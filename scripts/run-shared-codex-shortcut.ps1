@@ -95,9 +95,72 @@ function Resolve-ProjectRoot {
 $ProjectRoot = Resolve-ProjectRoot -RequestedPath $ProjectRoot -ScriptDirectory $scriptRoot
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
 $operatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
+$crmLocalSourceSelectionPath = Join-Path $operatorRuntimeRoot "runtime\crm-local\active-source.json"
 $tmpRoot = Join-Path $localStateRoot "tmp"
 $logRoot = Join-Path $operatorRuntimeRoot "logs"
 $wslInvoker = Join-Path $scriptRoot "invoke-skincos-wsl.ps1"
+$crmLocalPreviewSelected = $false
+$persistedCrmPreviewSelection = $null
+$crmCanonicalProjectRoot = 'C:\CodexShared\Projetos\skincos'
+if (-not (Test-Path -LiteralPath (Join-Path $crmCanonicalProjectRoot '.git'))) {
+    throw "A origem canônica do CRM Local não está disponível em '$crmCanonicalProjectRoot'."
+}
+$crmLaunchProjectRoot = $crmCanonicalProjectRoot
+
+# A CRM preview is selected explicitly and kept outside every worktree. This
+# makes the chosen source deterministic for all Codex actions/modules, while
+# never guessing from the thread that happened to invoke the shortcut.
+$previewSourceRoot = [string]$env:CRM_LOCAL_PREVIEW_SOURCE_ROOT
+if ([string]$env:CRM_LOCAL_CLEAR_PREVIEW_SOURCE -in @('1', 'true', 'TRUE')) {
+    Remove-Item -LiteralPath $crmLocalSourceSelectionPath -Force -ErrorAction SilentlyContinue
+    $previewSourceRoot = ''
+} elseif ([string]::IsNullOrWhiteSpace($previewSourceRoot) -and (Test-Path -LiteralPath $crmLocalSourceSelectionPath)) {
+    try {
+        $persistedCrmPreviewSelection = Get-Content -Raw -LiteralPath $crmLocalSourceSelectionPath | ConvertFrom-Json
+        $previewSourceRoot = [string]$persistedCrmPreviewSelection.sourceRoot
+    } catch {
+        throw "A seleção ativa do CRM Local está inválida em '$crmLocalSourceSelectionPath'. Remova-a com CRM_LOCAL_CLEAR_PREVIEW_SOURCE=1 antes de iniciar o CRM."
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($previewSourceRoot)) {
+    $previewSourceRoot = (Resolve-Path -LiteralPath $previewSourceRoot).Path
+    $privatePreviewRoot = (Resolve-Path -LiteralPath (Join-Path $operatorRuntimeRoot 'source')).Path.TrimEnd([char]'\')
+    if (-not $previewSourceRoot.StartsWith($privatePreviewRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "A prévia ativa do CRM Local deve estar no diretório privado autorizado '$privatePreviewRoot': '$previewSourceRoot'."
+    }
+    $previewGitRootRaw = @(& git -C $previewSourceRoot rev-parse --show-toplevel 2>$null)
+    $previewGitExit = $LASTEXITCODE
+    $previewGitRoot = [string]($previewGitRootRaw | Select-Object -First 1)
+    if ($previewGitExit -ne 0 -or [string]::IsNullOrWhiteSpace($previewGitRoot) -or -not ([IO.Path]::GetFullPath($previewGitRoot.Trim()).TrimEnd([char]'\') -eq $previewSourceRoot.TrimEnd([char]'\'))) {
+        throw "A prévia ativa do CRM Local deve ser a raiz de um worktree Git privado, sem checkout aninhado: '$previewSourceRoot'."
+    }
+    $previewCommit = (& git -C $previewSourceRoot rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+    if ($previewCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "Não foi possível resolver o commit da prévia ativa do CRM Local: '$previewSourceRoot'."
+    }
+    $crmLaunchProjectRoot = $previewSourceRoot
+    $crmLocalPreviewSelected = $true
+    $env:CRM_LOCAL_INCLUDE_WORKING_CHANGES = 'true'
+    if (-not [string]::IsNullOrWhiteSpace([string]$env:CRM_LOCAL_PREVIEW_SOURCE_ROOT) -or $null -ne $persistedCrmPreviewSelection) {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $crmLocalSourceSelectionPath) -Force | Out-Null
+        $selectedAt = if (-not [string]::IsNullOrWhiteSpace([string]$env:CRM_LOCAL_PREVIEW_SOURCE_ROOT) -or [string]::IsNullOrWhiteSpace([string]$persistedCrmPreviewSelection.selectedAt)) { (Get-Date).ToString('o') } else { [string]$persistedCrmPreviewSelection.selectedAt }
+        $selectedBy = if (-not [string]::IsNullOrWhiteSpace([string]$env:CRM_LOCAL_PREVIEW_SOURCE_ROOT)) { 'CRM_LOCAL_PREVIEW_SOURCE_ROOT' } elseif ([string]::IsNullOrWhiteSpace([string]$persistedCrmPreviewSelection.selectedBy)) { 'persisted-preview' } else { [string]$persistedCrmPreviewSelection.selectedBy }
+        [pscustomobject]@{
+            version = 1
+            sourceRoot = $previewSourceRoot
+            sourceCommit = $previewCommit
+            selectedAt = $selectedAt
+            selectedBy = $selectedBy
+        } | ConvertTo-Json | Set-Content -LiteralPath $crmLocalSourceSelectionPath -Encoding utf8
+        Write-Host "[crm-local] Prévia ativa selecionada: $previewSourceRoot"
+    }
+}
+
+function Use-CrmLaunchSource {
+    # CRM actions never inherit the calling thread/worktree. They use either
+    # the explicitly persisted private preview or the canonical shared source.
+    $script:ProjectRoot = $script:crmLaunchProjectRoot
+}
 
 function Ensure-LocalState {
     foreach ($path in @(
@@ -130,17 +193,26 @@ function Convert-WindowsPathToWsl {
     return $Path
 }
 
-function Convert-ToBashLiteral {
-    param([string]$Value)
-
-    return "'" + $Value.Replace("'", "'""'""'") + "'"
-}
-
 function Invoke-ShortcutWsl {
+    [CmdletBinding(DefaultParameterSetName = "BashScript")]
     param(
-        [string]$Command,
+        [Parameter(Mandatory = $true, ParameterSetName = "BashScript")]
+        [string]$ScriptPath,
+        [Parameter(Mandatory = $true, ParameterSetName = "Executable")]
+        [string]$Executable,
+        [Parameter(Mandatory = $true, ParameterSetName = "NpmScript")]
+        [string]$NpmScript,
+        [Parameter(Mandatory = $true, ParameterSetName = "PythonScript")]
+        [string]$PythonScript,
+        [Parameter(ParameterSetName = "BashScript")]
+        [Parameter(ParameterSetName = "Executable")]
+        [Parameter(ParameterSetName = "NpmScript")]
+        [Parameter(ParameterSetName = "PythonScript")]
+        [string[]]$ArgumentList = @(),
+        [string]$WorkingDirectory = ".",
         [string]$WorkingProjectRoot = $ProjectRoot,
         [string[]]$EnvVar = @(),
+        [int[]]$AcceptedExitCode = @(0),
         [switch]$SkipBootstrapCheck,
         [switch]$SkipNodeCheck,
         [switch]$SkipNpmCheck,
@@ -148,33 +220,141 @@ function Invoke-ShortcutWsl {
         [switch]$SkipRepoCheck
     )
 
-    & $wslInvoker `
-        -ProjectRoot $WorkingProjectRoot `
-        -RepoCommand $Command `
-        -EnvVar $EnvVar `
-        -SkipBootstrapCheck:$SkipBootstrapCheck `
-        -SkipNodeCheck:$SkipNodeCheck `
-        -SkipNpmCheck:$SkipNpmCheck `
-        -SkipGitCheck:$SkipGitCheck `
-        -SkipRepoCheck:$SkipRepoCheck
+    $invokeParameters = @{
+        ProjectRoot = $WorkingProjectRoot
+        WorkingDirectory = $WorkingDirectory
+        ArgumentList = $ArgumentList
+        EnvVar = $EnvVar
+        SkipBootstrapCheck = $SkipBootstrapCheck
+        SkipNodeCheck = $SkipNodeCheck
+        SkipNpmCheck = $SkipNpmCheck
+        SkipGitCheck = $SkipGitCheck
+        SkipRepoCheck = $SkipRepoCheck
+    }
+    switch ($PSCmdlet.ParameterSetName) {
+        "BashScript" { $invokeParameters.ScriptPath = $ScriptPath }
+        "Executable" { $invokeParameters.Executable = $Executable }
+        "NpmScript" { $invokeParameters.NpmScript = $NpmScript }
+        "PythonScript" { $invokeParameters.PythonScript = $PythonScript }
+    }
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "The WSL command failed with exit code $LASTEXITCODE."
+    & $wslInvoker @invokeParameters
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -notin $AcceptedExitCode) {
+        throw "The WSL operation failed with exit code $exitCode."
     }
 }
 
+function Start-ShortcutWslDetached {
+    [CmdletBinding(DefaultParameterSetName = "BashScript")]
+    param(
+        [Parameter(Mandatory = $true, ParameterSetName = "BashScript")]
+        [string]$ScriptPath,
+        [Parameter(Mandatory = $true, ParameterSetName = "Executable")]
+        [string]$Executable,
+        [Parameter(Mandatory = $true, ParameterSetName = "NpmScript")]
+        [string]$NpmScript,
+        [Parameter(Mandatory = $true, ParameterSetName = "PythonScript")]
+        [string]$PythonScript,
+        [Parameter(ParameterSetName = "BashScript")]
+        [Parameter(ParameterSetName = "Executable")]
+        [Parameter(ParameterSetName = "NpmScript")]
+        [Parameter(ParameterSetName = "PythonScript")]
+        [string[]]$ArgumentList = @(),
+        [Parameter(Mandatory = $true)][string]$WorkingProjectRoot,
+        [Parameter(Mandatory = $true)][string]$OutputLog,
+        [Parameter(Mandatory = $true)][string]$ErrorLog,
+        [string]$WorkingDirectory = ".",
+        [string[]]$EnvVar = @(),
+        [switch]$SkipBootstrapCheck
+    )
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $OutputLog) -Force | Out-Null
+    New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
+    $target = switch ($PSCmdlet.ParameterSetName) {
+        "BashScript" { $ScriptPath }
+        "Executable" { $Executable }
+        "NpmScript" { $NpmScript }
+        "PythonScript" { $PythonScript }
+    }
+    $invocationId = [Guid]::NewGuid().ToString("N")
+    $pendingInvocation = Join-Path $tmpRoot "wsl-invocation-$invocationId.tmp"
+    $invocationFile = Join-Path $tmpRoot "wsl-invocation-$invocationId.json"
+    [pscustomobject]@{
+        version = 1
+        mode = $PSCmdlet.ParameterSetName
+        target = $target
+        projectRoot = $WorkingProjectRoot
+        workingDirectory = $WorkingDirectory
+        argumentList = @($ArgumentList)
+        envVar = @($EnvVar)
+        distro = "Ubuntu-24.04"
+        linuxUser = "admin"
+        skipBootstrapCheck = [bool]$SkipBootstrapCheck
+        skipNodeCheck = $false
+        skipNpmCheck = $false
+        skipGitCheck = $false
+        skipRepoCheck = $false
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $pendingInvocation -Encoding utf8
+    Move-Item -LiteralPath $pendingInvocation -Destination $invocationFile
+
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $wslInvoker, '-InvocationFile', $invocationFile)
+    $escapedArguments = $arguments | ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' }
+    try {
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList ($escapedArguments -join ' ') -WindowStyle Hidden -RedirectStandardOutput $OutputLog -RedirectStandardError $ErrorLog -PassThru
+    }
+    catch {
+        Remove-Item -LiteralPath $invocationFile -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    if ($null -eq $process -or $process.Id -le 0) {
+        Remove-Item -LiteralPath $invocationFile -Force -ErrorAction SilentlyContinue
+        throw 'Não foi possível iniciar o processo persistente do CRM Local.'
+    }
+    return $process.Id
+}
+
 function Get-CrmLocalReviewRef {
+    if (-not [string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)) {
+        return $env:CRM_LOCAL_REVIEW_REF.Trim()
+    }
+    if ($crmLocalPreviewSelected) {
+        # A selected preview is intentionally evaluated at its own checked-out
+        # base. Its dirty snapshot is then fingerprinted, so every module sees
+        # the same work without pretending that it was already integrated.
+        return "HEAD"
+    }
     if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)) {
+        # The Codex App action is the canonical local CRM, not a preview of
+        # whichever worktree or thread happens to invoke it. Fetching and
+        # resolving origin/main makes "atualizado" deterministic across
+        # modules and threads.
         return "origin/main"
     }
-    return $env:CRM_LOCAL_REVIEW_REF.Trim()
+    return "origin/main"
+}
+
+function Test-CrmLocalIncludeWorkingChanges {
+    $raw = [string]$env:CRM_LOCAL_INCLUDE_WORKING_CHANGES
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
+    switch ($raw.Trim().ToLowerInvariant()) {
+        "1" { return $true }
+        "true" { return $true }
+        "yes" { return $true }
+        "0" { return $false }
+        "false" { return $false }
+        "no" { return $false }
+        default { throw "CRM_LOCAL_INCLUDE_WORKING_CHANGES deve ser true ou false." }
+    }
 }
 
 function Get-CrmLocalTargetCommit {
     $reviewRef = Get-CrmLocalReviewRef
-    & git -C $ProjectRoot fetch origin --prune --quiet
-    if ($LASTEXITCODE -ne 0) {
-        throw "Não foi possível atualizar as referências remotas antes de iniciar o CRM Local."
+    if ($reviewRef -match '^(origin/|refs/remotes/origin/)') {
+        & git -C $ProjectRoot fetch origin --prune --quiet
+        if ($LASTEXITCODE -ne 0) {
+            throw "Não foi possível atualizar as referências remotas antes de iniciar o CRM Local."
+        }
     }
 
     $targetCommit = (& git -C $ProjectRoot rev-parse --verify "${reviewRef}^{commit}" 2>$null | Select-Object -First 1).Trim()
@@ -182,6 +362,191 @@ function Get-CrmLocalTargetCommit {
         throw "A revisão do CRM Local não pôde ser resolvida: '$reviewRef'."
     }
     return $targetCommit.ToLowerInvariant()
+}
+
+function Get-CrmLocalSnapshotHash {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Export-CrmLocalSnapshotPatch {
+    param([Parameter(Mandatory = $true)][string]$OutputPath)
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
+    $process.StartInfo.FileName = 'git'
+    $process.StartInfo.Arguments = ('-C "{0}" diff --binary HEAD' -f $ProjectRoot)
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    try {
+        [void]$process.Start()
+        $stream = [IO.File]::Open($OutputPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $process.StandardOutput.BaseStream.CopyTo($stream)
+        } finally {
+            $stream.Dispose()
+        }
+        $standardError = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {
+            throw "Não foi possível ler as alterações locais do checkout '$ProjectRoot': $standardError"
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Remove-CrmLocalSourceSnapshot {
+    param([object]$Snapshot)
+    if ($null -ne $Snapshot -and -not [string]::IsNullOrWhiteSpace([string]$Snapshot.PatchPath)) {
+        Remove-Item -LiteralPath ([string]$Snapshot.PatchPath) -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-CrmLocalSnapshotRelativePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRootPath,
+        [Parameter(Mandatory = $true)][string]$FullPath
+    )
+    $normalizedFullPath = [IO.Path]::GetFullPath($FullPath)
+    $rootPrefix = $SourceRootPath + [IO.Path]::DirectorySeparatorChar
+    if (-not $normalizedFullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Arquivo não rastreado fora do checkout no snapshot do CRM Local: '$FullPath'."
+    }
+    return $normalizedFullPath.Substring($rootPrefix.Length).Replace([char]'\', [char]'/')
+}
+
+function Get-CrmLocalSnapshotUntrackedFiles {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Entries)
+
+    $sourceRootPath = (Resolve-Path -LiteralPath $ProjectRoot).Path.TrimEnd([char]'\', [char]'/')
+    $files = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in $Entries) {
+        $relativeEntry = ([string]$entry).Trim()
+        if ([string]::IsNullOrWhiteSpace($relativeEntry)) { continue }
+
+        $candidate = Join-Path $ProjectRoot $relativeEntry.Replace('/', [IO.Path]::DirectorySeparatorChar)
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $item = Get-Item -LiteralPath $candidate -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Arquivo não rastreado com link simbólico não pode entrar no snapshot do CRM Local: '$relativeEntry'."
+            }
+            $relativeFile = Get-CrmLocalSnapshotRelativePath -SourceRootPath $sourceRootPath -FullPath $item.FullName
+            $files.Add($relativeFile)
+            continue
+        }
+
+        if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+            throw "Arquivo não rastreado inválido no snapshot do CRM Local: '$relativeEntry'."
+        }
+
+        # Git representa checkouts aninhados não rastreados como diretórios. Eles não
+        # fazem parte da árvore do checkout acionado e não podem ser copiados para o
+        # runtime sem misturar revisões, .git e alterações de outra thread.
+        if (Test-Path -LiteralPath (Join-Path $candidate '.git')) {
+            Write-Verbose "Ignorando checkout Git aninhado fora do snapshot do CRM Local: '$relativeEntry'."
+            continue
+        }
+
+        $directoryItem = Get-Item -LiteralPath $candidate -Force
+        if (($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Diretório não rastreado com link simbólico não pode entrar no snapshot do CRM Local: '$relativeEntry'."
+        }
+
+        Get-ChildItem -LiteralPath $candidate -File -Recurse -Force | ForEach-Object {
+            if (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Arquivo não rastreado com link simbólico não pode entrar no snapshot do CRM Local: '$($_.FullName)'."
+            }
+            $relativeFile = Get-CrmLocalSnapshotRelativePath -SourceRootPath $sourceRootPath -FullPath $_.FullName
+            & git -C $ProjectRoot check-ignore --quiet -- $relativeFile 2>$null
+            if ($LASTEXITCODE -eq 0) { return }
+            if ($LASTEXITCODE -ne 1) { throw "Não foi possível validar o arquivo não rastreado '$relativeFile' no snapshot do CRM Local." }
+            $files.Add($relativeFile)
+        }
+    }
+    return @($files | Sort-Object -Unique)
+}
+
+function Get-CrmLocalSourceSnapshot {
+    param([Parameter(Mandatory = $true)][string]$TargetCommit)
+
+    # The standard action intentionally ignores the caller's dirty checkout.
+    # That checkout can belong to another Codex thread and may be based on an
+    # older branch. A local preview must opt in explicitly and be based on the
+    # exact requested revision, otherwise no changes are copied.
+    if (-not (Test-CrmLocalIncludeWorkingChanges)) {
+        return [pscustomobject]@{
+            SourceRoot = $ProjectRoot
+            TargetCommit = $TargetCommit
+            PatchPath = $null
+            Untracked = @()
+            HasChanges = $false
+            Fingerprint = "commit:${TargetCommit}"
+        }
+    }
+
+    $sourceCommit = (& git -C $ProjectRoot rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+    if ($sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Não foi possível resolver o commit do checkout que disparou o CRM Local: '$ProjectRoot'." }
+    if ($sourceCommit -ne $TargetCommit) {
+        # A named preview may be based on an older ancestor. Its patch is
+        # applied only to a fresh worktree at the current canonical commit;
+        # conflict detection remains fail-closed in Apply-CrmLocalSourceSnapshot.
+        & git -C $ProjectRoot merge-base --is-ancestor $sourceCommit $TargetCommit
+        if ($LASTEXITCODE -ne 0) {
+            throw "A prévia ativa não deriva da revisão canônica solicitada ($TargetCommit). Não copie alterações entre linhas divergentes; selecione uma prévia rebaseada ou limpe a seleção com CRM_LOCAL_CLEAR_PREVIEW_SOURCE=1."
+        }
+    }
+    $patchPath = Join-Path $operatorRuntimeRoot ("tmp\crm-local-snapshot-{0}.patch" -f [Guid]::NewGuid().ToString('N'))
+    Export-CrmLocalSnapshotPatch -OutputPath $patchPath
+    $patchBytes = (Get-Item -LiteralPath $patchPath).Length
+    $untrackedEntries = @(& git -C $ProjectRoot ls-files --others --exclude-standard)
+    if ($LASTEXITCODE -ne 0) { throw "Não foi possível ler os arquivos não rastreados do checkout '$ProjectRoot'." }
+    $untracked = @(Get-CrmLocalSnapshotUntrackedFiles -Entries $untrackedEntries)
+    $untrackedDigest = foreach ($relativePath in $untracked) {
+        $candidate = Join-Path $ProjectRoot $relativePath
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Arquivo não rastreado inválido no snapshot do CRM Local: '$relativePath'." }
+        "${relativePath}:$((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant())"
+    }
+    $hasChanges = $patchBytes -gt 0 -or $untracked.Count -gt 0
+    $fingerprint = if ($hasChanges) {
+        "snapshot:${TargetCommit}:$(Get-CrmLocalSnapshotHash -Value ((Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant() + "`n" + ($untrackedDigest -join "`n")))"
+    } else {
+        "commit:${TargetCommit}"
+    }
+    return [pscustomobject]@{
+        SourceRoot = $ProjectRoot
+        TargetCommit = $TargetCommit
+        PatchPath = $patchPath
+        Untracked = $untracked
+        HasChanges = $hasChanges
+        Fingerprint = $fingerprint
+    }
+}
+
+function Apply-CrmLocalSourceSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$DestinationRoot
+    )
+    if (-not $Snapshot.HasChanges) { return }
+    if ((Get-Item -LiteralPath $Snapshot.PatchPath).Length -gt 0) {
+        & git -C $DestinationRoot apply --whitespace=nowarn --binary $Snapshot.PatchPath
+        if ($LASTEXITCODE -ne 0) { throw "Não foi possível aplicar o snapshot local no worktree isolado '$DestinationRoot'." }
+    }
+    foreach ($relativePath in @($Snapshot.Untracked)) {
+        $from = Join-Path $Snapshot.SourceRoot $relativePath
+        $to = Join-Path $DestinationRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force | Out-Null
+        Copy-Item -LiteralPath $from -Destination $to -Force
+    }
 }
 
 function Get-CrmLocalSourceBaseRoot {
@@ -197,12 +562,32 @@ function Sync-CrmLocalSourceRoot {
         [ValidateSet("Gestor", "Consultor")]
         [string]$Persona,
         [Parameter(Mandatory = $true)]
-        [string]$TargetCommit
+        [string]$TargetCommit,
+        [Parameter(Mandatory = $true)]
+        [object]$Snapshot
     )
 
     $sourceRoot = Get-CrmLocalSourceBaseRoot -Persona $Persona
     $sourceParent = Split-Path -Parent $sourceRoot
     New-Item -ItemType Directory -Path $sourceParent -Force | Out-Null
+
+    if ($Snapshot.HasChanges) {
+        $shortCommit = $TargetCommit.Substring(0, 12)
+        $shortSnapshot = $Snapshot.Fingerprint.Split(':')[-1].Substring(0, 12)
+        $snapshotRoot = "$sourceRoot-$shortCommit-$shortSnapshot"
+        if (Test-Path -LiteralPath $snapshotRoot) {
+            $snapshotRoot = "$snapshotRoot-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        }
+        & git -C $ProjectRoot worktree add --detach $snapshotRoot $TargetCommit | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Não foi possível criar o worktree isolado do snapshot do CRM Local em '$snapshotRoot'." }
+        try {
+            Apply-CrmLocalSourceSnapshot -Snapshot $Snapshot -DestinationRoot $snapshotRoot
+        } catch {
+            & git -C $ProjectRoot worktree remove --force $snapshotRoot 2>$null
+            throw
+        }
+        return $snapshotRoot
+    }
 
     if (Test-Path -LiteralPath $sourceRoot) {
         $trackedChanges = @(& git -C $sourceRoot status --porcelain --untracked-files=no)
@@ -243,14 +628,37 @@ function Resolve-CrmLocalSourceRoot {
         [string]$Persona = "Gestor"
     )
     $targetCommit = Get-CrmLocalTargetCommit
-    $manifest = Get-CrmPersonaManifest -Persona $Persona
-    if ($null -ne $manifest -and (Test-CrmWslPid -PidValue $manifest.pids.launcher)) {
-        $runningSource = Convert-WslPathToWindows -Path ([string]$manifest.worktree)
-        $runningCommit = if (Test-Path -LiteralPath $runningSource) { (& git -C $runningSource rev-parse HEAD 2>$null | Select-Object -First 1) } else { $null }
-        if ([string]$runningCommit -eq $targetCommit) { return $runningSource }
-        throw "O runtime de $Persona está ativo em outra revisão. Execute primeiro a ação principal do CRM Local para atualizá-lo."
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $targetCommit
+    try {
+        $manifest = Get-CrmPersonaManifest -Persona $Persona
+        if ($null -ne $manifest -and (Test-CrmWslPid -PidValue $manifest.pids.launcher)) {
+            $runningSource = Convert-WslPathToWindows -Path ([string]$manifest.worktree)
+            $runningCommit = if (Test-Path -LiteralPath $runningSource) { (& git -C $runningSource rev-parse HEAD 2>$null | Select-Object -First 1) } else { $null }
+            if ([string]$runningCommit -eq $targetCommit) { return $runningSource }
+            throw "O runtime de $Persona está ativo em outra revisão. Execute primeiro a ação principal do CRM Local para atualizá-lo."
+        }
+        return Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $targetCommit -Snapshot $snapshot
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }
-    return Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $targetCommit
+}
+
+function Resolve-CrmLocalModuleSourceRoot {
+    param(
+        [ValidateSet("Gestor", "Consultor")]
+        [string]$Persona = "Gestor"
+    )
+
+    # Module-specific launchers do not own the canonical persona manifest, but
+    # they must still execute the exact source snapshot selected by this action.
+    # Never fall back to the mutable shared checkout here.
+    $targetCommit = Get-CrmLocalTargetCommit
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $targetCommit
+    try {
+        return Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $targetCommit -Snapshot $snapshot
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
+    }
 }
 
 function Convert-WslPathToWindows {
@@ -278,7 +686,15 @@ function Test-CrmWslPid {
     param([object]$PidValue)
     $pidText = [string]$PidValue
     if ($pidText -notmatch '^[0-9]+$') { return $false }
-    & wsl.exe -d Ubuntu-24.04 -- bash -lc "kill -0 $pidText 2>/dev/null" 2>$null
+    & $wslInvoker `
+        -ProjectRoot $ProjectRoot `
+        -Executable kill `
+        -ArgumentList @("-0", $pidText) `
+        -SkipBootstrapCheck `
+        -SkipNodeCheck `
+        -SkipNpmCheck `
+        -SkipGitCheck `
+        -SkipRepoCheck 2>$null | Out-Null
     return $LASTEXITCODE -eq 0
 }
 
@@ -296,12 +712,19 @@ function Test-CrmHttpEndpoint {
 }
 
 function Test-CrmPersonaHealth {
-    param([ValidateSet("Gestor", "Consultor")][string]$Persona)
+    param([ValidateSet("Gestor", "Consultor")][string]$Persona, [object]$Manifest = $null)
     if ($Persona -eq "Gestor") {
-        return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8791/api/auth/me" -Role "GESTOR") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8787/insumos/health") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8801/api/ponto/readiness") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8110/health")
+        if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8791/api/auth/me" -Role "GESTOR")) { return $false }
+        if ($null -eq $Manifest -or $null -ne $Manifest.ports.insumos) {
+            if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8787/insumos/health")) { return $false }
+        }
+        if ($null -eq $Manifest -or $null -ne $Manifest.ports.timekeeping) {
+            if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8801/api/ponto/readiness")) { return $false }
+        }
+        if ($null -eq $Manifest -or $null -ne $Manifest.ports.whatsapp) {
+            if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8110/health")) { return $false }
+        }
+        return $true
     }
     return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8792/api/auth/me" -Role "CONSULTOR") -and
         (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8792/api/ponto/readiness")
@@ -310,23 +733,40 @@ function Test-CrmPersonaHealth {
 function Get-CrmPersonaDecision {
     param(
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
-        [Parameter(Mandatory = $true)][string]$TargetCommit
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
     )
     $runtimeRoot = Get-CrmPersonaRuntimeRoot -Persona $Persona
     $manifest = Get-CrmPersonaManifest -Persona $Persona
     $pidAlive = $false
     if ($null -ne $manifest) { $pidAlive = Test-CrmWslPid -PidValue $manifest.pids.launcher }
     $healthy = $false
-    if ($pidAlive) { $healthy = Test-CrmPersonaHealth -Persona $Persona }
+    if ($pidAlive) { $healthy = Test-CrmPersonaHealth -Persona $Persona -Manifest $manifest }
     $policyWsl = Convert-WindowsPathToWsl -Path (Join-Path $scriptRoot "crm-local-runtime-policy.mjs")
     $manifestWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "current.json")
     $buildStateWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "build-state.json")
-    $decisionRaw = & wsl.exe -d Ubuntu-24.04 -- node $policyWsl `
-        --manifest $manifestWsl --build-state $buildStateWsl --target $TargetCommit `
-        --persona $Persona.ToUpperInvariant() --pid-alive $pidAlive.ToString().ToLowerInvariant() `
-        --healthy $healthy.ToString().ToLowerInvariant()
-    if ($LASTEXITCODE -ne 0) { throw "Não foi possível avaliar o estado do CRM Local ($Persona)." }
+    $decisionRaw = @(Invoke-ShortcutWsl -Executable node -ArgumentList @(
+        $policyWsl,
+        "--manifest", $manifestWsl,
+        "--build-state", $buildStateWsl,
+        "--target", $TargetCommit,
+        "--source-fingerprint", $SourceFingerprint,
+        "--persona", $Persona.ToUpperInvariant(),
+        "--pid-alive", $pidAlive.ToString().ToLowerInvariant(),
+        "--healthy", $healthy.ToString().ToLowerInvariant()
+    ))
     $decision = $decisionRaw | Select-Object -Last 1 | ConvertFrom-Json
+    if ([string]$decision.action -eq 'reuse' -and [string]$SourceFingerprint -eq "commit:$TargetCommit" -and $null -ne $manifest -and [string]::IsNullOrWhiteSpace([string]$manifest.sourceFingerprint)) {
+        # A legacy canonical manifest has no fingerprint. Before accepting it,
+        # prove its worktree still resolves to the exact requested commit. This
+        # preserves the snapshot guard while letting an upgraded launcher reuse
+        # a healthy canonical runtime instead of rebuilding it indefinitely.
+        $legacyWorktree = Convert-WslPathToWindows -Path ([string]$manifest.worktree)
+        $legacyCommit = if (Test-Path -LiteralPath $legacyWorktree) { (& git -C $legacyWorktree rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } else { $null }
+        if ($legacyCommit -ne $TargetCommit) {
+            $decision = [pscustomobject]@{ action = 'restart'; reason = 'legacy_worktree_outdated' }
+        }
+    }
     return [pscustomobject]@{ Action = [string]$decision.action; Reason = [string]$decision.reason; Manifest = $manifest }
 }
 
@@ -342,16 +782,36 @@ function Open-CrmPersonaUrl {
     Write-Host "[crm-local] Runtime atualizado de $Persona reutilizado em $url."
 }
 
+function Open-CrmModuleUrl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Module,
+        [string]$ExtraQuery = ""
+    )
+    $url = "http://localhost:8791/?module=$Module"
+    if (-not [string]::IsNullOrWhiteSpace($ExtraQuery)) {
+        $url = "$url&$ExtraQuery"
+    }
+    Start-Process $url | Out-Null
+    Write-Host "[crm-local] Abrindo o módulo atualizado '$Module' em $url."
+}
+
 function Wait-CrmPersonaCurrent {
     param(
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
         [Parameter(Mandatory = $true)][string]$TargetCommit,
-        [int]$TimeoutSeconds = 420
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint,
+        [int]$TimeoutSeconds = 420,
+        [switch]$StartupGrace
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $startupGraceDeadline = if ($StartupGrace) { (Get-Date).AddSeconds(30) } else { Get-Date }
     while ((Get-Date) -lt $deadline) {
-        $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit
+        $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit -SourceFingerprint $SourceFingerprint
         if ($decision.Action -eq 'reuse') { return $decision }
+        if ($decision.Action -eq 'restart' -and (Get-Date) -lt $startupGraceDeadline) {
+            Start-Sleep -Seconds 1
+            continue
+        }
         if ($decision.Action -notin @('wait', 'start')) { return $decision }
         Start-Sleep -Seconds 2
     }
@@ -396,10 +856,17 @@ function Stop-LegacyCrmRuntimeIfNeeded {
 
     Write-Host "[crm-local] Encerrando somente o runtime legado identificado antes de iniciar o Gestor canônico."
     $legacyRuntimeRootWsl = Convert-WindowsPathToWsl -Path (Join-Path $operatorRuntimeRoot "runtime\crm-local")
-    Invoke-ShortcutWsl -WorkingProjectRoot $legacyProjectRoot -SkipBootstrapCheck -Command ("CRM_PERSONA=LEGACY CRM_RUNTIME_ROOT={0} CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
-        (Convert-ToBashLiteral -Value $legacyRuntimeRootWsl), `
-        (Convert-ToBashLiteral -Value $crmLegacyPidWsl), `
-        (Convert-ToBashLiteral -Value $crmLegacyLogWsl))
+    Invoke-ShortcutWsl `
+        -WorkingProjectRoot $legacyProjectRoot `
+        -SkipBootstrapCheck `
+        -ScriptPath "./scripts/run-local-crm.sh" `
+        -ArgumentList @("--stop") `
+        -EnvVar @(
+            "CRM_PERSONA=LEGACY",
+            "CRM_RUNTIME_ROOT=$legacyRuntimeRootWsl",
+            "CRM_PID_FILE=$crmLegacyPidWsl",
+            "CRM_LOG_FILE=$crmLegacyLogWsl"
+        )
 }
 
 function Invoke-RepoPowerShellScript {
@@ -507,7 +974,41 @@ function Stop-CrmPersonaRuntime {
     $manifest = Get-CrmPersonaManifest -Persona $Persona
     if ($null -eq $manifest) { return }
 
-    $sourceRoot = Convert-WslPathToWindows -Path ([string]$manifest.worktree)
+    $manifestWorktree = [string]$manifest.worktree
+    $sourceRoot = Convert-WslPathToWindows -Path $manifestWorktree
+    $runtimeRootWsl = Convert-WindowsPathToWsl -Path (Get-CrmPersonaRuntimeRoot -Persona $Persona)
+    if ($Persona -eq "Gestor") {
+        $stopEnv = @(
+            "CRM_PERSONA=GESTOR",
+            "CRM_RUNTIME_ROOT=$runtimeRootWsl",
+            "CRM_WITH_INSUMOS=1",
+            "CRM_WITH_TIMEKEEPING=1",
+            "CRM_WITH_WHATSAPP=1",
+            "CRM_PID_FILE=$crmGestorPidWsl",
+            "CRM_LOG_FILE=$crmGestorLogWsl"
+        )
+    } else {
+        $stopEnv = @(
+            "CRM_PERSONA=CONSULTOR",
+            "CRM_RUNTIME_ROOT=$runtimeRootWsl",
+            "CRM_VITE_PORT=5174",
+            "CRM_PAGES_PORT=8792",
+            "CRM_WITH_INSUMOS=0",
+            "CRM_WITH_TIMEKEEPING=0",
+            "CRM_WITH_WHATSAPP=0",
+            "CRM_PID_FILE=$crmConsultorPidWsl",
+            "CRM_LOG_FILE=$crmConsultorLogWsl"
+        )
+    }
+    if ($manifestWorktree -match '^/home/admin/\.local/state/skincos/crm-local-preview-source/[A-Za-z0-9._-]+$') {
+        Invoke-ShortcutWsl `
+            -WorkingProjectRoot $manifestWorktree `
+            -SkipBootstrapCheck `
+            -ScriptPath "./scripts/run-local-crm.sh" `
+            -ArgumentList @("--stop") `
+            -EnvVar $stopEnv
+        return
+    }
     $allowedSourceRoot = Join-Path $operatorRuntimeRoot "source"
     $resolvedSource = if (Test-Path -LiteralPath $sourceRoot) { (Resolve-Path -LiteralPath $sourceRoot).Path } else { $null }
     if ($null -eq $resolvedSource -or -not $resolvedSource.StartsWith($allowedSourceRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -516,43 +1017,160 @@ function Stop-CrmPersonaRuntime {
     if (-not (Test-Path -LiteralPath (Join-Path $resolvedSource "scripts\run-local-crm.sh"))) {
         throw "O launcher do runtime de $Persona não existe em '$resolvedSource'."
     }
-
-    $runtimeRootWsl = Convert-WindowsPathToWsl -Path (Get-CrmPersonaRuntimeRoot -Persona $Persona)
-    if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_RUNTIME_ROOT={0} CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
-            (Convert-ToBashLiteral -Value $runtimeRootWsl), `
-            (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
-            (Convert-ToBashLiteral -Value $crmGestorLogWsl)
-    } else {
-        $command = "CRM_PERSONA=CONSULTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
-            (Convert-ToBashLiteral -Value $runtimeRootWsl), `
-            (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
-            (Convert-ToBashLiteral -Value $crmConsultorLogWsl)
-    }
-    Invoke-ShortcutWsl -WorkingProjectRoot $resolvedSource -SkipBootstrapCheck -Command $command
+    Invoke-ShortcutWsl `
+        -WorkingProjectRoot $resolvedSource `
+        -SkipBootstrapCheck `
+        -ScriptPath "./scripts/run-local-crm.sh" `
+        -ArgumentList @("--stop") `
+        -EnvVar $stopEnv
 }
 
 function Start-CrmPersonaRuntime {
     param(
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
         [Parameter(Mandatory = $true)][string]$SourceRoot,
-        [Parameter(Mandatory = $true)][string]$TargetCommit
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
     )
-    $targetLiteral = Convert-ToBashLiteral -Value $TargetCommit
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
-            $targetLiteral, `
-            (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
-            (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
-            (Convert-ToBashLiteral -Value $crmGestorLogWsl)
+        $personaLogWsl = $crmGestorLogWsl
+        $launchArguments = @()
+        $launchEnv = @(
+            "CRM_PERSONA=GESTOR",
+            "CRM_TARGET_COMMIT=$TargetCommit",
+            "CRM_SOURCE_FINGERPRINT=$SourceFingerprint",
+            "CRM_RUNTIME_ROOT=$crmGestorRuntimeRootWsl",
+            "LOCAL_AUTH_BYPASS=true",
+            "LOCAL_AUTH_TEST_USER_ADMIN=true",
+            "LOCAL_AUTH_ROLE=GESTOR",
+            "LOCAL_AUTH_EMAIL=dev@local.test",
+            "LOCAL_AUTH_NAME=Gestor Local",
+            "CRM_WITH_INSUMOS=1",
+            "CRM_WITH_TIMEKEEPING=1",
+            "CRM_WITH_WHATSAPP=1",
+            "CRM_BUILD_BEFORE_START=auto",
+            "CRM_OPEN_BROWSER=1",
+            "CRM_PID_FILE=$crmGestorPidWsl",
+            "CRM_LOG_FILE=$crmGestorLogWsl"
+        )
     } else {
-        $command = "CRM_PERSONA=CONSULTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh --module ponto" -f `
-            $targetLiteral, `
-            (Convert-ToBashLiteral -Value $crmConsultorRuntimeRootWsl), `
-            (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
-            (Convert-ToBashLiteral -Value $crmConsultorLogWsl)
+        $personaLogWsl = $crmConsultorLogWsl
+        $launchArguments = @("--module", "ponto")
+        $launchEnv = @(
+            "CRM_PERSONA=CONSULTOR",
+            "CRM_TARGET_COMMIT=$TargetCommit",
+            "CRM_SOURCE_FINGERPRINT=$SourceFingerprint",
+            "CRM_RUNTIME_ROOT=$crmConsultorRuntimeRootWsl",
+            "LOCAL_AUTH_BYPASS=true",
+            "LOCAL_AUTH_TEST_USER_ADMIN=false",
+            "LOCAL_AUTH_ROLE=CONSULTOR",
+            "LOCAL_AUTH_EMAIL=consultor.local@local.test",
+            "LOCAL_AUTH_USERNAME=consultor-local",
+            "LOCAL_AUTH_NAME=Consultor Local",
+            "LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto",
+            "CRM_VITE_PORT=5174",
+            "CRM_PAGES_PORT=8792",
+            "CRM_WITH_INSUMOS=0",
+            "CRM_WITH_TIMEKEEPING=0",
+            "CRM_WITH_WHATSAPP=0",
+            "PONTO_API_TARGET=http://127.0.0.1:8801",
+            "PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret",
+            "LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787",
+            "LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110",
+            "CRM_BUILD_BEFORE_START=auto",
+            "CRM_OPEN_BROWSER=1",
+            "CRM_PID_FILE=$crmConsultorPidWsl",
+            "CRM_LOG_FILE=$crmConsultorLogWsl"
+        )
     }
-    Invoke-ShortcutWsl -WorkingProjectRoot $SourceRoot -SkipBootstrapCheck -Command $command
+    # A launcher action is expected to return after the local runtime is ready.
+    # The separate hidden PowerShell process owns the WSL session; closing the
+    # invoking shortcut cannot terminate Pages, Vite or the local dependencies.
+    $personaLauncherOut = Join-Path $logRoot ("crm-local-{0}-launcher.out.log" -f $Persona.ToLowerInvariant())
+    $personaLauncherErr = Join-Path $logRoot ("crm-local-{0}-launcher.err.log" -f $Persona.ToLowerInvariant())
+    [void](Start-ShortcutWslDetached `
+        -WorkingProjectRoot $SourceRoot `
+        -SkipBootstrapCheck `
+        -ScriptPath "./scripts/run-local-crm.sh" `
+        -ArgumentList $launchArguments `
+        -EnvVar $launchEnv `
+        -OutputLog $personaLauncherOut `
+        -ErrorLog $personaLauncherErr)
+}
+
+function Start-CrmAtendimentoRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
+    )
+    $snapshotId = ($SourceFingerprint -split ':')[-1]
+    if ([string]::IsNullOrWhiteSpace($snapshotId) -or $snapshotId.Length -lt 12) {
+        throw "Fingerprint inválido para a prévia isolada de Atendimento: '$SourceFingerprint'."
+    }
+    $nativeAtendimentoSource = "/home/admin/.local/state/skincos/crm-local-preview-source/atendimento-{0}-{1}" -f $TargetCommit.Substring(0, 12), $snapshotId.Substring(0, 12)
+    $launchEnv = @(
+        "CRM_PERSONA=GESTOR",
+        "CRM_TARGET_COMMIT=$TargetCommit",
+        "CRM_SOURCE_FINGERPRINT=$SourceFingerprint",
+        "CRM_RUNTIME_ROOT=$crmGestorRuntimeRootWsl",
+        "CRM_LOCAL_NATIVE_SOURCE_ROOT=$nativeAtendimentoSource",
+        "LOCAL_AUTH_BYPASS=true",
+        "LOCAL_AUTH_TEST_USER_ADMIN=true",
+        "LOCAL_AUTH_ROLE=GESTOR",
+        "LOCAL_AUTH_EMAIL=dev@local.test",
+        "LOCAL_AUTH_NAME=Gestor Local",
+        "CRM_WITH_INSUMOS=0",
+        "CRM_WITH_TIMEKEEPING=0",
+        "CRM_WITH_WHATSAPP=1",
+        "CRM_BUILD_BEFORE_START=auto",
+        "CRM_OPEN_BROWSER=1",
+        "CRM_PID_FILE=$atendimentoPidWsl",
+        "CRM_LOG_FILE=$atendimentoLogWsl"
+    )
+    # Do not leave Atendimento coupled to the lifetime of a Codex/PowerShell
+    # invocation. The manifest remains the single owner and stop authority.
+    $atendimentoLauncherOut = Join-Path $logRoot 'crm-atendimento-launcher.out.log'
+    $atendimentoLauncherErr = Join-Path $logRoot 'crm-atendimento-launcher.err.log'
+    [void](Start-ShortcutWslDetached `
+        -WorkingProjectRoot $SourceRoot `
+        -SkipBootstrapCheck `
+        -ScriptPath "./scripts/run-local-atendimento.sh" `
+        -EnvVar $launchEnv `
+        -OutputLog $atendimentoLauncherOut `
+        -ErrorLog $atendimentoLauncherErr)
+}
+
+function Invoke-CrmAtendimentoAction {
+    $targetCommit = Get-CrmLocalTargetCommit
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $targetCommit
+    try {
+        $decision = Get-CrmPersonaDecision -Persona Gestor -TargetCommit $targetCommit -SourceFingerprint $snapshot.Fingerprint
+        if ($decision.Action -eq 'reuse') {
+            Open-CrmModuleUrl -Module 'atendimento' -ExtraQuery 'metaAdsLocalScenario=connected-ready'
+            return
+        }
+        if ($decision.Action -eq 'wait') {
+            $decision = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $targetCommit -SourceFingerprint $snapshot.Fingerprint
+            if ($decision.Action -eq 'reuse') {
+                Open-CrmModuleUrl -Module 'atendimento' -ExtraQuery 'metaAdsLocalScenario=connected-ready'
+                return
+            }
+        }
+        if ($decision.Action -eq 'restart') {
+            Write-Host "[crm-local] Reiniciando Atendimento: $($decision.Reason)."
+            Stop-CrmPersonaRuntime -Persona Gestor
+        }
+        $sourceRoot = Sync-CrmLocalSourceRoot -Persona Gestor -TargetCommit $targetCommit -Snapshot $snapshot
+        Start-CrmAtendimentoRuntime -SourceRoot $sourceRoot -TargetCommit $targetCommit -SourceFingerprint $snapshot.Fingerprint
+        $ready = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $targetCommit -SourceFingerprint $snapshot.Fingerprint -StartupGrace
+        if ($ready.Action -ne 'reuse') {
+            throw "A prévia de Atendimento não ficou saudável após iniciar ($($ready.Reason))."
+        }
+        Open-CrmModuleUrl -Module 'atendimento' -ExtraQuery 'metaAdsLocalScenario=connected-ready'
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
+    }
 }
 
 function Invoke-CrmPersonaAction {
@@ -560,25 +1178,35 @@ function Invoke-CrmPersonaAction {
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
         [Parameter(Mandatory = $true)][string]$TargetCommit
     )
-    $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit
-    if ($decision.Action -eq 'reuse') {
-        Open-CrmPersonaUrl -Persona $Persona -Manifest $decision.Manifest
-        return
-    }
-    if ($decision.Action -eq 'wait') {
-        Write-Host "[crm-local] A inicialização de $Persona para o commit atual já está em andamento; aguardando."
-        $decision = Wait-CrmPersonaCurrent -Persona $Persona -TargetCommit $TargetCommit
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $TargetCommit
+    try {
+        $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
         if ($decision.Action -eq 'reuse') {
             Open-CrmPersonaUrl -Persona $Persona -Manifest $decision.Manifest
             return
         }
+        if ($decision.Action -eq 'wait') {
+            Write-Host "[crm-local] A inicialização de $Persona para o commit atual já está em andamento; aguardando."
+            $decision = Wait-CrmPersonaCurrent -Persona $Persona -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
+            if ($decision.Action -eq 'reuse') {
+                Open-CrmPersonaUrl -Persona $Persona -Manifest $decision.Manifest
+                return
+            }
+        }
+        if ($decision.Action -eq 'restart') {
+            Write-Host "[crm-local] Reiniciando ${Persona}: $($decision.Reason)."
+            Stop-CrmPersonaRuntime -Persona $Persona
+        }
+        $sourceRoot = Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $TargetCommit -Snapshot $snapshot
+        Start-CrmPersonaRuntime -Persona $Persona -SourceRoot $sourceRoot -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
+        $ready = Wait-CrmPersonaCurrent -Persona $Persona -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint -StartupGrace
+        if ($ready.Action -ne 'reuse') {
+            throw "O runtime de $Persona não ficou saudável após iniciar ($($ready.Reason))."
+        }
+        Open-CrmPersonaUrl -Persona $Persona -Manifest $ready.Manifest
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }
-    if ($decision.Action -eq 'restart') {
-        Write-Host "[crm-local] Reiniciando ${Persona}: $($decision.Reason)."
-        Stop-CrmPersonaRuntime -Persona $Persona
-    }
-    $sourceRoot = Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $TargetCommit
-    Start-CrmPersonaRuntime -Persona $Persona -SourceRoot $sourceRoot -TargetCommit $TargetCommit
 }
 
 function Start-CrmGestorBackgroundUpdate {
@@ -602,17 +1230,22 @@ function Start-CrmGestorBackgroundUpdate {
 
 function Ensure-CrmGestorForConsultor {
     param([Parameter(Mandatory = $true)][string]$TargetCommit)
-    $decision = Get-CrmPersonaDecision -Persona Gestor -TargetCommit $TargetCommit
-    if ($decision.Action -eq 'reuse') { return }
-    if ($decision.Action -eq 'wait') {
-        $decision = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $TargetCommit
+    try {
+        $decision = Get-CrmPersonaDecision -Persona Gestor -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
         if ($decision.Action -eq 'reuse') { return }
-    }
-    if ($decision.Action -eq 'restart') { Stop-CrmPersonaRuntime -Persona Gestor }
-    Start-CrmGestorBackgroundUpdate -TargetCommit $TargetCommit
-    $ready = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -TimeoutSeconds 600
-    if ($ready.Action -ne 'reuse') {
-        throw "O Gestor não ficou pronto no commit $TargetCommit. Consulte '$logRoot\crm-local-gestor-action.err.log'."
+        if ($decision.Action -eq 'wait') {
+            $decision = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
+            if ($decision.Action -eq 'reuse') { return }
+        }
+        if ($decision.Action -eq 'restart') { Stop-CrmPersonaRuntime -Persona Gestor }
+        Start-CrmGestorBackgroundUpdate -TargetCommit $TargetCommit
+        $ready = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint -TimeoutSeconds 600
+        if ($ready.Action -ne 'reuse') {
+            throw "O Gestor não ficou pronto no commit $TargetCommit. Consulte '$logRoot\crm-local-gestor-action.err.log'."
+        }
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }
 }
 
@@ -650,11 +1283,17 @@ function Invoke-EfAppPythonMode {
         -EnvVar ($efAppEnvVars + @("EF_MODE=$Mode", $headlessValue) + $ExtraEnvVar) `
         -SkipNodeCheck `
         -SkipNpmCheck `
-        -Command "cd integration/ef && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && ./.venv/bin/python run_scraper.py"
+        -WorkingDirectory "integration/ef" `
+        -ScriptPath "./scripts/run-local-python.sh" `
+        -ArgumentList @("run_scraper.py")
 }
 
 function Invoke-ShortcutActionInternal {
     param([string]$SelectedAction)
+
+    if ($SelectedAction -like 'Crm*') {
+        Use-CrmLaunchSource
+    }
 
     switch ($SelectedAction) {
         "SharedSetup" { Invoke-RepoPowerShellScript -ScriptName "setup-shared-codex-workspace.ps1" }
@@ -662,7 +1301,10 @@ function Invoke-ShortcutActionInternal {
         "RuntimeSetup" { & (Join-Path $scriptRoot "setup-shared-runtime.ps1") }
         "RuntimeValidate" { & (Join-Path $scriptRoot "validate-shared-runtime.ps1") }
         "WslAccountBootstrap" {
-            Invoke-ShortcutWsl -SkipBootstrapCheck -Command "cd orb/engine && bash scripts/bootstrap-imported-wsl-account.sh"
+            Invoke-ShortcutWsl `
+                -SkipBootstrapCheck `
+                -WorkingDirectory "orb/engine" `
+                -ScriptPath "scripts/bootstrap-imported-wsl-account.sh"
         }
         "GitHubAuthLoginWsl" {
             Invoke-ShortcutWsl `
@@ -670,34 +1312,56 @@ function Invoke-ShortcutActionInternal {
                 -SkipNodeCheck `
                 -SkipNpmCheck `
                 -SkipGitCheck `
-                -Command "gh auth login --web --git-protocol https --hostname github.com && gh auth status"
+                -Executable gh `
+                -ArgumentList @("auth", "login", "--web", "--git-protocol", "https", "--hostname", "github.com")
+            Invoke-ShortcutWsl `
+                -SkipBootstrapCheck `
+                -SkipNodeCheck `
+                -SkipNpmCheck `
+                -SkipGitCheck `
+                -Executable gh `
+                -ArgumentList @("auth", "status")
         }
         "GitHubAuthStatus" {
             & (Join-Path $scriptRoot "show-github-auth-status.ps1") -ProjectRoot $ProjectRoot
         }
         "SharedStatus" { Invoke-RepoPowerShellScript -ScriptName "show-shared-codex-status.ps1" }
-        "CodexContext" { Invoke-ShortcutWsl -Command "bash ./scripts/codex-context.sh" }
-        "CodexContextOnline" { Invoke-ShortcutWsl -Command "bash ./scripts/codex-context.sh --online" }
+        "CodexContext" { Invoke-ShortcutWsl -ScriptPath "./scripts/codex-context.sh" }
+        "CodexContextOnline" { Invoke-ShortcutWsl -ScriptPath "./scripts/codex-context.sh" -ArgumentList @("--online") }
         "ThreadBootstrap" { & (Join-Path $scriptRoot "print-codex-thread-bootstrap.ps1") -Interactive }
         "NewWorktree" { & (Join-Path $scriptRoot "new-shared-worktree.ps1") -Fetch }
         "WebsiteLocalStart" {
-            $websiteSourceWsl = Convert-ToBashLiteral -Value (Convert-WindowsPathToWsl -Path $websiteSourceRoot)
-            $websiteLocalCommand = 'mkdir -p "$HOME/.cache/skincos-local-root/website" && rsync -a --delete --exclude node_modules --exclude .next {0}/website/ "$HOME/.cache/skincos-local-root/website/" && WEBSITE_SOURCE_ROOT="$HOME/.cache/skincos-local-root" WEBSITE_SKIP_WORKERD_CHECK=0 WEBSITE_STATE_DIR={1} WEBSITE_PID_FILE={2} WEBSITE_LOG_FILE={3} WEBSITE_PORT_FILE={4} WEBSITE_DETACH=1 OPEN_BROWSER=0 bash ./scripts/run-local-website.sh' -f `
-                $websiteSourceWsl, `
-                (Convert-ToBashLiteral -Value $tmpRootWsl), `
-                (Convert-ToBashLiteral -Value $websitePidWsl), `
-                (Convert-ToBashLiteral -Value $websiteLogWsl), `
-                (Convert-ToBashLiteral -Value $websitePortWsl)
-            Invoke-ShortcutWsl -Command $websiteLocalCommand
+            $websiteSourceWsl = Convert-WindowsPathToWsl -Path $websiteSourceRoot
+            $websiteRuntimeSource = "/home/admin/.cache/skincos-local-root"
+            Invoke-ShortcutWsl `
+                -ScriptPath "./scripts/prepare-local-website-source.sh" `
+                -ArgumentList @($websiteSourceWsl, $websiteRuntimeSource)
+            Invoke-ShortcutWsl `
+                -ScriptPath "./scripts/run-local-website.sh" `
+                -EnvVar @(
+                    "WEBSITE_SOURCE_ROOT=$websiteRuntimeSource",
+                    "WEBSITE_SKIP_WORKERD_CHECK=0",
+                    "WEBSITE_STATE_DIR=$tmpRootWsl",
+                    "WEBSITE_PID_FILE=$websitePidWsl",
+                    "WEBSITE_LOG_FILE=$websiteLogWsl",
+                    "WEBSITE_PORT_FILE=$websitePortWsl",
+                    "WEBSITE_DETACH=1",
+                    "OPEN_BROWSER=0"
+                )
         }
         "WebsiteLocalStop" {
-            Invoke-ShortcutWsl -Command ('WEBSITE_SOURCE_ROOT="$HOME/.cache/skincos-local-root" WEBSITE_STATE_DIR={0} WEBSITE_PID_FILE={1} WEBSITE_PORT_FILE={2} bash ./scripts/run-local-website.sh --stop' -f `
-                (Convert-ToBashLiteral -Value $tmpRootWsl), `
-                (Convert-ToBashLiteral -Value $websitePidWsl), `
-                (Convert-ToBashLiteral -Value $websitePortWsl))
+            Invoke-ShortcutWsl `
+                -ScriptPath "./scripts/run-local-website.sh" `
+                -ArgumentList @("--stop") `
+                -EnvVar @(
+                    "WEBSITE_SOURCE_ROOT=/home/admin/.cache/skincos-local-root",
+                    "WEBSITE_STATE_DIR=$tmpRootWsl",
+                    "WEBSITE_PID_FILE=$websitePidWsl",
+                    "WEBSITE_PORT_FILE=$websitePortWsl"
+                )
         }
-        "WebsiteSiteCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:check" }
-        "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
+        "WebsiteSiteCheck" { Invoke-ShortcutWsl -NpmScript "codex:site:check" }
+        "WebsiteReleaseCheck" { Invoke-ShortcutWsl -NpmScript "codex:site:release-check" }
         "CrmLocal" {
             Stop-LegacyCrmRuntimeIfNeeded
             $targetCommit = Get-CrmLocalTargetCommit
@@ -713,51 +1377,55 @@ function Invoke-ShortcutActionInternal {
             Stop-CrmPersonaRuntime -Persona Consultor
         }
         "CrmSiteEf" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
-                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
-                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
+            $targetCommit = Get-CrmLocalTargetCommit
+            Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            Open-CrmModuleUrl -Module "site-tracking" -ExtraQuery "metaAdsLocalScenario=connected-ready"
         }
         "CrmMetaAds" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
-                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
-                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
+            $targetCommit = Get-CrmLocalTargetCommit
+            Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            Open-CrmModuleUrl -Module "meta-ads" -ExtraQuery "metaAdsLocalScenario=connected-ready"
         }
         "CrmFinance" {
-            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command "npm run crm:local:finance"
+            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -NpmScript "crm:local:finance"
         }
         "CrmAtendimento" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh" -f `
-                (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
-                (Convert-ToBashLiteral -Value $atendimentoLogWsl))
+            Invoke-CrmAtendimentoAction
         }
-        "CrmAtendimentoMirrorStatus" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-status" }
-        "CrmAtendimentoMirrorSync" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-sync -- --apply" }
+        "CrmAtendimentoMirrorStatus" { Invoke-ShortcutWsl -NpmScript "codex:crm:atendimento-mirror-status" }
+        "CrmAtendimentoMirrorSync" { Invoke-ShortcutWsl -NpmScript "codex:crm:atendimento-mirror-sync" -ArgumentList @("--apply") }
         "CrmLocalStop" {
-            Invoke-ShortcutWsl -Command "npm run crm:local:finance:stop"
+            Invoke-ShortcutWsl -NpmScript "crm:local:finance:stop"
             Stop-CrmPersonaRuntime -Persona Gestor
             Stop-LegacyCrmRuntimeIfNeeded
         }
-        "CrmMemory" { Invoke-ShortcutWsl -Command "bash ./scripts/codex-memory-crm.sh" }
-        "CrmSiteSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:site-smoke" }
-        "CrmMetaAdsSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:meta-ads-smoke" }
-        "CrmFinanceSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:finance-smoke" }
-        "CrmAtendimentoSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-smoke" }
-        "PlatformLocalStart" { Invoke-ShortcutWsl -Command "OPEN_BROWSER=0 bash ./backend/scripts/dev.sh watch" }
+        "CrmMemory" { Invoke-ShortcutWsl -ScriptPath "./scripts/codex-memory-crm.sh" }
+        "CrmSiteSmoke" { Invoke-ShortcutWsl -NpmScript "codex:crm:site-smoke" }
+        "CrmMetaAdsSmoke" { Invoke-ShortcutWsl -NpmScript "codex:crm:meta-ads-smoke" }
+        "CrmFinanceSmoke" { Invoke-ShortcutWsl -NpmScript "codex:crm:finance-smoke" }
+        "CrmAtendimentoSmoke" { Invoke-ShortcutWsl -NpmScript "codex:crm:atendimento-smoke" }
+        "PlatformLocalStart" {
+            Invoke-ShortcutWsl `
+                -ScriptPath "./backend/scripts/dev.sh" `
+                -ArgumentList @("watch") `
+                -EnvVar @("OPEN_BROWSER=0")
+        }
         "EfAppSetup" {
             Invoke-ShortcutWsl `
                 -EnvVar $efAppEnvVars `
                 -SkipNodeCheck `
                 -SkipNpmCheck `
-                -Command "cd integration/ef && if ! command -v python3 >/dev/null 2>&1; then echo 'python3 is not available in WSL. Install Python 3 before using the Espaço Facial app automations.'; exit 1; fi && if [[ ! -d .venv ]]; then python3 -m venv .venv; fi && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/pip install -r requirements.lock"
+                -WorkingDirectory "integration/ef" `
+                -ScriptPath "./scripts/setup-local-venv.sh"
         }
         "EfAppSelftest" {
             Invoke-ShortcutWsl `
                 -EnvVar ($efAppEnvVars + @("HEADLESS=1")) `
                 -SkipNodeCheck `
                 -SkipNpmCheck `
-                -Command "cd integration/ef && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && ./.venv/bin/python selftest.py"
+                -WorkingDirectory "integration/ef" `
+                -ScriptPath "./scripts/run-local-python.sh" `
+                -ArgumentList @("selftest.py")
         }
         "EfAppCaixa" { Invoke-EfAppPythonMode -Mode "caixa" }
         "EfAppAgendaDelta" { Invoke-EfAppPythonMode -Mode "agenda_delta" }
@@ -766,7 +1434,8 @@ function Invoke-ShortcutActionInternal {
                 -EnvVar ($efAppEnvVars + @("HEADLESS=1", "EF_OUTPUT_BASE_DIR=$efAppOutputRoot")) `
                 -SkipNodeCheck `
                 -SkipNpmCheck `
-                -Command "cd integration/ef && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && bash ./run_agenda_full_sync_all_units.sh"
+                -WorkingDirectory "integration/ef" `
+                -ScriptPath "./run_agenda_full_sync_all_units.sh"
         }
         "EfAppBookingApi" { Invoke-EfAppPythonMode -Mode "booking_api" }
         "EfAppProcedures" { Invoke-EfAppPythonMode -Mode "procedures" }
@@ -777,34 +1446,39 @@ function Invoke-ShortcutActionInternal {
         "EfAppRotateAgendaSyncToken" {
             Invoke-ShortcutWsl `
                 -EnvVar $efAppEnvVars `
-                -Command "cd integration/ef && bash ./scripts/rotate_agenda_sync_token.sh --website-dir ../../../../website"
+                -WorkingDirectory "integration/ef" `
+                -ScriptPath "./rotate_agenda_sync_token.sh" `
+                -ArgumentList @("--website-dir", "../../website")
         }
         "OrbStatus" {
-            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh status"
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("status")
         }
         "OrbRestart" {
-            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh restart"
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("restart")
         }
         "OrbRepair" {
-            Invoke-ShortcutWsl -Command "bash scripts/runtime/prepare-lifecycle-layout.sh --apply && bash scripts/runtime/install-lifecycle-units.sh --apply && bash scripts/runtime/manage-native-runtime.sh restart && bash scripts/runtime/manage-native-runtime.sh validate"
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/prepare-lifecycle-layout.sh" -ArgumentList @("--apply")
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/install-lifecycle-units.sh" -ArgumentList @("--apply")
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("restart")
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("validate")
         }
         "OrbLogs" {
-            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh logs 200"
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("logs", "200")
         }
         "MetaAdsPublishPreflight" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-meta-ads-publish-preflight.sh"
+            Invoke-ShortcutWsl -WorkingDirectory "orb/engine" -ScriptPath "scripts/validate-meta-ads-publish-preflight.sh"
         }
         "OrbValidate" {
-            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh validate"
+            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("validate")
         }
         "OrbBusinessValidate" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-mini-pc-business-readiness.sh"
+            Invoke-ShortcutWsl -WorkingDirectory "orb/engine" -ScriptPath "scripts/validate-mini-pc-business-readiness.sh"
         }
         "OrbAudit" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/audit-mini-pc-service-footprint.sh"
+            Invoke-ShortcutWsl -WorkingDirectory "orb/engine" -ScriptPath "scripts/audit-mini-pc-service-footprint.sh"
         }
         "OrbSupportServicesApply" {
-            Invoke-ShortcutWsl -Command "bash ./scripts/runtime/install-lifecycle-units.sh --apply"
+            Invoke-ShortcutWsl -ScriptPath "./scripts/runtime/install-lifecycle-units.sh" -ArgumentList @("--apply")
         }
         "OrbImportClinicWorkflowsLive" {
             $importChoice = Read-MenuSelection `
@@ -819,15 +1493,18 @@ function Invoke-ShortcutActionInternal {
             }
 
             $projectId = Read-Host "Project ID do n8n live (ENTER para detectar automaticamente)"
-            $applyFlag = if ($importChoice.Action -eq "Apply") { " --apply" } else { "" }
-            $projectArg = if ([string]::IsNullOrWhiteSpace($projectId)) {
-                ""
+            $importArguments = @()
+            if ($importChoice.Action -eq "Apply") {
+                $importArguments += "--apply"
             }
-            else {
-                " --project-id " + (Convert-ToBashLiteral -Value $projectId)
+            if (-not [string]::IsNullOrWhiteSpace($projectId)) {
+                $importArguments += @("--project-id", $projectId)
             }
 
-            Invoke-ShortcutWsl -Command ("cd orb/engine && bash scripts/import-clinic-workflows-live.sh{0}{1}" -f $applyFlag, $projectArg)
+            Invoke-ShortcutWsl `
+                -WorkingDirectory "orb/engine" `
+                -ScriptPath "scripts/import-clinic-workflows-live.sh" `
+                -ArgumentList $importArguments
         }
         "WorkspaceMenu" { Show-WorkspaceMenu }
         "ContextMenu" { Show-ContextMenu }

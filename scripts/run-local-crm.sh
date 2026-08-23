@@ -12,6 +12,11 @@ INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
 WHATSAPP_ORCHESTRATOR_HELPER="$ROOT_DIR/scripts/run-local-whatsapp-orchestrator.sh"
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
+if [[ -n "${CRM_VITE_PORT+x}" ]]; then
+  CRM_VITE_PORT_EXPLICIT=1
+else
+  CRM_VITE_PORT_EXPLICIT=0
+fi
 CRM_VITE_PORT="${CRM_VITE_PORT:-5173}"
 CRM_PAGES_PORT="${CRM_PAGES_PORT:-8791}"
 CRM_ROUTE="${CRM_ROUTE:-/}"
@@ -78,6 +83,7 @@ CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
 CRM_INSUMOS_SEED_TOKEN="${CRM_INSUMOS_SEED_TOKEN:-dev-seed-token}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
+FRONTEND_DEPENDENCIES_ALIGNED=0
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
 SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
@@ -108,6 +114,7 @@ Opções:
   --meta-ads-scenario NAME       live | disconnected | connected-no-account | connected-ready | unauthorized
                                  Ativa um cenário local controlado do Meta Ads/tracking em localhost.
   --skip-build                   Não roda build do frontend antes de subir o Pages local
+  CRM_BUILD_BEFORE_START=auto    Reutiliza dist somente quando a impressão dos insumos coincide
   --with-insumos                 Sobe Worker local do Insumos e aponta o CRM para ele
   --insumos-port PORT            Porta do Worker local de Insumos (default: 8787)
   --insumos-snapshot FILE        Faz seed local do Insumos com este snapshot JSON
@@ -149,7 +156,7 @@ while [[ $# -gt 0 ]]; do
     --profile) shift; CRM_PROFILE="$1" ;;
     --module) shift; CRM_MODULE="$1" ;;
     --crm-host) shift; CRM_HOST="$1" ;;
-    --vite-port) shift; CRM_VITE_PORT="$1" ;;
+    --vite-port) shift; CRM_VITE_PORT="$1"; CRM_VITE_PORT_EXPLICIT=1 ;;
     --pages-port) shift; CRM_PAGES_PORT="$1" ;;
     --meta-ads-scenario) shift; CRM_META_ADS_SCENARIO="$1" ;;
     --skip-build) CRM_BUILD_BEFORE_START=0 ;;
@@ -337,6 +344,28 @@ assert_port_free() {
   exit 1
 }
 
+select_available_vite_port() {
+  if crm_runtime_port_is_free "$CRM_VITE_PORT"; then
+    return 0
+  fi
+  if [[ "$CRM_VITE_PORT_EXPLICIT" == "1" ]]; then
+    assert_port_free "$CRM_VITE_PORT" "vite"
+  fi
+
+  local preferred="$CRM_VITE_PORT"
+  local candidate="$preferred"
+  while (( candidate < preferred + 20 )); do
+    candidate=$((candidate + 1))
+    if crm_runtime_port_is_free "$candidate"; then
+      echo "[crm-local] Porta Vite padrão $preferred ocupada; usando $candidate." >&2
+      CRM_VITE_PORT="$candidate"
+      return 0
+    fi
+  done
+  echo "[crm-local] Nenhuma porta Vite livre encontrada entre $preferred e $((preferred + 20))." >&2
+  exit 1
+}
+
 wait_for_http() {
   local url="$1"
   local retries="${2:-90}"
@@ -377,8 +406,9 @@ open_browser() {
 
 ensure_frontend_ready() {
   if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
-    echo "Dependências do frontend não encontradas. Instalando..."
-    npm --prefix "$FRONTEND_DIR" install
+    echo "Dependências do frontend não encontradas. Instalando a árvore travada..."
+    npm --prefix "$FRONTEND_DIR" ci --no-audit --no-fund
+    FRONTEND_DEPENDENCIES_ALIGNED=1
   fi
 }
 
@@ -435,6 +465,46 @@ ensure_frontend_dist_ready() {
   fi
   echo "[crm-local] Build local do frontend ausente; gerando dist inicial para o Pages local..."
   npm --prefix "$FRONTEND_DIR" run build
+  crm_persona_runtime_write_build_state
+}
+
+run_frontend_build_auto() {
+  local build_inputs_helper="$ROOT_DIR/scripts/crm-local-build-inputs.mjs"
+  local action reason lock_changed input_fingerprint lock_fingerprint file_count
+  if [[ ! -f "$build_inputs_helper" ]]; then
+    echo "[crm-local] O avaliador determinístico de build não existe em $build_inputs_helper." >&2
+    exit 1
+  fi
+
+  IFS=$'\t' read -r action reason lock_changed input_fingerprint lock_fingerprint file_count < <(
+    node "$build_inputs_helper" evaluate \
+      --root "$FRONTEND_DIR" \
+      --state "$CRM_BUILD_STATE_FILE" \
+      --dist "$FRONTEND_DIR/dist" \
+      --format tsv
+  )
+  if [[ "$action" == "reuse" ]]; then
+    CRM_BUILD_COMMIT="$CRM_TARGET_COMMIT"
+    export CRM_BUILD_COMMIT
+    echo "[crm-local] Build reutilizado: impressão ${input_fingerprint} (${file_count} insumos)."
+    return 0
+  fi
+
+  echo "[crm-local] Novo build necessário: ${reason}; impressão ${input_fingerprint}."
+  if [[ "$lock_changed" == "true" ]]; then
+    if [[ "$FRONTEND_DEPENDENCIES_ALIGNED" == "1" ]]; then
+      echo "[crm-local] Dependências já alinhadas ao lockfile nesta execução."
+    else
+      echo "[crm-local] Lockfile alterado; alinhando dependências antes do build..."
+      npm --prefix "$FRONTEND_DIR" ci --no-audit --no-fund
+      FRONTEND_DEPENDENCIES_ALIGNED=1
+    fi
+  fi
+
+  npm --prefix "$FRONTEND_DIR" run build
+  # The helper writes through a private temporary file and renames only after
+  # the build succeeds, so a failed build can never bless an outdated dist.
+  crm_persona_runtime_write_build_state
 }
 
 ensure_insumos_seed_config() {
@@ -533,6 +603,72 @@ start_whatsapp_orchestrator_local() {
   fi
 }
 
+warm_atendimento_api() {
+  # The adapter reports /health before its first PostgreSQL connection has
+  # necessarily completed.  Pages then opens the Atendimento screen with a
+  # small burst of requests, and the per-request proxy timeout could turn that
+  # first connection into intermittent 500s.  Prime every route exercised by
+  # the local gate before exposing the Pages shell.
+  local actor_header='x-crm-user: eyJpZCI6ImNybS1sb2NhbC1nYXRlIiwicm9sZSI6IkdFU1RPUiJ9'
+  local endpoint
+  local attempt
+  local status
+  local endpoints=(
+    '/api/atendimento/local-mirror/status'
+    '/api/atendimento/management/catalog'
+    '/api/atendimento/doctor-suggestion?unit=novo-hamburgo&date=2026-07-28'
+    '/api/atendimento/attendances?from=2026-07-01&to=2026-07-28&limit=50'
+    '/api/atendimento/management/finance'
+  )
+
+  echo '[crm-local] Aquecendo as rotas locais de Atendimento...'
+  for endpoint in "${endpoints[@]}"; do
+    attempt=0
+    status='000'
+    while [[ "$attempt" -lt 12 ]]; do
+      status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 -H "$actor_header" \
+        "http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}${endpoint}" || true)"
+      if [[ "$status" == '200' ]]; then
+        break
+      fi
+      attempt=$((attempt + 1))
+      sleep 1
+    done
+    if [[ "$status" != '200' ]]; then
+      echo "[crm-local] A rota local de Atendimento não ficou pronta (${endpoint}; HTTP ${status})." >&2
+      exit 1
+    fi
+  done
+}
+
+verify_atendimento_proxy() {
+  # Authentication is established at the local Pages boundary. A direct
+  # adapter request without actor header must remain unauthorized; this proves
+  # the supported proxy path does not surface a 401 or 503 after warm-up.
+  local endpoint attempt status
+  local endpoints=(
+    '/api/atendimento/local-mirror/status'
+    '/api/atendimento/management/finance'
+  )
+
+  echo '[crm-local] Verificando proxy autenticado de Atendimento...'
+  for endpoint in "${endpoints[@]}"; do
+    attempt=0
+    status='000'
+    while [[ "$attempt" -lt 12 ]]; do
+      status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 \
+        "http://127.0.0.1:${CRM_PAGES_PORT}${endpoint}" || true)"
+      if [[ "$status" == '200' ]]; then break; fi
+      attempt=$((attempt + 1))
+      sleep 1
+    done
+    if [[ "$status" != '200' ]]; then
+      echo "[crm-local] O proxy autenticado de Atendimento não ficou pronto (${endpoint}; HTTP ${status})." >&2
+      exit 1
+    fi
+  done
+}
+
 if [[ "$STOP_ONLY" == "1" ]]; then
   crm_persona_runtime_stop_manifest_owner
   stop_existing
@@ -563,6 +699,15 @@ case "$CRM_LOCAL_LOG_LEVEL" in
   *)
     echo "CRM_LOCAL_LOG_LEVEL inválido: $CRM_LOCAL_LOG_LEVEL" >&2
     echo "Use warn, info, debug, error ou none." >&2
+    exit 1
+    ;;
+esac
+
+case "$CRM_BUILD_BEFORE_START" in
+  0|1|auto) ;;
+  *)
+    echo "CRM_BUILD_BEFORE_START inválido: $CRM_BUILD_BEFORE_START" >&2
+    echo "Use 0, 1 ou auto." >&2
     exit 1
     ;;
 esac
@@ -635,8 +780,9 @@ echo "Log: $LOG_FILE"
 echo ""
 
 stop_existing
-crm_persona_runtime_write_manifest starting
 rotate_current_log
+select_available_vite_port
+crm_persona_runtime_write_manifest starting
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
@@ -645,13 +791,19 @@ fi
 ensure_frontend_ready
 ensure_playwright_chromium
 
-if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
-  echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
-  npm --prefix "$FRONTEND_DIR" run build
-  crm_persona_runtime_write_build_state
-else
-  ensure_frontend_dist_ready
-fi
+case "$CRM_BUILD_BEFORE_START" in
+  1)
+    echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
+    npm --prefix "$FRONTEND_DIR" run build
+    crm_persona_runtime_write_build_state
+    ;;
+  auto)
+    run_frontend_build_auto
+    ;;
+  0)
+    ensure_frontend_dist_ready
+    ;;
+esac
 
 INSUMOS_PID=""
 WHATSAPP_ORCHESTRATOR_PID=""
@@ -688,6 +840,7 @@ fi
 
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
   start_whatsapp_orchestrator_local
+  warm_atendimento_api
   export LOCAL_WA_ORCHESTRATOR_API_TARGET="http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}"
 fi
 
@@ -741,6 +894,10 @@ fi
 if ! wait_for_http "$DEFAULT_URL" 60; then
   echo "[crm-local] O shell do CRM não respondeu em $DEFAULT_URL dentro do tempo esperado." >&2
   exit 1
+fi
+
+if [[ "$CRM_MODULE" == 'atendimento' && "$CRM_WITH_WHATSAPP" == '1' ]]; then
+  verify_atendimento_proxy
 fi
 
 run_gate_smoke() {

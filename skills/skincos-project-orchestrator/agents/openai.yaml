@@ -1,0 +1,4 @@
+interface:
+  display_name: "SKINCOS Project Orchestrator"
+  short_description: "Audit and safely continue SKINCOS work"
+  default_prompt: "Use $skincos-project-orchestrator to inspect SKINCOS and continue the next safe action."

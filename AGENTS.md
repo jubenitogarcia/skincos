@@ -25,6 +25,31 @@
 - If local execution needs secrets, use a private overlay or a private clone
   outside the shared area and document only variable names here.
 
+## Windows-native Codex boundary
+
+- Run the Codex agent natively on Windows and use PowerShell as its integrated
+  terminal. Sessions, plugins, browser automation, Computer Use, MCPs and Codex
+  authentication remain Windows-owned.
+- Native Windows Git, GitHub CLI, Node LTS and Python are available for Codex
+  utilities. They are not the SKINCOS application runtime.
+- Never run `npm install`, `npm ci`, project builds, Playwright, Wrangler,
+  project Python environments or SKINCOS tests with Windows Node/Python. All
+  project dependency trees and caches are created and consumed by the
+  `Ubuntu-24.04` operator `admin`.
+- PowerShell actions cross into Linux only through
+  `scripts/invoke-skincos-wsl.ps1`, using `-ScriptPath`, `-Executable`,
+  `-NpmScript` or `-PythonScript` plus typed argument and environment arrays.
+  `-RepoCommand` exists only for explicit legacy compatibility and must not be
+  used by new or visible Codex actions.
+- Direct `wsl.exe` ownership is restricted to the gateway and the lifecycle
+  infrastructure that must keep WSL alive or publish a native backup:
+  `start-wsl-runtime-keepalive.ps1`,
+  `install-wsl-runtime-keepalive.ps1`,
+  `test-wsl-runtime-keepalive.ps1` and
+  `scripts/runtime/publish-orb-backup.ps1`.
+- If WSL, `Ubuntu-24.04` or the `admin` Linux operator is unavailable, the
+  gateway must fail before launching any partial SKINCOS service.
+
 ## Default Codex App Startup
 
 - For non-trivial work in this repo, start by running or mentally applying
@@ -34,6 +59,14 @@
 - Prefer repo evidence and live endpoints over generic assumptions.
 - If the user asks briefly ("proceda", "verifique", "publique", "corrija"),
   infer the standard Skincos flow instead of asking them to restate context.
+- Automatically use `skills/skincos-project-orchestrator` for requests to
+  retomar, continuar, revisar, auditar or define the next steps of SKINCOS,
+  including handoffs, PR/CI/deploy state and planning-versus-staging review.
+  Run its read-only state reconstruction before acting, keep its persistent
+  ledgers current, and continue the minimum safe authorized action rather than
+  ending at a report. Install the versioned source for Codex App, CLI and the
+  extension with `powershell -ExecutionPolicy Bypass -File
+  .\scripts\install-project-skill.ps1`.
 
 ## Source of Truth
 
