@@ -254,6 +254,8 @@ export default function AppFunctionalNeatlab() {
     const roleKey = String(user?.role || '').trim().toUpperCase()
     const [financeEnabled, setFinanceEnabled] = React.useState(false)
     const pontoCanAdmin = canManagePonto(roleKey)
+    const usersCanManage = ['ADMIN', 'GESTOR', 'GERENTE'].includes(roleKey)
+        && (roleKey === 'ADMIN' || (Array.isArray(user?.allowedUnits) && user.allowedUnits.length > 0))
     const hasModuleAccess = React.useCallback(
         (moduleKey: string) => {
             const key = String(moduleKey || '').trim()
@@ -1158,15 +1160,49 @@ export default function AppFunctionalNeatlab() {
 	                        {/* Premium Header */}
 			                        <header className="glass-morphism border-b border-white/10 backdrop-blur-xl px-8 py-5">
 			                            <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3" data-testid="crm-header-layout">
-				                                <div className="flex min-w-0 flex-wrap items-center gap-4">
+				                                <div className={`flex min-w-0 flex-wrap items-center gap-4 ${active === 'users' ? 'flex-1' : ''}`}>
 					                                    <div className="shrink-0 animate-fade-in">
 					                                        <h1 className={`whitespace-nowrap font-bold text-white leading-tight ${active === 'insumos' ? 'text-xl' : 'text-2xl'}`}>
 					                                            {modules.find(m => m.key === active)?.label || 'Painel'}
 					                                        </h1>
 			                                    </div>
 				                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-				                                    <div className={`${active === 'escala-profissionais' || active === 'meta-ads' || active === 'site-tracking' || active === 'atendimento' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
-				                                        {active === 'insumos' ? (
+                                    <div className={`${active === 'escala-profissionais' || active === 'meta-ads' || active === 'site-tracking' || active === 'atendimento' || active === 'users' ? 'flex min-w-0' : 'hidden lg:flex'} ${active === 'users' ? 'ml-auto' : ''} items-center gap-2`}>
+                                        {active === 'users' ? (
+                                            <div className="flex min-w-0 items-center justify-end gap-2">
+                                                <span className="hidden min-w-0 max-w-[34rem] flex-1 truncate text-xs text-blue-100/70 md:block">
+                                                    Identidade, equipe e convites sob o mesmo cadastro; senhas são criadas pelo próprio funcionário.
+                                                </span>
+                                                <TooltipButton label="Atualizar usuários">
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-9 w-9 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 shadow-sm hover:bg-white/[0.12]"
+                                                        aria-label="Atualizar usuários"
+                                                        onClick={() => {
+                                                            window.dispatchEvent(new CustomEvent('skincos:users:header-action', { detail: { action: 'refresh' } }))
+                                                        }}
+                                                    >
+                                                        <RefreshCw className="size-3.5" aria-hidden="true" />
+                                                    </Button>
+                                                </TooltipButton>
+                                                <TooltipButton label="Cadastrar funcionário">
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-9 w-9 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 shadow-sm hover:bg-white/[0.12]"
+                                                        aria-label="Cadastrar funcionário"
+                                                        disabled={!usersCanManage}
+                                                        onClick={() => {
+                                                            window.dispatchEvent(new CustomEvent('skincos:users:header-action', { detail: { action: 'create' } }))
+                                                        }}
+                                                    >
+                                                        <Plus className="size-3.5" aria-hidden="true" />
+                                                    </Button>
+                                                </TooltipButton>
+                                            </div>
+                                        ) : null}
+                                        {active === 'insumos' ? (
 					                                            <>
 					                                                <Select
 					                                                    value={selectedUnit}
