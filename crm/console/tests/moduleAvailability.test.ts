@@ -19,6 +19,12 @@ describe('module availability', () => {
     expect(unlocked.has('meta-ads')).toBe(true)
   })
 
+  it('limits a modular local runtime to its canonical focus module', () => {
+    expect([...unlockedModuleKeys('insumos', false, 'atendimento')]).toEqual(['atendimento'])
+    expect([...unlockedModuleKeys('insumos', false, 'unknown-module')]).toEqual([])
+    expect(unlockedModuleKeys('insumos', true, 'meta-ads').has('atendimento')).toBe(true)
+  })
+
   it('distinguishes local loopback from online hosts', () => {
     expect(isOnlineCrmRuntime('localhost')).toBe(false)
     expect(isOnlineCrmRuntime('127.0.0.1')).toBe(false)

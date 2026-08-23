@@ -16,19 +16,14 @@ icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action ContextMenu"
 
 [[actions]]
-name = "Local"
-icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action LocalMenu"
-
-[[actions]]
-name = "CRM – Local (Gestor)"
+name = "CRM – Local"
 icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmLocal"
 
 [[actions]]
-name = "CRM – Consultor (Ponto)"
+name = "CRM – Módulos"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmConsultor"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmModules"
 
 [[actions]]
 name = "EF App"
