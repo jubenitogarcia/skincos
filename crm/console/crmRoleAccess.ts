@@ -1,6 +1,15 @@
+import rolePolicy from './modules/localRolePolicy.json'
+import { normalizeCrmRole } from './authPolicy'
+
 // This is a navigation allowlist, not an authorization bypass.  The CRM
 // Function and Workforce Worker independently authorize every Ponto request.
-export const CONSULTOR_MODULE_KEYS = new Set(['atendimento', 'ponto'])
+export const CONSULTOR_MODULE_KEYS = new Set(rolePolicy.restrictedRoleModules.CONSULTOR)
+
+const RESTRICTED_ROLE_MODULES = rolePolicy.restrictedRoleModules as Record<string, readonly string[]>
+const EXCLUSIVE_MODULE_ROLES = rolePolicy.exclusiveModuleRoles as Record<string, readonly string[]>
+const IMPLIED_MODULE_GRANTS = rolePolicy.impliedModuleGrants as Record<string, readonly string[]>
+const UNRESTRICTED_ROLES = new Set<string>(rolePolicy.unrestrictedRoles)
+const ALWAYS_AVAILABLE_MODULES = new Set<string>(rolePolicy.alwaysAvailableModules)
 
 function normalizedModules(value: unknown): string[] {
   return Array.isArray(value)
@@ -11,28 +20,28 @@ function normalizedModules(value: unknown): string[] {
 /** Navigation policy only; every API remains authorized on the server. */
 export function hasCrmModuleAccess(role: unknown, allowedModules: unknown, moduleKey: unknown): boolean {
   const key = String(moduleKey || '').trim()
-  const roleKey = String(role || '').trim().toUpperCase()
+  const roleKey = normalizeCrmRole(role)
   if (!key) return false
   // Consultants and the legacy EMPLOYEE spelling can operate only Atendimento
   // and their self-service Ponto area. This must be evaluated before the
   // generic self-service Ponto allowance below so assigned module lists never
   // broaden their navigation.
-  if (roleKey === 'CONSULTOR' || roleKey === 'EMPLOYEE') return CONSULTOR_MODULE_KEYS.has(key)
+  const restrictedModules = RESTRICTED_ROLE_MODULES[roleKey]
+  if (restrictedModules) return restrictedModules.includes(key)
   // Every authenticated CRM user can access the self-service timekeeping area.
   // Data and administrative operations remain authorized by the Ponto proxy and
   // Workforce service; this function only governs sidebar navigation.
-  if (key === 'ponto') return true
-  // Customer intelligence includes detailed commercial and clinical history.
-  if (key === 'clientes') return roleKey === 'GESTOR' || roleKey === 'ADMIN'
-  if (roleKey === 'GESTOR' || roleKey === 'ADMIN') return true
-  if (key === 'escala-profissionais') return roleKey === 'GERENTE'
+  if (ALWAYS_AVAILABLE_MODULES.has(key)) return true
+  // Some modules contain privileged commercial or workforce information and
+  // therefore remain exclusive even when a legacy grant list is broad.
+  const exclusiveRoles = EXCLUSIVE_MODULE_ROLES[key]
+  if (exclusiveRoles) return exclusiveRoles.includes(roleKey)
+  if (UNRESTRICTED_ROLES.has(roleKey)) return true
 
   const allowed = normalizedModules(allowedModules)
-  if (!allowed.length) return true // compatibility for existing non-Consultor users
+  if (!allowed.length) return rolePolicy.allowEmptyGrantListForAuthenticatedLegacyRoles
   if (allowed.includes(key)) return true
-  if (key === 'procedimentos') return allowed.some((module) => ['procedimentos', 'atendimento'].includes(module))
-  if (key === 'faturamento') return allowed.some((module) => ['faturamento', 'atendimento'].includes(module))
-  if (key === 'conversa') return allowed.some((module) => ['whatsapp-business', 'harmonia', 'omnichannel'].includes(module))
-  if (key === 'ai-automation') return allowed.some((module) => ['ai-automation', 'automation', 'whatsapp-n8n'].includes(module))
+  const impliedGrants = IMPLIED_MODULE_GRANTS[key]
+  if (impliedGrants) return allowed.some((module) => impliedGrants.includes(module))
   return false
 }

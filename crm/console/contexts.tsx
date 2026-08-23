@@ -9,9 +9,6 @@ import { useKV } from '@/spark-mock'
 import { csrfHeader } from '@/csrf'
 import { effectiveAllowedModules, normalizeCrmRole } from '@/authPolicy'
 
-const LOCAL_CRM_FOCUS_MODULE = (import.meta as any).env?.VITE_LOCAL_CRM_FOCUS_MODULE || ''
-const SKIP_INSTAGRAM_PREFLIGHT = LOCAL_CRM_FOCUS_MODULE === 'meta-ads'
-
 // =========================
 // Auth
 // =========================
@@ -25,6 +22,7 @@ export interface AuthUser {
   role?: string
   allowedUnits?: string[]
   allowedModules?: string[]
+  localFocusModule?: string
   createdAt: string
   avatarUrl?: string
 }
@@ -110,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: insumosUser.role ? normalizeCrmRole(insumosUser.role) : undefined,
       allowedUnits: Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined,
       allowedModules: effectiveAllowedModules(insumosUser.role, insumosUser.allowedModules),
+      localFocusModule: insumosUser.localFocusModule ? String(insumosUser.localFocusModule) : undefined,
       createdAt: String(insumosUser.createdAt || new Date().toISOString()),
       avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
     }
@@ -466,7 +465,8 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
     ; (window as any).__INTEGRATIONS_PROVIDER_MOUNTED__ = true
   }
 
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
+  const skipInstagramPreflight = user?.localFocusModule === 'meta-ads'
   const [instagram, setInstagram] = useState<InstagramIntegrationState>({ connected: false })
   const [whatsapp, setWhatsApp] = useState<WhatsAppIntegrationState>({ connected: false })
 
@@ -510,12 +510,12 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
       setInstagram({ connected: false })
       return
     }
-    if (SKIP_INSTAGRAM_PREFLIGHT) {
+    if (skipInstagramPreflight) {
       setInstagram({ connected: false })
       return
     }
     void refreshInstagram()
-  }, [isAuthenticated, refreshInstagram])
+  }, [isAuthenticated, refreshInstagram, skipInstagramPreflight])
 
   const connectInstagram = async (token: string, businessAccountId: string) => {
     const res = await fetch('/api/instagram/connect', {

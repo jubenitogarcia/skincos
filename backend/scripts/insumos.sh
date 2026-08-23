@@ -39,12 +39,32 @@ ensure_insumos_exists() {
 }
 
 ensure_insumos_deps() {
-  if [[ ! -d "$INSUMOS_DIR/node_modules" ]]; then
-    echo "[insumos] Installing inventory Worker dependencies from the locked graph (pnpm)..."
-    if ! install_node_deps "$INSUMOS_DIR" ci; then
+  local lockfile="$INSUMOS_DIR/pnpm-lock.yaml"
+  local state_file="${CRM_INSUMOS_DEPENDENCY_STATE_FILE:-$INSUMOS_DIR/node_modules/.skincos-pnpm-lock.sha256}"
+  local lock_hash
+  local recorded_hash=""
+  if [[ ! -f "$lockfile" ]]; then
+    echo "[insumos] pnpm-lock.yaml not found at $lockfile" >&2
+    exit 1
+  fi
+  lock_hash="$(sha256sum "$lockfile" | awk '{print $1}')"
+  [[ -f "$state_file" ]] && recorded_hash="$(tr -d '\r\n' < "$state_file")"
+  if [[ ! "$lock_hash" =~ ^[a-f0-9]{64}$ ]]; then
+    echo "[insumos] Could not fingerprint the locked dependency graph." >&2
+    exit 1
+  fi
+
+  if [[ ! -x "$INSUMOS_DIR/node_modules/.bin/wrangler" || "$recorded_hash" != "$lock_hash" ]]; then
+    echo "[insumos] Aligning inventory Worker dependencies with the locked graph (pnpm)..."
+    if ! install_node_deps "$INSUMOS_DIR" ci ||
+       [[ ! -x "$INSUMOS_DIR/node_modules/.bin/wrangler" ]]; then
       echo "[insumos] Inventory Worker dependency installation failed; refusing to continue with an incomplete workspace." >&2
       exit 1
     fi
+    mkdir -p "$(dirname "$state_file")"
+    local state_tmp="${state_file}.tmp.$$"
+    printf '%s\n' "$lock_hash" > "$state_tmp"
+    mv -f "$state_tmp" "$state_file"
   fi
 }
 
