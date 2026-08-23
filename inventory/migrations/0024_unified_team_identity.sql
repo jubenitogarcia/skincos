@@ -48,3 +48,32 @@ CREATE TABLE IF NOT EXISTS crm_employee_identity_links (
 );
 CREATE INDEX IF NOT EXISTS idx_crm_employee_identity_links_review
   ON crm_employee_identity_links(source, review_status, created_at DESC);
+
+-- Bulk status changes are idempotent by request key. The payload is limited to
+-- canonical workforce/onboarding ids; no names, e-mails or phone numbers are
+-- copied into the operation ledger.
+CREATE TABLE IF NOT EXISTS crm_team_operations (
+  operation_key TEXT PRIMARY KEY,
+  operation_type TEXT NOT NULL,
+  requested_status TEXT NOT NULL,
+  member_ids_json TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  result_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_crm_team_operations_created
+  ON crm_team_operations(created_at DESC);
+
+-- Operational telemetry is deliberately aggregate and PII-free. Audit logs
+-- retain the actor/entity trail; this table is only for volume/outcome trends.
+CREATE TABLE IF NOT EXISTS crm_team_telemetry (
+  id TEXT PRIMARY KEY,
+  event_name TEXT NOT NULL,
+  actor_role TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  item_count INTEGER NOT NULL DEFAULT 0,
+  unit_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_crm_team_telemetry_event_created
+  ON crm_team_telemetry(event_name, created_at DESC);

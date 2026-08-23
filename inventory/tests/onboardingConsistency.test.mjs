@@ -22,6 +22,9 @@ test('unified team identity migration is additive and creates explicit link ledg
   assert.match(inventory, /crm_employee_team/i);
   assert.match(inventory, /crm_employee_identity_links/i);
   assert.match(inventory, /PENDING_REVIEW/i);
+  assert.match(inventory, /crm_team_operations/i);
+  assert.match(inventory, /crm_team_telemetry/i);
+  assert.match(inventory, /CREATE TABLE IF NOT EXISTS/i);
   assert.match(escala, /workforce_employee_id/i);
   assert.match(escala, /professional_id/i);
   assert.match(atendimento, /professional_workforce_links/i);
@@ -56,4 +59,26 @@ test('onboarding status changes stay hierarchical, synchronized, audited and fai
   assert.match(statusBlock, /failClosed: true/);
   assert.match(statusBlock, /uses_count=0/);
   assert.match(admin, /IDENTITY_ONBOARDING_MANAGED/);
+});
+
+test('unified team management is explicit about RBAC, scope, idempotency and aggregate telemetry', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const teamBlock = admin.slice(admin.indexOf("const isTeamRoute"), admin.indexOf("// POST /admin/onboarding"));
+  assert.match(admin, /TEAM_ADMIN_ROLES = \['ADMIN', 'GESTOR', 'GERENTE'\]/);
+  assert.match(admin, /TEAM_READ_ROLES = \[\.\.\.TEAM_ADMIN_ROLES, 'SUPERVISOR'\]/);
+  assert.match(teamBlock, /request\.method !== 'GET'/);
+  assert.match(admin, /function teamPendingItems/);
+  assert.match(admin, /url\.pathname === '\/admin\/team\/bulk-status'/);
+  assert.match(admin, /BULK_IDEMPOTENCY_REQUIRED/);
+  assert.match(admin, /crm_team_operations/);
+  assert.match(admin, /recordTeamTelemetry/);
+  assert.match(admin, /failClosed: pendingIds\.length > 0/);
+});
+
+test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
+  const telemetry = await readFile(new URL('../src/services/teamTelemetry.js', import.meta.url), 'utf8');
+  assert.match(telemetry, /item_count/);
+  assert.match(telemetry, /unit_count/);
+  const implementation = telemetry.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.doesNotMatch(implementation, /email|phone|fullName|entityId|memberId/i);
 });

@@ -1,22 +1,24 @@
 import React from 'react'
-import { Ban, Mail, Pencil, Power, Search, UsersRound } from 'lucide-react'
+import { Ban, CircleAlert, ListChecks, Mail, Pencil, Power, Search, ShieldCheck, UsersRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { addEscalaProfessional, updateEscalaProfessional } from '@/escalaApi'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/card'
+import { Card, CardContent, CardHeader } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { getCsrfToken } from '@/csrf'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { buildCorporateEmail, suggestUsername, type UnifiedTeamConfig, type UnifiedTeamMember } from '@/teamApi'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { TooltipButton } from '@/tooltip'
 
 type Me = { success?: boolean; user?: { username?: string; role?: string; allowedUnits?: string[] }; csrfToken?: string }
 type Onboarding = { id: string; fullName: string; username?: string | null; corporateEmail: string; workforceEmployeeId?: string | null; profile: string; jobTitle: string; department: string; units: string[]; accountStatus: string; createdAt?: string; updatedAt?: string }
 type ApiError = { error?: string; message?: string; code?: string }
 type RequestOptions = { method?: string; body?: unknown; csrf?: string | null; headers?: Record<string, string> }
-type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number }
+type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'IDENTITY_LINK' | 'ESCALA_LINK'; source?: string; status: string }
+type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number; pendingItems?: TeamPendingItem[] }
 
 class RequestError extends Error {
   code?: string
@@ -81,6 +83,7 @@ function emptyTeamForm(row?: UnifiedTeamMember) {
     // the request just because the display name changed.
     corporateEmailOverride: row?.corporateEmail || '',
     personalEmail: '',
+    mobilePhone: row?.schedule?.phone || '',
     department: row?.department || '',
     jobTitle: row?.jobTitle || 'Consultor',
     units: row?.units || [],
@@ -125,6 +128,12 @@ function memberInitials(fullName: string) {
     .join('') || '?'
 }
 
+function pendingItemLabel(item: TeamPendingItem) {
+  if (item.kind === 'IDENTITY_LINK') return item.source === 'ATENDIMENTO' ? 'Vínculo do Atendimento' : 'Vínculo da Escala'
+  if (item.kind === 'PROVISIONING') return 'Provisionamento'
+  return 'Vínculo da Escala'
+}
+
 export function UsersModule() {
   const [me, setMe] = React.useState<Me | null>(null)
   const [teamRows, setTeamRows] = React.useState<UnifiedTeamMember[]>([])
@@ -139,6 +148,9 @@ export function UsersModule() {
   const [statusFilter, setStatusFilter] = React.useState('ACTIVE')
   const [searchQuery, setSearchQuery] = React.useState('')
   const [summary, setSummary] = React.useState<TeamSummary>({})
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
+  const [bulkSaving, setBulkSaving] = React.useState(false)
+  const [formTab, setFormTab] = React.useState('identity')
   const usernameWasEdited = React.useRef(false)
 
   const role = String(me?.user?.role || '').toUpperCase()
@@ -152,6 +164,8 @@ export function UsersModule() {
   const editingIsSuspended = editingRow?.accountStatus === 'SUSPENDED'
   const unitCount = new Set(teamRows.flatMap((row) => row.units)).size
   const canRead = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)
+  const formReadOnly = !canManage
+  const editTitles = Array.from(new Set([editingRow?.jobTitle, ...selectableTitles].filter((value): value is string => Boolean(value))))
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -166,16 +180,18 @@ export function UsersModule() {
         const params = new URLSearchParams()
         if (statusFilter) params.set('status', statusFilter)
         if (searchQuery.trim()) params.set('q', searchQuery.trim())
-        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken }).catch(() => null)
+        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary; pendingItems?: TeamPendingItem[] }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken }).catch(() => null)
         const members = Array.isArray(result?.data) ? result!.data! : []
         setTeamRows(members)
-        setSummary(result?.summary || { members: members.length })
+        setSelectedIds((current) => current.filter((id) => members.some((member) => member.id === id)))
+        setSummary({ ...(result?.summary || { members: members.length }), pendingItems: result?.pendingItems || result?.summary?.pendingItems || [] })
       } else {
         const params = new URLSearchParams({ status: statusFilter || 'ALL' })
         if (searchQuery.trim()) params.set('q', searchQuery.trim())
         const result = await api<{ success?: boolean; data?: Onboarding[]; summary?: TeamSummary }>(`/admin/onboarding?${params.toString()}`, { csrf: auth.csrfToken }).catch(() => null)
         const legacyRows = Array.isArray(result?.data) ? result!.data! : []
         setTeamRows(legacyRows.map((row) => ({ ...row, schedule: undefined, identityLinks: [] })))
+        setSelectedIds([])
         setSummary(result?.summary || { members: legacyRows.length })
       }
     } finally {
@@ -195,6 +211,7 @@ export function UsersModule() {
     setEditingOriginalName('')
     setCollisionRequired(false)
     usernameWasEdited.current = false
+    setFormTab('identity')
     setForm({ ...initialForm, jobTitle: defaultTitle, units: defaultUnits })
     setOpen(true)
   }, [selectableTitles, selectableUnits])
@@ -204,6 +221,7 @@ export function UsersModule() {
     setEditingOriginalName(row.fullName)
     setCollisionRequired(false)
     usernameWasEdited.current = true
+    setFormTab('identity')
     setForm(emptyTeamForm(row))
     setOpen(true)
   }
@@ -243,7 +261,7 @@ export function UsersModule() {
       role: form.scheduleRole,
       shift: form.scheduleShift,
       nickname: form.scheduleNickname,
-      phone: form.mobilePhone,
+      phone: form.mobilePhone || member.schedule?.phone || undefined,
       email: effectiveEmail,
       instagram: form.scheduleInstagram,
       color: form.scheduleColor,
@@ -350,6 +368,35 @@ export function UsersModule() {
     }
   }
 
+  const toggleSelected = (id: string) => setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
+  const bulkEligibleRows = teamRows.filter((row) => ['ACTIVE', 'SUSPENDED'].includes(String(row.accountStatus || '').toUpperCase()))
+  const allBulkEligibleSelected = bulkEligibleRows.length > 0 && bulkEligibleRows.every((row) => selectedIds.includes(row.id))
+
+  const bulkChangeStatus = async (nextStatus: 'ACTIVE' | 'SUSPENDED') => {
+    if (!canManage || !teamConfig.enabled) return
+    const ids = selectedIds.filter((id) => bulkEligibleRows.some((row) => row.id === id))
+    if (!ids.length) return
+    const label = nextStatus === 'ACTIVE' ? 'ativar' : 'suspender'
+    if (!window.confirm(`Deseja ${label} ${ids.length} membro${ids.length === 1 ? '' : 's'}? O histórico e os vínculos serão preservados.`)) return
+    setBulkSaving(true)
+    try {
+      await api('/admin/team/bulk-status', {
+        method: 'POST',
+        csrf: me?.csrfToken,
+        headers: { 'idempotency-key': `crm-team-bulk-${Date.now()}-${Math.random().toString(16).slice(2)}` },
+        body: { ids, accountStatus: nextStatus },
+      })
+      setSelectedIds([])
+      toast.success(`${ids.length} membro${ids.length === 1 ? '' : 's'} ${nextStatus === 'ACTIVE' ? 'ativado' : 'suspenso'}${ids.length === 1 ? '' : 's'}.`)
+      await load()
+    } catch (error: any) {
+      toast.error(error?.message || 'A ação em lote ficou pendente de sincronização.')
+      await load()
+    } finally {
+      setBulkSaving(false)
+    }
+  }
+
   return (
     <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-4">
@@ -369,7 +416,7 @@ export function UsersModule() {
                   <UsersRound className="size-5" aria-hidden="true" />
                 </div>
                 <div className="min-w-0">
-                  <CardTitle className="text-base text-white">Equipe</CardTitle>
+                  <h2 className="text-base font-semibold leading-tight text-white">Equipe</h2>
                   <p className="mt-1 truncate text-xs text-blue-100/60">Cadastro unificado de membros e vínculos.</p>
                 </div>
               </div>
@@ -409,11 +456,47 @@ export function UsersModule() {
                   <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{summary.pendingLinks || 0}</p></div>
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{unitCount}</p></div>
                 </div>
+                {canManage && bulkEligibleRows.length > 0 && (
+                  <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="inline-flex items-center gap-2 text-xs text-blue-100/75">
+                      <input type="checkbox" className="size-4 accent-sky-400" checked={allBulkEligibleSelected} onChange={() => setSelectedIds(allBulkEligibleSelected ? [] : bulkEligibleRows.map((row) => row.id))} aria-label="Selecionar membros ativos ou suspensos" />
+                      {selectedIds.length ? `${selectedIds.length} selecionado${selectedIds.length === 1 ? '' : 's'}` : 'Selecionar membros para uma ação segura'}
+                    </label>
+                    {selectedIds.length > 0 && <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" variant="outline" disabled={bulkSaving} onClick={() => void bulkChangeStatus('ACTIVE')}><ShieldCheck className="mr-2 size-4" aria-hidden="true" />Ativar</Button>
+                      <Button type="button" size="sm" variant="outline" disabled={bulkSaving} onClick={() => void bulkChangeStatus('SUSPENDED')}><CircleAlert className="mr-2 size-4" aria-hidden="true" />Suspender</Button>
+                    </div>}
+                  </div>
+                )}
+                {(summary.pendingItems || []).length > 0 && (
+                  <section className="rounded-2xl border border-amber-200/15 bg-amber-300/[0.045] px-3 py-3" aria-labelledby="team-pending-title">
+                    <div className="flex items-start gap-2">
+                      <ListChecks className="mt-0.5 size-4 shrink-0 text-amber-200" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h2 id="team-pending-title" className="text-sm font-semibold text-amber-50">Pendências para revisão</h2>
+                          <span className="text-xs text-amber-100/60">{summary.pendingItems!.length} item{summary.pendingItems!.length === 1 ? '' : 's'}</span>
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {summary.pendingItems!.slice(0, 6).map((item) => {
+                            const member = teamRows.find((row) => row.id === item.memberId)
+                            if (!member) return null
+                            return <button key={`${item.memberId}-${item.kind}-${item.source || ''}`} type="button" className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-amber-100/10 bg-black/15 px-3 py-2 text-left transition hover:bg-amber-100/[0.08]" onClick={() => openEdit(member)}>
+                              <span className="min-w-0"><span className="block truncate text-xs font-medium text-amber-50">{member.fullName}</span><span className="mt-0.5 block truncate text-[11px] text-amber-100/55">{pendingItemLabel(item)}</span></span>
+                              <span className="shrink-0 text-[11px] text-amber-100/55">Revisar</span>
+                            </button>
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                )}
               </div>
             )}
             <div className="hidden overflow-auto rounded-xl border border-white/10 md:block">
-              <table className="w-full table-fixed text-sm">
-                <colgroup>
+                <table className="w-full table-fixed text-sm">
+                  <colgroup>
+                  <col className="w-[4%]" />
                   <col className="w-[22%]" />
                   <col className="w-[12%]" />
                   <col className="w-[10%]" />
@@ -425,6 +508,7 @@ export function UsersModule() {
                 </colgroup>
                 <thead className="bg-black/25 text-[11px] uppercase tracking-[0.12em] text-blue-100/60">
                   <tr>
+                    <th className="p-3 text-left" scope="col"><span className="sr-only">Selecionar</span></th>
                     <th className="p-3 text-left" scope="col">Nome</th>
                     <th className="p-3 text-left" scope="col">Usuário</th>
                     <th className="p-3 text-left" scope="col">Cargo</th>
@@ -438,6 +522,9 @@ export function UsersModule() {
                 <tbody className="divide-y divide-white/5 text-blue-50">
                   {teamRows.map((row) => (
                     <tr key={row.id} className="transition-colors hover:bg-white/[0.035]">
+                      <td className="p-3 align-middle">
+                        {canManage && ['ACTIVE', 'SUSPENDED'].includes(String(row.accountStatus || '').toUpperCase()) && <input type="checkbox" className="size-4 accent-sky-400" checked={selectedIds.includes(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Selecionar ${row.fullName}`} />}
+                      </td>
                       <td className="p-3 align-middle">
                         <div className="flex min-w-0 items-center gap-3">
                           <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-gradient-to-br from-sky-300/25 to-indigo-400/20 text-xs font-bold text-sky-50">{memberInitials(row.fullName)}</div>
@@ -469,7 +556,7 @@ export function UsersModule() {
                     </tr>
                   ))}
                   {!teamRows.length && (
-                    <tr><td className="p-5 text-blue-100/70" colSpan={8}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
+                    <tr><td className="p-5 text-blue-100/70" colSpan={9}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -480,6 +567,7 @@ export function UsersModule() {
                 <article key={row.id} className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 shadow-lg shadow-black/10">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-3">
+                      {canManage && ['ACTIVE', 'SUSPENDED'].includes(String(row.accountStatus || '').toUpperCase()) && <input type="checkbox" className="mt-1 size-4 shrink-0 accent-sky-400" checked={selectedIds.includes(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Selecionar ${row.fullName}`} />}
                       <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-gradient-to-br from-sky-300/25 to-indigo-400/20 text-xs font-bold text-sky-50">{memberInitials(row.fullName)}</div>
                       <div className="min-w-0">
                         <h2 className="truncate text-sm font-semibold text-white">{row.fullName}</h2>
@@ -518,45 +606,51 @@ export function UsersModule() {
               {editingId && editingRow && teamConfig.enabled && (
                 <div className="flex max-w-full flex-wrap items-center justify-end gap-2 rounded-xl border border-white/10 bg-black/20 p-2">
                   <Badge variant={statusBadgeVariant(editingRow.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(editingRow.accountStatus)}</Badge>
-                  {(editingRow.accountStatus === 'INVITED' || editingRow.accountStatus === 'PENDING_ACCESS') && <>
+                  {canManage && (editingRow.accountStatus === 'INVITED' || editingRow.accountStatus === 'PENDING_ACCESS') && <>
                     <TooltipButton label="Reenviar convite"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-amber-100 hover:bg-amber-200/10" aria-label="Reenviar convite" onClick={() => void changeInvite(editingRow, 'resend')}><Mail className="size-4" aria-hidden="true" /></Button></TooltipButton>
                     <TooltipButton label="Revogar convite"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Revogar convite" onClick={() => void changeInvite(editingRow, 'revoke')}><Ban className="size-4" aria-hidden="true" /></Button></TooltipButton>
                   </>}
-                  {editingRow.accountStatus !== 'TERMINATED' && editingRow.accountStatus !== 'PENDING_ACCESS' && <Button type="button" size="sm" variant={editingIsSuspended ? 'default' : 'outline'} aria-label={editingIsSuspended ? 'Ativar membro' : 'Suspender membro'} onClick={() => void changeStatus(editingRow, editingIsSuspended ? 'ACTIVE' : 'SUSPENDED')}>
+                  {canManage && editingRow.accountStatus !== 'TERMINATED' && editingRow.accountStatus !== 'PENDING_ACCESS' && <Button type="button" size="sm" variant={editingIsSuspended ? 'default' : 'outline'} aria-label={editingIsSuspended ? 'Ativar membro' : 'Suspender membro'} onClick={() => void changeStatus(editingRow, editingIsSuspended ? 'ACTIVE' : 'SUSPENDED')}>
                     <Power className="mr-2 size-4" aria-hidden="true" />
                     {editingIsSuspended ? 'Ativar' : 'Suspender'}
                   </Button>}
-                  {editingRow.accountStatus !== 'TERMINATED' && <TooltipButton label="Desativar definitivamente"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Desativar definitivamente" onClick={() => void changeStatus(editingRow, 'TERMINATED')}><Power className="size-4" aria-hidden="true" /></Button></TooltipButton>}
+                  {canManage && editingRow.accountStatus !== 'TERMINATED' && <TooltipButton label="Desativar definitivamente"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Desativar definitivamente" onClick={() => void changeStatus(editingRow, 'TERMINATED')}><Power className="size-4" aria-hidden="true" /></Button></TooltipButton>}
                 </div>
               )}
             </div>
           </DialogHeader>
 
-          <div className="space-y-5">
-            <div>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/55">Identidade e acesso</p>
+          <Tabs value={formTab} onValueChange={setFormTab} className="mt-1">
+            <TabsList className="w-full sm:w-auto">
+              <TabsTrigger value="identity">Identidade e acesso</TabsTrigger>
+              <TabsTrigger value="operation" disabled={!teamConfig.enabled}>Operação</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="identity" className="mt-4 space-y-5">
               <div className="grid gap-3 md:grid-cols-2">
-                <label className="space-y-1.5 text-sm">Nome completo<Input value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value, username: usernameWasEdited.current ? current.username : suggestUsername(event.target.value, buildCorporateEmail(event.target.value)) }))} /></label>
-                <label className="space-y-1.5 text-sm">Nome de usuário<Input value={form.username} onChange={(event) => { usernameWasEdited.current = true; updateField('username', event.target.value) }} placeholder="primeironomeultimosobrenome" disabled={!!editingId} /></label>
-                <label className="space-y-1.5 text-sm">E-mail corporativo {editingId ? '(mantido)' : form.corporateEmailOverride ? '(ajuste confirmado)' : '(calculado)'}<Input value={effectiveEmail} readOnly aria-readonly="true" /></label>
-                <label className="space-y-1.5 text-sm">E-mail pessoal <span className="text-xs text-blue-100/45">{editingId ? '(opcional)' : '(obrigatório)'}</span><Input type="email" value={form.personalEmail} onChange={(event) => updateField('personalEmail', event.target.value)} /></label>
-                <label className="space-y-1.5 text-sm">Celular <span className="text-xs text-blue-100/45">{editingId ? '(opcional)' : '(obrigatório)'}</span><Input value={form.mobilePhone} onChange={(event) => updateField('mobilePhone', event.target.value)} inputMode="tel" /></label>
-                <label className="space-y-1.5 text-sm">Departamento<Input value={form.department} onChange={(event) => updateField('department', event.target.value)} /></label>
-                <label className="space-y-1.5 text-sm">Cargo<Select value={form.jobTitle} onValueChange={(jobTitle) => updateField('jobTitle', jobTitle)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{selectableTitles.map((title) => <SelectItem value={title} key={title}>{title}</SelectItem>)}</SelectContent></Select></label>
+                <label className="space-y-1.5 text-sm">Nome completo<Input value={form.fullName} disabled={formReadOnly} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value, username: usernameWasEdited.current ? current.username : suggestUsername(event.target.value, buildCorporateEmail(event.target.value)) }))} /></label>
+                <label className="space-y-1.5 text-sm">Nome de usuário<Input value={form.username} onChange={(event) => { usernameWasEdited.current = true; updateField('username', event.target.value) }} placeholder="primeironomeultimosobrenome" disabled={formReadOnly || !!editingId} /></label>
+                <label className="space-y-1.5 text-sm">E-mail corporativo <span className="text-xs text-blue-100/45">{editingId ? 'mantido' : 'calculado'}</span><Input value={effectiveEmail} readOnly aria-readonly="true" /></label>
+                <label className="space-y-1.5 text-sm">E-mail pessoal <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span><Input type="email" value={form.personalEmail} disabled={formReadOnly} onChange={(event) => updateField('personalEmail', event.target.value)} /></label>
+                <label className="space-y-1.5 text-sm">Celular <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span><Input value={form.mobilePhone} disabled={formReadOnly} onChange={(event) => updateField('mobilePhone', event.target.value)} inputMode="tel" /></label>
+                <label className="space-y-1.5 text-sm">Departamento<Input value={form.department} disabled={formReadOnly} onChange={(event) => updateField('department', event.target.value)} /></label>
+                <label className="space-y-1.5 text-sm">Cargo<Select value={form.jobTitle} onValueChange={(jobTitle) => updateField('jobTitle', jobTitle)} disabled={formReadOnly}><SelectTrigger disabled={formReadOnly}><SelectValue /></SelectTrigger><SelectContent>{editTitles.map((title) => <SelectItem value={title} key={title}>{title}</SelectItem>)}</SelectContent></Select></label>
               </div>
-            </div>
 
-            {!editingId && (collisionRequired || form.corporateEmailOverride) && <label className="block space-y-1.5 text-sm">Ajuste do e-mail em caso de colisão<Input type="email" value={form.corporateEmailOverride} onChange={(event) => updateField('corporateEmailOverride', event.target.value)} placeholder="primeironomeultimosobrenome2@espacofacial.com" /><span className="block text-xs text-amber-100/70">Use somente após o sistema informar colisão; o ajuste também deve manter o domínio corporativo.</span></label>}
+              {!editingId && (collisionRequired || form.corporateEmailOverride) && <label className="block space-y-1.5 text-sm">Ajuste do e-mail em caso de colisão<Input type="email" value={form.corporateEmailOverride} disabled={formReadOnly} onChange={(event) => updateField('corporateEmailOverride', event.target.value)} placeholder="primeironomeultimosobrenome2@espacofacial.com" /><span className="block text-xs text-amber-100/70">Use somente após o sistema informar colisão; o ajuste também deve manter o domínio corporativo.</span></label>}
 
-            <div>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/55">Unidades de acesso</p>
-              <div className="flex flex-wrap gap-2">{selectableUnits.map((unit) => <Button key={unit} type="button" variant={form.units.includes(unit) ? 'default' : 'outline'} onClick={() => toggleUnit(unit)}>{unitLabels[unit] || unit}</Button>)}</div>
-            </div>
+              <div>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/55">Unidades de acesso</p>
+                <div className="flex flex-wrap gap-2">{selectableUnits.map((unit) => <Button key={unit} type="button" variant={form.units.includes(unit) ? 'default' : 'outline'} disabled={formReadOnly} onClick={() => toggleUnit(unit)}>{unitLabels[unit] || unit}</Button>)}</div>
+              </div>
+            </TabsContent>
 
-            {teamConfig.enabled && <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><div className="mb-3"><p className="text-sm font-semibold text-white">Operação na Escala</p><p className="mt-1 text-xs text-blue-100/55">Dados usados para agenda, função e identificação profissional.</p></div><div className="grid gap-3 md:grid-cols-2"><label className="space-y-1.5 text-sm">Status na Escala<Input value={form.scheduleStatus} onChange={(event) => updateField('scheduleStatus', event.target.value)} /></label><label className="space-y-1.5 text-sm">Função na Escala<Input value={form.scheduleRole} onChange={(event) => updateField('scheduleRole', event.target.value)} /></label><label className="space-y-1.5 text-sm">Turno<Input value={form.scheduleShift} onChange={(event) => updateField('scheduleShift', event.target.value)} /></label><label className="space-y-1.5 text-sm">Apelido<Input value={form.scheduleNickname} onChange={(event) => updateField('scheduleNickname', event.target.value)} /></label><label className="space-y-1.5 text-sm">Instagram<Input value={form.scheduleInstagram} onChange={(event) => updateField('scheduleInstagram', event.target.value)} /></label><label className="space-y-1.5 text-sm">Cor<Input value={form.scheduleColor} onChange={(event) => updateField('scheduleColor', event.target.value)} placeholder="#6d9eeb" /></label></div></div>}
-          </div>
+            <TabsContent value="operation" className="mt-4">
+              {teamConfig.enabled ? <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><div className="mb-4 flex items-start gap-3"><div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-400/10 text-sky-200"><ListChecks className="size-4" aria-hidden="true" /></div><div><p className="text-sm font-semibold text-white">Vínculo operacional da Escala</p><p className="mt-1 text-xs text-blue-100/55">Agenda, função e identificação permanecem aqui; o vínculo usa o identificador do funcionário.</p></div></div><div className="grid gap-3 md:grid-cols-2"><label className="space-y-1.5 text-sm">Status na Escala<Input value={form.scheduleStatus} disabled={formReadOnly} onChange={(event) => updateField('scheduleStatus', event.target.value)} /></label><label className="space-y-1.5 text-sm">Função na Escala<Input value={form.scheduleRole} disabled={formReadOnly} onChange={(event) => updateField('scheduleRole', event.target.value)} /></label><label className="space-y-1.5 text-sm">Turno<Input value={form.scheduleShift} disabled={formReadOnly} onChange={(event) => updateField('scheduleShift', event.target.value)} /></label><label className="space-y-1.5 text-sm">Apelido<Input value={form.scheduleNickname} disabled={formReadOnly} onChange={(event) => updateField('scheduleNickname', event.target.value)} /></label><label className="space-y-1.5 text-sm">Instagram<Input value={form.scheduleInstagram} disabled={formReadOnly} onChange={(event) => updateField('scheduleInstagram', event.target.value)} /></label><label className="space-y-1.5 text-sm">Cor<Input value={form.scheduleColor} disabled={formReadOnly} onChange={(event) => updateField('scheduleColor', event.target.value)} placeholder="#6d9eeb" /></label></div></div> : <div className="rounded-2xl border border-dashed border-white/15 p-4 text-sm text-blue-100/65">O vínculo operacional aparece após a liberação da centralização.</div>}
+            </TabsContent>
+          </Tabs>
 
-          <DialogFooter className="border-t border-white/10 pt-4"><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={() => void submit()} disabled={saving || !canManage}>{saving ? 'Salvando…' : editingId ? 'Salvar alterações' : 'Cadastrar e convidar'}</Button></DialogFooter>
+          <DialogFooter className="border-t border-white/10 pt-4"><Button variant="outline" onClick={() => setOpen(false)}>Fechar</Button>{canManage ? <Button onClick={() => void submit()} disabled={saving}>{saving ? 'Salvando…' : editingId ? 'Salvar alterações' : 'Cadastrar e convidar'}</Button> : <span className="inline-flex items-center gap-2 text-xs text-blue-100/55"><ShieldCheck className="size-4" aria-hidden="true" />Somente leitura</span>}</DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

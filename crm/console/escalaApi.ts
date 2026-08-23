@@ -118,8 +118,8 @@ export async function updateEscalaProfessional(payload: {
   role: string
   shift: string
   nickname: string
-  phone: string
-  email: string
+  phone?: string
+  email?: string
   instagram: string
   color: string
   workforceEmployeeId?: string | null
@@ -134,8 +134,8 @@ export async function addEscalaProfessional(payload: {
   role: string
   shift: string
   nickname: string
-  phone: string
-  email: string
+  phone?: string
+  email?: string
   instagram: string
   color: string
   workforceEmployeeId?: string | null

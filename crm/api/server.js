@@ -1195,6 +1195,8 @@ if (DEV_AUTH_ENABLED) {
         const clean = (item, max = 160) => String(item ?? '').trim().slice(0, max)
         return {
             professionalId: clean(input.professionalId ?? input.scheduleProfessionalId ?? current.professionalId, 120) || null,
+            phone: clean(input.phone ?? current.phone, 40),
+            email: clean(input.email ?? current.email, 180),
             status: clean(input.status ?? current.status, 40),
             role: clean(input.role ?? current.role, 80),
             shift: clean(input.shift ?? current.shift, 120),
@@ -1264,11 +1266,32 @@ if (DEV_AUTH_ENABLED) {
         identityLinks: (member.identityLinks || []).map(localPublicIdentityLink),
     })
 
+    const localPendingItems = (rows) => {
+        const items = []
+        for (const row of rows || []) {
+            const memberId = String(row?.id || '').trim()
+            if (!memberId) continue
+            const provisioningState = String(row?.provisioningState || '').trim().toUpperCase()
+            if (['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(provisioningState)) {
+                items.push({ memberId, kind: 'PROVISIONING', status: provisioningState })
+            }
+            for (const link of row?.identityLinks || []) {
+                if (String(link?.reviewStatus || '').toUpperCase() === 'PENDING_REVIEW') {
+                    items.push({ memberId, kind: 'IDENTITY_LINK', source: String(link?.source || '').toUpperCase(), status: 'PENDING_REVIEW' })
+                }
+            }
+            if (!row?.schedule?.professionalId && String(row?.accountStatus || '').toUpperCase() !== 'TERMINATED') {
+                items.push({ memberId, kind: 'ESCALA_LINK', status: 'PENDING' })
+            }
+        }
+        return items.slice(0, 100)
+    }
+
     const localTeamUnitsVisible = (session, member) => {
         const role = normalizeRole(session?.user?.role)
         if (role === 'ADMIN') return true
         const allowed = localNormalizeUnits(session?.user?.allowedUnits)
-        return allowed.length > 0 && member.units.some((unit) => allowed.includes(unit))
+        return allowed.length > 0 && member.units.length > 0 && member.units.every((unit) => allowed.includes(unit))
     }
 
     const localTeamHierarchyError = (session, profile, units) => {
@@ -1288,6 +1311,8 @@ if (DEV_AUTH_ENABLED) {
         const invitesIn = Array.isArray(store?.invites) ? store.invites : []
         const teamIn = Array.isArray(store?.team) ? store.team : []
         const auditIn = Array.isArray(store?.audit) ? store.audit : []
+        const telemetryIn = Array.isArray(store?.telemetry) ? store.telemetry : []
+        const bulkOperationsIn = Array.isArray(store?.bulkOperations) ? store.bulkOperations : []
         let changed = false
         const users = usersIn.map((user) => {
             if (!user || typeof user !== 'object') return user
@@ -1305,7 +1330,7 @@ if (DEV_AUTH_ENABLED) {
         })
         const team = teamIn.map(localNormalizeTeamMember).filter(Boolean)
         if (JSON.stringify(team) !== JSON.stringify(teamIn)) changed = true
-        return { store: { version: 2, users, invites, team, audit: auditIn }, changed }
+        return { store: { version: 3, users, invites, team, audit: auditIn, telemetry: telemetryIn, bulkOperations: bulkOperationsIn }, changed }
     }
 
     const loadLocalCrmStore = async () => {
@@ -1318,6 +1343,8 @@ if (DEV_AUTH_ENABLED) {
                 invites: Array.isArray(json?.invites) ? json.invites : [],
                 team: Array.isArray(json?.team) ? json.team : [],
                 audit: Array.isArray(json?.audit) ? json.audit : [],
+                telemetry: Array.isArray(json?.telemetry) ? json.telemetry : [],
+                bulkOperations: Array.isArray(json?.bulkOperations) ? json.bulkOperations : [],
             })
             if (normalized.changed) {
                 await fs.writeFile(LOCAL_CRM_STORE_FILE, JSON.stringify(normalized.store, null, 2), 'utf8')
@@ -1334,7 +1361,7 @@ if (DEV_AUTH_ENABLED) {
                     // Keep an empty local store if the optional fixture is unavailable.
                 }
             }
-            return { version: 2, users: [], invites: [], team: [], audit: [] }
+            return { version: 3, users: [], invites: [], team: [], audit: [], telemetry: [], bulkOperations: [] }
         }
     }
     const saveLocalCrmStore = async (store) => {
@@ -1383,7 +1410,7 @@ if (DEV_AUTH_ENABLED) {
             profile,
             jobTitle: localDisplayJobTitle(profile, jobTitle),
             units,
-            schedule: localNormalizeSchedule(body.team, units, current?.schedule || {}),
+            schedule: localNormalizeSchedule({ ...(body.team && typeof body.team === 'object' ? body.team : {}), phone: body.mobilePhone ?? current?.mobilePhone, email: body.corporateEmail ?? current?.corporateEmail }, units, current?.schedule || {}),
         }
     }
 
@@ -1399,6 +1426,19 @@ if (DEV_AUTH_ENABLED) {
             after,
         })
         store.audit = audit.slice(0, 250)
+    }
+
+    const localTeamTelemetry = (store, session, eventName, outcome = 'SUCCESS', itemCount = 1, unitCount = 0) => {
+        const telemetry = Array.isArray(store.telemetry) ? store.telemetry : []
+        telemetry.unshift({
+            eventName: String(eventName || '').trim().toUpperCase().slice(0, 100),
+            actorRole: normalizeRole(session?.user?.role || 'UNKNOWN'),
+            outcome: String(outcome || 'UNKNOWN').trim().toUpperCase().slice(0, 40),
+            itemCount: Math.max(0, Math.min(500, Number(itemCount) || 0)),
+            unitCount: Math.max(0, Math.min(100, Number(unitCount) || 0)),
+            createdAt: new Date().toISOString(),
+        })
+        store.telemetry = telemetry.slice(0, 500)
     }
 
     app.get(['/api/crm/admin/team', '/admin/team'], async (req, res) => {
@@ -1428,10 +1468,11 @@ if (DEV_AUTH_ENABLED) {
               : requestedStatus === 'ACTIVE'
                   ? ['INVITED', 'ACTIVE'].includes(String(member.accountStatus || '').toUpperCase())
                   : String(member.accountStatus || '').toUpperCase() === requestedStatus)
-          .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle]
+          .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle, ...member.units]
               .some((value) => String(value || '').toLowerCase().includes(query)))
           .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
-      // The Pages Function already authenticates and scopes this loopback
+        const pendingItems = localPendingItems(data)
+        // The Pages Function already authenticates and scopes this loopback
       // response. Applying the unit filter again here would make the local
       // preview dependent on a second process' session serialization.
       .map(localPublicTeamMember)
@@ -1446,6 +1487,7 @@ if (DEV_AUTH_ENABLED) {
                 pendingLinks: data.reduce((total, member) => total + (member.identityLinks || []).filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0),
                 pendingProvisioning: data.filter((member) => ['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(String(member.provisioningState || '').toUpperCase())).length,
             },
+            pendingItems,
         })
     })
     app.post(['/api/crm/admin/team', '/admin/team'], async (req, res) => {
@@ -1514,6 +1556,7 @@ if (DEV_AUTH_ENABLED) {
             createdAt: at,
         })
         localAudit(store, session, 'EMPLOYEE_TEAM_CREATED', id, { profile: input.profile, units: input.units, inviteIssued: true, localPreview: true })
+        localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_CREATED', 'SUCCESS', 1, input.units.length)
         await saveLocalCrmStore(store)
         return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
     })
@@ -1549,7 +1592,8 @@ if (DEV_AUTH_ENABLED) {
             updatedAt: new Date().toISOString(),
         })
         store.team[index] = updated
-        localAudit(store, session, 'EMPLOYEE_TEAM_UPDATED', id, { fullName: updated.fullName, profile: updated.profile, units: updated.units, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_TEAM_UPDATED', id, { profile: updated.profile, units: updated.units, localPreview: true })
+        localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_UPDATED', 'SUCCESS', 1, updated.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(updated) })
     })
@@ -1578,8 +1622,52 @@ if (DEV_AUTH_ENABLED) {
             if (invite && !invite.revoked) invite.revoked = true
         }
         localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', id, { beforeStatus: currentStatus, accountStatus: nextStatus, historyPreserved: true, localPreview: true })
+        localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.post(['/api/crm/admin/team/bulk-status', '/admin/team/bulk-status'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const ids = Array.from(new Set((Array.isArray(body.ids) ? body.ids : []).map((value) => String(value || '').trim()).filter(Boolean)))
+        const nextStatus = String(body.accountStatus || '').trim().toUpperCase()
+        const operationKey = String(req.headers['idempotency-key'] || body.idempotencyKey || '').trim().slice(0, 180)
+        if (!operationKey) return res.status(400).json({ success: false, error: 'Ação em lote exige uma chave de idempotência', code: 'BULK_IDEMPOTENCY_REQUIRED' })
+        if (!ids.length || ids.length > 50 || !['ACTIVE', 'SUSPENDED'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'Ação em lote inválida', code: 'BULK_STATUS_INVALID' })
+        const fingerprint = `${nextStatus}|${ids.join(',')}`
+        const replay = (store.bulkOperations || []).find((operation) => operation.operationKey === operationKey)
+        if (replay) {
+            if (replay.fingerprint !== fingerprint) return res.status(409).json({ success: false, error: 'A chave de idempotência já foi usada para outra ação', code: 'BULK_IDEMPOTENCY_CONFLICT' })
+            return res.status(200).set('cache-control', 'no-store').json({ success: true, replayed: true, data: replay.result })
+        }
+        const members = ids.map((id) => store.team.find((row) => row.id === id))
+        if (members.some((member) => !member)) return res.status(404).json({ success: false, error: 'Um ou mais membros não foram encontrados', code: 'TEAM_MEMBER_NOT_FOUND' })
+        for (const member of members) {
+            if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+            const hierarchyError = localTeamHierarchyError(session, member.profile, member.units)
+            if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite alterar este membro', code: hierarchyError })
+            const currentStatus = String(member.accountStatus || '').toUpperCase()
+            if (!['ACTIVE', 'SUSPENDED'].includes(currentStatus)) return res.status(409).json({ success: false, error: 'Ação em lote aceita somente membros ativos ou suspensos', code: 'BULK_STATUS_TRANSITION_DENIED' })
+        }
+        const at = new Date().toISOString()
+        for (const member of members) {
+            member.accountStatus = nextStatus
+            member.updatedAt = at
+            if (nextStatus === 'SUSPENDED') {
+                const invite = store.invites.find((row) => row.id === member.inviteId)
+                if (invite && !invite.revoked) invite.revoked = true
+            }
+            localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', member.id, { accountStatus: nextStatus, historyPreserved: true, bulk: true, localPreview: true })
+        }
+        const result = { ids, accountStatus: nextStatus, count: members.length }
+        store.bulkOperations = [{ operationKey, fingerprint, result, createdAt: at }, ...(store.bulkOperations || [])].slice(0, 100)
+        localAudit(store, session, 'EMPLOYEE_TEAM_BULK_STATUS_CHANGED', `bulk:${operationKey}`, { accountStatus: nextStatus, count: members.length, historyPreserved: true, localPreview: true })
+        localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_BULK_STATUS_CHANGED', 'SUCCESS', members.length, new Set(members.flatMap((member) => member.units)).size)
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: { ...result, members: members.map(localPublicTeamMember) } })
     })
     app.post(['/api/crm/admin/team/:id/invite/resend', '/admin/team/:id/invite/resend'], async (req, res) => {
         const session = requireDevAdmin(req, res)
@@ -1614,6 +1702,7 @@ if (DEV_AUTH_ENABLED) {
             createdAt: at,
         })
         localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_RESENT', id, { inviteIssued: true, localPreview: true })
+        localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_INVITE_RESENT', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
     })
@@ -1632,6 +1721,7 @@ if (DEV_AUTH_ENABLED) {
         member.accountStatus = 'PENDING_ACCESS'
         member.updatedAt = new Date().toISOString()
         localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_REVOKED', id, { inviteRevoked: true, localPreview: true })
+        localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_INVITE_REVOKED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
     })
@@ -1677,6 +1767,7 @@ if (DEV_AUTH_ENABLED) {
         if (source === 'ESCALA' && reviewStatus === 'CONFIRMED') member.schedule = { ...member.schedule, professionalId: sourceId }
         member.updatedAt = new Date().toISOString()
         localAudit(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', member.id, { source, sourceId, reviewStatus, localPreview: true })
+        localTeamTelemetry(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicIdentityLink(link) })
     })
@@ -1689,7 +1780,7 @@ if (DEV_AUTH_ENABLED) {
         const query = String(req.query?.q || '').trim().toLowerCase()
         const data = store.team
             .filter((member) => requestedStatus === 'ALL' || String(member.accountStatus || '').toUpperCase() === requestedStatus)
-            .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle].some((value) => String(value || '').toLowerCase().includes(query)))
+            .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle, ...member.units].some((value) => String(value || '').toLowerCase().includes(query)))
             .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
             .map(localPublicTeamMember)
         res.status(200).set('cache-control', 'no-store').json({ success: true, data, activeOnly: false, status: requestedStatus, summary: { members: data.length, pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length } })

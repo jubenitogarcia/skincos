@@ -7,8 +7,16 @@ const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,39}$/;
 export const EMPLOYEE_PROFILES = Object.freeze({
   GESTOR: Object.freeze({ rank: 4, modules: ['ponto', 'atendimento', 'conversa', 'finance', 'insumos'], accountStatus: 'INVITED' }),
   GERENTE: Object.freeze({ rank: 3, modules: ['ponto', 'atendimento', 'insumos'], accountStatus: 'INVITED' }),
-  // Every active employee receives an invite and creates their own password.
-  // Ponto is the smallest non-empty scope accepted by the invite contract.
+  SUPERVISOR: Object.freeze({ rank: 2, modules: [], accountStatus: 'PENDING_ACCESS' }),
+  INJETOR: Object.freeze({ rank: 1, modules: [], accountStatus: 'PENDING_ACCESS' }),
+  CONSULTOR: Object.freeze({ rank: 1, modules: ['atendimento'], accountStatus: 'PENDING_ACCESS' }),
+});
+
+// The unified team contract is intentionally opt-in so the existing onboarding
+// saga keeps its states and compensation semantics during the expand phase.
+const UNIFIED_EMPLOYEE_PROFILES = Object.freeze({
+  GESTOR: EMPLOYEE_PROFILES.GESTOR,
+  GERENTE: EMPLOYEE_PROFILES.GERENTE,
   SUPERVISOR: Object.freeze({ rank: 2, modules: ['ponto'], accountStatus: 'INVITED' }),
   INJETOR: Object.freeze({ rank: 1, modules: ['ponto'], accountStatus: 'INVITED' }),
   CONSULTOR: Object.freeze({ rank: 1, modules: ['atendimento'], accountStatus: 'INVITED' }),
@@ -27,7 +35,7 @@ function key(value) {
 
 export function normalizeCorporateEmail(value) {
   const email = String(value || '').trim().toLowerCase();
-  return EMAIL_RE.test(email) && email.endsWith(`@${CORPORATE_DOMAIN}`) ? email : '';
+  return EMAIL_RE.test(email) ? email : '';
 }
 
 export function normalizePersonalEmail(value) {
@@ -78,7 +86,7 @@ export function suggestEmployeeUsername(fullName, corporateEmail = '') {
 export function isAllowedCorporateEmail(fullName, corporateEmail) {
   const email = normalizeCorporateEmail(corporateEmail);
   const generated = buildCorporateEmail(fullName);
-  if (!email || !generated) return false;
+  if (!email || !email.endsWith(`@${CORPORATE_DOMAIN}`) || !generated) return false;
   const local = email.slice(0, email.indexOf('@'));
   const generatedLocal = generated.slice(0, generated.indexOf('@'));
   return local === generatedLocal || new RegExp(`^${generatedLocal}\\d+$`).test(local);
@@ -91,16 +99,19 @@ export function normalizePhone(value) {
   return e164.length >= 12 && e164.length <= 13 ? `+${e164}` : '';
 }
 
-export function resolveEmployeeProfile(value) {
+export function resolveEmployeeProfile(value, options = {}) {
   const profile = TITLE_ALIASES[key(value)] || '';
-  return profile ? { profile, ...EMPLOYEE_PROFILES[profile] } : null;
+  const definitions = options.unified === true ? UNIFIED_EMPLOYEE_PROFILES : EMPLOYEE_PROFILES;
+  return profile ? { profile, ...definitions[profile] } : null;
 }
 
 export function displayJobTitle(profile) {
   return ({ GESTOR: 'Gestor', GERENTE: 'Gerente', SUPERVISOR: 'Coordenador', INJETOR: 'Injetor', CONSULTOR: 'Consultor' })[profile] || '';
 }
 
-export function validateOnboardingInput(input = {}) {
+export function validateOnboardingInput(input = {}, options = {}) {
+  const unified = options.unified === true;
+  const requireCorporateDomain = options.requireCorporateDomain === true || unified;
   const fullName = String(input.fullName ?? input.name ?? '').trim().replace(/\s+/g, ' ');
   const generatedCorporateEmail = buildCorporateEmail(fullName);
   const rawCorporateEmail = input.corporateEmail ?? input.email;
@@ -111,7 +122,7 @@ export function validateOnboardingInput(input = {}) {
   const mobilePhone = normalizePhone(input.mobilePhone ?? input.phone);
   const invalidUnits = unknownUnitScopes(input.units ?? input.allowedUnits);
   const units = normalizeAllowedUnits(input.units ?? input.allowedUnits);
-  const profile = resolveEmployeeProfile(input.jobTitle ?? input.role);
+  const profile = resolveEmployeeProfile(input.jobTitle ?? input.role, { unified });
   const department = String(input.department || '').trim().replace(/\s+/g, ' ').slice(0, 120);
   const suppliedUsername = input.username ?? input.requestedUsername;
   const requestedUsername = suppliedUsername === undefined || suppliedUsername === null || String(suppliedUsername).trim() === ''
@@ -122,7 +133,7 @@ export function validateOnboardingInput(input = {}) {
     !generatedCorporateEmail ||
     (hasSuppliedCorporateEmail && !suppliedCorporateEmail) ||
     !corporateEmail ||
-    !isAllowedCorporateEmail(fullName, corporateEmail) ||
+    (requireCorporateDomain && !isAllowedCorporateEmail(fullName, corporateEmail)) ||
     !personalEmail ||
     !mobilePhone ||
     !department ||
@@ -131,17 +142,21 @@ export function validateOnboardingInput(input = {}) {
     !units.length ||
     invalidUnits.length
   ) return null;
-  return {
+  const base = {
     fullName,
     corporateEmail,
-    generatedCorporateEmail,
-    corporateEmailOverridden: corporateEmail !== generatedCorporateEmail,
     personalEmail,
     mobilePhone,
-    requestedUsername,
     units,
     department,
     ...profile,
+  };
+  if (!unified) return base;
+  return {
+    ...base,
+    generatedCorporateEmail,
+    corporateEmailOverridden: corporateEmail !== generatedCorporateEmail,
+    requestedUsername,
   };
 }
 

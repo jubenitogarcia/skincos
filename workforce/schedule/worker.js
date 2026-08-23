@@ -454,8 +454,6 @@ async function handleProfessionalPut(env, actor, body) {
   const role = normalizeName(body?.role)
   const shift = normalizeName(body?.shift)
   const nickname = normalizeName(body?.nickname)
-  const phone = normalizeName(body?.phone)
-  const email = normalizeName(body?.email)
   const instagram = normalizeName(body?.instagram)
   const color = normalizeName(body?.color)
   const workforceEmployeeId = normalizeName(body?.workforceEmployeeId)
@@ -471,11 +469,21 @@ async function handleProfessionalPut(env, actor, body) {
   }
 
   const existing = await env.DB.prepare(
-    hasWorkforceColumn ? `select id, name, workforce_employee_id from professionals where name = ?1` : `select id, name from professionals where name = ?1`
+    hasWorkforceColumn ? `select id, name, phone, email, workforce_employee_id from professionals where name = ?1` : `select id, name, phone, email from professionals where name = ?1`
   ).bind(currentName).first()
   if (!existing) {
     return { ok: false, status: 404, body: { ok: false, error: 'PROFESSIONAL_NOT_FOUND' } }
   }
+
+  // Identity edits do not necessarily include the private phone field. An
+  // omitted value preserves the operational record; an explicit empty value
+  // remains a deliberate clear from the Escala editor.
+  const phone = Object.prototype.hasOwnProperty.call(body || {}, 'phone')
+    ? normalizeName(body?.phone)
+    : normalizeName(existing?.phone)
+  const email = Object.prototype.hasOwnProperty.call(body || {}, 'email')
+    ? normalizeName(body?.email)
+    : normalizeName(existing?.email)
 
   if (currentName !== nextName) {
     const conflicting = await env.DB.prepare(
