@@ -319,7 +319,11 @@ export default function AppFunctionalNeatlab() {
 	    // confirmed flag, explicit module grant and scope grant. Keep the
 	    // generic unlocked-module policy intact for every other module.
 	    const UNLOCKED_MODULE_KEYS = useMemo(
-	        () => unlockedModuleKeys(financeEnabled ? 'finance' : DEFAULT_MODULE_KEY, isOnlineCrmRuntime(window.location.hostname)),
+	        () => unlockedModuleKeys(
+                financeEnabled ? 'finance' : DEFAULT_MODULE_KEY,
+                isOnlineCrmRuntime(window.location.hostname),
+                (import.meta as any).env?.VITE_LOCAL_CRM_FOCUS_MODULE || '',
+            ),
 	        [DEFAULT_MODULE_KEY, financeEnabled]
 	    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
