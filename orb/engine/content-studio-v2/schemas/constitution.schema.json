@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/constitution",
+  "title": "constitution",
+  "examples": [
+    {
+      "schema_version": "fixture",
+      "production_id": "fixture",
+      "central_thesis": "fixture",
+      "audience": {},
+      "awareness_stage": "fixture",
+      "creative_angle": "fixture",
+      "primary_emotion": "fixture",
+      "conversion_goal": "fixture",
+      "message_hierarchy": [],
+      "approved_claim_ids": [],
+      "prohibited_claim_ids": [],
+      "offer_facts": {},
+      "cta": "fixture",
+      "tone": "fixture",
+      "mandatory_elements": [],
+      "forbidden_elements": [],
+      "brand_rules": {},
+      "lock_hash": "fixture",
+      "status": "CONSTITUTION_LOCKED"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "fixture",
+      "central_thesis": "fixture",
+      "audience": {},
+      "awareness_stage": "fixture",
+      "creative_angle": "fixture",
+      "primary_emotion": "fixture",
+      "conversion_goal": "fixture",
+      "message_hierarchy": [],
+      "approved_claim_ids": [],
+      "prohibited_claim_ids": [],
+      "offer_facts": {},
+      "cta": "fixture",
+      "tone": "fixture",
+      "mandatory_elements": [],
+      "forbidden_elements": [],
+      "brand_rules": {},
+      "lock_hash": "fixture",
+      "status": "CONSTITUTION_LOCKED"
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "production_id": {
+      "type": "string"
+    },
+    "central_thesis": {
+      "type": "string"
+    },
+    "audience": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "awareness_stage": {
+      "type": "string"
+    },
+    "creative_angle": {
+      "type": "string"
+    },
+    "primary_emotion": {
+      "type": "string"
+    },
+    "conversion_goal": {
+      "type": "string"
+    },
+    "message_hierarchy": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "approved_claim_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "prohibited_claim_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "offer_facts": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "cta": {
+      "type": "string"
+    },
+    "tone": {
+      "type": "string"
+    },
+    "mandatory_elements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_elements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "brand_rules": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "lock_hash": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "CONSTITUTION_LOCKED",
+        "NEEDS_REVIEW"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "production_id",
+    "central_thesis",
+    "audience",
+    "awareness_stage",
+    "creative_angle",
+    "primary_emotion",
+    "conversion_goal",
+    "message_hierarchy",
+    "approved_claim_ids",
+    "prohibited_claim_ids",
+    "offer_facts",
+    "cta",
+    "tone",
+    "mandatory_elements",
+    "forbidden_elements",
+    "brand_rules",
+    "lock_hash",
+    "status"
+  ]
+}

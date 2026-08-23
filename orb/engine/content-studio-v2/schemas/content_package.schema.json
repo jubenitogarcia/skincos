@@ -1,0 +1,473 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/contentPackage",
+  "title": "contentPackage",
+  "examples": [
+    {
+      "schema_version": "fixture",
+      "production_id": "fixture",
+      "content_id": "fixture",
+      "status": "READY_TO_PUBLISH",
+      "constitution_ref": {
+        "uri": "fixture"
+      },
+      "blueprint_ref": {
+        "uri": "fixture"
+      },
+      "master": {
+        "uri": "fixture"
+      },
+      "deliverables": [],
+      "source_artifacts": [],
+      "generation_log": [],
+      "qa_summary": {
+        "schema_version": "fixture",
+        "production_id": "fixture",
+        "results": [],
+        "status": "PASS",
+        "blocking_issues": [],
+        "recommended_fixes": [],
+        "score": 0
+      },
+      "warnings": [],
+      "posting_payload": {}
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "fixture",
+      "content_id": "fixture",
+      "status": "READY_TO_PUBLISH",
+      "constitution_ref": {
+        "uri": "fixture"
+      },
+      "blueprint_ref": {
+        "uri": "fixture"
+      },
+      "master": {
+        "uri": "fixture"
+      },
+      "deliverables": [],
+      "source_artifacts": [],
+      "generation_log": [],
+      "qa_summary": {
+        "schema_version": "fixture",
+        "production_id": "fixture",
+        "results": [],
+        "status": "PASS",
+        "blocking_issues": [],
+        "recommended_fixes": [],
+        "score": 0
+      },
+      "warnings": [],
+      "posting_payload": {}
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "production_id": {
+      "type": "string"
+    },
+    "content_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "READY_TO_PUBLISH",
+        "NEEDS_REVIEW",
+        "FAILED"
+      ]
+    },
+    "constitution_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checksum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "blueprint_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checksum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "master": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checksum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "deliverables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "deliverable_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "string",
+            "enum": [
+              "ORGANIC",
+              "PAID"
+            ]
+          },
+          "format": {
+            "type": "string"
+          },
+          "aspect_ratio": {
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uri": {
+            "type": "string"
+          },
+          "cover_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "caption": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "hashtags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "alt_text": {
+            "type": "string"
+          },
+          "ad_copy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "qa_status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "NEEDS_REVIEW",
+              "FAIL"
+            ]
+          },
+          "technical_metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "deliverable_id",
+          "revision",
+          "content_type",
+          "usage",
+          "format",
+          "aspect_ratio",
+          "duration_seconds",
+          "uri",
+          "cover_uri",
+          "checksum",
+          "title",
+          "caption",
+          "description",
+          "hashtags",
+          "alt_text",
+          "ad_copy",
+          "qa_status",
+          "technical_metadata"
+        ]
+      }
+    },
+    "source_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "uri": {
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "uri"
+        ]
+      }
+    },
+    "generation_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "qa_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "production_id": {
+          "type": "string"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "NEEDS_REVIEW",
+            "FAIL"
+          ]
+        },
+        "blocking_issues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recommended_fixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "results",
+        "status",
+        "blocking_issues",
+        "recommended_fixes",
+        "score"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "posting_payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "production_id",
+    "content_id",
+    "status",
+    "constitution_ref",
+    "blueprint_ref",
+    "master",
+    "deliverables",
+    "source_artifacts",
+    "generation_log",
+    "qa_summary",
+    "warnings",
+    "posting_payload"
+  ]
+}

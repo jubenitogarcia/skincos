@@ -1,0 +1,4 @@
+const { validate } = require('./lib/contracts');
+function organizerInput(payload) { const request = payload?.production_request || payload; validate('productionRequest', request); return request; }
+function postingOutput(contentPackage) { if (!contentPackage || !['READY_TO_PUBLISH', 'NEEDS_REVIEW'].includes(contentPackage.status)) throw new Error('Posting adapter accepts only packaged content'); return { package_id: `${contentPackage.production_id}:${contentPackage.content_id}`, deliverables: contentPackage.deliverables || [], captions: (contentPackage.deliverables || []).map((item) => item.caption), alt_text: (contentPackage.deliverables || []).map((item) => item.alt_text), review_status: contentPackage.status, publish_requested: false }; }
+module.exports = { organizerInput, postingOutput };

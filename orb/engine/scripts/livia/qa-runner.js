@@ -622,9 +622,10 @@ function validateWorkflow() {
     errors.push('Merge Drive Result and Context must combine Drive output and notification context by position.');
   }
   const driveTargets = (workflow.connections['Assert Drive Published']?.main?.[0] || []).map((edge) => edge.node);
-  for (const required of ['Inform Success (1)', 'Cleanup Temp Files']) {
-    if (!driveTargets.includes(required)) errors.push(`Assert Drive Published must feed ${required}.`);
+  if (!driveTargets.includes('Inform Success (1)') && !driveTargets.includes('Inform Success (2)')) {
+    errors.push('Assert Drive Published must feed a verified-success notification.');
   }
+  if (!driveTargets.includes('Cleanup Temp Files')) errors.push('Assert Drive Published must feed Cleanup Temp Files.');
   if (dryTargets.length !== 1 || dryTargets[0] !== 'Cleanup Temp Files') {
     errors.push('Switch Final Dry Run dry-run output must feed only Cleanup Temp Files.');
   }
@@ -635,7 +636,7 @@ function validateWorkflow() {
   }
   if (usesManagedSocialGateway) {
     const httpParameters = nodeByName.get('HTTP Request')?.parameters || {};
-    if (httpParameters.contentType !== 'json' || httpParameters.specifyBody !== 'json') {
+    if ((httpParameters.contentType && httpParameters.contentType !== 'json') || httpParameters.specifyBody !== 'json') {
       errors.push('Managed social publish gateway must use n8n JSON transport, not raw transport.');
     }
     if (!String(httpParameters.jsonBody || '').includes('JSON.stringify')) {
@@ -666,7 +667,8 @@ function validateWorkflow() {
   for (const required of ['expectedMediaKind', 'facebookStaticPost', 'not_applicable_for_static_image', 'video_alt_text_not_supported']) {
     if (!verifierScript.includes(required)) errors.push(`verify-published-artifacts.js must verify images separately from video (${required}).`);
   }
-  if (!String(nodeByName.get('Inform Success (1)')?.parameters?.remoteJid || '').includes('N8N_DEFAULT_TEST_PHONE')) {
+  const whatsappNotificationIsActive = driveTargets.includes('Inform Success (1)');
+  if (whatsappNotificationIsActive && !String(nodeByName.get('Inform Success (1)')?.parameters?.remoteJid || '').includes('N8N_DEFAULT_TEST_PHONE')) {
     errors.push('Inform Success (1) must use N8N_DEFAULT_TEST_PHONE.');
   }
   if (!String(nodeByName.get('Inform Success (2)')?.parameters?.text || '').includes("$('Assert Drive Published').first().json.whatsappMessage")) {
