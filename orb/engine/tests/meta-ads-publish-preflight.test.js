@@ -10,6 +10,14 @@ const {
   manualExecutionAuditState,
 } = require('../scripts/lib/meta-ads-publish-execution-semantics');
 const { CRM_TOOL_NAME, CRM_URL, transform } = require('../scripts/prepare-meta-ads-publish-crm-catalog');
+const { transform: patchCrmToolAuth, validate: validateCrmToolAuth } = require('../scripts/patch-meta-ads-crm-tool-auth');
+const {
+  PREPARE_NODE: CRM_PREPARE_NODE,
+  FETCH_NODE: CRM_FETCH_NODE,
+  ATTACH_NODE: CRM_ATTACH_NODE,
+  transform: patchCrmContextPrefetch,
+  validate: validateCrmContextPrefetch,
+} = require('../scripts/patch-meta-ads-crm-context-prefetch');
 const { transform: patchVideoUploadReplay } = require('../scripts/patch-meta-ads-video-transfer-replay');
 
 test('Responses API uses the n8n 1.3 default when the stored parameter is absent', () => {
@@ -61,7 +69,10 @@ test('replaces the legacy Sheets tool with the authenticated CRM offer-context t
   assert.equal(candidate.nodes.some((node) => node.type === 'n8n-nodes-base.googleSheetsTool'), false);
   const crm = candidate.nodes.find((node) => node.name === CRM_TOOL_NAME);
   assert.equal(crm.parameters.url, CRM_URL);
-  assert.equal(crm.credentials.httpBearerAuth.id, 'credential-id');
+  assert.equal(crm.parameters.sendQuery, true);
+  assert.deepEqual(crm.parameters.parametersQuery.values, [{ name: 'unit', valueProvider: 'modelRequired' }]);
+  assert.equal(crm.parameters.genericAuthType, 'httpHeaderAuth');
+  assert.equal(crm.credentials.httpHeaderAuth.id, 'credential-id');
   assert.deepEqual(candidate.connections[CRM_TOOL_NAME].ai_tool[0][0], { node: 'Livia', type: 'ai_tool', index: 0 });
   const updatedSchema = JSON.parse(candidate.nodes.find((node) => node.name === 'OpenAI Chat Model (Agent)').parameters.options.textFormat.textOptions.schema);
   assert.equal(updatedSchema.properties.analysis.properties.spreadsheetPricing, undefined);
@@ -74,6 +85,70 @@ test('preflight loads workflow connections before validating the CRM tool edge',
     'utf8',
   );
   assert.match(source, /SELECT active, nodes, connections, settings,/);
+});
+
+test('preflight rejects creative-contract drift between Build Jobs and the quality gate', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'validate-meta-ads-publish-preflight.js'),
+    'utf8',
+  );
+  assert.match(source, /workflow_contract_revision_mismatch/);
+  assert.match(source, /book_now_contract_mismatch/);
+  assert.match(source, /objective_aware_cta_contract_mismatch/);
+  assert.match(source, /current_build_payload_precedence_missing/);
+  assert.match(source, /source_url_contract_mismatch/);
+  assert.match(source, /video_feature_gateway_mismatch/);
+  assert.match(source, /const sourceUrl\\s\*=\\s\*safeString/);
+  assert.match(source, /creative_payload_contract_synchronized/);
+});
+
+test('CRM Offer Context patches unsupported bearer auth to the supported header auth type', () => {
+  const workflow = {
+    id: 'eFJhFg79lyaycjlm',
+    active: false,
+    nodes: [{
+      name: 'CRM Offer Context',
+      type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
+      parameters: {
+        url: `${CRM_URL}?unit={unit}`,
+        authentication: 'genericCredentialType',
+        genericAuthType: 'httpBearerAuth',
+      },
+      credentials: { httpBearerAuth: { id: 'old', name: 'old bearer' } },
+    }],
+    connections: { 'CRM Offer Context': { ai_tool: [[{ node: 'Livia', type: 'ai_tool', index: 0 }]] } },
+  };
+  const candidate = patchCrmToolAuth(workflow, { credentialId: 'header-id', credentialName: 'CRM header' });
+  const crm = candidate.nodes[0];
+  assert.equal(crm.parameters.genericAuthType, 'httpHeaderAuth');
+  assert.equal(crm.parameters.url, CRM_URL);
+  assert.deepEqual(crm.parameters.parametersQuery.values, [{ name: 'unit', valueProvider: 'modelRequired' }]);
+  assert.deepEqual(crm.credentials, { httpHeaderAuth: { id: 'header-id', name: 'CRM header' } });
+  assert.doesNotThrow(() => validateCrmToolAuth(candidate));
+  assert.throws(() => validateCrmToolAuth(workflow), /httpHeaderAuth/);
+});
+
+test('CRM offer context is prefetched before Livia instead of using an AI HTTP sub-node', () => {
+  const workflow = {
+    id: 'eFJhFg79lyaycjlm',
+    active: false,
+    nodes: [
+      { name: 'Prepare Media Upload Plan', type: 'n8n-nodes-base.code', parameters: {} },
+      { name: 'Livia', type: '@n8n/n8n-nodes-langchain.agent', parameters: { text: 'destinations: $json.destinations || [],', options: { systemMessage: '- Consulte `CRM Offer Context` exatamente uma vez por item, usando a unidade de destino.\n- O CRM é a única fonte externa autorizada para preço, oferta, parcelamento, condição e vigência.\n- Se a oferta não for retornada pelo CRM, não use preço ou condição que não esteja inequívoca na mídia.\n`crmPricing` deve refletir apenas o que vier do CRM, quando ele for consultado.' } } },
+      { name: 'CRM Offer Context', type: '@n8n/n8n-nodes-langchain.toolHttpRequest', parameters: {}, credentials: {} },
+    ],
+    connections: {
+      'Prepare Media Upload Plan': { main: [[{ node: 'Livia', type: 'main', index: 0 }]] },
+      'CRM Offer Context': { ai_tool: [[{ node: 'Livia', type: 'ai_tool', index: 0 }]] },
+    },
+  };
+  const candidate = patchCrmContextPrefetch(workflow, { credentialId: 'bearer-id', credentialName: 'CRM Bearer' });
+  assert.equal(candidate.nodes.some((node) => node.name === 'CRM Offer Context'), false);
+  assert.equal(candidate.nodes.find((node) => node.name === CRM_FETCH_NODE).credentials.httpBearerAuth.id, 'bearer-id');
+  assert.ok(candidate.connections['Prepare Media Upload Plan'].main[0].some((edge) => edge.node === CRM_PREPARE_NODE));
+  assert.deepEqual(candidate.connections[CRM_PREPARE_NODE].main[0][0], { node: CRM_FETCH_NODE, type: 'main', index: 0 });
+  assert.deepEqual(candidate.connections[CRM_FETCH_NODE].main[0][0], { node: CRM_ATTACH_NODE, type: 'main', index: 0 });
+  assert.doesNotThrow(() => validateCrmContextPrefetch(candidate));
 });
 
 test('video upload replay key includes normalized bytes and rejects the legacy v4 key', () => {

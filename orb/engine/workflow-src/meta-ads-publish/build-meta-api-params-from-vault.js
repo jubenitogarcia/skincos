@@ -12,6 +12,7 @@ const SAFE_LANDING_PAGE_BY_DESTINATION = Object.freeze({
   barrashoppingsul: 'https://espacofacial.com/agendamento?unit=barrashoppingsul',
   novohamburgo: 'https://espacofacial.com/agendamento?unit=novo-hamburgo',
 });
+const SAFE_WHATSAPP_DESTINATION_URL = 'https://api.whatsapp.com/send';
 
 const root = $input.first()?.json || {};
 if (root.ok !== true || root.ready !== true) {
@@ -88,7 +89,10 @@ const rows = destinations.map((entry) => {
       campaign_objective: safeString(item.campaign_objective),
       optimization_goal: safeString(item.optimization_goal),
       destination_type: safeString(item.destination_type).toUpperCase(),
-      whatsapp_destination_url: safeString(item.whatsapp_destination_url),
+      // The effective destination type is read from the live ad set. This
+      // endpoint is the only fallback when a legacy Token Vault row omits its
+      // explicit WhatsApp handoff URL; it is corroborated by the source ads.
+      whatsapp_destination_url: safeString(item.whatsapp_destination_url || SAFE_WHATSAPP_DESTINATION_URL),
       carousel_native_campaign_id: safeString(item.carousel_native_campaign_id),
       carousel_native_adset_id: safeString(item.carousel_native_adset_id),
       carousel_native_adset_verified: item.carousel_native_adset_verified === true,

@@ -9,7 +9,7 @@ const path = require('path');
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const CRM_TOOL_NAME = 'CRM Offer Context';
 const CRM_TOOL_ID = 'meta-publish-crm-offer-context';
-const CRM_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}';
+const CRM_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context';
 
 function parseArgs(argv) {
   const values = new Map();
@@ -53,8 +53,20 @@ function createCrmTool(credentialId, credentialName) {
       method: 'GET',
       url: CRM_URL,
       authentication: 'genericCredentialType',
-      genericAuthType: 'httpBearerAuth',
-      sendQuery: false,
+      // `toolHttpRequest` deliberately supports generic header credentials but
+      // not the standalone `httpBearerAuth` credential type. Keep this as a
+      // header credential so n8n can construct the AI tool at run time.
+      genericAuthType: 'httpHeaderAuth',
+      sendQuery: true,
+      specifyQuery: 'keypair',
+      parametersQuery: {
+        values: [
+          {
+            name: 'unit',
+            valueProvider: 'modelRequired',
+          },
+        ],
+      },
       sendHeaders: false,
       sendBody: false,
       placeholderDefinitions: {
@@ -74,7 +86,7 @@ function createCrmTool(credentialId, credentialName) {
     typeVersion: 1.1,
     position: [7696, 1536],
     credentials: {
-      httpBearerAuth: {
+      httpHeaderAuth: {
         id: credentialId,
         name: credentialName,
       },

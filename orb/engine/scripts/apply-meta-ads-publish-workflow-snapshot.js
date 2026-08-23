@@ -9,6 +9,7 @@ const path = require('path');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
+const { validate: validateCrmContextPrefetch } = require('./patch-meta-ads-crm-context-prefetch');
 const args = new Set(process.argv.slice(2));
 const sourcePath = [...args].find((value) => value.endsWith('.json'));
 const expectedVersion = [...args].find((value) => value.startsWith('--expected-version='))?.slice('--expected-version='.length);
@@ -45,12 +46,7 @@ function assertCandidate(candidate) {
   if (!Array.isArray(candidate.nodes) || candidate.nodes.some((node) => node.type === 'n8n-nodes-base.googleSheetsTool')) {
     throw new Error('Candidate still contains a Google Sheets tool.');
   }
-  const crm = candidate.nodes.find((node) => node.name === 'CRM Offer Context');
-  if (crm?.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest' || crm?.parameters?.url !== 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}') {
-    throw new Error('Candidate CRM Offer Context tool is incomplete.');
-  }
-  const target = candidate.connections?.['CRM Offer Context']?.ai_tool?.[0]?.[0];
-  if (target?.node !== 'Livia' || target?.type !== 'ai_tool') throw new Error('Candidate CRM Offer Context is not connected to Livia.');
+  validateCrmContextPrefetch(candidate);
   validateVideoUploadReplay(candidate);
 }
 
