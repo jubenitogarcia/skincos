@@ -449,7 +449,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /type SpecialCardAction = "none" \| "confirm" \| "reopen"/);
     assert.match(experience, /function renderSpecialCard\(\s*revealed: boolean,\s*action: SpecialCardAction = "none",\s*settled = false,\s*deferRevealContent = false,/);
     assert.match(experience, /const kind: SpecialCardKind = revealed\s*\? hasCourtesyClass\s*\? "velocity"\s*:\s*offer\s*\? "offer"/);
-    assert.match(experience, /kind === "velocity" && offer !== null/);
+    assert.match(experience, /const selectedConcepts = revealed/);
     assert.match(experience, /className=\{styles\.specialCardRevealAction\}/);
     assert.match(experience, /Garantir presente e confirmar presença/);
     assert.match(experience, /if \(!operationalConsent && !isLocalPreview\) return;/);
