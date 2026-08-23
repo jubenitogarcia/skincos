@@ -9,11 +9,23 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${CRM_LOCAL_WA_ORCHESTRATOR_PORT:-8110}"
 ENV_FILE="${CRM_LOCAL_WA_NATIVE_ENV_FILE:-/etc/skincos/crm-whatsapp.env}"
 RUN_AS_USER="${CRM_LOCAL_WA_RUN_AS_USER:-admin}"
-# This is an operator-owned QA adapter, never a native service runtime.
-RUNTIME_HOME="${CRM_LOCAL_WA_RUNTIME_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/skincos/crm-local-adapter}"
+# This is an operator-owned QA adapter, never a native service runtime. Its
+# state must belong to the account that actually runs the adapter; inheriting
+# the launcher's HOME would make the later rsync fail under the service user.
+RUNTIME_HOME="${CRM_LOCAL_WA_RUNTIME_HOME:-/home/$RUN_AS_USER/.local/state/skincos/crm-local-adapter}"
 SOURCE_HOME="${CRM_LOCAL_WA_SOURCE_HOME:-$RUNTIME_HOME/source}"
 DATABASE_URL="${CRM_LOCAL_WA_DATABASE_URL:-postgresql:///skincos_crm_local?host=/var/run/postgresql}"
 TARGET_COMMIT="${CRM_LOCAL_TARGET_COMMIT:-unknown}"
+
+if [[ "$DATABASE_URL" != "postgresql:///skincos_crm_local?host=/var/run/postgresql" ]]; then
+  echo "[whatsapp-local] CRM_LOCAL_WA_DATABASE_URL deve apontar somente para o socket local sem credenciais de skincos_crm_local." >&2
+  exit 2
+fi
+
+if ! sudo -n -u "$RUN_AS_USER" psql "$DATABASE_URL" -Atqc 'select 1' >/dev/null 2>&1; then
+  echo "[whatsapp-local] O banco local skincos_crm_local não está acessível para $RUN_AS_USER." >&2
+  exit 2
+fi
 
 if ! sudo -n test -f "$ENV_FILE"; then
   echo "[whatsapp-local] Configuração nativa ausente: CRM_LOCAL_WA_NATIVE_ENV_FILE" >&2
