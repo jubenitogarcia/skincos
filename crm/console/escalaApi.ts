@@ -122,8 +122,9 @@ export async function updateEscalaProfessional(payload: {
   email: string
   instagram: string
   color: string
+  workforceEmployeeId?: string | null
 }) {
-  return apiWrite<{ ok: boolean }>(`/professionals`, 'PUT', payload)
+  return apiWrite<{ ok: boolean; data?: { professionalId?: string; workforceEmployeeId?: string | null } }>(`/professionals`, 'PUT', payload)
 }
 
 export async function addEscalaProfessional(payload: {
@@ -137,8 +138,9 @@ export async function addEscalaProfessional(payload: {
   email: string
   instagram: string
   color: string
+  workforceEmployeeId?: string | null
 }) {
-  return apiWrite<{ ok: boolean }>(`/professionals`, 'POST', payload)
+  return apiWrite<{ ok: boolean; data?: { professionalId?: string; workforceEmployeeId?: string | null } }>(`/professionals`, 'POST', payload)
 }
 
 export async function fetchEscalaSchedule(unit?: string, month?: string) {
