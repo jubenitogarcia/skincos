@@ -307,6 +307,8 @@ jobs:
             }
             const entries = Array.isArray(payload) ? payload : (payload ? [payload] : []);
             const errors = entries.flatMap((entry) => Array.isArray(entry?.errors) ? entry.errors : []);
+            const topLevelError = payload && !Array.isArray(payload) && payload.error ? [payload.error] : [];
+            const diagnosticErrors = [...errors, ...topLevelError];
             const scrub = (value) => String(value)
               .replace(/https?:\/\/\S+/gi, '[url]')
               .replace(/#c=[A-Za-z0-9_-]+/g, '#c=[opaque]')
@@ -316,8 +318,8 @@ jobs:
               code: 'beauty_movement_short_links_d1_apply_failed',
               topLevel: Array.isArray(payload) ? 'array' : typeof payload,
               entryKeys: entries.slice(0, 3).map((entry) => Object.keys(entry ?? {}).sort()),
-              errorKeys: errors.slice(0, 3).map((error) => Object.keys(error ?? {}).sort()),
-              errorMessages: errors.slice(0, 3).map((error) => scrub(error?.message ?? error?.error ?? 'unknown')),
+              errorKeys: diagnosticErrors.slice(0, 3).map((error) => Object.keys(error ?? {}).sort()),
+              errorMessages: diagnosticErrors.slice(0, 3).map((error) => scrub(error?.message ?? error?.text ?? error?.error ?? 'unknown')),
             }));
             NODE
             exit 1
