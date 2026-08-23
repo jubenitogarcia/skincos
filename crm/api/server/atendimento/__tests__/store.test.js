@@ -435,7 +435,7 @@ test('returns segmented goal plan for cross-month periods without distorting the
             rowCount: 1,
         },
         (sql) => sql.includes('as doctor_id') && {
-            rows: [{ unit_slug: 'barra-shopping-sul', doctor_id: 'doc-b', doctor_name: 'Dra. B', total: 30000 }],
+            rows: [{ unit_slug: 'barra-shopping-sul', doctor_id: 'doc-b', doctor_name: 'Dra. B', total: 30000, attended_days: 30 }],
             rowCount: 1,
         },
         (sql) => sql.includes('from crm_atendimento.schedule_days') && { rows: [], rowCount: 0 },
@@ -465,10 +465,13 @@ test('returns segmented goal plan for cross-month periods without distorting the
     assert.equal(section.metrics.periodAttendanceTotal?.weekValue, 30000)
     assert.equal(section.metrics.periodAttendanceTotal?.label, 'Total')
     assert.equal(section.metrics.rankedDoctorTotal?.weekValue, 30000)
-    assert.equal(section.metrics.standardDeviation?.label, 'Desvio Padrão')
-    assert.equal(section.metrics.upperLimit?.label, 'Limite Superior')
-    assert.equal(section.metrics.lowerLimit?.label, 'Limite Inferior')
+    assert.equal(section.metrics.standardDeviation?.label, 'Desvio Padrão diário')
+    assert.equal(section.metrics.upperLimit?.label, 'Limite Superior diário')
+    assert.equal(section.metrics.lowerLimit?.label, 'Limite Inferior diário')
     assert.equal(section.metrics.ratioDivisor?.label, 'Divisor Razões')
+    assert.equal(section.doctors[0]?.workingDays, 30)
+    assert.equal(section.doctors[0]?.totalValue, 30000)
+    assert.equal(section.doctors[0]?.weekValue, 1000)
     assert.equal(section.metrics.periodGoal?.weekValue, 30000)
     assert.equal(section.metrics.dailyGoal?.weekValue, 1000)
     assert.equal(section.goalPlan?.periodOperationalDays, 30)
@@ -777,8 +780,8 @@ function buildConversionPoolHandlers() {
         },
         (sql) => sql.includes('as doctor_id') && {
             rows: [
-                { unit_slug: 'novo-hamburgo', doctor_id: 'doc-a', doctor_name: 'Dra. A', total: 14 },
-                { unit_slug: 'barra-shopping-sul', doctor_id: 'doc-b', doctor_name: 'Dra. B', total: 9 },
+                { unit_slug: 'novo-hamburgo', doctor_id: 'doc-a', doctor_name: 'Dra. A', total: 14, attended_days: 1 },
+                { unit_slug: 'barra-shopping-sul', doctor_id: 'doc-b', doctor_name: 'Dra. B', total: 9, attended_days: 1 },
             ],
             rowCount: 2,
         },
