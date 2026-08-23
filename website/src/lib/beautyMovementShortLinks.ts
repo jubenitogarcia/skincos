@@ -98,11 +98,12 @@ export function prepareBeautyMovementShortLinks(params: {
         const slugPath = `/${suffix}${BEAUTY_MOVEMENT_CANONICAL_PATH}`;
         const normalizedSlugPath = `/${normalizedSuffix}${BEAUTY_MOVEMENT_CANONICAL_PATH.toLowerCase()}`;
         const destinationUrl = `https://espacofacial.com${BEAUTY_MOVEMENT_CANONICAL_PATH}#c=${token}`;
+        const tokenIdentity = createHash("sha256").update(token, "utf8").digest("hex").slice(0, 32);
         links.push({
-            // Keep the redirect contract/source stable while moving the row identity
-            // forward. A previously reserved v1 id must never be overwritten if a
-            // stale/manual row is found under that primary key.
-            id: `beauty-movement-short-v2-${campaignId}-${normalizedSuffix}`,
+            // Keep identity independent from the short suffix. A stale/manual row
+            // can reserve an old primary key without being overwritten, while the
+            // token-derived digest remains stable for future idempotent syncs.
+            id: `beauty-movement-short-v3-${campaignId}-${tokenIdentity}`,
             name: `Cartas da Beleza - ${suffix}`,
             inviteRef: row.inviteRef,
             whatsapp: row.whatsapp,
