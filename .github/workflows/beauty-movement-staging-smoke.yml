@@ -650,3 +650,35 @@ jobs:
           path: ${{ runner.temp }}/beauty-movement-staging-smoke/promotion-evidence.json
           retention-days: 14
           if-no-files-found: error
+
+      # The Beauty Movement smoke is also the immutable website validation for
+      # the generic website promotion workflow. Keep that evidence under the
+      # canonical unit name expected by promotion-gate.yml while preserving
+      # the campaign-specific artifact above for the controlled activation
+      # workflow.
+      - name: Write public website staging promotion evidence
+        if: ${{ success() }}
+        shell: bash
+        env:
+          PROMOTION_UNIT: public-website-release
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ inputs.release_sha }}
+          PROMOTION_EVIDENCE_FILE: ${{ runner.temp }}/beauty-movement-staging-smoke/promotion-evidence-public-website-release.json
+        run: |
+          set -euo pipefail
+          tree="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")"
+          digest="$(PROMOTION_UNIT="${PROMOTION_UNIT}" PROMOTION_SOURCE_SHA="${PROMOTION_SOURCE_SHA}" node .github/scripts/promotion-evidence.mjs digest)"
+          PROMOTION_SOURCE_TREE="${tree}" \
+          PROMOTION_RELEASE_INPUT_DIGEST="${digest}" \
+          PROMOTION_DEPENDENCY_CLOSURE_DIGEST="${digest}" \
+          node .github/scripts/promotion-evidence.mjs write "${PROMOTION_EVIDENCE_FILE}" >/dev/null
+          test -s "${PROMOTION_EVIDENCE_FILE}"
+
+      - name: Upload public website staging promotion evidence
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-public-website-release
+          path: ${{ runner.temp }}/beauty-movement-staging-smoke/promotion-evidence-public-website-release.json
+          retention-days: 14
+          if-no-files-found: error

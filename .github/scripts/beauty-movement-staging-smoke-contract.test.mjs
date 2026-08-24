@@ -28,6 +28,8 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.doesNotMatch(workflow, /node -e\s/);
     assert.doesNotMatch(workflow, /set -x/);
     assert.match(workflow, /promotion-evidence-beauty-movement-production-activation/);
+    assert.match(workflow, /PROMOTION_UNIT: public-website-release/);
+    assert.match(workflow, /promotion-evidence-public-website-release/);
     assert.match(workflow, /actions\/upload-artifact/);
     assert.match(workflow, /staging-smoke-disabled-probe/);
     assert.match(workflow, /beauty_movement_delivery_ref_invalid/);
