@@ -211,3 +211,14 @@ não há fallback para caminho local, chat ou outro checkout.
 Em sucesso, a campanha real permanece ativa durante a janela aprovada e a flag
 continua explicitamente habilitada apenas na versão atestada. Em falha, o estado
 terminal esperado é `BEAUTY_MOVEMENT_ENABLED=false` e API `503`.
+
+### Continuidade durante deploys posteriores
+
+O deploy genérico não cria, importa ou ativa campanhas. Porém, enquanto existir
+uma campanha de produção vigente no D1, ele consulta esse estado antes de
+publicar e mantém `BEAUTY_MOVEMENT_ENABLED=true` somente na versão que está
+sendo publicada. Se não houver campanha vigente, o padrão continua sendo
+`false`. A consulta é feita sem exibir dados de convites; qualquer falha em
+provar o estado ativo interrompe o deploy antes da publicação. Assim, um deploy
+posterior de código não desliga acidentalmente uma campanha já aprovada nem
+reativa uma campanha encerrada.
