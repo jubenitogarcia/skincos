@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-    HERO_JULHO_2026_DESKTOP_ITEMS,
-    HERO_JULHO_2026_MOBILE_ITEMS,
+    HERO_AGOSTO_2026_DESKTOP_ITEMS,
+    HERO_AGOSTO_2026_MOBILE_ITEMS,
     composeHeroMediaItems,
     getHeroMediaAspectRatio,
     getLocalHeroItems,
@@ -90,64 +90,55 @@ test("scoped resolver selects global + current unit and defaults missing scope t
     );
 });
 
-test("local hero items use the julho 2026 global campaign for a unit page", () => {
+test("local hero items use the agosto 2026 global campaign for a unit page", () => {
     const items = getLocalHeroItems("desktop", { unitSlug: "barrashoppingsul" });
 
-    assert.equal(items.length, 13);
-    assert.ok(items.every((item) => item.src.includes("/images/hero/campaigns/julho-2026/desktop/")));
+    assert.equal(items.length, 8);
+    assert.ok(items.every((item) => item.src.includes("/images/hero/campaigns/agosto-2026/desktop/")));
     assert.ok(items.every((item) => item.scope !== "unit:barrashoppingsul"));
 });
 
-test("julho 2026 local hero campaign keeps separate desktop and mobile assets", () => {
-    assert.equal(HERO_JULHO_2026_DESKTOP_ITEMS.length, 13);
-    assert.equal(HERO_JULHO_2026_MOBILE_ITEMS.length, 13);
+test("agosto 2026 local hero campaign keeps separate desktop and mobile assets", () => {
+    assert.equal(HERO_AGOSTO_2026_DESKTOP_ITEMS.length, 8);
+    assert.equal(HERO_AGOSTO_2026_MOBILE_ITEMS.length, 8);
 
-    assert.ok(HERO_JULHO_2026_DESKTOP_ITEMS.every((item) => item.src.includes("/desktop/")));
-    assert.ok(HERO_JULHO_2026_DESKTOP_ITEMS.every((item) => item.src.endsWith(".png")));
-    assert.ok(HERO_JULHO_2026_MOBILE_ITEMS.every((item) => item.src.includes("/mobile/")));
-    assert.ok(HERO_JULHO_2026_MOBILE_ITEMS.every((item) => item.src.endsWith(".png")));
+    assert.ok(HERO_AGOSTO_2026_DESKTOP_ITEMS.every((item) => item.src.includes("/desktop/")));
+    assert.ok(HERO_AGOSTO_2026_DESKTOP_ITEMS.every((item) => item.src.endsWith(".png")));
+    assert.ok(HERO_AGOSTO_2026_MOBILE_ITEMS.every((item) => item.src.includes("/mobile/")));
+    assert.ok(HERO_AGOSTO_2026_MOBILE_ITEMS.every((item) => item.src.endsWith(".png")));
 
     assert.deepEqual(
-        HERO_JULHO_2026_DESKTOP_ITEMS.map((item) => item.id),
-        Array.from({ length: 13 }, (_, index) => `julho-2026-desktop-banner-${String(index + 1).padStart(2, "0")}`),
+        HERO_AGOSTO_2026_DESKTOP_ITEMS.map((item) => item.id),
+        Array.from({ length: 8 }, (_, index) => `agosto-2026-desktop-banner-${String(index + 1).padStart(2, "0")}`),
     );
 
     assert.deepEqual(
-        HERO_JULHO_2026_MOBILE_ITEMS.map((item) => item.id),
-        Array.from({ length: 13 }, (_, index) => `julho-2026-mobile-banner-${String(index + 1).padStart(2, "0")}`),
+        HERO_AGOSTO_2026_MOBILE_ITEMS.map((item) => item.id),
+        Array.from({ length: 8 }, (_, index) => `agosto-2026-mobile-banner-${String(index + 1).padStart(2, "0")}`),
+    );
+
+    assert.deepEqual(
+        HERO_AGOSTO_2026_DESKTOP_ITEMS.map((item) => item.src.replace("/desktop/", "/mobile/")),
+        HERO_AGOSTO_2026_MOBILE_ITEMS.map((item) => item.src),
     );
 });
 
-test("julho 2026 local hero campaign exposes dimensions before image load", () => {
+test("agosto 2026 local hero campaign exposes dimensions before image load", () => {
     assert.deepEqual(
-        HERO_JULHO_2026_DESKTOP_ITEMS.map((item) => ({
+        HERO_AGOSTO_2026_DESKTOP_ITEMS.map((item) => ({
             width: item.width,
             height: item.height,
             aspectRatio: getHeroMediaAspectRatio(item),
         })),
-        [
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1731, height: 909, aspectRatio: "1731 / 909" },
-            { width: 1732, height: 908, aspectRatio: "1732 / 908" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1731, height: 908, aspectRatio: "1731 / 908" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
-            { width: 1734, height: 907, aspectRatio: "1734 / 907" },
-        ],
+        Array.from({ length: 8 }, () => ({ width: 1733, height: 907, aspectRatio: "1733 / 907" })),
     );
 
     assert.deepEqual(
-        HERO_JULHO_2026_MOBILE_ITEMS.map((item) => ({
+        HERO_AGOSTO_2026_MOBILE_ITEMS.map((item) => ({
             width: item.width,
             height: item.height,
             aspectRatio: getHeroMediaAspectRatio(item),
         })),
-        Array.from({ length: 13 }, () => ({ width: 1080, height: 1920, aspectRatio: "1080 / 1920" })),
+        Array.from({ length: 8 }, () => ({ width: 941, height: 1672, aspectRatio: "941 / 1672" })),
     );
 });
