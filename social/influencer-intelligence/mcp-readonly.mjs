@@ -4,9 +4,9 @@
  * The transport gateway owns bearer validation. This adapter accepts only the
  * resulting authentication context and delegates to an injected internal read
  * service. It never calls a provider, opens a database, executes shell, or
- * constructs a query. The same gateway conventions used by
- * orb/engine/mcp-readonly-gateway are enforced here so M8 can mount the
- * service without widening this boundary.
+ * constructs a query. The external Orb gateway contract's bounded read-only
+ * conventions are enforced here so M8 can mount the service without widening
+ * this boundary.
  */
 
 import { randomUUID } from 'node:crypto';

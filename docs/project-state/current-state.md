@@ -1,5 +1,19 @@
 # Current state
 
+## Checkpoint atual — separação do Orb/n8n — 2026-08-24
+
+- O código de `orb/engine` foi extraído com histórico preservado para o
+  repositório privado [jubenitogarcia/orb](https://github.com/jubenitogarcia/orb).
+- Este repositório não contém mais código, workflow JSON, units, backup,
+  migration ou publisher do Orb; mantém somente contratos de integração,
+  URLs e observabilidade.
+- `C:\CodexRuntime\n8n` e
+  `C:\CodexRuntime\operator\admin\skincos\orb` permanecem privados e
+  intocados.
+- O corte de produção não foi executado: falta exportação live autenticada e
+  reconciliação de paridade com o ledger. As seções abaixo são snapshots e
+  evidências históricas; não são fonte atual do Orb.
+
 ## Snapshot terminal do Ponto — `origin/main` `6daa6eaee7c4c49f047e97944e70ea1aa320ca61` — 2026-08-05T01:59:29Z
 
 O objetivo governado desta thread está concluído no escopo de staging. As PRs
@@ -1085,7 +1099,8 @@ operations, events and locks. It wrote a durable audit event per run, changed
 three staged runs as `reconciliation_required`. The current distribution is
 1 archived calibration, 52 completed, 54 failed and 3 reconciliation-required,
 with zero active locks. The three residual runs and required read-only Graph
-lookup are listed in `orb/engine/docs/meta-ads-publish-historical-run-audit-2026-07-29.md`.
+lookup are listed in the independent Orb repository's retained execution
+ledger and historical audit.
 
 ## Observability alert hardening operational closeout — 2026-07-29T03:06Z
 
@@ -1699,7 +1714,7 @@ teve `SHA256SUMS` conferido, SHA-256
 O registro de autorização e o runbook versionado especificam a promoção
 `stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
 dos bundles referenciados por manifestos. O export sanitizado e versionado da
-versão publicada está em `orb/engine/workflows/livia/livia.current.json`
+versão publicada está no export correspondente do repositório independente Orb
 (SHA-256 `1dcdef7df289311b553f2b5f44932f999f9a96f96fa32bc2d5d6a5b1192fe4cc`).
 O arquivo usa escapes JSON equivalentes somente para as menções editoriais a
 Facebook, evitando o falso positivo específico de OAuth sem retirar seus nós
@@ -1748,7 +1763,7 @@ um workflow operacional inativo, `Music Composition Studio (Unified)`. MSC-10
 a MSC-90 executam inline, os outputs de erro convergem no MSC-99 inline e não
 há nodes Execute Workflow. Os 11 predecessores estão arquivados fora do pacote
 de importação em
-`orb/engine/archived-workflows/music-composition-studio`.
+`archived-workflows/music-composition-studio` no repositório independente Orb.
 
 A validação local passou em FAST, STANDARD e PREMIUM com provider mock e custo
 zero; também comprovou cache sem nova submissão, callback/artifact dedupe,

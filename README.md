@@ -7,13 +7,14 @@ Plataforma interna (local) para automações e operações da clínica.
   - `website/` para o site público e seu deploy Cloudflare/OpenNext
   - `crm/console/` para a UI operacional do CRM
   - `crm/api/` para o backend operacional do CRM
-  - `orb/engine/` para automações e `orb-proxy`
 - `ads/meta/` para o workspace do Meta Ads
 - `messaging/channels/whatsapp/engine/` para o único runtime nativo de WhatsApp
 - `backend/` continua hospedando infraestrutura compartilhada e blocos ainda não redistribuídos para `modules/` e `platform/`
-- Estado ativo do Orb fica em `/var/lib/skincos-runtime/orb`; segredos ficam em
-  `/etc/skincos` e backups restore-verified são publicados privadamente em
-  `C:\CodexRuntime\backups\orb\daily`.
+- Orb/n8n é um projeto independente, com código, workflows, proxy, Workers,
+  releases e banco próprios em [github.com/jubenitogarcia/orb](https://github.com/jubenitogarcia/orb).
+  Este repositório mantém somente contratos externos, URLs e observabilidade;
+  o runtime privado continua fora do Git. O limite está documentado em
+  [`docs/architecture/orb-integration-contract.md`](docs/architecture/orb-integration-contract.md).
 
 ## Como rodar (local)
 - Stack principal (recomendado): `./backend/scripts/dev.sh status|start|stop|restart`

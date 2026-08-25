@@ -24,7 +24,8 @@ registrado abaixo, pois uma integração Git do fornecedor é outro publisher.
 | Social Publisher | `deploy-social-publisher-worker.yml` | Worker Social Publisher | sem migration | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Meta Ads Report | `deploy-meta-ads-report-worker.yml` | Worker `skincos-meta-ads-performance-report` | D1 produção/staging; `ads/meta/apps/report-ingest-worker/migrations` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Site público | `deploy-website-cloudflare.yml` | Workers Espaço Facial, legal hub e ESFA redirector | D1 `espacofacial-booking`; `website/migrations` | Cloudflare e `CLOUDFLARE_SECURITY_API_TOKEN` |
-| Runtime nativo | `docs/runbooks/lifecycle-runtime-cutover.md` | `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb`, `cloudflare-runtime` | PostgreSQL `n8n_runtime`; migrations de Orb, Atendimento e Booking | `/etc/skincos` (fora do GitHub) |
+| Runtime nativo SKINCOS | módulos `messaging-whatsapp`, `crm`, `booking`, `cloudflare-runtime` | PostgreSQL/SQLite próprios dos módulos; sem tabelas do Orb | `/etc/skincos` (fora do GitHub) |
+| Orb/n8n | [repositório independente](https://github.com/jubenitogarcia/orb) | PostgreSQL próprio e runtime privado | custódia do repositório Orb |
 
 `skincos-api` e `skincos-insumos` permanecem uma única unidade de release: o
 contrato e o D1 ainda são compartilhados. Ponto não publica mais o gateway/API.
@@ -45,8 +46,7 @@ contrato e o D1 ainda são compartilhados. Ponto não publica mais o gateway/API
 - Alert webhook: `platform/observability/alert-webhook/wrangler.toml`; sem
   publisher GitHub declarado. Está retido até possuir runbook de promoção
   verificável.
-- Configuração do relatório Meta Ads em
-  `orb/engine/cloudflare/meta-ads-performance-report/wrangler.jsonc`; não é
+- Configuração do relatório Meta Ads fica no próprio módulo `ads/meta`; não é
   publisher. A publicação desse Worker é exclusivamente o workflow Meta Ads.
 
 Não há leitura de valores de secrets nesta auditoria. A separação efetiva de

@@ -2,7 +2,7 @@
 
 ## Local and isolated validation
 
-Regenerate and validate from `orb/engine`:
+Regenerate and validate from [the independent Orb repository](https://github.com/jubenitogarcia/orb):
 
 ```bash
 npm run workflow:music:build

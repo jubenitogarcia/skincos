@@ -43,7 +43,7 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-          resource: global:orb-coordination-custody
+          resource: global:native-runtime-coordination-custody
           module: native-runtime
           source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-custody.json
@@ -57,7 +57,7 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-          resource: global:orb-coordination-custody
+          resource: global:native-runtime-coordination-custody
           module: native-runtime
           source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-custody.json

@@ -10,7 +10,6 @@ flowchart LR
   module_inventory["inventory\nexperimental"]
   module_messaging["messaging\nexperimental"]
   module_ops["ops\nexperimental"]
-  module_orb["orb\nexperimental"]
   module_platform["platform\nexperimental"]
   module_service["service\nexperimental"]
   module_shared["shared\nexperimental"]
@@ -18,7 +17,6 @@ flowchart LR
   module_website["website\nexperimental"]
   module_workforce["workforce\nexperimental"]
   module_ads -->|hard| module_shared
-  module_ads -. optional .-> module_orb
   module_api -->|hard| module_shared
   module_api -. optional .-> module_finance
   module_api -. optional .-> module_identity
@@ -47,16 +45,12 @@ flowchart LR
   module_ops -. optional .-> module_booking
   module_ops -. optional .-> module_crm
   module_ops -. optional .-> module_messaging
-  module_ops -. optional .-> module_orb
   module_ops -. optional .-> module_platform
-  module_orb -->|hard| module_shared
-  module_orb -. optional .-> module_integration
   module_platform -->|hard| module_shared
   module_service -->|hard| module_shared
   module_service -. optional .-> module_booking
   module_service -. optional .-> module_integration
   module_social -->|hard| module_shared
-  module_social -. optional .-> module_orb
   module_website -->|hard| module_shared
   module_website -. optional .-> module_ads
   module_website -. optional .-> module_api

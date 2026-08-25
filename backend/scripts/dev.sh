@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FINAL_UNITS=(orb orb-proxy messaging-whatsapp crm booking cloudflare-orb cloudflare-runtime)
+FINAL_UNITS=(messaging-whatsapp crm booking cloudflare-runtime)
 
 usage() {
   cat <<'EOF'

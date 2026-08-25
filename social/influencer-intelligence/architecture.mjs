@@ -70,7 +70,7 @@ export const BOUNDARIES = deepFreeze([
   },
   {
     id: 'mcp',
-    owner: 'orb/engine/mcp-readonly-gateway pattern',
+    owner: 'independent Orb repository read-only gateway contract',
     owns: ['authenticated tool presentation', 'sanitization', 'bounded read-only invocation', 'rate limits', 'timeouts', 'audit'],
     delegatesTo: 'internal Influencer Intelligence service',
     mustNotDo: ['scrape', 'publish', 'engage', 'execute arbitrary SQL', 'execute arbitrary shell', 'mutate workflows'],
@@ -84,7 +84,7 @@ export const BOUNDARIES = deepFreeze([
   },
   {
     id: 'orb',
-    owner: 'orb/engine',
+    owner: 'independent Orb repository',
     owns: ['schedule', 'retry', 'resume', 'job correlation', 'operator recovery'],
     mustNotDo: ['become a provider', 'compute scores', 'own domain snapshots', 'import stale local workflow JSON as live truth'],
   },
@@ -343,7 +343,7 @@ export const API_CONTRACT = deepFreeze({
 
 export const MCP_CONTRACT = deepFreeze({
   contractVersion: 'influencer-intelligence/mcp/v1.1',
-  transport: 'domain adapter for the authenticated orb/engine/mcp-readonly-gateway pattern; MCP is not a provider transport',
+  transport: 'domain adapter for the authenticated external Orb read-only gateway contract; MCP is not a provider transport',
   controls: ['authentication', 'server-side grant', 'schema sanitization', 'bounded input', 'rate limit', 'timeout and abort', 'audit event', 'read-only database role', 'redacted output'],
   limits: { maxRequestBytes: 65536, maxResponseBytes: 524288, maxPageSize: 50, maxCreatorsPerRequest: 20, maxWindowDays: 365, maxConcurrentRequests: 4, timeoutMs: 12000, rateLimitPerMinute: 60 },
   tools: [

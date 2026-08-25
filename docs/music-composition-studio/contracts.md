@@ -1,6 +1,6 @@
 # Contracts and schemas
 
-Closed schemas live in `orb/engine/music-composition-studio/schemas`. Every
+Closed schemas live in the Orb repository's `music-composition-studio/schemas`. Every
 root and bounded nested object declares an `additionalProperties` policy, with
 valid and invalid examples. Provider payloads, lineage, annotations and usage
 maps are explicit controlled extension points rather than accidental open
