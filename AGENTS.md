@@ -144,9 +144,10 @@
 - If the user says a bug came back, investigate the recurrence mechanism before
   applying another patch.
 - For `Meta Ads - Publish` incidents, inspect the real execution or runtime
-  evidence first. Run `Orb > Meta Ads Publish Preflight`; manual executions may
-  not be retained, so do not claim a fix without a reproducing test and a green
-  live preflight. Never publish to Meta merely to diagnose an error.
+  evidence first in the independent Orb repository and its retained execution
+  ledger. Manual executions may not be retained, so do not claim a fix without
+  a reproducing test and a green live preflight. Never publish to Meta merely
+  to diagnose an error.
 - Report the exact files, deployments, endpoints, or logs used as evidence.
 
 ## Native Codex App Routing
@@ -188,7 +189,8 @@
   `https://espacofacial.com`.
 - "CRM" usually means `crm/console/` plus `crm/api/` and
   `https://crm.skincos.com.br`.
-- "n8n" usually means `orb/engine/` and production
+- "n8n" usually means the independent Orb repository
+  `https://github.com/jubenitogarcia/orb` and production
   `https://orb.skincos.com.br`.
 - "Site EF" means the CRM module `?module=site-tracking`.
 - "Meta Ads" means the CRM module plus related `ads/meta/`

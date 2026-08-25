@@ -609,7 +609,7 @@ function Get-TopologyDocument {
     if ([int]$document.schemaVersion -ne 1 -or [string]$document.topologyId -ne "skincos-canonical-worktrees") {
         return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = "unsupported_schema" }
     }
-    $surfaceIds = @($document.crm.surfaces | ForEach-Object { [string]$_.id }) + @($document.orb.families | ForEach-Object { [string]$_.id })
+    $surfaceIds = @($document.crm.surfaces | ForEach-Object { [string]$_.id })
     if (@($surfaceIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9-]*$' }).Count -gt 0) {
         return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = "invalid_surface_id" }
     }
@@ -639,17 +639,6 @@ function Get-TopologySurfaceDefinitions {
             pilot = @($Topology.crm.pilot) -contains $id
             expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) ("crm\$id"))
             workflowIds = @()
-        }
-    }
-    foreach ($family in @($Topology.orb.families)) {
-        $id = [string]$family.id
-        $definitions += [pscustomobject]@{
-            surfaceType = "orb-workflow-family"
-            surfaceId = $id
-            label = [string]$family.label
-            pilot = @($Topology.orb.pilot) -contains $id
-            expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) ("orb\$id"))
-            workflowIds = @($family.mainWorkflowIds) + @($family.subworkflowIds) + @($family.relatedWorkflowIds)
         }
     }
     return @($definitions)
@@ -881,11 +870,6 @@ $retiredPaths = @(
     "C:\CodexShared\Projetos\_bootstrap\n8n-top-level-legacy-20260703T181656",
     "C:\CodexRuntime\recovery\atendimento-legacy"
 )
-$backupRoot = Join-Path $RuntimeRoot "backups\orb\daily"
-$backupFiles = if (Test-Path -LiteralPath $backupRoot) {
-    @(Get-ChildItem -LiteralPath $backupRoot -File -Recurse -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
-} else { @() }
-$latestBackup = if ($backupFiles.Count -gt 0) { $backupFiles[0] } else { $null }
 $orphanTask = Get-ScheduledTask -TaskName "Orb Stack WSL Supervisor" -ErrorAction SilentlyContinue
 $drive = Get-PSDrive -Name C
 $manualWorktrees = @($worktrees | Where-Object { $_.category -eq "manual-shared" })
@@ -946,9 +930,11 @@ $result = [pscustomobject]@{
     runtimeManifests = @($runtimeManifests)
     retiredPaths = @($retiredPaths | ForEach-Object { [pscustomobject]@{ path = $_; exists = Test-Path -LiteralPath $_ } })
     orphanScheduledTaskPresent = $null -ne $orphanTask
-    latestOrbBackup = if ($latestBackup) {
-        [pscustomobject]@{ path = $latestBackup.FullName; bytes = [int64]$latestBackup.Length; ageHours = [math]::Round(((Get-Date).ToUniversalTime() - $latestBackup.LastWriteTimeUtc).TotalHours, 2) }
-    } else { $null }
+    orb = [pscustomobject]@{
+        ownership = "standalone repository"
+        repository = "https://github.com/jubenitogarcia/orb"
+        health = Get-Health -Url "https://orb.skincos.com.br/healthz"
+    }
     cDrive = [pscustomobject]@{ freeBytes = [int64]$drive.Free; usedBytes = [int64]$drive.Used }
     health = if ($SkipHealth) {
         @()

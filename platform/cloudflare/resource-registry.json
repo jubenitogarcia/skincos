@@ -37,7 +37,7 @@
       "routes": ["/ads/*"],
       "bindings": ["META_ADS_DB", "META_ADS_RAW"],
       "stores": ["D1:skincos-meta-ads-performance-report", "R2:skincos-meta-ads-performance-report-raw"],
-      "sourceRoots": ["ads/meta", "orb/engine"]
+      "sourceRoots": ["ads/meta"]
     },
     {
       "id": "token-vault",

@@ -39,13 +39,10 @@ test('the WSL gateway exposes typed operations and fail-closed preflight', () =>
 
 test('direct WSL process ownership remains limited to documented infrastructure', () => {
   const allowed = new Set([
-    'orb/engine/scripts/export-wsl-codex-base.ps1',
     'scripts/invoke-skincos-wsl.ps1',
     'scripts/install-wsl-runtime-keepalive.ps1',
     'scripts/start-wsl-runtime-keepalive.ps1',
     'scripts/test-wsl-runtime-keepalive.ps1',
-    'scripts/runtime/publish-orb-backup.ps1',
-    'scripts/validate-mcp-readonly-persistence.ps1',
   ])
   const diagnosticMentions = new Set([
     'scripts/show-github-auth-status.ps1',

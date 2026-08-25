@@ -51,17 +51,16 @@ git push
 ## Topologia canônica híbrida
 
 O arquivo `ops/codex/worktree-topology.json` define um slot canônico por
-superfície CRM do catálogo local, pela exceção explícita `users` e por família
-operacional de workflow ORB. Workflows principais e subworkflows são mapeados
-na família; subworkflows não recebem slots físicos independentes. O slot
-canônico é destinado a preview, qualificação e leitura estável; alterações
-continuam em worktrees temporários por tarefa/PR.
+superfície CRM do catálogo local e pela exceção explícita `users`. Workflows do
+Orb não recebem slots neste repositório: são editados, qualificados e
+publicados no repositório independente do Orb. O slot canônico é destinado a
+preview, qualificação e leitura estável; alterações continuam em worktrees
+temporários por tarefa/PR.
 
 Os slots ficam em:
 
 ```text
 C:\CodexShared\Worktrees\skincos\admin\canonical\crm\<module>
-C:\CodexShared\Worktrees\skincos\admin\canonical\orb\<workflow-family>
 ```
 
 Inventário e plano não alteram Git:
@@ -91,9 +90,8 @@ explícito. Diretórios não são combinados. Worktrees sujos, detached, com PR,
 manifesto, processo ou lease permanecem preservados. A aposentadoria usa
 somente `git worktree remove` e depois `git worktree prune`.
 
-O ORB continua executando apenas releases imutáveis sob `/opt/skincos`; o
-worktree canônico de uma família serve para edição e qualificação e não pode
-ser usado como `cwd` de serviço.
+O Orb executa apenas releases imutáveis sob `/opt/orb`, sob a governança do
+repositório independente. O SKINCOS não usa worktree Orb como `cwd` de serviço.
 
 ## Checklist de encerramento por chat
 - Branch/worktree limpos (`git status` sem alteracoes locais).
