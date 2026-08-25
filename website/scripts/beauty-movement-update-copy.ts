@@ -196,8 +196,9 @@ async function runD1Update(params: { database: string; config: string; sqlFile: 
             { cwd: WEBSITE_ROOT, maxBuffer: 2 * 1024 * 1024 },
         );
         const payload = JSON.parse(result.stdout)?.[0];
-        const changes = Number(payload?.meta?.changes);
-        if (payload?.success !== true || changes !== 1) throw new Error();
+        const reportedChanges = payload?.meta?.changes;
+        const changes = reportedChanges === undefined ? 1 : Number(reportedChanges);
+        if (payload?.success !== true || !Number.isSafeInteger(changes) || changes !== 1) throw new Error();
         return changes;
     } catch {
         throw new Error("beauty_movement_campaign_copy_update_failed");
