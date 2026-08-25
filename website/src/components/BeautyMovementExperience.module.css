@@ -1107,6 +1107,17 @@
   animation: specialCardIconFloat 4.8s ease-in-out 820ms infinite alternate;
 }
 
+/* Prize artwork is supplied at a larger transparent source size. Constrain it
+ * to the illustration slot in every layout so the desktop card never paints
+ * over its editorial copy. Mobile can still enlarge the slot itself below. */
+.specialCardIllustration :global(.beautyMovementPrizeArt) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 10px rgba(23, 54, 46, 0.12));
+}
+
 .specialCardCopy {
   max-width: 275px;
   color: var(--bm-muted);
@@ -4256,13 +4267,6 @@
     margin: 2px auto 0;
   }
 
-  .specialCardIllustration :global(.beautyMovementPrizeArt) {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    filter: drop-shadow(0 8px 10px rgba(23, 54, 46, 0.12));
-  }
 }
 
 @keyframes mobilePromptSurfaceIn {
