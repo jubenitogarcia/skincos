@@ -38,7 +38,9 @@ test("campaign copy update is production-only, release-bound and narrowly scoped
   assert.match(workflow, /Release Website production coordination lease/);
   assert.match(workflow, /Remove runner-local private material/);
   assert.match(updateCopyHelper, /--file\", params\.sqlFile, \"--json/);
-  assert.match(updateCopyHelper, /reportedChanges === undefined \? 1 : Number\(reportedChanges\)/);
+  assert.match(updateCopyHelper, /const payload = Array\.isArray\(parsed\) \? parsed\[0\] : parsed/);
+  assert.match(updateCopyHelper, /payload\?\.success !== true/);
+  assert.match(updateCopyHelper, /post-write readback prove the single/);
   assert.doesNotMatch(workflow, /wrangler secret put/);
   assert.doesNotMatch(workflow, /INSERT INTO bm_campaigns/);
   assert.doesNotMatch(workflow, /UPDATE bm_invites/);
