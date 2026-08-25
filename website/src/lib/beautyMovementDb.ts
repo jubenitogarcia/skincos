@@ -238,6 +238,15 @@ export type BeautyMovementExchangeResult =
     }
     | { ok: false; error: BeautyMovementError };
 
+/**
+ * Read-only production attestation used by the protected copy-update workflow.
+ * It deliberately returns campaign copy only and never creates a session or
+ * touches invite/session/rate-limit state.
+ */
+export type BeautyMovementCampaignCopyProbeResult =
+    | { ok: true; campaign: { description: string } }
+    | { ok: false; error: BeautyMovementError };
+
 export type BeautyMovementOperationOptions = {
     db?: BeautyMovementD1;
     /** Test-only / controlled server override. Runtime defaults fail closed. */
@@ -865,6 +874,29 @@ export async function exchangeBeautyMovementInvite(params: {
         return { ok: true, sessionToken, sessionExpiresAtMs, state };
     } catch {
         return failExchange("campaign_unavailable");
+    }
+}
+
+export async function probeBeautyMovementCampaignCopy(params: {
+    token: string;
+    origin: string | null | undefined;
+    nowMs?: number;
+}, options: BeautyMovementOperationOptions = {}): Promise<BeautyMovementCampaignCopyProbeResult> {
+    if (!(await isBeautyMovementEnabled(options))) return { ok: false, error: "campaign_unavailable" };
+    if (!(await assertOrigin(params.origin, options))) return { ok: false, error: "origin_not_allowed" };
+    if (!isBeautyMovementOpaqueToken(params.token)) return { ok: false, error: "invite_unavailable" };
+    const nowMs = Number.isFinite(params.nowMs) ? Number(params.nowMs) : now(options);
+
+    try {
+        const [db, tokenKey] = await Promise.all([resolveDb(options), resolveTokenHmacKey(options)]);
+        const inviteTokenHash = await hashBeautyMovementInviteToken({ secret: tokenKey, token: params.token });
+        const row = await findInviteByTokenHash(db, inviteTokenHash);
+        if (!row || !inviteIsAvailable(row, nowMs)) return { ok: false, error: "invite_unavailable" };
+        const campaign = renderCampaign(row);
+        if (!campaign) return { ok: false, error: "campaign_unavailable" };
+        return { ok: true, campaign: { description: campaign.description } };
+    } catch {
+        return { ok: false, error: "campaign_unavailable" };
     }
 }
 
