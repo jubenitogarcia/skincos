@@ -108,7 +108,7 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(experience, /className=\{`\$\{styles\.finaleCardFace\} \$\{styles\.cardBack\}`\}/);
     assert.match(experience, /Você também leva o squeeze e a ecobag da Espaço Facial, além de mais mimos da celebração\./);
     assert.match(experience, /styles\.specialCardGiftNote/);
-    assert.match(styles, /\.specialCardModalDialog \.specialCardWithPrice \{[\s\S]*min-height: clamp\(454px, 147vw, 480px\)/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardWithPrice \{[\s\S]*min-height: clamp\(568px, 178vw, 592px\)/);
     assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardConditions \{[\s\S]*position: static[\s\S]*width: 100%/);
     assert.match(styles, /\.specialCardModalDialog \.specialCardWithPrice \.specialCardConditions \{[\s\S]*position: static[\s\S]*width: 100%/);
     assert.match(experience, /renderSpecialCard\(false, "reopen", true\)/);

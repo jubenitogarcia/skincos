@@ -35,14 +35,14 @@ test("mobile handoff keeps one rhythm, one deck anchor, and a roomier special-ca
         styles,
         /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardIllustration\s*\{\s*width: clamp\(160px, 52vw, 188px\);\s*height: clamp\(148px, 48vw, 174px\);/,
     );
-    assert.match(styles, /\.specialCardModalDialog \.specialCardWithPrice\s*\{\s*min-height: clamp\(454px, 147vw, 480px\);/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardWithPrice\s*\{\s*min-height: clamp\(568px, 178vw, 592px\);/);
     assert.match(
         styles,
         /\.specialCardModalDialog \.specialCard:has\(\.specialCardConditions\[open\]\)\s*\{\s*min-height: clamp\(548px, 172vw, 584px\);/,
     );
     assert.match(
         styles,
-        /\.specialCardModalDialog \.specialCardWithPrice:has\(\.specialCardConditions\[open\]\)\s*\{\s*min-height: clamp\(560px, 176vw, 600px\);/,
+        /\.specialCardModalDialog \.specialCardWithPrice:has\(\.specialCardConditions\[open\]\)\s*\{\s*min-height: clamp\(636px, 199vw, 660px\);/,
     );
     assert.match(styles, /\.specialCardModalClose\s*\{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
 
