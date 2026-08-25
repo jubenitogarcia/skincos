@@ -38,3 +38,22 @@ test("prize art ships four compact branded illustrations instead of eager source
     assert.doesNotMatch(component, /-v[23]\.png/);
     assert.doesNotMatch(component, /rewards\/(?:elleva-upgrade|filler-double|sculptra-classic-unlock|skinbooster-diamond-unlock)\.webp/);
 });
+
+test("prize art is constrained by the special-card illustration box on every viewport", async () => {
+    const styles = await readFile(sourceUrl("src/components/BeautyMovementExperience.module.css"), "utf8");
+    const artworkRule = ".specialCardIllustration :global(.beautyMovementPrizeArt)";
+    const mobileHandContract = "/* On a portrait phone the hand is a readable strip";
+    const ruleIndex = styles.indexOf(artworkRule);
+
+    assert.ok(ruleIndex >= 0, "the shared prize-art sizing rule is present");
+    assert.ok(
+        ruleIndex < styles.indexOf(mobileHandContract),
+        "the shared prize-art sizing rule is not confined to the mobile hand breakpoint",
+    );
+
+    const rule = styles.slice(ruleIndex, ruleIndex + 360);
+    assert.match(rule, /display: block;/);
+    assert.match(rule, /width: 100%;/);
+    assert.match(rule, /height: 100%;/);
+    assert.match(rule, /object-fit: contain;/);
+});
