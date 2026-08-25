@@ -3801,6 +3801,28 @@
   overflow: auto;
 }
 
+/* Price cards need the campaign conditions in the editorial flow on desktop,
+ * otherwise the link lands on top of the WhatsApp action at compact heights. */
+@media (min-width: 721px) {
+  .specialCardModalDialog .specialCardWithPrice {
+    min-height: 456px;
+  }
+
+  .specialCardModalDialog .specialCardWithPrice .specialCardWhatsappAction {
+    margin-bottom: 0;
+  }
+
+  .specialCardModalDialog .specialCardWithPrice .specialCardConditions {
+    position: static;
+    width: 100%;
+    margin-top: 0;
+  }
+
+  .specialCardModalDialog .specialCardWithPrice:has(.specialCardConditions[open]) {
+    min-height: 560px;
+  }
+}
+
 @media (max-width: 720px) {
   .specialCardFrontOffer {
     gap: 4px;
