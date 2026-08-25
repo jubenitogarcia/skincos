@@ -695,6 +695,35 @@ function escapeSql(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
 }
 
+/**
+ * Produces the narrowly-scoped SQL used by the protected active-campaign copy
+ * update workflow. Active campaigns intentionally reject the normal import
+ * upsert; this helper changes only the description after the workflow has
+ * independently attested the exact campaign id, status and expiry.
+ */
+export function buildBeautyMovementCampaignDescriptionUpdateSql(params: {
+    campaignId: string;
+    description: string;
+    campaignEndsAtMs: number;
+    updatedAtMs?: number;
+}): string {
+    const campaignId = validateCampaignId(params.campaignId);
+    const description = cleanText(params.description, 500);
+    if (!description) throw new Error("beauty_movement_campaign_description_invalid");
+    if (!Number.isSafeInteger(params.campaignEndsAtMs) || params.campaignEndsAtMs <= 0) {
+        throw new Error("beauty_movement_invalid_campaign_ends_at");
+    }
+    const updatedAtMs = params.updatedAtMs ?? Date.now();
+    if (!Number.isSafeInteger(updatedAtMs) || updatedAtMs <= 0) {
+        throw new Error("beauty_movement_invalid_campaign_updated_at");
+    }
+    return [
+        `UPDATE bm_campaigns SET description = ${escapeSql(description)}, updated_at_ms = ${updatedAtMs}`,
+        `WHERE id = ${escapeSql(campaignId)} AND status = 'active' AND ends_at_ms = ${params.campaignEndsAtMs};`,
+        "",
+    ].join(" ");
+}
+
 function sha256Hex(value: string): Promise<string> {
     return crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)).then((buffer) =>
         Array.from(new Uint8Array(buffer)).map((byte) => byte.toString(16).padStart(2, "0")).join(""),
