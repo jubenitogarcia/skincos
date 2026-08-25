@@ -8,6 +8,7 @@ import {
     normalizeBeautyMovementCampaignDescription,
     validateBeautyMovementCampaignConfig,
 } from "../src/lib/beautyMovementImport";
+import { parseD1UpdateResponse } from "./beauty-movement-update-copy-json";
 
 const execFileAsync = promisify(execFile);
 const WEBSITE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -216,7 +217,7 @@ async function runD1Update(params: { database: string; config: string; sqlFile: 
     }
     let parsed: unknown;
     try {
-        parsed = JSON.parse(result.stdout.toString("utf8"));
+        parsed = parseD1UpdateResponse(result.stdout.toString("utf8"));
     } catch {
         return failD1Update("response_invalid");
     }
