@@ -14,6 +14,9 @@ test("staging smoke is pinned to the protected staging surface", () => {
     assert.match(workflow, /STAGING_D1_DATABASE:\s*espacofacial-beauty-movement-staging/);
     assert.match(workflow, /STAGING_WORKER_NAME:\s*espacofacial-site-staging/);
     assert.match(workflow, /release_sha:/);
+    assert.match(workflow, /promotion_unit:/);
+    assert.match(workflow, /default:\s*beauty-movement-production-activation/);
+    assert.match(workflow, /promotion_unit is not allowed/);
     assert.doesNotMatch(workflow, /target_environment|production_d1|--env production|espacofacial-beauty-movement(?:"|\\')/i);
 });
 
@@ -27,7 +30,7 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /node --input-type=commonjs -e/);
     assert.doesNotMatch(workflow, /node -e\s/);
     assert.doesNotMatch(workflow, /set -x/);
-    assert.match(workflow, /promotion-evidence-beauty-movement-production-activation/);
+    assert.match(workflow, /name: promotion-evidence-\$\{\{ inputs\.promotion_unit \}\}/);
     assert.match(workflow, /actions\/upload-artifact/);
     assert.match(workflow, /staging-smoke-disabled-probe/);
     assert.match(workflow, /beauty_movement_delivery_ref_invalid/);
