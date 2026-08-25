@@ -187,7 +187,8 @@
         ".github/workflows/beauty-movement-staging-smoke.yml",
         ".github/workflows/beauty-movement-production-activation.yml",
         ".github/workflows/beauty-movement-short-links-sync.yml",
-        ".github/workflows/beauty-movement-team-invite-links.yml"
+        ".github/workflows/beauty-movement-team-invite-links.yml",
+        ".github/workflows/beauty-movement-campaign-copy-update.yml"
       ],
       "automaticDeploymentsRequired": false
     },

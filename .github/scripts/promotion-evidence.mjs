@@ -22,6 +22,7 @@ const releaseSurfacesByUnit = {
   "meta-ads-report": ["runtime"],
   "public-website-release": ["website"],
   "beauty-movement-production-activation": ["website"],
+  "beauty-movement-campaign-copy-update": ["website"],
   // Atendimento is promoted as an isolated native CRM runtime.  Its release
   // identity spans the CRM/API source, native runtime custody and the
   // main-custodied workflow validators; keeping all three inputs in the

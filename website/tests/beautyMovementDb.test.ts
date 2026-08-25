@@ -4,6 +4,7 @@ import {
     confirmBeautyMovementInvite,
     exchangeBeautyMovementInvite,
     getBeautyMovementSession,
+    probeBeautyMovementCampaignCopy,
     revealBeautyMovementCard,
     type BeautyMovementD1,
     type BeautyMovementPreparedStatement,
@@ -276,6 +277,17 @@ test("beauty movement exchanges an opaque invite into a private session without 
     assert.equal(restored.ok, true);
     const rejected = await exchangeBeautyMovementInvite({ token: fixture.token, origin: "https://evil.example", ip: "203.0.113.10", nowMs: NOW }, options(fixture.db));
     assert.deepEqual(rejected, { ok: false, error: "origin_not_allowed" });
+});
+
+test("beauty movement campaign copy probe reads the active campaign without creating a session", async () => {
+    const fixture = await makeFixture();
+    const result = await probeBeautyMovementCampaignCopy(
+        { token: fixture.token, origin: ORIGIN, nowMs: NOW },
+        options(fixture.db),
+    );
+    assert.deepEqual(result, { ok: true, campaign: { description: "Beleza que se move com você." } });
+    assert.equal(fixture.db.sessions.size, 0);
+    assert.equal(fixture.db.rateLimits.size, 0);
 });
 
 test("beauty movement applies exchange limits atomically to both the invite token and IP subject", async () => {
