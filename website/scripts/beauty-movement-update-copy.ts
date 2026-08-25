@@ -188,23 +188,46 @@ async function writePrivateJson(filePath: string, value: unknown): Promise<void>
     await writeFile(filePath, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600, flag: "w" });
 }
 
+function classifyD1UpdateFailure(error: unknown): string {
+    if (!error || typeof error !== "object") return "unknown";
+    const record = error as Record<string, unknown>;
+    if (record.code === "ENOENT") return "command_missing";
+    const stderr = typeof record.stderr === "string" ? record.stderr.toLowerCase() : "";
+    if (stderr.includes("unauthorized") || stderr.includes("forbidden") || stderr.includes("authentication")) return "authorization";
+    if (stderr.includes("database") || stderr.includes("d1") || stderr.includes("sql")) return "remote_rejected";
+    return "command_failed";
+}
+
+function failD1Update(diagnostic: string): never {
+    console.error(`beauty_movement_campaign_copy_update_diagnostic:${diagnostic}`);
+    throw new Error("beauty_movement_campaign_copy_update_failed");
+}
+
 async function runD1Update(params: { database: string; config: string; sqlFile: string }): Promise<number> {
+    let result: Awaited<ReturnType<typeof execFileAsync>>;
     try {
-        const result = await execFileAsync(
+        result = await execFileAsync(
             "npx",
             ["--yes", "wrangler@4.112.0", "d1", "execute", params.database, "--remote", "--config", params.config, "--file", params.sqlFile, "--json"],
             { cwd: WEBSITE_ROOT, maxBuffer: 2 * 1024 * 1024 },
         );
-        const parsed = JSON.parse(result.stdout);
-        const payload = Array.isArray(parsed) ? parsed[0] : parsed;
-        if (payload?.success !== true) throw new Error();
-        // Wrangler's --file JSON does not expose a stable affected-row count.
-        // The SQL CAS predicate plus the post-write readback prove the single
-        // logical update; metadata is intentionally treated as advisory.
-        return 1;
-    } catch {
-        throw new Error("beauty_movement_campaign_copy_update_failed");
+    } catch (error) {
+        return failD1Update(classifyD1UpdateFailure(error));
     }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(result.stdout.toString("utf8"));
+    } catch {
+        return failD1Update("response_invalid");
+    }
+    const payload = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || (payload as { success?: unknown }).success !== true) {
+        return failD1Update("response_rejected");
+    }
+    // Wrangler's --file JSON does not expose a stable affected-row count.
+    // The SQL CAS predicate plus the post-write readback prove the single
+    // logical update; metadata is intentionally treated as advisory.
+    return 1;
 }
 
 async function main(): Promise<void> {
