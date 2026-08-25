@@ -4669,7 +4669,7 @@
   }
 
   .specialCardModalDialog .specialCardWithPrice {
-    min-height: clamp(454px, 147vw, 480px);
+    min-height: clamp(568px, 178vw, 592px);
   }
 
   /* Conditions are part of the dialog's keyboard path. When expanded, give
@@ -4679,7 +4679,7 @@
   }
 
   .specialCardModalDialog .specialCardWithPrice:has(.specialCardConditions[open]) {
-    min-height: clamp(560px, 176vw, 600px);
+    min-height: clamp(636px, 199vw, 660px);
   }
 
   .specialCardModalDialog .specialCardFrontOffer .specialCardConditions {
