@@ -25,7 +25,10 @@ test("campaign copy update is production-only, release-bound and narrowly scoped
   assert.match(workflow, /revoked_invite_count/);
   assert.match(workflow, /invite_count/);
   assert.match(workflow, /Revalidate Website production coordination lease immediately before D1 mutation/);
-  assert.match(workflow, /Verify updated copy through the live campaign API/);
+  assert.match(workflow, /Verify updated copy through the read-only live campaign API/);
+  assert.match(workflow, /campaign-copy/);
+  assert.match(workflow, /digest\('base64url'\)/);
+  assert.match(workflow, /Revalidate Website production coordination lease before copy rollback/);
   assert.match(workflow, /Restore incumbent campaign copy after a failed post-write attestation/);
   assert.match(workflow, /beauty_movement_campaign_copy_rollback_conflict/);
   assert.match(workflow, /Release Website production coordination lease/);

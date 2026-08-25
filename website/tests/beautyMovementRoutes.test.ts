@@ -35,6 +35,7 @@ const publicState: PublicState = {
 };
 
 let exchangeCalls = 0;
+let campaignCopyProbeCalls = 0;
 let revealCalls = 0;
 let confirmCalls = 0;
 type RevealOptions = {
@@ -58,6 +59,10 @@ mock.module(moduleUrl("lib/beautyMovementDb"), {
                 state: publicState,
             };
         },
+        probeBeautyMovementCampaignCopy: async () => {
+            campaignCopyProbeCalls += 1;
+            return { ok: true, campaign: { description: publicState.campaign.description } };
+        },
         getBeautyMovementSession: async () => ({ ok: true, state: publicState }),
         revealBeautyMovementCard: async (_input: unknown, options: unknown) => {
             revealCalls += 1;
@@ -73,8 +78,9 @@ mock.module(moduleUrl("lib/beautyMovementDb"), {
 
 process.env.NEXT_PUBLIC_SITE_URL = "https://espacofacial.com";
 
-const [{ POST: exchange }, { GET: getState }, { POST: reveal }, { POST: confirm }] = await Promise.all([
+const [{ POST: exchange }, { POST: campaignCopyProbe }, { GET: getState }, { POST: reveal }, { POST: confirm }] = await Promise.all([
     import("../src/app/api/beleza-em-movimento/session/route"),
+    import("../src/app/api/beleza-em-movimento/campaign-copy/route"),
     import("../src/app/api/beleza-em-movimento/state/route"),
     import("../src/app/api/beleza-em-movimento/reveal/route"),
     import("../src/app/api/beleza-em-movimento/confirm/route"),
@@ -110,6 +116,15 @@ test("invite exchange rejects an untrusted Origin without calling campaign stora
     const response = await exchange(request("/api/beleza-em-movimento/session", { token: "i".repeat(43) }, undefined, "https://evil.example"));
     assert.equal(response.status, 404);
     assert.equal(exchangeCalls, 0);
+});
+
+test("campaign copy probe is read-only and never sets a session cookie", async () => {
+    campaignCopyProbeCalls = 0;
+    const response = await campaignCopyProbe(request("/api/beleza-em-movimento/campaign-copy", { token: "i".repeat(43) }));
+    assert.equal(response.status, 200);
+    assert.equal(campaignCopyProbeCalls, 1);
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.deepEqual(await response.json(), { ok: true, campaign: { description: publicState.campaign.description } });
 });
 
 test("invite exchange bounds JSON bodies even when Content-Length is absent", async () => {

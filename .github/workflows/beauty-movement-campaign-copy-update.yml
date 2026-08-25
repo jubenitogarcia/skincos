@@ -259,7 +259,7 @@ jobs:
           console.log(JSON.stringify({ copyUpdated: true, inviteCount: Number(after.invite_count), activeInviteCount: Number(after.active_invite_count), revokedInviteCount: Number(after.revoked_invite_count), descriptionLength: expected.description.length }));
           NODE
 
-      - name: Verify updated copy through the live campaign API
+      - name: Verify updated copy through the read-only live campaign API
         env:
           BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
         shell: bash
@@ -274,15 +274,15 @@ jobs:
           const secret = String(process.env.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY ?? '').trim();
           const inviteRef = typeof pre?.probe_external_ref === 'string' ? pre.probe_external_ref : '';
           if (!secret || !inviteRef || typeof expected?.description !== 'string' || !expected.description) throw new Error('beauty_movement_live_copy_probe_input_invalid');
-          const token = crypto.createHmac('sha256', secret).update(`v1|beauty-movement|delivery|${campaignId}|${inviteRef}`, 'utf8').digest('hex');
-          const response = await fetch(`${productionUrl}/api/beleza-em-movimento/session`, {
+          const token = crypto.createHmac('sha256', secret).update(`v1|beauty-movement|delivery|${campaignId}|${inviteRef}`, 'utf8').digest('base64url');
+          const response = await fetch(`${productionUrl}/api/beleza-em-movimento/campaign-copy`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', origin: productionUrl },
             body: JSON.stringify({ token }),
           });
           let payload = null;
           try { payload = await response.json(); } catch { payload = null; }
-          if (response.status !== 200 || payload?.ok !== true || payload?.state?.campaign?.description !== expected.description) throw new Error('beauty_movement_live_copy_probe_mismatch');
+          if (response.status !== 200 || payload?.ok !== true || payload?.campaign?.description !== expected.description) throw new Error('beauty_movement_live_copy_probe_mismatch');
           fs.writeFileSync(outputFile, `${JSON.stringify({ liveCopyVerified: true, httpStatus: response.status, descriptionLength: expected.description.length })}\n`, { encoding: 'utf8', mode: 0o600 });
           console.log(JSON.stringify({ liveCopyVerified: true, httpStatus: response.status, descriptionLength: expected.description.length }));
           NODE
@@ -318,6 +318,20 @@ jobs:
             throw new Error('beauty_movement_campaign_copy_rollback_conflict');
           }
           NODE
+
+      - name: Revalidate Website production coordination lease before copy rollback
+        if: ${{ failure() }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ env.RELEASE_SHA }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
       - name: Restore incumbent campaign copy after a failed post-write attestation
         if: ${{ failure() }}

@@ -54,6 +54,12 @@ jobs:
             echo "STATE_FILE=${smoke_root}/state.json"
             echo "FIXTURE_DIR=${smoke_root}/fixture"
             echo "OUTPUT_DIR=${smoke_root}/output"
+            echo "COPY_PRE_READBACK=${smoke_root}/copy-pre-readback.json"
+            echo "COPY_POST_READBACK=${smoke_root}/copy-post-readback.json"
+            echo "COPY_RESTORE_READBACK=${smoke_root}/copy-restore-readback.json"
+            echo "COPY_EXPECTED_DESCRIPTION=${smoke_root}/copy-expected-description.json"
+            echo "COPY_APPLY_SUMMARY=${smoke_root}/copy-apply-summary.json"
+            echo "COPY_OUTPUT_DIR=${smoke_root}/copy-output"
           } >> "${GITHUB_ENV}"
 
       - name: Acquire Website staging coordination lease
@@ -292,6 +298,100 @@ jobs:
           if (!payload?.success || Number(payload.meta?.changes ?? 0) !== 1) throw new Error('beauty_movement_fixture_activation_failed');
           NODE
 
+      - name: Prepare synthetic active-campaign copy update
+        if: ${{ inputs.promotion_unit == 'beauty-movement-campaign-copy-update' }}
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-staging-smoke
+          GITHUB_ACTIONS: 'true'
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "${COPY_OUTPUT_DIR}"
+          copy_config="${FIXTURE_DIR}/campaign-copy-update.json"
+          node - "${FIXTURE_DIR}/campaign.json" "${copy_config}" <<'NODE'
+          const fs = require('node:fs');
+          const [source, destination] = process.argv.slice(2);
+          const campaign = JSON.parse(fs.readFileSync(source, 'utf8'));
+          campaign.description = 'Fixture sintética atualizada para validar o fluxo de cópia.';
+          fs.writeFileSync(destination, `${JSON.stringify(campaign, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+          NODE
+          query="SELECT id,status,ends_at_ms,description,updated_at_ms,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}') AS invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}' AND invite_status='active') AS active_invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}' AND invite_status='revoked') AS revoked_invite_count FROM bm_campaigns WHERE id='${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${query}" --json > "${COPY_PRE_READBACK}"
+          node - "${COPY_PRE_READBACK}" "${CAMPAIGN_ID}" "$(cat "${FIXTURE_DIR}/ends-at.txt")" <<'NODE'
+          const fs = require('node:fs');
+          const [file, expectedId, expectedEnds] = process.argv.slice(2);
+          const row = JSON.parse(fs.readFileSync(file, 'utf8'))?.[0]?.results?.[0];
+          if (!row || row.id !== expectedId || row.status !== 'active' || Number(row.ends_at_ms) !== Date.parse(expectedEnds) || Number(row.ends_at_ms) <= Date.now() || typeof row.description !== 'string' || !Number.isSafeInteger(Number(row.updated_at_ms)) || Number(row.updated_at_ms) <= 0) throw new Error('beauty_movement_staging_copy_preflight_invalid');
+          if (Number(row.invite_count) !== Number(row.active_invite_count) + Number(row.revoked_invite_count)) throw new Error('beauty_movement_staging_copy_invites_invalid');
+          NODE
+          npm run --silent beauty-movement:update-copy -- \
+            --dry-run \
+            --campaign "${CAMPAIGN_ID}" \
+            --confirm-campaign "${CAMPAIGN_ID}" \
+            --campaign-ends-at "$(cat "${FIXTURE_DIR}/ends-at.txt")" \
+            --campaign-config "${copy_config}" \
+            --normalized-description-out "${COPY_EXPECTED_DESCRIPTION}" > "${COPY_OUTPUT_DIR}/dry-run.json"
+
+      - name: Recheck staging D1 lease before synthetic copy update
+        if: ${{ inputs.promotion_unit == 'beauty-movement-campaign-copy-update' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
+          resource: 'global:staging-d1'
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Apply synthetic active-campaign copy update
+        if: ${{ inputs.promotion_unit == 'beauty-movement-campaign-copy-update' }}
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-staging-smoke
+          GITHUB_ACTIONS: 'true'
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent beauty-movement:update-copy -- \
+            --apply --remote \
+            --campaign "${CAMPAIGN_ID}" \
+            --confirm-campaign "${CAMPAIGN_ID}" \
+            --campaign-ends-at "$(cat "${FIXTURE_DIR}/ends-at.txt")" \
+            --campaign-config "${FIXTURE_DIR}/campaign-copy-update.json" \
+            --expected-state "${COPY_PRE_READBACK}" \
+            --apply-summary "${COPY_APPLY_SUMMARY}" \
+            --database "${STAGING_D1_DATABASE}" \
+            --config wrangler.toml \
+            --out-dir "${COPY_OUTPUT_DIR}" > "${COPY_OUTPUT_DIR}/apply.json"
+
+      - name: Verify synthetic active-campaign copy update
+        if: ${{ inputs.promotion_unit == 'beauty-movement-campaign-copy-update' }}
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="SELECT id,status,ends_at_ms,description,updated_at_ms,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}') AS invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}' AND invite_status='active') AS active_invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}' AND invite_status='revoked') AS revoked_invite_count FROM bm_campaigns WHERE id='${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${query}" --json > "${COPY_POST_READBACK}"
+          node - "${COPY_PRE_READBACK}" "${COPY_POST_READBACK}" "${COPY_EXPECTED_DESCRIPTION}" "${CAMPAIGN_ID}" "$(cat "${FIXTURE_DIR}/ends-at.txt")" <<'NODE'
+          const fs = require('node:fs');
+          const [beforeFile, afterFile, expectedFile, expectedId, expectedEnds] = process.argv.slice(2);
+          const before = JSON.parse(fs.readFileSync(beforeFile, 'utf8'))?.[0]?.results?.[0];
+          const after = JSON.parse(fs.readFileSync(afterFile, 'utf8'))?.[0]?.results?.[0];
+          const expected = JSON.parse(fs.readFileSync(expectedFile, 'utf8'));
+          if (!before || !after || after.id !== expectedId || after.status !== 'active' || Number(after.ends_at_ms) !== Date.parse(expectedEnds) || Number(after.ends_at_ms) <= Date.now() || after.description !== expected.description || Number(after.updated_at_ms) <= Number(before.updated_at_ms)) throw new Error('beauty_movement_staging_copy_update_readback_invalid');
+          if (Number(before.invite_count) !== Number(after.invite_count) || Number(before.active_invite_count) !== Number(after.active_invite_count) || Number(before.revoked_invite_count) !== Number(after.revoked_invite_count)) throw new Error('beauty_movement_staging_copy_invites_changed');
+          console.log(JSON.stringify({ copyUpdated: true, descriptionLength: expected.description.length, inviteCount: Number(after.invite_count), activeInviteCount: Number(after.active_invite_count), revokedInviteCount: Number(after.revoked_invite_count) }));
+          NODE
+
       - name: Recheck Website staging lease before Worker deployment
         uses: ./.github/actions/global-coordination-check
         with:
@@ -521,6 +621,58 @@ jobs:
           const result = { browser: true, revealRequests, reloadStable: true, whatsappRequests: 0, consoleErrors: 0, outcomeVisible: true };
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-staging-smoke/browser.json`, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
           await browser.close();
+          NODE
+
+      - name: Recheck staging D1 lease before synthetic copy restore
+        id: copyRestoreLease
+        if: ${{ always() && inputs.promotion_unit == 'beauty-movement-campaign-copy-update' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
+          resource: 'global:staging-d1'
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Restore synthetic campaign incumbent after copy-update smoke
+        if: ${{ always() && inputs.promotion_unit == 'beauty-movement-campaign-copy-update' && steps.copyRestoreLease.outcome == 'success' }}
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-staging-smoke
+          GITHUB_ACTIONS: 'true'
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -s "${COPY_APPLY_SUMMARY}" ]]; then
+            exit 0
+          fi
+          npm run --silent beauty-movement:update-copy -- \
+            --apply --remote --restore \
+            --campaign "${CAMPAIGN_ID}" \
+            --confirm-campaign "${CAMPAIGN_ID}" \
+            --campaign-ends-at "$(cat "${FIXTURE_DIR}/ends-at.txt")" \
+            --campaign-config "${FIXTURE_DIR}/campaign-copy-update.json" \
+            --expected-state "${COPY_PRE_READBACK}" \
+            --apply-summary "${COPY_APPLY_SUMMARY}" \
+            --database "${STAGING_D1_DATABASE}" \
+            --config wrangler.toml \
+            --out-dir "${COPY_OUTPUT_DIR}" > "${COPY_OUTPUT_DIR}/restore.json"
+          query="SELECT id,status,ends_at_ms,description,updated_at_ms,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}') AS invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}' AND invite_status='active') AS active_invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}' AND invite_status='revoked') AS revoked_invite_count FROM bm_campaigns WHERE id='${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${query}" --json > "${COPY_RESTORE_READBACK}"
+          node - "${COPY_PRE_READBACK}" "${COPY_RESTORE_READBACK}" "${CAMPAIGN_ID}" "$(cat "${FIXTURE_DIR}/ends-at.txt")" <<'NODE'
+          const fs = require('node:fs');
+          const [beforeFile, afterFile, expectedId, expectedEnds] = process.argv.slice(2);
+          const before = JSON.parse(fs.readFileSync(beforeFile, 'utf8'))?.[0]?.results?.[0];
+          const after = JSON.parse(fs.readFileSync(afterFile, 'utf8'))?.[0]?.results?.[0];
+          if (!before || !after || after.id !== expectedId || after.status !== 'active' || Number(after.ends_at_ms) !== Date.parse(expectedEnds) || after.description !== before.description || Number(after.updated_at_ms) <= Number(before.updated_at_ms)) throw new Error('beauty_movement_staging_copy_restore_invalid');
+          if (Number(before.invite_count) !== Number(after.invite_count) || Number(before.active_invite_count) !== Number(after.active_invite_count) || Number(before.revoked_invite_count) !== Number(after.revoked_invite_count)) throw new Error('beauty_movement_staging_copy_restore_invites_changed');
+          console.log(JSON.stringify({ copyRestored: true, descriptionLength: after.description.length, inviteCount: Number(after.invite_count), activeInviteCount: Number(after.active_invite_count), revokedInviteCount: Number(after.revoked_invite_count) }));
           NODE
 
       - name: Correlate persisted outcome without reading PII
