@@ -192,7 +192,7 @@ async function runD1Update(params: { database: string; config: string; sqlFile: 
     try {
         const result = await execFileAsync(
             "npx",
-            ["--yes", "wrangler@4.112.0", "d1", "execute", params.database, "--remote", "--config", params.config, "--file", params.sqlFile],
+            ["--yes", "wrangler@4.112.0", "d1", "execute", params.database, "--remote", "--config", params.config, "--file", params.sqlFile, "--json"],
             { cwd: WEBSITE_ROOT, maxBuffer: 2 * 1024 * 1024 },
         );
         const payload = JSON.parse(result.stdout)?.[0];

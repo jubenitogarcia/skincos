@@ -7,6 +7,10 @@ const workflow = await readFile(
   new URL("../workflows/beauty-movement-campaign-copy-update.yml", import.meta.url),
   "utf8",
 );
+const updateCopyHelper = await readFile(
+  new URL("../../website/scripts/beauty-movement-update-copy.ts", import.meta.url),
+  "utf8",
+);
 
 test("campaign copy update is production-only, release-bound and narrowly scoped", () => {
   assert.match(workflow, /environment: production/);
@@ -33,6 +37,7 @@ test("campaign copy update is production-only, release-bound and narrowly scoped
   assert.match(workflow, /beauty_movement_campaign_copy_rollback_conflict/);
   assert.match(workflow, /Release Website production coordination lease/);
   assert.match(workflow, /Remove runner-local private material/);
+  assert.match(updateCopyHelper, /--file\", params\.sqlFile, \"--json/);
   assert.doesNotMatch(workflow, /wrangler secret put/);
   assert.doesNotMatch(workflow, /INSERT INTO bm_campaigns/);
   assert.doesNotMatch(workflow, /UPDATE bm_invites/);
