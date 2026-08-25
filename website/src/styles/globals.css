@@ -8869,3 +8869,42 @@ video.heroMediaEl {
     justify-content: center;
   }
 }
+
+@media (max-width:389px) {
+  body:has(.beautyMovementPage) .header .container {
+    width: calc(100% - 24px);
+  }
+
+  body:has(.beautyMovementPage) .header .nav {
+    gap: 6px;
+  }
+
+  body:has(.beautyMovementPage) .header .navLeft {
+    gap: 8px;
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  body:has(.beautyMovementPage) .header .headerActions {
+    gap: 6px;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  body:has(.beautyMovementPage) .header .unitChooserBtnStatic {
+    width: clamp(94px, 30vw, 112px);
+    min-width: 0;
+    max-width: none;
+    flex: 0 1 auto;
+    padding-inline: 9px;
+    font-size: 10px;
+  }
+
+  body:has(.beautyMovementPage) .header .headerActions .cta--agende {
+    width: clamp(76px, 23vw, 82px);
+    min-width: 0;
+    flex: 0 1 auto;
+    padding-inline: 10px;
+    font-size: 10px;
+  }
+}
