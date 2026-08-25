@@ -1,6 +1,0 @@
-{
-  "schema_version": 1,
-  "last_evaluated_stable": "2.32.6",
-  "purpose": "Persistent comparison point for the isolated n8n release watcher. This is not an approval or production manifest.",
-  "production_policy": "Never select prerelease tags, merge, deploy, restart a service, apply a migration, or access production paths."
-}

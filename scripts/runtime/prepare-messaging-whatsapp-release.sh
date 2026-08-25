@@ -51,10 +51,10 @@ if [[ "$APPLY" != "1" ]]; then
 fi
 
 [[ -n "$COORDINATION_CLOSURE" && -f "$COORDINATION_CLOSURE" ]] || {
-  echo 'An immutable Orb dependency-closure attestation is required for WhatsApp artifact promotion.' >&2
+  echo 'An immutable messaging dependency-closure attestation is required for WhatsApp artifact promotion.' >&2
   exit 78
 }
-coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/release-orb-whatsapp-$RELEASE_ID-$$.json}"
+coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/release-messaging-whatsapp-$RELEASE_ID-$$.json}"
 artifact_identity_file="$(mktemp /tmp/skincos-whatsapp-release-identity.XXXXXX)"
 coordination_acquired=0
 coordination_run() {
@@ -65,18 +65,18 @@ cleanup_staging() {
 }
 cleanup_coordination() {
   if (( coordination_acquired == 1 )); then
-    coordination_run release >/dev/null 2>&1 || echo 'Unable to release the mini-PC Orb lease; it will expire fail-closed.' >&2
+    coordination_run release >/dev/null 2>&1 || echo 'Unable to release the mini-PC messaging lease; it will expire fail-closed.' >&2
   fi
   cleanup_staging
   rm -f -- "$artifact_identity_file"
 }
 trap cleanup_coordination EXIT INT TERM
 coordination_run acquire \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" \
-  --operation mutation --idempotency-key "mini-pc:release:orb:whatsapp:build:$RELEASE_ID:$$" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" \
+  --operation mutation --idempotency-key "mini-pc:release:messaging-whatsapp:build:$RELEASE_ID:$$" >/dev/null
 coordination_acquired=1
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 
 command -v rsync >/dev/null 2>&1 || { echo 'Missing required command: rsync' >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo 'Missing required command: npm' >&2; exit 1; }
@@ -86,7 +86,7 @@ command -v sudo >/dev/null 2>&1 || { echo 'Missing required command: sudo' >&2; 
 sudo -n true
 
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n install -d -o skincos -g skincos -m 0750 "$STAGING" "$NPM_CACHE"
 # The cache is durable runtime state. A prior diagnostic run as another user
 # must not make a later production release fail before dependencies are built.
@@ -113,7 +113,7 @@ const [closureFile, releaseId, artifactDigest] = process.argv.slice(2);
 const closure = JSON.parse(fs.readFileSync(closureFile, 'utf8'));
 const identity = {
   schemaVersion: 1,
-  module: 'orb',
+  module: 'messaging-whatsapp',
   sourceCommit: String(closure.sourceCommit).toLowerCase(),
   sourceTree: String(closure.sourceTree).toLowerCase(),
   dependencyClosureDigest: String(closure.digest).toLowerCase(),
@@ -123,27 +123,27 @@ process.stdout.write(`${JSON.stringify(identity, null, 2)}\n`);
 NODE
 
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$DESTINATION")"
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 coordination_run release >/dev/null
 coordination_acquired=0
 coordination_run acquire \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" \
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" \
   --operation promotion --release-identity-file "$artifact_identity_file" \
-  --idempotency-key "mini-pc:release:orb:whatsapp:promote:$RELEASE_ID:$$" >/dev/null
+  --idempotency-key "mini-pc:release:messaging-whatsapp:promote:$RELEASE_ID:$$" >/dev/null
 coordination_acquired=1
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
-sudo -n install -m 0640 "$artifact_identity_file" "$STAGING/.skincos-release-identity-orb.json"
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+sudo -n install -m 0640 "$artifact_identity_file" "$STAGING/.skincos-release-identity-messaging-whatsapp.json"
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n mv "$STAGING" "$DESTINATION"
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$CURRENT_LINK")"
 coordination_run check \
-  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  --resource release:messaging-whatsapp --module messaging-whatsapp --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n ln -sfn "$DESTINATION" "$CURRENT_LINK"
 echo "Native WhatsApp release prepared: $CURRENT_LINK -> $DESTINATION"

@@ -249,10 +249,10 @@
       "id": "native-runtime",
       "workflow": null,
       "canonicalRunbook": "docs/runbooks/lifecycle-runtime-cutover.md",
-      "publishes": ["Native:orb", "Native:orb-proxy", "Native:messaging-whatsapp", "Native:crm", "Native:booking", "Native:cloudflare-orb", "Native:cloudflare-runtime"],
-      "resources": ["orb", "orb-proxy", "messaging-whatsapp", "crm", "booking", "cloudflare-orb", "cloudflare-runtime", "PostgreSQL n8n_runtime"],
+      "publishes": ["Native:messaging-whatsapp", "Native:crm", "Native:booking", "Native:cloudflare-runtime"],
+      "resources": ["messaging-whatsapp", "crm", "booking", "cloudflare-runtime"],
       "secrets": ["/etc/skincos"],
-      "migrationPaths": ["orb/engine/db/migrations", "crm/api/server/atendimento/migrations", "booking/migrations"],
+      "migrationPaths": ["crm/api/server/atendimento/migrations", "booking/migrations"],
       "environments": ["preview", "staging", "production"],
       "promotion": {"stagingSupported": false, "blocker": "Native runtime has immutable releases but no isolated native staging host; production remains operator-gated."}
     }
@@ -269,13 +269,6 @@
       "resources": ["Worker:skincos-obs-alert-webhook"],
       "migrationPaths": [],
       "scope": "No GitHub publisher exists; this Worker remains held outside the release catalog until its promotion runbook is made explicit."
-    },
-    {
-      "id": "orb-meta-ads-performance-report-config",
-      "canonicalRunbook": "orb/engine/cloudflare/meta-ads-performance-report/wrangler.jsonc",
-      "resources": ["Worker:skincos-meta-ads-performance-report", "D1:skincos-meta-ads-performance-report", "R2:skincos-meta-ads-performance-report-raw"],
-      "migrationPaths": [],
-      "scope": "Configuration surface only; publishing remains exclusively in deploy-meta-ads-report-worker.yml."
     }
   ],
   "externalPublisherControls": [

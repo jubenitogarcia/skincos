@@ -9,7 +9,7 @@ set -euo pipefail
 # original legacy-v1 two-line contract.
 
 readonly TARGET_DIR='/etc/skincos/global-coordination'
-readonly TARGET_FILE="$TARGET_DIR/orb-backup.env"
+readonly TARGET_FILE="$TARGET_DIR/native-runtime.env"
 readonly TARGET_GROUP='admin'
 readonly COMMAND="${1:-}"
 readonly LEGACY_KEY_ID='legacy-v1'
@@ -99,7 +99,7 @@ case "$COMMAND" in
     umask 077
     read_contract
     install -d -o root -g "$TARGET_GROUP" -m 0750 "$TARGET_DIR"
-    temporary="$(mktemp "$TARGET_DIR/.orb-backup.env.tmp.XXXXXX")"
+    temporary="$(mktemp "$TARGET_DIR/.native-runtime.env.tmp.XXXXXX")"
     cleanup() { rm -f -- "$temporary"; }
     trap cleanup EXIT INT TERM
     if [[ "$COORDINATION_KEY_ID" == "$LEGACY_KEY_ID" ]]; then

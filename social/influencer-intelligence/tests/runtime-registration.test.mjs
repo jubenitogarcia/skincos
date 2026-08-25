@@ -13,7 +13,7 @@ const root = path.resolve(here, '..', '..', '..');
 const unitService = fs.readFileSync(path.join(root, 'ops/runtime/units/influencer-intelligence.service'), 'utf8');
 const unitMcp = fs.readFileSync(path.join(root, 'ops/runtime/units/influencer-intelligence-mcp.service'), 'utf8');
 const installer = fs.readFileSync(path.join(root, 'scripts/runtime/install-influencer-intelligence-runtime.sh'), 'utf8');
-const workflow = fs.readFileSync(path.join(root, 'orb/engine/workflows/influencer-intelligence-snapshot.json'), 'utf8');
+const architecture = fs.readFileSync(path.join(root, 'social/influencer-intelligence/architecture.mjs'), 'utf8');
 const crmProxy = fs.readFileSync(path.join(root, 'crm/console/functions/api/influencer-intelligence/[[path]].ts'), 'utf8');
 const tokenVaultWrangler = fs.readFileSync(path.join(root, 'platform/security/token-vault/wrangler.toml'), 'utf8');
 
@@ -71,18 +71,12 @@ test('registers both loopback units without enabling them or storing secrets', (
   assert.doesNotMatch(unitMcp, /INFLUENCER_INTELLIGENCE_MCP_BEARER_TOKEN=[^\n]+/);
 });
 
-test('registers signed CRM grant, private Orb auth, and inactive workflow source', () => {
+test('registers signed CRM grant and external Orb contract without copying workflow source', () => {
   assert.match(crmProxy, /x-crm-signature-version', '2'/);
   assert.match(crmProxy, /x-crm-grant/);
-  const parsed = JSON.parse(workflow);
-  assert.equal(parsed.active, false);
-  assert.equal(parsed.meta.runtime_registered, true);
-  const dispatch = parsed.nodes.find((node) => node.name === '06_Dispatch_And_Register_Snapshot');
-  assert.equal(dispatch.parameters.sendHeaders, true);
-  assert.match(JSON.stringify(dispatch.parameters.headerParameters), /INFLUENCER_INTELLIGENCE_SERVICE_TOKEN/);
-  assert.match(JSON.stringify(dispatch.parameters.headerParameters), /orb-scheduler/);
-  assert.equal(parsed.meta.instagram_write, false);
-  assert.equal(parsed.meta.publish_allowed, false);
+  assert.match(architecture, /owner: 'independent Orb repository read-only gateway contract'/);
+  assert.match(architecture, /owner: 'independent Orb repository'/);
+  assert.equal(fs.existsSync(path.join(root, 'orb')), false);
 });
 
 test('feature flag off short-circuits before auth or database access', async () => {

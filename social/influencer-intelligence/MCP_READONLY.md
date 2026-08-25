@@ -1,7 +1,7 @@
 # Influencer Intelligence MCP read-only adapter
 
-M6 defines the domain adapter for the existing
-`orb/engine/mcp-readonly-gateway` security pattern. The runtime-registration
+M6 defines the domain adapter for the independent Orb repository's
+authenticated read-only gateway contract. The runtime-registration
 gate now provides a separate loopback HTTP binding for the adapter, but the
 unit is installed disabled, the module flag is false, the bearer token is
 empty by default, and no user grant is assigned.

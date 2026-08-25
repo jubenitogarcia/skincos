@@ -41,12 +41,9 @@ for (const rootName of ["api", "booking", "integration", "messaging", "workforce
 }
 
 const lifecycleUnits = [
-  "orb.service",
-  "orb-proxy.service",
   "messaging-whatsapp.service",
   "crm.service",
   "booking.service",
-  "cloudflare-orb.service",
   "cloudflare-runtime.service",
   "crm-jobs.service",
 ];
@@ -56,31 +53,6 @@ for (const unit of lifecycleUnits) {
   if (/^ReadWritePaths=.*__TMP_ROOT__/m.test(source)) {
     fail(`${unit} cannot bind __TMP_ROOT__ while PrivateTmp hides the host /var/tmp tree`);
   }
-}
-
-const orbUnit = fs.readFileSync(path.join(root, "ops/runtime/units/orb.service"), "utf8");
-if (!/^Environment=N8N_TMP_DIR=\/tmp$/m.test(orbUnit)) {
-  fail("orb.service must use its systemd-private /tmp namespace");
-}
-
-for (const unit of ["orb.service", "orb-proxy.service"]) {
-  const source = fs.readFileSync(path.join(root, "ops/runtime/units", unit), "utf8");
-  const legacyEnvironment = source.lastIndexOf("EnvironmentFile=-__CONFIG_ROOT__/orb-business.env");
-  const nativeEnvironment = source.lastIndexOf("EnvironmentFile=__CONFIG_ROOT__/orb-runtime-paths.env");
-  if (legacyEnvironment === -1 || nativeEnvironment <= legacyEnvironment) {
-    fail(`${unit} must load native Orb paths after the legacy secret environment`);
-  }
-}
-
-const lifecycleLayout = fs.readFileSync(path.join(root, "scripts/runtime/prepare-lifecycle-layout.sh"), "utf8");
-for (const variable of [
-  "N8N_RESTRICT_FILE_ACCESS_TO=/tmp",
-  "META_REVIEW_STORE_PATH=$STATE_ROOT/orb/meta-review-store.json",
-  "N8N_USER_FOLDER=$STATE_ROOT/orb/n8n-home",
-  "N8N_STORAGE_PATH=$STATE_ROOT/orb/n8n-home/.n8n/storage",
-  "N8N_LOG_FILE_LOCATION=$LOG_ROOT/orb/n8n.log",
-]) {
-  if (!lifecycleLayout.includes(variable)) fail(`native Orb path overlay is missing ${variable}`);
 }
 
 const crmRunner = fs.readFileSync(path.join(root, "crm/api/scripts/run.sh"), "utf8");

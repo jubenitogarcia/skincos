@@ -9,7 +9,6 @@ if ($resolved -ne 'C:\CodexRuntime') {
 }
 
 $privateDirs = @(
-    (Join-Path $resolved 'backups\orb\daily'),
     (Join-Path $resolved 'operator\admin\skincos'),
     (Join-Path $resolved 'tmp')
 )

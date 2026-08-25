@@ -139,25 +139,9 @@
     "token-vault": {
       "patterns": [
         "platform/security/token-vault/**",
-        "orb/engine/workflow-src/meta-ads-publish/**",
-        "orb/engine/workflows/meta-ads-publish.current.json",
-        "orb/engine/scripts/*meta-ads-publish*.js",
-        "orb/engine/scripts/lib/meta-ads-publish-*.js",
-        "orb/engine/scripts/patch-meta-ads-*.js",
-        "orb/engine/scripts/read-meta-ads-*.js",
-        "orb/engine/tests/meta-ads-publish-*.test.js",
-                    "scripts/runtime/apply-meta-ads-publish-tracking-release.sh",
-                    "scripts/runtime/rollback-meta-ads-publish-tracking-release.sh",
-                    "scripts/runtime/meta-ads-tracking-custody.sh",
-                    "scripts/runtime/meta-ads-tracking-custody-attestation.mjs",
-                    "scripts/runtime/install-native-custody-runner.sh",
-                    "scripts/runtime/test-native-custody-contract.sh",
-                    "scripts/runtime/prepare-native-source-release.sh",
-                    "scripts/runtime/promote-native-source-release.sh",
-                    "scripts/runtime/test-prepare-native-source-release.sh",
-                    "scripts/runtime/test-promote-native-source-release.sh",
-                    "ops/runtime/github-actions-runner/skincos-native-custody.sudoers",
-                    "ops/runtime/units/skincos-native-custody-runner.service",
+        "scripts/runtime/install-native-custody-runner.sh",
+        "ops/runtime/github-actions-runner/skincos-native-custody.sudoers",
+        "ops/runtime/units/skincos-native-custody-runner.service",
         ".github/workflows/deploy-token-vault.yml",
         ".github/workflows/attest-meta-ads-candidate-appsecret.yml",
         ".github/workflows/influencer-intelligence-staging-shadow.yml",
@@ -175,20 +159,14 @@
       "patterns": ["backend/scripts/cloudflare-alerting-apply.sh", ".github/workflows/cloudflare-alerting-apply.yml"],
       "sharedInputs": true
     },
-    "orb": {
-      "patterns": ["orb/**", "ops/runtime/**", "scripts/runtime/**", ".github/workflows/orb-*.yml"],
-      "sharedInputs": true
-    },
     "native-runtime": {
       "patterns": [
-        "orb/**",
         "crm/api/**",
         "integration/ef/**",
         "booking/**",
         "messaging/**",
         "ops/runtime/**",
-        "scripts/runtime/**",
-        ".github/workflows/orb-*.yml"
+        "scripts/runtime/**"
       ],
       "sharedInputs": true
     },

@@ -11,7 +11,7 @@ errors route to inline MSC-99. There are no Execute Workflow nodes. The 11
 former MSC module identities are inactive archive descriptors outside the
 operational package.
 
-From `orb/engine` in Ubuntu-24.04:
+From [the independent Orb repository](https://github.com/jubenitogarcia/orb) in Ubuntu-24.04:
 
 ```bash
 npm run workflow:music:build

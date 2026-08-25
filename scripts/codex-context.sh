@@ -57,7 +57,7 @@ section "Source Of Truth"
 cat <<'EOF'
 site_public=website/ (espacofacial.com, booking, tracking, WhatsApp, CAPI)
 crm=crm/console/ + crm/api/ (crm.skincos.com.br)
-automations=orb/engine/ (orb.skincos.com.br)
+automations=independent Orb repository (https://github.com/jubenitogarcia/orb; orb.skincos.com.br)
 meta_ads=crm/console/ + ads/meta/ (crm module + dedicated meta-ads module)
 cloudflare=.github/workflows/ + wrangler configs + scripts/cloudflare-token-health.sh
 codex_docs=AGENTS.md, docs/codex-app-native.md, docs/codex-autonomy.md
