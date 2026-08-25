@@ -173,9 +173,13 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /className=\{styles\.deckStage\}/);
     assert.match(experience, /className=\{styles\.finaleSpecialCardTransform\}/);
     assert.match(experience, /function renderFinaleCard\(line: ReturnType<typeof getBeautyMovementReading>\[number\]\)/);
-    assert.match(experience, /<BeautyMovementCardIllustration cardId=\{card\.id\} \/>/);
+    assert.match(experience, /function renderRevealedCardContent\(card: BeautyMovementCard, actLabel: string\)/);
+    assert.match(experience, /renderRevealedCardContent\(card, tableDefinition\.label\)/);
+    assert.match(experience, /renderRevealedCardContent\(card, line\.actLabel\)/);
+    assert.match(experience, /className=\{`\$\{styles\.finaleCardFace\} \$\{styles\.cardBack\}`\}/);
+    assert.match(experience, /className=\{styles\.cardCopy\}/);
     assert.match(experience, /<strong>\{card\.title\}<\/strong>/);
-    assert.match(experience, /<span className=\{styles\.finaleCardMessage\}>\{card\.shortMessage\}<\/span>/);
+    assert.match(experience, /<span>\{card\.shortMessage\}<\/span>/);
     assert.match(experience, /type HandStage =\s*\|\s*"waiting"/);
     assert.match(experience, /"expand"\s*\|\s*"deal"/);
     assert.match(experience, /function scheduleDealSequence\(token: number, onReady: \(\) => void\)/);
@@ -206,9 +210,14 @@ test("continuous experience reuses the real shell and keeps the special-card fin
         experience.indexOf("function startInitialDeal()"),
         experience.indexOf("function handleDeckKeyDown"),
     );
+    const finishDeal = experience.slice(
+        experience.indexOf("function finishDealScroll"),
+        experience.indexOf("function startInitialDealScroll"),
+    );
     assert.match(initialDeal, /setCurrentIntroStage\("entering"\);\s*startInitialDealScroll\(\);/);
     assert.match(initialDeal, /setCurrentHandStage\("ready"\);\s*\/\/ Let the ready-state DOM commit once before[\s\S]*window\.requestAnimationFrame\(finishDealScroll\)/);
-    assert.match(experience, /function finishDealScroll\(\)[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*scrollToTable\(\)/);
+    assert.match(finishDeal, /function finishDealScroll\(\)[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.setTimeout\([\s\S]*stopInitialDealScroll\(\)/);
+    assert.doesNotMatch(finishDeal, /scrollToTable\(\)/);
     assert.doesNotMatch(initialDeal, /addEventListener\("(?:wheel|touchstart|pointerdown|keydown)"/);
     assert.match(experience, /function handleDeckKeyDown\(event: ReactKeyboardEvent<HTMLButtonElement>\)/);
     assert.match(experience, /event\.key !== "Enter" && event\.key !== " " && event\.key !== "Spacebar"/);
@@ -460,7 +469,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /finaleStage === "confirmation" \?/);
     assert.match(experience, /!isLocalPreview \? renderConfirmationAction\(\) : null/);
     assert.match(experience, /renderSpecialCard\(false, isLocalPreview \? "confirm" : "none", true, true\)/);
-    assert.match(experience, /renderSpecialCard\(false, "reopen"\)/);
+    assert.match(experience, /renderSpecialCard\(false, "reopen", true\)/);
     assert.doesNotMatch(experience, /specialCardPrompt|Sua carta especial está pronta\./);
     assert.match(experience, /Clique aqui para revelar sua carta especial/);
     assert.match(experience, /finaleCardGridMerging/);
