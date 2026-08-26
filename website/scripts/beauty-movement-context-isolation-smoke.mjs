@@ -499,14 +499,15 @@ async function run() {
 
     const racePage = await shared.newPage();
     const diagnosticsRace = attachDiagnostics(racePage);
-    await openInvite(racePage, baseUrl, invites.a, ROUTES[0], "Celebração", "race-a");
+    await openInvite(racePage, baseUrl, invites.a, ROUTES[0], "Celebração", "race-seed-a");
+    resetCheckpointDiagnostics(racePage);
     await racePage.evaluate(({ tokenB, tokenA }) => {
       window.location.hash = `c=${tokenB}`;
       window.setTimeout(() => {
         window.location.hash = `c=${tokenA}`;
       }, 50);
     }, { tokenB: invites.b.token, tokenA: invites.a.token });
-    await waitAct(racePage, "Celebração", "race-a");
+    await waitAct(racePage, "Celebração", "hash-race-b-to-a");
     await assertScrubbed(racePage);
 
     await shared.addCookies([{

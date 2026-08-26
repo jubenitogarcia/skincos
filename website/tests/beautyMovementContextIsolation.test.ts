@@ -258,6 +258,7 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(smoke, /contextRef\(page, checkpoint = "context-ref"\)/);
     assert.match(smoke, /waitAct\(page, act, checkpoint = "act-transition"\)/);
     assert.match(smoke, /"forward-b"/);
+    assert.match(smoke, /"hash-race-b-to-a"/);
     assert.match(smoke, /navigateAtCheckpoint/);
     assert.match(smoke, /checkpointLastApiTransportFailure = true/);
     assert.doesNotMatch(smoke, /console\.log\(.*token/i);
