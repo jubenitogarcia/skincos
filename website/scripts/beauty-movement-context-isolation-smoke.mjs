@@ -186,6 +186,19 @@ function resetCheckpointDiagnostics(page) {
   diagnostics.checkpointLastApiTransportFailure = false;
 }
 
+function checkpointDiagnosticsSnapshot(page) {
+  const diagnostics = pageDiagnostics.get(page) ?? {};
+  return {
+    apiResponses: diagnostics.checkpointApiResponses ?? 0,
+    apiFailures: diagnostics.checkpointApiFailures ?? 0,
+    lastApiStatus: diagnostics.checkpointLastApiStatus ?? 0,
+    lastApiOperation: diagnostics.checkpointLastApiOperation ?? "none",
+    lastApiTransportFailure: diagnostics.checkpointLastApiTransportFailure ?? false,
+    consoleErrors: diagnostics.consoleErrors ?? 0,
+    pageErrors: diagnostics.pageErrors ?? 0,
+  };
+}
+
 async function contextRef(page) {
   const value = await page.evaluate(() => history.state?.__efBeautyMovementContextRef ?? null);
   if (!CONTEXT_PATTERN.test(value ?? "")) fail("beauty_movement_isolation_smoke_context_missing");
@@ -220,18 +233,11 @@ async function reportFreshCheckpointFailure(page, checkpoint, phase) {
     deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
     busyRegionCount: document.querySelectorAll('[aria-busy="true"]').length,
   })).catch(() => ({ stateUnavailable: true }));
-  const diagnostics = pageDiagnostics.get(page) ?? {};
   fail("beauty_movement_isolation_smoke_fresh_checkpoint_failure", {
     checkpoint,
     phase,
     ...state,
-    apiResponses: diagnostics.checkpointApiResponses ?? 0,
-    apiFailures: diagnostics.checkpointApiFailures ?? 0,
-    lastApiStatus: diagnostics.checkpointLastApiStatus ?? 0,
-    lastApiOperation: diagnostics.checkpointLastApiOperation ?? "none",
-    lastApiTransportFailure: diagnostics.checkpointLastApiTransportFailure ?? false,
-    consoleErrors: diagnostics.consoleErrors ?? 0,
-    pageErrors: diagnostics.pageErrors ?? 0,
+    ...checkpointDiagnosticsSnapshot(page),
   });
 }
 
@@ -271,13 +277,18 @@ async function readJourneyState(page) {
   });
 }
 
-async function waitAct(page, act) {
+async function waitAct(page, act, checkpoint = "act-transition") {
   try {
     await page.getByRole("button", { name: `Revelar carta 1 de ${act}`, exact: true })
       .waitFor({ state: "visible", timeout: 60_000 });
   } catch {
     const state = await readJourneyState(page).catch(() => ({ stateUnavailable: true }));
-    fail("beauty_movement_isolation_smoke_act_timeout", { expectedAct: act, ...state });
+    fail("beauty_movement_isolation_smoke_act_timeout", {
+      checkpoint,
+      expectedAct: act,
+      ...state,
+      ...checkpointDiagnosticsSnapshot(page),
+    });
   }
   await assertScrubbed(page);
 }
@@ -287,12 +298,14 @@ async function openInvite(page, baseUrl, invite, route, expectedAct = null, chec
   await navigateAtCheckpoint(page, checkpoint, () => (
     page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" })
   ));
-  if (expectedAct) await waitAct(page, expectedAct);
+  if (expectedAct) await waitAct(page, expectedAct, checkpoint);
   else await waitFresh(page, checkpoint);
   return contextRef(page);
 }
 
 async function revealAndAdvance(page, currentAct, nextAct) {
+  const checkpoint = `advance-${currentAct.toLowerCase()}-to-${nextAct.toLowerCase()}`;
+  resetCheckpointDiagnostics(page);
   const card = page.getByRole("button", {
     name: `Revelar carta 1 de ${currentAct}`,
     exact: true,
@@ -315,12 +328,12 @@ async function revealAndAdvance(page, currentAct, nextAct) {
   }
   await page.locator('button[aria-pressed="true"]').waitFor({ state: "visible", timeout: 30_000 });
   await page.waitForTimeout(5_600);
-  await waitAct(page, nextAct);
+  await waitAct(page, nextAct, checkpoint);
 }
 
 async function reloadAt(page, act, checkpoint) {
   await navigateAtCheckpoint(page, checkpoint, () => page.reload({ waitUntil: "domcontentloaded" }));
-  await waitAct(page, act);
+  await waitAct(page, act, checkpoint);
 }
 
 async function expectFailClosed(page, target) {
@@ -384,14 +397,14 @@ async function run() {
     }
 
     await navigateAtCheckpoint(pageA, "back-a", () => pageA.goBack());
-    await waitAct(pageA, "Movimento");
+    await waitAct(pageA, "Movimento", "back-a");
     if (await contextRef(pageA) !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
     await navigateAtCheckpoint(pageA, "forward-b", () => pageA.goForward());
     await waitFresh(pageA, "forward-b");
     if (await contextRef(pageA) !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
 
     await navigateAtCheckpoint(pageA, "back-a-final", () => pageA.goBack());
-    await waitAct(pageA, "Movimento");
+    await waitAct(pageA, "Movimento", "back-a-final");
     await revealAndAdvance(pageA, "Movimento", "Celebração");
     await revealAndAdvance(pageB, "Beleza", "Movimento");
 
@@ -447,7 +460,7 @@ async function run() {
         window.location.hash = `c=${tokenA}`;
       }, 50);
     }, { tokenB: invites.b.token, tokenA: invites.a.token });
-    await waitAct(racePage, "Celebração");
+    await waitAct(racePage, "Celebração", "race-a");
     await assertScrubbed(racePage);
 
     await shared.addCookies([{
