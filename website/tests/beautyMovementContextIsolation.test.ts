@@ -19,6 +19,7 @@ import {
 } from "../src/lib/beautyMovementSecurity";
 import {
     buildBeautyMovementReleaseValidationMarker,
+    extractBeautyMovementChildFailureCode,
     extractStaticAssetPaths,
     parseWranglerJson,
 } from "../scripts/beauty-movement-production-release-smoke.mjs";
@@ -292,10 +293,13 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(primarySmoke, /Clique aqui para revelar sua carta especial/);
     assert.match(primarySmoke, /getByRole\("checkbox"\)\.count\(\) !== 0/);
     assert.doesNotMatch(primarySmoke, /getByRole\("checkbox"\)\.check\(\)/);
+    assert.match(primarySmoke, /specialCardFront/);
+    assert.doesNotMatch(primarySmoke, /beforeReload = await special\.innerText/);
     for (const workflow of [staging, production]) {
         assert.match(workflow, /Clique aqui para revelar sua carta especial/);
         assert.match(workflow, /getByRole\('checkbox'\)\.count\(\) !== 0/);
         assert.doesNotMatch(workflow, /getByRole\('checkbox'\)\.check\(\)/);
+        assert.match(workflow, /specialCardFront/);
     }
     assert.match(releaseSmoke, /syntheticFixtureRevoked: true/);
     assert.match(releaseSmoke, /durableValidationRecorded: true/);
@@ -371,6 +375,16 @@ test("production release smoke parses clean and noisy Wrangler JSON without logg
         () => buildBeautyMovementReleaseValidationMarker("invalid", "bm-123456789-2"),
         /beauty_movement_release_smoke_validation_marker_invalid/,
     );
+});
+
+test("production release smoke preserves a safe child failure code without child output", () => {
+    assert.equal(
+        extractBeautyMovementChildFailureCode(
+            "opaque details\nbeauty_movement_primary_smoke_evidence_invalid:{\"opaque\":\"redacted\"}\n",
+        ),
+        "beauty_movement_primary_smoke_evidence_invalid",
+    );
+    assert.equal(extractBeautyMovementChildFailureCode("generic child failure"), null);
 });
 
 test("production reconciliation derives one bounded synthetic fixture identity", () => {

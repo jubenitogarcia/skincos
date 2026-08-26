@@ -650,12 +650,15 @@ jobs:
           await specialReveal.click();
           const special = page.locator('article[aria-label^="Carta especial:"]');
           await special.waitFor({ state: 'visible', timeout: 30000 });
-          const firstResultText = await special.innerText();
+          const revealedFace = special.locator('div[class*="specialCardFront"]');
+          await revealedFace.waitFor({ state: 'visible', timeout: 30000 });
+          const firstResultText = (await revealedFace.innerText()).replace(/\s+/g, ' ').trim();
           if (!/combinação|Elleva|Preenchimento|Restylane|Skinbooster|Diamond|Sculptra/i.test(firstResultText)) throw new Error('beauty_movement_browser_offer_missing');
           const revealCountBeforeReload = revealRequests;
           await page.reload({ waitUntil: 'domcontentloaded' });
           await special.waitFor({ state: 'visible', timeout: 30000 });
-          const secondResultText = await special.innerText();
+          await revealedFace.waitFor({ state: 'visible', timeout: 30000 });
+          const secondResultText = (await revealedFace.innerText()).replace(/\s+/g, ' ').trim();
           if (firstResultText !== secondResultText) throw new Error('beauty_movement_browser_result_not_persistent');
           if (revealRequests !== revealCountBeforeReload || revealRequests !== 3) throw new Error('beauty_movement_browser_reveal_count_invalid');
           if (whatsappRequests.length !== 0) throw new Error('beauty_movement_external_whatsapp_request');

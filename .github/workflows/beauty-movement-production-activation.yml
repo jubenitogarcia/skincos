@@ -621,10 +621,11 @@ jobs:
             throw new Error(`beauty_movement_production_confirm_response_invalid:${JSON.stringify({ mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12) })}`);
           }
           const special = page.locator('article[aria-label^="Carta especial:"]'); await special.waitFor({ state: 'visible', timeout: 30000 });
-          const first = await special.innerText();
+          const revealedFace = special.locator('div[class*="specialCardFront"]'); await revealedFace.waitFor({ state: 'visible', timeout: 30000 });
+          const first = (await revealedFace.innerText()).replace(/\s+/g, ' ').trim();
           if (!/combinação|Elleva|Preenchimento|Restylane|Skinbooster|Diamond|Sculptra/i.test(first)) throw new Error('beauty_movement_production_offer_missing');
-          const beforeReload = reveals; await page.reload({ waitUntil: 'domcontentloaded' }); await special.waitFor({ state: 'visible', timeout: 30000 });
-          const second = await special.innerText();
+          const beforeReload = reveals; await page.reload({ waitUntil: 'domcontentloaded' }); await special.waitFor({ state: 'visible', timeout: 30000 }); await revealedFace.waitFor({ state: 'visible', timeout: 30000 });
+          const second = (await revealedFace.innerText()).replace(/\s+/g, ' ').trim();
           if (first !== second || beforeReload !== 3 || reveals !== 3 || whatsapp.length !== 0 || errors.length !== 0) throw new Error(`beauty_movement_production_browser_evidence_invalid:${JSON.stringify({ beforeReload, reveals, whatsappRequests: whatsapp.length, consoleErrors: errors.length, apiResponses: apiResponses.slice(-20), failedRequests: failedRequests.slice(-12) })}`);
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-production-activation/browser.json`, `${JSON.stringify({ browser: true, revealRequests: reveals, reloadStable: true, whatsappRequests: 0, consoleErrors: 0, outcomeVisible: true }, null, 2)}\n`, { mode: 0o600 });
           await browser.close();
