@@ -322,8 +322,7 @@ async function openInvite(page, baseUrl, invite, route, expectedAct = null, chec
   return contextRef(page, checkpoint);
 }
 
-async function revealAndAdvance(page, currentAct, nextAct) {
-  const checkpoint = `advance-${currentAct.toLowerCase()}-to-${nextAct.toLowerCase()}`;
+async function revealAndAdvance(page, currentAct, nextAct, checkpoint) {
   resetCheckpointDiagnostics(page);
   const card = page.getByRole("button", {
     name: `Revelar carta 1 de ${currentAct}`,
@@ -437,7 +436,7 @@ async function run() {
 
     const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0], null, "initial-a");
     await pageA.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i }).click();
-    await revealAndAdvance(pageA, "Beleza", "Movimento");
+    await revealAndAdvance(pageA, "Beleza", "Movimento", "advance-a-beleza-to-movimento");
     await reloadAt(pageA, "Movimento", "reload-a-movement");
 
     const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0], null, "switch-a-to-b");
@@ -465,8 +464,8 @@ async function run() {
 
     await navigateAtCheckpoint(pageA, "back-a-final", () => pageA.goBack());
     await waitAct(pageA, "Movimento", "back-a-final");
-    await revealAndAdvance(pageA, "Movimento", "Celebração");
-    await revealAndAdvance(pageB, "Beleza", "Movimento");
+    await revealAndAdvance(pageA, "Movimento", "Celebração", "advance-a-movimento-to-celebracao");
+    await revealAndAdvance(pageB, "Beleza", "Movimento", "advance-b-beleza-to-movimento");
 
     await Promise.all([
       reloadAt(pageA, "Celebração", "simultaneous-reload-a"),

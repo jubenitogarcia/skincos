@@ -260,6 +260,8 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(smoke, /waitAct\(page, act, checkpoint = "act-transition"\)/);
     assert.match(smoke, /"forward-b"/);
     assert.match(smoke, /"hash-race-b-to-a"/);
+    assert.match(smoke, /"advance-a-beleza-to-movimento"/);
+    assert.match(smoke, /"advance-b-beleza-to-movimento"/);
     assert.match(smoke, /"simultaneous-reload-a"/);
     assert.match(smoke, /"simultaneous-reload-b"/);
     assert.match(smoke, /"expired-invite"/);
