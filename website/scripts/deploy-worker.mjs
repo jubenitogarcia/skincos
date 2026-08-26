@@ -203,9 +203,25 @@ export function writeDeployReleaseManifest({
 }
 
 export function parseCurrentWorkerVersionId(output) {
-  const match = String(output ?? "").match(/\(100%\)\s+([0-9a-f-]{36})/i);
-  if (!match) throw new Error("worker_current_version_unreadable");
-  return match[1];
+  const normalized = String(output ?? "")
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/^\uFEFF/, "")
+    .trim();
+  try {
+    const deployment = JSON.parse(normalized);
+    const activeVersions = Array.isArray(deployment?.versions)
+      ? deployment.versions.filter((version) => (
+        Number(version?.percentage) === 100
+        && /^[0-9a-f-]{36}$/i.test(version?.version_id ?? "")
+      ))
+      : [];
+    if (activeVersions.length === 1) return activeVersions[0].version_id;
+  } catch {
+    // Retain compatibility with older Wrangler text output for local tooling.
+  }
+  const matches = [...normalized.matchAll(/\(100%\)\s+([0-9a-f-]{36})/gi)];
+  if (matches.length !== 1) throw new Error("worker_current_version_unreadable");
+  return matches[0][1];
 }
 
 export function assertProductionReleaseReconciliationContract({
@@ -279,7 +295,15 @@ function getWranglerEnvironmentArgs(environmentName) {
 
 async function getCurrentVersionId(configPath, env, wranglerEnvironmentArgs, allowMissingWorker = false) {
   try {
-    const { stdout } = await runAndCapture("npx", ["wrangler", "deployments", "list", "-c", configPath, ...wranglerEnvironmentArgs], env);
+    const { stdout } = await runAndCapture("npx", [
+      "wrangler",
+      "deployments",
+      "status",
+      "--json",
+      "-c",
+      configPath,
+      ...wranglerEnvironmentArgs,
+    ], env);
     return parseCurrentWorkerVersionId(stdout);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

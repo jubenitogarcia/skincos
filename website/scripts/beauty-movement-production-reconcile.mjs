@@ -292,7 +292,8 @@ function currentVersionId(options) {
     "--yes",
     `wrangler@${WRANGLER_VERSION}`,
     "deployments",
-    "list",
+    "status",
+    "--json",
     "--config",
     options.config,
   ]));
