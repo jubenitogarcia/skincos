@@ -27,6 +27,9 @@ test("workflow keeps PR Gitleaks mandatory and reserves full current-tree scans 
   assert.match(workflow, /gitleaks\/gitleaks-action@/);
   assert.match(workflow, /gitleaks dir --redact --exit-code=2 --config \.gitleaks\.toml \./);
   assert.doesNotMatch(workflow, /--log-opts="--all"/);
+  const gitleaksJob = workflow.split("\n  gitleaks:", 2)[1]?.split("\n  npm-audit:", 1)[0] || "";
+  assert.match(gitleaksJob, /git fetch --no-tags --unshallow origin/);
+  assert.ok(gitleaksJob.indexOf("git fetch --no-tags --unshallow origin") < gitleaksJob.indexOf("gitleaks/gitleaks-action@"));
   const fullTreeGitleaks = workflow.split("Run full current-tree Gitleaks scan for broad-risk PRs and main", 2)[1] || "";
   assert.match(fullTreeGitleaks, /if:\s+\$\{\{\s*needs\.scope\.outputs\.full_scan\s*==\s*'true'\s*\}\}/);
   assert.doesNotMatch(fullTreeGitleaks, /github\.event_name/);
