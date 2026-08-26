@@ -37,6 +37,10 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /beauty_movement_delivery_ref_invalid/);
     assert.match(workflow, /i\.external_ref = '\$\{invite_ref\}'/);
     assert.doesNotMatch(workflow, /i\.external_ref = 'velocity-0002'/);
+    const correlationStep = workflow.match(/      - name: Correlate persisted outcome without reading PII[\s\S]*?(?=\n      - name:)/)?.[0] ?? "";
+    assert.match(correlationStep, /const quote = String\.fromCharCode\(39\)/);
+    assert.match(correlationStep, /refs\.map\(\(value\) => quote \+ value \+ quote\)/);
+    assert.doesNotMatch(correlationStep, /\$\{value\}/);
     assert.match(workflow, /bootstrapReady/);
     assert.match(workflow, /mutationResponses/);
     assert.match(workflow, /failedRequests/);
