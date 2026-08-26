@@ -381,19 +381,28 @@ async function reloadAt(page, act, checkpoint) {
   await waitAct(page, act, checkpoint);
 }
 
-async function expectFailClosed(page, target) {
-  await page.goto(target, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => {
-    const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
-    return normalized !== "/beleza-em-movimento" && normalized.toLowerCase() !== "/belezaemmovimento";
-  }, { timeout: 60_000 });
+async function expectFailClosed(page, target, checkpoint) {
+  await navigateAtCheckpoint(page, checkpoint, () => page.goto(target, { waitUntil: "domcontentloaded" }));
+  try {
+    await page.waitForFunction(() => {
+      const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
+      return normalized !== "/beleza-em-movimento" && normalized.toLowerCase() !== "/belezaemmovimento";
+    }, { timeout: 60_000 });
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_fail_closed_invalid", checkpoint, {
+      phase: "redirect",
+    });
+  }
   const result = await page.evaluate(() => ({
     hashEmpty: window.location.hash === "",
     campaignBusy: document.querySelectorAll('[aria-busy="true"]').length,
     campaignDeck: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
   }));
   if (!result.hashEmpty || result.campaignBusy !== 0 || result.campaignDeck !== 0) {
-    fail("beauty_movement_isolation_smoke_fail_closed_invalid", result);
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_fail_closed_invalid", checkpoint, {
+      phase: "validation",
+      ...result,
+    });
   }
 }
 
@@ -432,21 +441,27 @@ async function run() {
     await reloadAt(pageA, "Movimento", "reload-a-movement");
 
     const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0], null, "switch-a-to-b");
-    if (firstContextA === firstContextB) fail("beauty_movement_isolation_smoke_context_collision");
+    if (firstContextA === firstContextB) {
+      failAtCheckpoint(pageA, "beauty_movement_isolation_smoke_context_collision", "switch-a-to-b");
+    }
 
     const pageB = await shared.newPage();
     const diagnosticsB = attachDiagnostics(pageB);
     const secondContextB = await openInvite(pageB, baseUrl, invites.b, ROUTES[1], null, "parallel-b");
     if (secondContextB === firstContextA || secondContextB === firstContextB) {
-      fail("beauty_movement_isolation_smoke_session_context_reused");
+      failAtCheckpoint(pageB, "beauty_movement_isolation_smoke_session_context_reused", "parallel-b");
     }
 
     await navigateAtCheckpoint(pageA, "back-a", () => pageA.goBack());
     await waitAct(pageA, "Movimento", "back-a");
-    if (await contextRef(pageA, "back-a") !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
+    if (await contextRef(pageA, "back-a") !== firstContextA) {
+      failAtCheckpoint(pageA, "beauty_movement_isolation_smoke_back_restored_wrong_context", "back-a");
+    }
     await navigateAtCheckpoint(pageA, "forward-b", () => pageA.goForward());
     await waitFresh(pageA, "forward-b");
-    if (await contextRef(pageA, "forward-b") !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
+    if (await contextRef(pageA, "forward-b") !== firstContextB) {
+      failAtCheckpoint(pageA, "beauty_movement_isolation_smoke_forward_restored_wrong_context", "forward-b");
+    }
 
     await navigateAtCheckpoint(pageA, "back-a-final", () => pageA.goBack());
     await waitAct(pageA, "Movimento", "back-a-final");
@@ -457,9 +472,19 @@ async function run() {
       reloadAt(pageA, "Celebração", "simultaneous-reload-a"),
       reloadAt(pageB, "Movimento", "simultaneous-reload-b"),
     ]);
-    if (await contextRef(pageA, "simultaneous-reload-a") !== firstContextA
-      || await contextRef(pageB, "simultaneous-reload-b") !== secondContextB) {
-      fail("beauty_movement_isolation_smoke_simultaneous_reload_context_changed");
+    if (await contextRef(pageA, "simultaneous-reload-a") !== firstContextA) {
+      failAtCheckpoint(
+        pageA,
+        "beauty_movement_isolation_smoke_simultaneous_reload_context_changed",
+        "simultaneous-reload-a",
+      );
+    }
+    if (await contextRef(pageB, "simultaneous-reload-b") !== secondContextB) {
+      failAtCheckpoint(
+        pageB,
+        "beauty_movement_isolation_smoke_simultaneous_reload_context_changed",
+        "simultaneous-reload-b",
+      );
     }
 
     const reopenedA = await shared.newPage();
@@ -520,16 +545,20 @@ async function run() {
     }]);
     const expiredPage = await shared.newPage();
     const diagnosticsExpired = attachDiagnostics(expiredPage);
-    await expectFailClosed(expiredPage, `${baseUrl}${ROUTES[0]}#c=${encodeURIComponent(invites.expired.token)}`);
+    await expectFailClosed(
+      expiredPage,
+      `${baseUrl}${ROUTES[0]}#c=${encodeURIComponent(invites.expired.token)}`,
+      "expired-invite",
+    );
     const legacyAfterExpired = (await shared.cookies(baseUrl)).some((cookie) => cookie.name === LEGACY_COOKIE);
     if (legacyAfterExpired) fail("beauty_movement_isolation_smoke_legacy_cookie_not_cleared");
 
     const invalidPage = await shared.newPage();
     const diagnosticsInvalid = attachDiagnostics(invalidPage);
-    await expectFailClosed(invalidPage, `${baseUrl}${ROUTES[1]}#c=invalid`);
+    await expectFailClosed(invalidPage, `${baseUrl}${ROUTES[1]}#c=invalid`, "invalid-invite");
     const directPage = await shared.newPage();
     const diagnosticsDirect = attachDiagnostics(directPage);
-    await expectFailClosed(directPage, `${baseUrl}${ROUTES[0]}`);
+    await expectFailClosed(directPage, `${baseUrl}${ROUTES[0]}`, "direct-entry");
 
     const sharedCookies = await shared.cookies(`${baseUrl}/api/beleza-em-movimento/state`);
     const cookieA = sharedCookies.find((cookie) => cookie.name === `ef_bm_ctx_${firstContextA}`);
