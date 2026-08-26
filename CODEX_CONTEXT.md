@@ -33,9 +33,14 @@
   every Windows-published artifact matched its native SHA-256.
 - Orb backup owner, PostgreSQL restore and n8n encryption-key custody belong to
   the independent Orb repository and its private runtime. SKINCOS does not
-  copy, publish or delete `C:\CodexRuntime\n8n` or Orb evidence.
+  copy, publish or delete the retained legacy paths `C:\CodexRuntime\n8n` and
+  `C:\CodexRuntime\operator\admin\skincos\orb`; new Orb operator evidence
+  belongs under `C:\CodexRuntime\operator\admin\orb`.
 - Cutover checkpoint: `C:\CodexRuntime\backups\runtime-cutover\20260715T182203Z`; it preserves the pre-cutover unit/config evidence while the active and prior immutable releases provide operational rollback.
-- Native releases are immutable. Rollback repoints `/opt/skincos/current/*` to the prior release, restores the captured units/config and restarts only the affected services.
+- Native releases are immutable. O rollback do Orb é gerido exclusivamente no
+  repositório Orb e repõe `/opt/orb/current` para a release anterior; qualquer
+  referência a `/opt/skincos/current/*` é histórica e não deve ser usada como
+  runtime, release ou rollback do Orb.
 - Cross-filesystem transfer is Windows-owned. Do not recursively traverse `C:`
   from WSL or launch Windows transfer binaries from a Linux service.
 

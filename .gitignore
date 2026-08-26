@@ -79,13 +79,6 @@ dist/
 eggs/
 .eggs/
 lib/
-!orb/engine/music-composition-studio/lib/
-!orb/engine/music-composition-studio/lib/**
-!orb/engine/scripts/lib/
-orb/engine/scripts/lib/*
-!orb/engine/scripts/lib/runtime-paths.sh
-!orb/engine/scripts/lib/runtime-paths.js
-!orb/engine/scripts/lib/meta-ads-publish-execution-semantics.js
 lib64/
 parts/
 sdist/
