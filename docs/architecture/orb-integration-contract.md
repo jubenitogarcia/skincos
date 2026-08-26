@@ -24,15 +24,22 @@ submodule, mirror ou cópia sincronizada neste repositório.
   contrato externo de integração e não dá acesso direto ao banco;
 - os schemas, autenticação, idempotência e versionamento dos endpoints do Orb
   são publicados e testados no repositório independente.
+- A configuração MCP do consumidor usa somente os nomes `orb_readonly`,
+  `orb_workflows`, `orb_admin` e `orb_ops`, com hostnames publicados pelo Orb.
+  Headers Access, OAuth e aprovações ficam no computador do Codex, nunca neste
+  repositório consumidor.
 
 ## Gate de corte
 
-O corte de produção só é elegível depois de reconciliar uma exportação
-autenticada do n8n live com o ledger de execuções, restaurar e validar o banco
-PostgreSQL próprio do Orb, testar import/export isolado e executar smoke
-sintético em staging. A release anterior e o banco anterior permanecem
-retidos até o encerramento da observação pós-corte.
+O runtime Orb já foi separado em namespace próprio. A promoção de novas
+releases e dos planos MCP continua elegível somente depois de reconciliar uma
+exportação autenticada do n8n live com o ledger de execuções, restaurar e
+validar o banco PostgreSQL próprio do Orb, testar import/export isolado e
+executar smoke sintético em staging. A release anterior e o banco anterior
+permanecem retidos durante a observação pós-corte.
 
 Os diretórios privados `C:\CodexRuntime\n8n` e
-`C:\CodexRuntime\operator\admin\skincos\orb` não fazem parte do Git e não
-devem ser copiados, apagados ou tratados como fonte de código.
+`C:\CodexRuntime\operator\admin\skincos\orb` são legado retido: não fazem
+parte do Git e não devem ser copiados, apagados ou tratados como fonte de
+código. Cópias futuras verificadas pertencem exclusivamente ao namespace
+`C:\CodexRuntime\operator\admin\orb`.
