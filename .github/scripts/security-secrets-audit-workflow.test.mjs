@@ -21,15 +21,18 @@ function scopeFor(files, { eventName = "pull_request", riskReport = null } = {})
   });
 }
 
-test("workflow keeps PR Gitleaks mandatory and reserves full scans for main, schedule, dispatch, or broad risk", () => {
+test("workflow keeps PR Gitleaks mandatory and reserves full current-tree scans for main, schedule, dispatch, or broad risk", () => {
   assert.match(workflow, /pull_request:\n\s+branches:\s+\[main\]/);
   assert.match(workflow, /schedule:/);
   assert.match(workflow, /gitleaks\/gitleaks-action@/);
-  assert.match(workflow, /gitleaks git --redact --exit-code=2/);
-  assert.match(workflow, /--log-opts="--all"/);
-  const fullHistoryGitleaks = workflow.split("Run full Gitleaks history scan for broad-risk PRs and main", 2)[1] || "";
-  assert.match(fullHistoryGitleaks, /if:\s+\$\{\{\s*needs\.scope\.outputs\.full_scan\s*==\s*'true'\s*\}\}/);
-  assert.doesNotMatch(fullHistoryGitleaks, /github\.event_name/);
+  assert.match(workflow, /gitleaks dir --redact --exit-code=2 --config \.gitleaks\.toml \./);
+  assert.doesNotMatch(workflow, /--log-opts="--all"/);
+  const gitleaksJob = workflow.split("\n  gitleaks:", 2)[1]?.split("\n  npm-audit:", 1)[0] || "";
+  assert.match(gitleaksJob, /git fetch --no-tags --unshallow origin/);
+  assert.ok(gitleaksJob.indexOf("git fetch --no-tags --unshallow origin") < gitleaksJob.indexOf("gitleaks/gitleaks-action@"));
+  const fullTreeGitleaks = workflow.split("Run full current-tree Gitleaks scan for broad-risk PRs and main", 2)[1] || "";
+  assert.match(fullTreeGitleaks, /if:\s+\$\{\{\s*needs\.scope\.outputs\.full_scan\s*==\s*'true'\s*\}\}/);
+  assert.doesNotMatch(fullTreeGitleaks, /github\.event_name/);
   assert.match(workflow, /fetch-depth:\s+2/);
   assert.match(workflow, /codex-bounded-diff\.mjs/);
   assert.match(workflow, /git fetch --no-tags --unshallow origin/);
