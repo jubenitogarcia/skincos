@@ -1,6 +1,10 @@
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 
-export const BEAUTY_MOVEMENT_SESSION_COOKIE = "ef_beauty_movement_session";
+export const BEAUTY_MOVEMENT_LEGACY_SESSION_COOKIE = "ef_beauty_movement_session";
+/** @deprecated Read only to expire pre-context sessions during an invite exchange. */
+export const BEAUTY_MOVEMENT_SESSION_COOKIE = BEAUTY_MOVEMENT_LEGACY_SESSION_COOKIE;
+export const BEAUTY_MOVEMENT_CONTEXT_HEADER = "x-beauty-movement-context";
+export const BEAUTY_MOVEMENT_CONTEXT_COOKIE_PREFIX = "ef_bm_ctx_";
 
 const TOKEN_MIN_LENGTH = 32;
 const TOKEN_MAX_LENGTH = 256;
@@ -136,6 +140,11 @@ export function isBeautyMovementOpaqueToken(value: string | null | undefined): v
     return normalizeToken(value) !== null;
 }
 
+export function getBeautyMovementSessionCookieName(contextRef: string | null | undefined): string | null {
+    const normalized = normalizeToken(contextRef);
+    return normalized ? `${BEAUTY_MOVEMENT_CONTEXT_COOKIE_PREFIX}${normalized}` : null;
+}
+
 export function createBeautyMovementOpaqueToken(): string {
     const bytes = requireCrypto().getRandomValues(new Uint8Array(32));
     return toBase64Url(bytes);
@@ -164,6 +173,18 @@ export async function hashBeautyMovementSessionToken(params: { secret: string; t
     const token = normalizeToken(params.token);
     if (!token) throw new Error("beauty_movement_invalid_session_token");
     return hmacSha256(params.secret, `v1|beauty-movement|session|${token}`);
+}
+
+/**
+ * Produces a non-secret selector for one private session. The selector can be
+ * exposed to the tab, but is accepted only together with the matching
+ * HttpOnly session cookie. Keeping it in a separate HMAC domain prevents it
+ * from being confused with either invite or session credentials.
+ */
+export async function deriveBeautyMovementSessionContextRef(params: { secret: string; token: string }): Promise<string> {
+    const token = normalizeToken(params.token);
+    if (!token) throw new Error("beauty_movement_invalid_session_token");
+    return hmacSha256(params.secret, `v1|beauty-movement|session-context|${token}`);
 }
 
 export async function hashBeautyMovementIp(params: { secret: string; ip: string | null | undefined }): Promise<string | null> {

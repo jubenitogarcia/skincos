@@ -273,10 +273,84 @@ test("beauty movement exchanges an opaque invite into a private session without 
     assert.equal(result.state.campaign.whatsappMessage, "Olá, quero confirmar a condição do meu convite.");
     assert.equal(JSON.stringify(result.state).includes("+5551999991234"), false);
 
-    const restored = await getBeautyMovementSession(result.sessionToken, options(fixture.db));
+    const restored = await getBeautyMovementSession(
+        { sessionToken: result.sessionToken, contextRef: result.contextRef },
+        options(fixture.db),
+    );
     assert.equal(restored.ok, true);
     const rejected = await exchangeBeautyMovementInvite({ token: fixture.token, origin: "https://evil.example", ip: "203.0.113.10", nowMs: NOW }, options(fixture.db));
     assert.deepEqual(rejected, { ok: false, error: "origin_not_allowed" });
+});
+
+test("beauty movement rejects a session token paired with another tab context", async () => {
+    const fixture = await makeFixture();
+    const exchange = await exchangeBeautyMovementInvite(
+        { token: fixture.token, origin: ORIGIN, ip: "203.0.113.90", nowMs: NOW },
+        options(fixture.db),
+    );
+    assert.equal(exchange.ok, true);
+    if (!exchange.ok) return;
+
+    const wrongContextRef = exchange.contextRef === "w".repeat(43) ? "z".repeat(43) : "w".repeat(43);
+    assert.deepEqual(
+        await getBeautyMovementSession(
+            { sessionToken: exchange.sessionToken, contextRef: wrongContextRef },
+            options(fixture.db),
+        ),
+        { ok: false, error: "session_unavailable" },
+    );
+    assert.deepEqual(
+        await revealBeautyMovementCard(
+            {
+                sessionToken: exchange.sessionToken,
+                contextRef: wrongContextRef,
+                actIndex: 1,
+                cardId: "beleza-presenca",
+                origin: ORIGIN,
+                ip: "203.0.113.90",
+            },
+            options(fixture.db),
+        ),
+        { ok: false, error: "session_unavailable" },
+    );
+    assert.equal(fixture.db.reveals.length, 0);
+});
+
+test("beauty movement creates distinct contexts for simultaneous sessions", async () => {
+    const fixture = await makeFixture();
+    const [sessionA, sessionB] = await Promise.all([
+        exchangeBeautyMovementInvite(
+            { token: fixture.token, origin: ORIGIN, ip: "203.0.113.91", nowMs: NOW },
+            options(fixture.db),
+        ),
+        exchangeBeautyMovementInvite(
+            { token: fixture.token, origin: ORIGIN, ip: "203.0.113.92", nowMs: NOW },
+            options(fixture.db),
+        ),
+    ]);
+    assert.equal(sessionA.ok, true);
+    assert.equal(sessionB.ok, true);
+    if (!sessionA.ok || !sessionB.ok) return;
+    assert.notEqual(sessionA.sessionToken, sessionB.sessionToken);
+    assert.notEqual(sessionA.contextRef, sessionB.contextRef);
+
+    const [stateA, stateB, crossed] = await Promise.all([
+        getBeautyMovementSession(
+            { sessionToken: sessionA.sessionToken, contextRef: sessionA.contextRef },
+            options(fixture.db),
+        ),
+        getBeautyMovementSession(
+            { sessionToken: sessionB.sessionToken, contextRef: sessionB.contextRef },
+            options(fixture.db),
+        ),
+        getBeautyMovementSession(
+            { sessionToken: sessionA.sessionToken, contextRef: sessionB.contextRef },
+            options(fixture.db),
+        ),
+    ]);
+    assert.equal(stateA.ok, true);
+    assert.equal(stateB.ok, true);
+    assert.deepEqual(crossed, { ok: false, error: "session_unavailable" });
 });
 
 test("beauty movement campaign copy probe reads the active campaign without creating a session", async () => {
@@ -340,7 +414,7 @@ test("beauty movement leaves seven session mutations below their distinct limit"
 
     for (let attempt = 0; attempt < 7; attempt += 1) {
         const reveal = await revealBeautyMovementCard(
-            { sessionToken: exchange.sessionToken, actIndex: 1, cardId: "beleza-presenca", origin: ORIGIN, ip },
+            { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, actIndex: 1, cardId: "beleza-presenca", origin: ORIGIN, ip },
             options(fixture.db),
         );
         assert.equal(reveal.ok, true);
@@ -407,18 +481,19 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
     if (!exchange.ok) return;
 
     const sessionToken = exchange.sessionToken;
-    const outOfOrder = await revealBeautyMovementCard({ sessionToken, actIndex: 2, cardId: "potencia", origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
+    const contextRef = exchange.contextRef;
+    const outOfOrder = await revealBeautyMovementCard({ sessionToken, contextRef, actIndex: 2, cardId: "potencia", origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
     assert.deepEqual(outOfOrder, { ok: false, error: "invalid_act" });
     for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
-        const reveal = await revealBeautyMovementCard({ sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
+        const reveal = await revealBeautyMovementCard({ sessionToken, contextRef, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
         assert.equal(reveal.ok, true);
     }
-    const replacement = await revealBeautyMovementCard({ sessionToken, actIndex: 1, cardId: "potencia", origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
+    const replacement = await revealBeautyMovementCard({ sessionToken, contextRef, actIndex: 1, cardId: "potencia", origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
     assert.deepEqual(replacement, { ok: false, error: "card_already_revealed" });
 
-    const withoutConsent = await confirmBeautyMovementInvite({ sessionToken, operationalConsent: false, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
+    const withoutConsent = await confirmBeautyMovementInvite({ sessionToken, contextRef, operationalConsent: false, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
     assert.deepEqual(withoutConsent, { ok: false, error: "operational_consent_required" });
-    const confirmed = await confirmBeautyMovementInvite({ sessionToken, email: "ana+event@example.com", operationalConsent: true, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
+    const confirmed = await confirmBeautyMovementInvite({ sessionToken, contextRef, email: "ana+event@example.com", operationalConsent: true, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
     assert.equal(confirmed.ok, true);
     if (!confirmed.ok) return;
     assert.equal(confirmed.state.confirmed, true);
@@ -442,6 +517,7 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
 
     const replay = await confirmBeautyMovementInvite({
         sessionToken,
+        contextRef,
         email: "troca-nao-autorizada@example.com",
         operationalConsent: true,
         origin: ORIGIN,
@@ -477,6 +553,7 @@ test("invite assignment is authoritative even when symbolic cards resolve elsewh
     for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard({
             sessionToken: exchange.sessionToken,
+            contextRef: exchange.contextRef,
             actIndex,
             cardId,
             origin: ORIGIN,
@@ -486,6 +563,7 @@ test("invite assignment is authoritative even when symbolic cards resolve elsewh
     }
     const confirmed = await confirmBeautyMovementInvite({
         sessionToken: exchange.sessionToken,
+        contextRef: exchange.contextRef,
         operationalConsent: true,
         origin: ORIGIN,
         ip: "203.0.113.71",
@@ -519,6 +597,7 @@ test("assigned Velocity invites never manufacture a commercial outcome", async (
     for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard({
             sessionToken: exchange.sessionToken,
+            contextRef: exchange.contextRef,
             actIndex,
             cardId,
             origin: ORIGIN,
@@ -528,6 +607,7 @@ test("assigned Velocity invites never manufacture a commercial outcome", async (
     }
     const confirmed = await confirmBeautyMovementInvite({
         sessionToken: exchange.sessionToken,
+        contextRef: exchange.contextRef,
         operationalConsent: true,
         origin: ORIGIN,
         ip: "203.0.113.72",
@@ -552,7 +632,7 @@ test("beauty movement preserves a prior v1 outcome instead of reinterpreting it 
 
     for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard(
-            { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.12" },
+            { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.12" },
             options(fixture.db),
         );
         assert.equal(reveal.ok, true);
@@ -568,7 +648,7 @@ test("beauty movement preserves a prior v1 outcome instead of reinterpreting it 
     fixture.db.invite.outcome_protocol_version = BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION;
 
     const confirmed = await confirmBeautyMovementInvite(
-        { sessionToken: exchange.sessionToken, email: null, operationalConsent: true, origin: ORIGIN, ip: "203.0.113.12" },
+        { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, email: null, operationalConsent: true, origin: ORIGIN, ip: "203.0.113.12" },
         options(fixture.db),
     );
     assert.equal(confirmed.ok, true);
@@ -588,7 +668,7 @@ test("beauty movement rejects an incompatible or incomplete persisted outcome sn
         if (!exchange.ok) continue;
         for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
             const reveal = await revealBeautyMovementCard(
-                { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.13" },
+                { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.13" },
                 options(fixture.db),
             );
             assert.equal(reveal.ok, true);
@@ -597,7 +677,7 @@ test("beauty movement rejects an incompatible or incomplete persisted outcome sn
         fixture.db.invite.outcome_snapshot_json = snapshot;
         fixture.db.invite.outcome_protocol_version = BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION;
         const confirmed = await confirmBeautyMovementInvite(
-            { sessionToken: exchange.sessionToken, email: null, operationalConsent: true, origin: ORIGIN, ip: "203.0.113.13" },
+            { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, email: null, operationalConsent: true, origin: ORIGIN, ip: "203.0.113.13" },
             options(fixture.db),
         );
         assert.deepEqual(confirmed, { ok: false, error: "campaign_unavailable" });
@@ -623,13 +703,13 @@ test("beauty movement reveals a configured discount only after confirmation and 
 
     for (const [actIndex, cardId] of [[1, "beleza-autocuidado"], [2, "movimento-potencia"], [3, "celebracao-confianca"]] as const) {
         const reveal = await revealBeautyMovementCard(
-            { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.17" },
+            { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.17" },
             options(fixture.db),
         );
         assert.equal(reveal.ok, true);
     }
     const confirmed = await confirmBeautyMovementInvite(
-        { sessionToken: exchange.sessionToken, email: null, operationalConsent: true, origin: ORIGIN, ip: "203.0.113.17" },
+        { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, email: null, operationalConsent: true, origin: ORIGIN, ip: "203.0.113.17" },
         options(fixture.db),
     );
     assert.equal(confirmed.ok, true);
@@ -663,7 +743,10 @@ test("beauty movement fails closed for expired or revoked invitations and sessio
     if (!exchange.ok) return;
     const storedSession = [...active.db.sessions.values()][0]!;
     storedSession.session_expires_at_ms = NOW - 1;
-    assert.deepEqual(await getBeautyMovementSession(exchange.sessionToken, options(active.db)), {
+    assert.deepEqual(await getBeautyMovementSession(
+        { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef },
+        options(active.db),
+    ), {
         ok: false,
         error: "session_unavailable",
     });
@@ -689,13 +772,14 @@ test("beauty movement does not allow the invitation form to replace a pre-regist
 
     for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard(
-            { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.31" },
+            { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.31" },
             options(fixture.db),
         );
         assert.equal(reveal.ok, true);
     }
     const replacement = await confirmBeautyMovementInvite({
         sessionToken: exchange.sessionToken,
+        contextRef: exchange.contextRef,
         email: "nova@example.com",
         operationalConsent: true,
         origin: ORIGIN,
@@ -715,7 +799,7 @@ test("beauty movement treats a concurrent confirmation claim as a replay without
 
     for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard(
-            { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.41" },
+            { sessionToken: exchange.sessionToken, contextRef: exchange.contextRef, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.41" },
             options(fixture.db),
         );
         assert.equal(reveal.ok, true);
@@ -725,6 +809,7 @@ test("beauty movement treats a concurrent confirmation claim as a replay without
     fixture.db.claimConfirmationElsewhereOnNextWrite = true;
     const replay = await confirmBeautyMovementInvite({
         sessionToken: exchange.sessionToken,
+        contextRef: exchange.contextRef,
         email: "nao-deve-sobrescrever@example.com",
         operationalConsent: true,
         origin: ORIGIN,

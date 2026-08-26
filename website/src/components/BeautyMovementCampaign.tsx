@@ -8,82 +8,162 @@ import BeautyMovementExperience, {
   type BeautyMovementReveal,
 } from "@/components/BeautyMovementExperience";
 import {
-    isBeautyMovementTrackableEvent,
-    sanitizeBeautyMovementTrackingParams,
-    trackBeautyMovementSiteEvent,
+  BEAUTY_MOVEMENT_HANDOFF_ATTEMPT_KEY,
+  BEAUTY_MOVEMENT_HANDOFF_EVENT,
+  BEAUTY_MOVEMENT_INVITE_STORAGE_KEY,
+  bindBeautyMovementContextRef,
+  clearBeautyMovementContextRef,
+  consumeBeautyMovementInviteHandoff,
+  isBeautyMovementContextRef,
+  readBeautyMovementContextRef,
+  type BeautyMovementInviteHandoff,
+} from "@/lib/beautyMovementBrowserContext";
+import {
+  isBeautyMovementTrackableEvent,
+  sanitizeBeautyMovementTrackingParams,
+  trackBeautyMovementSiteEvent,
 } from "@/lib/beautyMovementTracking";
 import styles from "./BeautyMovementCampaign.module.css";
 
-const INVITE_STORAGE_KEY = "ef:beauty-movement:invite";
+const CONTEXT_HEADER = "X-Beauty-Movement-Context";
 
 type CampaignApiResponse =
-  | { ok: true; state: BeautyMovementExperienceInitialState }
+  | { ok: true; contextRef?: string; state: BeautyMovementExperienceInitialState }
   | { ok: false; error?: string };
 
-async function requestCampaignState(path: string, init?: RequestInit): Promise<BeautyMovementExperienceInitialState> {
+type CampaignRequestOptions = RequestInit & {
+  contextRef?: string | null;
+};
+
+async function requestCampaignState(
+  path: string,
+  { contextRef, ...init }: CampaignRequestOptions = {},
+): Promise<Extract<CampaignApiResponse, { ok: true }>> {
   const response = await fetch(path, {
     cache: "no-store",
     credentials: "same-origin",
     ...init,
     headers: {
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-      ...(init?.headers ?? {}),
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(contextRef ? { [CONTEXT_HEADER]: contextRef } : {}),
+      ...(init.headers ?? {}),
     },
   });
   const payload = (await response.json().catch(() => null)) as CampaignApiResponse | null;
   if (!response.ok || !payload?.ok || !payload.state) {
     throw new Error("beauty_movement_unavailable");
   }
-  return payload.state;
+  return payload;
 }
 
 function redirectToInstitutionalSite() {
   try {
-    window.sessionStorage.removeItem(INVITE_STORAGE_KEY);
+    window.sessionStorage.removeItem(BEAUTY_MOVEMENT_INVITE_STORAGE_KEY);
+    window.sessionStorage.removeItem(BEAUTY_MOVEMENT_HANDOFF_ATTEMPT_KEY);
   } catch {
     // The redirect is still safe if storage is unavailable.
+  }
+  try {
+    clearBeautyMovementContextRef();
+  } catch {
+    // A blocked History API must not prevent the fail-closed redirect.
   }
   window.location.replace("/");
 }
 
 export default function BeautyMovementCampaign() {
   const [state, setState] = useState<BeautyMovementExperienceInitialState | null>(null);
-  const initializedRef = useRef(false);
+  const [contextRef, setContextRef] = useState<string | null>(null);
+  const contextRefRef = useRef<string | null>(null);
+  const pendingHandoffRef = useRef<BeautyMovementInviteHandoff | null>(null);
+  const initializationGenerationRef = useRef(0);
+  const initializationAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-    let active = true;
+    let mounted = true;
 
     async function initialize() {
-      let inviteToken: string | null = null;
-      try {
-        inviteToken = window.sessionStorage.getItem(INVITE_STORAGE_KEY);
-        window.sessionStorage.removeItem(INVITE_STORAGE_KEY);
-      } catch {
-        // A valid existing session can still continue without session storage.
+      const generation = initializationGenerationRef.current + 1;
+      initializationGenerationRef.current = generation;
+      initializationAbortRef.current?.abort();
+      const controller = new AbortController();
+      initializationAbortRef.current = controller;
+      setState(null);
+
+      if (!pendingHandoffRef.current) {
+        pendingHandoffRef.current = consumeBeautyMovementInviteHandoff();
       }
+      const handoff = pendingHandoffRef.current;
 
       try {
-        if (inviteToken) {
-          await requestCampaignState("/api/beleza-em-movimento/session", {
+        let nextContextRef: string;
+        let nextState: BeautyMovementExperienceInitialState;
+        if (handoff.attempted) {
+          if (!handoff.token) throw new Error("beauty_movement_invalid_handoff");
+          const exchange = await requestCampaignState("/api/beleza-em-movimento/session", {
             method: "POST",
-            body: JSON.stringify({ token: inviteToken }),
+            body: JSON.stringify({ token: handoff.token }),
+            signal: controller.signal,
           });
+          if (!isBeautyMovementContextRef(exchange.contextRef)) {
+            throw new Error("beauty_movement_invalid_context_ref");
+          }
+          // The exchange body does not prove that the browser retained the
+          // HttpOnly credential. Verify it before rendering personalized state.
+          const verified = await requestCampaignState("/api/beleza-em-movimento/state", {
+            contextRef: exchange.contextRef,
+            signal: controller.signal,
+          });
+          nextContextRef = exchange.contextRef;
+          nextState = verified.state;
+        } else {
+          const boundContextRef = readBeautyMovementContextRef();
+          if (!boundContextRef) throw new Error("beauty_movement_context_required");
+          const restored = await requestCampaignState("/api/beleza-em-movimento/state", {
+            contextRef: boundContextRef,
+            signal: controller.signal,
+          });
+          nextContextRef = boundContextRef;
+          nextState = restored.state;
         }
-        const nextState = await requestCampaignState("/api/beleza-em-movimento/state");
-        if (active) setState(nextState);
+
+        if (!mounted || controller.signal.aborted || generation !== initializationGenerationRef.current) return;
+        pendingHandoffRef.current = null;
+        bindBeautyMovementContextRef(nextContextRef);
+        contextRefRef.current = nextContextRef;
+        setContextRef(nextContextRef);
+        setState(nextState);
       } catch {
-        // The API intentionally has one generic invalid state. A tokenless
-        // direct visit, invalid token, expired invite and revoked invite all
-        // return to the institutional site without disclosing the reason.
+        if (!mounted || controller.signal.aborted || generation !== initializationGenerationRef.current) return;
+        pendingHandoffRef.current = null;
+        contextRefRef.current = null;
+        setContextRef(null);
+        // A tokenless direct visit, invalid/expired invite, unavailable
+        // storage, or mismatched context all fail closed. No request ever
+        // falls back to a global legacy cookie.
         redirectToInstitutionalSite();
       }
     }
 
+    const reinitialize = () => {
+      pendingHandoffRef.current = null;
+      void initialize();
+    };
+    const revalidateRestoredPage = (event: PageTransitionEvent) => {
+      if (event.persisted) reinitialize();
+    };
+
+    window.addEventListener(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitialize);
+    window.addEventListener("popstate", reinitialize);
+    window.addEventListener("pageshow", revalidateRestoredPage);
     void initialize();
+
     return () => {
-      active = false;
+      mounted = false;
+      initializationAbortRef.current?.abort();
+      window.removeEventListener(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitialize);
+      window.removeEventListener("popstate", reinitialize);
+      window.removeEventListener("pageshow", revalidateRestoredPage);
     };
   }, []);
 
@@ -96,24 +176,38 @@ export default function BeautyMovementCampaign() {
   }
 
   async function revealCard(actIndex: number, cardId: string): Promise<{ reveals: readonly BeautyMovementReveal[] }> {
-    const nextState = await requestCampaignState("/api/beleza-em-movimento/reveal", {
+    const selectedContextRef = contextRefRef.current;
+    const generation = initializationGenerationRef.current;
+    if (!selectedContextRef) throw new Error("beauty_movement_context_required");
+    const response = await requestCampaignState("/api/beleza-em-movimento/reveal", {
+      contextRef: selectedContextRef,
       method: "POST",
       body: JSON.stringify({ actIndex, cardId }),
     });
-    setState(nextState);
-    return { reveals: nextState.reveals };
+    if (contextRefRef.current !== selectedContextRef || generation !== initializationGenerationRef.current) {
+      throw new Error("beauty_movement_context_changed");
+    }
+    setState(response.state);
+    return { reveals: response.state.reveals };
   }
 
   async function confirmInvite(input: BeautyMovementConfirmationInput): Promise<BeautyMovementConfirmationCommit> {
-    const nextState = await requestCampaignState("/api/beleza-em-movimento/confirm", {
+    const selectedContextRef = contextRefRef.current;
+    const generation = initializationGenerationRef.current;
+    if (!selectedContextRef) throw new Error("beauty_movement_context_required");
+    const response = await requestCampaignState("/api/beleza-em-movimento/confirm", {
+      contextRef: selectedContextRef,
       method: "POST",
       body: JSON.stringify(input),
     });
-    setState(nextState);
-    return { confirmed: nextState.confirmed, offer: nextState.offer ?? null };
+    if (contextRefRef.current !== selectedContextRef || generation !== initializationGenerationRef.current) {
+      throw new Error("beauty_movement_context_changed");
+    }
+    setState(response.state);
+    return { confirmed: response.state.confirmed, offer: response.state.offer ?? null };
   }
 
-  if (!state) {
+  if (!state || !contextRef) {
     return (
       <main className={styles.statusPage} aria-live="polite" aria-busy="true">
         <p className={styles.statusEyebrow}>Cartas da Beleza em Movimento</p>
@@ -125,6 +219,7 @@ export default function BeautyMovementCampaign() {
 
   return (
     <BeautyMovementExperience
+      key={contextRef}
       initialState={state}
       onReveal={revealCard}
       onConfirm={confirmInvite}

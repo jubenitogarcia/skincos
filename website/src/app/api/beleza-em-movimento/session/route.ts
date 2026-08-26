@@ -7,6 +7,7 @@ import {
   beautyMovementInvalidResponse,
   beautyMovementJson,
   beautyMovementUnavailableResponse,
+  clearBeautyMovementLegacySessionCookie,
   getBeautyMovementClientIp,
   hasBeautyMovementAllowedOrigin,
   readBeautyMovementJson,
@@ -20,7 +21,11 @@ export async function POST(request: NextRequest) {
   if (!(await hasBeautyMovementAllowedOrigin(request))) return beautyMovementInvalidResponse();
   const body = await readBeautyMovementJson(request);
   const token = stringField(body?.token, 256);
-  if (!token) return beautyMovementInvalidResponse();
+  if (!token) {
+    const response = beautyMovementInvalidResponse();
+    clearBeautyMovementLegacySessionCookie(response);
+    return response;
+  }
 
   const result = await exchangeBeautyMovementInvite({
     token,
@@ -29,16 +34,21 @@ export async function POST(request: NextRequest) {
   });
 
   if (!result.ok) {
-    return result.error === "campaign_unavailable"
+    const response = result.error === "campaign_unavailable"
       ? beautyMovementUnavailableResponse()
       : beautyMovementInvalidResponse();
+    // A new-link attempt must never fall back to the pre-context global
+    // cookie, even when the new token is invalid or unavailable.
+    clearBeautyMovementLegacySessionCookie(response);
+    return response;
   }
 
-  const response = beautyMovementJson({ ok: true, state: result.state });
+  const response = beautyMovementJson({ ok: true, contextRef: result.contextRef, state: result.state });
   const expiresAtMs =
     "sessionExpiresAtMs" in result && typeof result.sessionExpiresAtMs === "number"
       ? result.sessionExpiresAtMs
       : Date.now() + BEAUTY_MOVEMENT_SESSION_TTL_MS;
-  setBeautyMovementSessionCookie(response, result.sessionToken, expiresAtMs);
+  setBeautyMovementSessionCookie(response, result.contextRef, result.sessionToken, expiresAtMs);
+  clearBeautyMovementLegacySessionCookie(response);
   return response;
 }

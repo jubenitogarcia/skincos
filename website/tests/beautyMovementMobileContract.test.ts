@@ -25,7 +25,7 @@ test("mobile handoff keeps one rhythm, one deck anchor, and a roomier special-ca
     assert.match(styles, /--bm-mobile-special-card-height: clamp\(300px, 100vw, 320px\);/);
     assert.match(
         styles,
-        /\.specialCardModalDialog \.specialCard\s*\{\s*min-height: clamp\(448px, 145vw, 474px\);/,
+        /\.specialCardModalDialog \.specialCard\s*\{\s*min-height: clamp\(460px, 149vw, 486px\);/,
     );
     assert.match(
         styles,
