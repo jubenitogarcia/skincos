@@ -4,20 +4,23 @@ import {
   beautyMovementInvalidResponse,
   beautyMovementJson,
   beautyMovementUnavailableResponse,
+  clearBeautyMovementLegacySessionCookie,
   clearBeautyMovementSessionCookie,
-  getBeautyMovementSessionToken,
+  getBeautyMovementSessionCredential,
 } from "@/lib/beautyMovementRoute";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const result = await getBeautyMovementSession(getBeautyMovementSessionToken(request));
+  const credential = getBeautyMovementSessionCredential(request);
+  const result = await getBeautyMovementSession(credential);
   if (result.ok) return beautyMovementJson({ ok: true, state: result.state });
 
   const response =
     result.error === "campaign_unavailable"
       ? beautyMovementUnavailableResponse()
       : beautyMovementInvalidResponse();
-  clearBeautyMovementSessionCookie(response);
+  if (credential) clearBeautyMovementSessionCookie(response, credential.contextRef);
+  clearBeautyMovementLegacySessionCookie(response);
   return response;
 }

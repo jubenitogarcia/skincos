@@ -176,7 +176,10 @@ jobs:
           const write = (name, value) => fs.writeFileSync(path.join(fixtureDir, name), value, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
           write('invites.csv', [
             'NOME,TELEFONE,PRÊMIO',
-            'Beauty Movement Smoke,5511999999999,Preenchimento',
+            'Beauty Movement Smoke Primary,5511999999999,Preenchimento',
+            'Beauty Movement Isolation A,5511999999998,Preenchimento',
+            'Beauty Movement Isolation B,5511999999997,Preenchimento',
+            'Beauty Movement Isolation Expired,5511999999996,Preenchimento',
             '',
           ].join('\n'));
           write('ends-at.txt', endsAt);
@@ -296,6 +299,20 @@ jobs:
           const fs = require('node:fs');
           const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0];
           if (!payload?.success || Number(payload.meta?.changes ?? 0) !== 1) throw new Error('beauty_movement_fixture_activation_failed');
+          NODE
+          expired_ref="$(node --input-type=module - "${OUTPUT_DIR}" <<'NODE'
+          import { readSyntheticInvites } from './scripts/beauty-movement-context-isolation-smoke.mjs';
+          process.stdout.write(readSyntheticInvites(process.argv[2]).expired.inviteRef);
+          NODE
+          )"
+          [[ "${expired_ref}" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$ ]] || { echo 'synthetic expired invite reference invalid'; exit 1; }
+          expiry_json="$RUNNER_TEMP/beauty-movement-staging-smoke/expiry.json"
+          expiry_sql="UPDATE bm_invites SET expires_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 - 60000, updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE campaign_id = '${CAMPAIGN_ID}' AND external_ref = '${expired_ref}' AND invite_status = 'active';"
+          npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${expiry_sql}" --json >"${expiry_json}"
+          node - "${expiry_json}" <<'NODE'
+          const fs = require('node:fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0];
+          if (!payload?.success || Number(payload.meta?.changes ?? 0) !== 1) throw new Error('beauty_movement_expired_fixture_update_failed');
           NODE
 
       - name: Prepare synthetic active-campaign copy update
@@ -517,6 +534,10 @@ jobs:
           state.inviteRef = inviteRef;
           fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
           NODE
+          node scripts/beauty-movement-context-isolation-smoke.mjs \
+            --base-url "${SMOKE_URL}" \
+            --delivery-directory "${OUTPUT_DIR}" \
+            --evidence-file "$RUNNER_TEMP/beauty-movement-staging-smoke/context-isolation.json"
           SMOKE_INVITE_TOKEN="${token}" node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import { chromium } from 'playwright';
@@ -684,15 +705,34 @@ jobs:
           invite_ref="$(node --input-type=commonjs -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const value=state.inviteRef; if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) throw new Error("beauty_movement_delivery_ref_invalid"); process.stdout.write(value);' "${STATE_FILE}")"
           readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.assigned_outcome_key, i.assignment_protocol_version, length(i.outcome_snapshot_json) AS outcome_snapshot_length, length(i.planned_card_selections_json) AS planned_card_selections_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${CAMPAIGN_ID}' AND i.external_ref = '${invite_ref}';"
           npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${readback_sql}" --json >"${readback}"
-          node - "${readback}" "${RUNNER_TEMP}/beauty-movement-staging-smoke/browser.json" <<'NODE'
+          isolation_evidence="$RUNNER_TEMP/beauty-movement-staging-smoke/context-isolation.json"
+          isolation_readback="$RUNNER_TEMP/beauty-movement-staging-smoke/context-isolation-readback.json"
+          isolation_refs="$(node --input-type=commonjs -e '
+          const fs = require("node:fs");
+          const evidence = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          const refs = [evidence.inviteRefs?.a, evidence.inviteRefs?.b, evidence.inviteRefs?.expired];
+          if (!refs.every((value) => /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) || new Set(refs).size !== 3) throw new Error("beauty_movement_isolation_refs_invalid");
+          process.stdout.write(refs.map((value) => `'${value}'`).join(","));
+          ' "${isolation_evidence}")"
+          isolation_sql="SELECT i.external_ref, i.invite_status, i.confirmed_at_ms, i.expires_at_ms, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_invites i WHERE i.campaign_id = '${CAMPAIGN_ID}' AND i.external_ref IN (${isolation_refs}) ORDER BY i.external_ref;"
+          npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${isolation_sql}" --json >"${isolation_readback}"
+          node - "${readback}" "${RUNNER_TEMP}/beauty-movement-staging-smoke/browser.json" "${isolation_evidence}" "${isolation_readback}" <<'NODE'
           const fs = require('node:fs');
-          const [readbackPath, browserPath] = process.argv.slice(2);
+          const [readbackPath, browserPath, isolationEvidencePath, isolationReadbackPath] = process.argv.slice(2);
           const row = JSON.parse(fs.readFileSync(readbackPath, 'utf8'))?.[0]?.results?.[0];
           const browser = JSON.parse(fs.readFileSync(browserPath, 'utf8'));
+          const isolation = JSON.parse(fs.readFileSync(isolationEvidencePath, 'utf8'));
+          const isolationRows = JSON.parse(fs.readFileSync(isolationReadbackPath, 'utf8'))?.[0]?.results ?? [];
           const outcomes = new Set(['elleva_upgrade', 'filler_double', 'sculptra_classic_unlock', 'skinbooster_diamond_unlock']);
           if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || row.outcome_key !== 'filler_double' || row.assigned_outcome_key !== 'filler_double' || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_persisted_readback_invalid');
           if (browser.browser !== true || browser.reloadStable !== true || browser.revealRequests !== 3 || browser.whatsappRequests !== 0 || browser.consoleErrors !== 0) throw new Error('beauty_movement_browser_evidence_invalid');
-          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-staging-smoke/evidence.json`, `${JSON.stringify({ campaignStatus: row.campaign_status, inviteStatus: row.invite_status, confirmed: true, revealCount: Number(row.reveal_count), outcomeKey: row.outcome_key, assignedOutcomeKey: row.assigned_outcome_key, assignmentProtocolVersion: row.assignment_protocol_version, outcomeProtocolVersion: row.outcome_protocol_version, outcomeSnapshotPresent: true, plannedCardSelectionsPresent: true, outcomeResolved: true, browserReloadStable: true, whatsappRequests: 0, consoleErrors: 0 }, null, 2)}\n`, { mode: 0o600 });
+          const byRef = new Map(isolationRows.map((candidate) => [candidate.external_ref, candidate]));
+          const rowA = byRef.get(isolation.inviteRefs.a);
+          const rowB = byRef.get(isolation.inviteRefs.b);
+          const expired = byRef.get(isolation.inviteRefs.expired);
+          if (isolationRows.length !== 3 || !rowA || !rowB || !expired || rowA.invite_status !== 'active' || rowB.invite_status !== 'active' || rowA.confirmed_at_ms !== null || rowB.confirmed_at_ms !== null || Number(rowA.reveal_count) !== 2 || Number(rowB.reveal_count) !== 1 || Number(expired.reveal_count) !== 0 || Number(expired.expires_at_ms) >= Date.now()) throw new Error('beauty_movement_context_isolation_readback_invalid');
+          if (isolation.browser !== true || isolation.crossContextAuthorizationRejected !== true || isolation.simultaneousReloadStable !== true || isolation.rawTokensPersistedInEvidence !== false) throw new Error('beauty_movement_context_isolation_evidence_invalid');
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-staging-smoke/evidence.json`, `${JSON.stringify({ campaignStatus: row.campaign_status, inviteStatus: row.invite_status, confirmed: true, revealCount: Number(row.reveal_count), outcomeKey: row.outcome_key, assignedOutcomeKey: row.assigned_outcome_key, assignmentProtocolVersion: row.assignment_protocol_version, outcomeProtocolVersion: row.outcome_protocol_version, outcomeSnapshotPresent: true, plannedCardSelectionsPresent: true, outcomeResolved: true, browserReloadStable: true, contextIsolation: true, syntheticInviteCount: 4, whatsappRequests: 0, consoleErrors: 0 }, null, 2)}\n`, { mode: 0o600 });
           console.log(`staging persisted smoke passed: outcome=${row.outcome_key} reveals=${row.reveal_count} browserReloadStable=true`);
           NODE
 

@@ -1,0 +1,196 @@
+name: Recover Beauty Movement production release
+
+on:
+  workflow_run:
+    workflows: [Deploy Website to Cloudflare]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: deploy-website-production
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: >-
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download incumbent checkpoint from the completed release
+        id: incumbentArtifact
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          pattern: website-production-incumbent-*-${{ github.event.workflow_run.run_attempt }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/beauty-movement-production-recovery/incumbent
+
+      - name: Download candidate checkpoint from the completed release
+        id: candidateArtifact
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          pattern: website-production-candidate-*-${{ github.event.workflow_run.run_attempt }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/beauty-movement-production-recovery/candidate
+
+      - name: Resolve trusted recovery context
+        id: recovery
+        env:
+          ORIGINAL_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          ORIGINAL_RUN_ID: ${{ github.event.workflow_run.id }}
+          ORIGINAL_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const root = path.join(process.env.RUNNER_TEMP, 'beauty-movement-production-recovery');
+          const find = (directory, name) => {
+            if (!fs.existsSync(directory)) return null;
+            const entries = fs.readdirSync(directory, { withFileTypes: true });
+            for (const entry of entries) {
+              const candidate = path.join(directory, entry.name);
+              if (entry.isDirectory()) {
+                const nested = find(candidate, name);
+                if (nested) return nested;
+              } else if (entry.name === name) {
+                return candidate;
+              }
+            }
+            return null;
+          };
+          const incumbentPath = find(path.join(root, 'incumbent'), 'incumbent.json');
+          if (!incumbentPath) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'required=false\n');
+            console.log('No production incumbent checkpoint exists; this completed run did not reach production mutation.');
+            process.exit(0);
+          }
+          const incumbent = JSON.parse(fs.readFileSync(incumbentPath, 'utf8'));
+          const shaPattern = /^[0-9a-f]{40}$/;
+          const versionPattern = /^[0-9a-f-]{36}$/i;
+          const expectedReleaseOwner = `bm-${process.env.ORIGINAL_RUN_ID}-${process.env.ORIGINAL_RUN_ATTEMPT}`;
+          if (
+            incumbent.version !== 1
+            || incumbent.phase !== 'prepared'
+            || !shaPattern.test(incumbent.releaseSha ?? '')
+            || incumbent.releaseOwner !== expectedReleaseOwner
+            || !versionPattern.test(incumbent.previousVersionId ?? '')
+            || !shaPattern.test(incumbent.previousBuildSha ?? '')
+            || incumbent.candidateVersionId !== null
+            || !Number.isInteger(incumbent.beautyMovementActiveCampaignCount)
+            || incumbent.beautyMovementActiveCampaignCount < 0
+          ) {
+            throw new Error('beauty_movement_recovery_incumbent_invalid');
+          }
+          if (incumbent.beautyMovementActiveCampaignCount === 0) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'required=false\n');
+            console.log('No active Beauty Movement campaign was present at deployment; recovery is not required.');
+            process.exit(0);
+          }
+
+          const conclusion = ['success', 'cancelled', 'timed_out'].includes(process.env.ORIGINAL_CONCLUSION)
+            ? process.env.ORIGINAL_CONCLUSION
+            : 'failure';
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `required=true\nrelease_sha=${incumbent.releaseSha}\nconclusion=${conclusion}\n`);
+          NODE
+
+      - name: Checkout the trusted recovery source
+        if: ${{ steps.recovery.outputs.required == 'true' }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Setup Node
+        if: ${{ steps.recovery.outputs.required == 'true' }}
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install trusted recovery dependencies
+        if: ${{ steps.recovery.outputs.required == 'true' }}
+        working-directory: website
+        run: npm ci
+
+      - name: Acquire Website recovery lease
+        id: recoveryLease
+        if: ${{ steps.recovery.outputs.required == 'true' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:website
+          module: website
+          source_sha: ${{ steps.recovery.outputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-recovery.json
+          wait_timeout_seconds: '1200'
+          retry_interval_seconds: '15'
+
+      - name: Revalidate Website recovery lease before mutation
+        if: ${{ steps.recoveryLease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-recovery.json
+          resource: release:website
+          module: website
+          source_sha: ${{ steps.recovery.outputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Reconcile a stranded Beauty Movement release
+        id: reconcile
+        if: ${{ steps.recoveryLease.outcome == 'success' }}
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node scripts/beauty-movement-production-reconcile.mjs \
+            --base-url https://espacofacial.com \
+            --database espacofacial-beauty-movement \
+            --config wrangler.toml \
+            --release-sha "${{ steps.recovery.outputs.release_sha }}" \
+            --incumbent-manifest "$RUNNER_TEMP/beauty-movement-production-recovery/incumbent/incumbent.json" \
+            --candidate-manifest "$RUNNER_TEMP/beauty-movement-production-recovery/candidate/candidate.json" \
+            --trigger-run-id "${{ github.event.workflow_run.id }}" \
+            --trigger-run-attempt "${{ github.event.workflow_run.run_attempt }}" \
+            --conclusion "${{ steps.recovery.outputs.conclusion }}" \
+            --evidence-file "$RUNNER_TEMP/beauty-movement-production-recovery/reconciliation.json"
+
+      - name: Upload private recovery evidence
+        if: ${{ always() && steps.recovery.outputs.required == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beauty-movement-production-recovery-${{ steps.recovery.outputs.release_sha }}-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/beauty-movement-production-recovery/reconciliation.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Release Website recovery lease
+        if: ${{ always() && steps.recoveryLease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-recovery.json

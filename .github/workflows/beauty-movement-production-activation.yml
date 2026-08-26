@@ -428,7 +428,14 @@ jobs:
           const now = Date.now();
           const ends = new Date(now + 24 * 60 * 60 * 1000).toISOString();
           const write = (name, value) => fs.writeFileSync(path.join(root, name), value, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-          write('invites.csv', ['NOME,TELEFONE,PRÊMIO', 'Beauty Movement QA,5511999990000,Preenchimento', ''].join('\n'));
+          write('invites.csv', [
+            'NOME,TELEFONE,PRÊMIO',
+            'Beauty Movement Smoke Primary,5511999990000,Preenchimento',
+            'Beauty Movement Isolation A,5511999990001,Preenchimento',
+            'Beauty Movement Isolation B,5511999990002,Preenchimento',
+            'Beauty Movement Isolation Expired,5511999990003,Preenchimento',
+            '',
+          ].join('\n'));
           write('campaign.json', JSON.stringify({
             title: 'Beauty Movement production smoke',
             description: 'Fixture sintética privada; não é campanha pública.',
@@ -473,6 +480,19 @@ jobs:
           state.smokeActivated = true;
           fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
           NODE
+          expired_ref="$(node --input-type=module - "${SMOKE_OUTPUT_DIR}" <<'NODE'
+          import { readSyntheticInvites } from './scripts/beauty-movement-context-isolation-smoke.mjs';
+          process.stdout.write(readSyntheticInvites(process.argv[2]).expired.inviteRef);
+          NODE
+          )"
+          [[ "${expired_ref}" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$ ]] || { echo 'synthetic expired invite reference invalid'; exit 1; }
+          expiry_sql="UPDATE bm_invites SET expires_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 - 60000, updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE campaign_id = '${SMOKE_CAMPAIGN_ID}' AND external_ref = '${expired_ref}' AND invite_status = 'active';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${expiry_sql}" --json > "${SMOKE_ROOT}/expiry.json"
+          node - "${SMOKE_ROOT}/expiry.json" <<'NODE'
+          const fs = require('node:fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0];
+          if (!payload?.success || Number(payload.meta?.changes ?? 0) !== 1) throw new Error('beauty_movement_expired_fixture_update_failed');
+          NODE
 
       - name: Install production smoke browser
         working-directory: website
@@ -509,6 +529,10 @@ jobs:
           invite_ref="$(node --input-type=commonjs -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).inviteRef)' "${delivery_meta}")"
           token="${invite_url##*#c=}"
           [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
+          node scripts/beauty-movement-context-isolation-smoke.mjs \
+            --base-url "${SMOKE_URL}" \
+            --delivery-directory "${SMOKE_OUTPUT_DIR}" \
+            --evidence-file "$RUNNER_TEMP/beauty-movement-production-activation/context-isolation.json"
           SMOKE_INVITE_TOKEN="${token}" SMOKE_CAMPAIGN_ID="${SMOKE_CAMPAIGN_ID}" node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import { chromium } from 'playwright';
@@ -606,13 +630,33 @@ jobs:
           NODE
           readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.assigned_outcome_key, i.assignment_protocol_version, length(i.outcome_snapshot_json) AS outcome_snapshot_length, length(i.planned_card_selections_json) AS planned_card_selections_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${SMOKE_CAMPAIGN_ID}' AND i.external_ref = '${invite_ref}';"
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${readback_sql}" --json > "${SMOKE_ROOT}/readback.json"
-          node - "${SMOKE_ROOT}/readback.json" "${RUNNER_TEMP}/beauty-movement-production-activation/browser.json" <<'NODE'
+          isolation_evidence="$RUNNER_TEMP/beauty-movement-production-activation/context-isolation.json"
+          isolation_readback="$RUNNER_TEMP/beauty-movement-production-activation/context-isolation-readback.json"
+          isolation_refs="$(node --input-type=commonjs -e '
+          const fs = require("node:fs");
+          const evidence = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          const refs = [evidence.inviteRefs?.a, evidence.inviteRefs?.b, evidence.inviteRefs?.expired];
+          if (!refs.every((value) => /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) || new Set(refs).size !== 3) throw new Error("beauty_movement_isolation_refs_invalid");
+          process.stdout.write(refs.map((value) => `'${value}'`).join(","));
+          ' "${isolation_evidence}")"
+          isolation_sql="SELECT i.external_ref, i.invite_status, i.confirmed_at_ms, i.expires_at_ms, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_invites i WHERE i.campaign_id = '${SMOKE_CAMPAIGN_ID}' AND i.external_ref IN (${isolation_refs}) ORDER BY i.external_ref;"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${isolation_sql}" --json > "${isolation_readback}"
+          node - "${SMOKE_ROOT}/readback.json" "${RUNNER_TEMP}/beauty-movement-production-activation/browser.json" "${isolation_evidence}" "${isolation_readback}" <<'NODE'
           const fs = require('node:fs');
-          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
-          const browser = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          const [readbackPath, browserPath, isolationEvidencePath, isolationReadbackPath] = process.argv.slice(2);
+          const row = JSON.parse(fs.readFileSync(readbackPath, 'utf8'))?.[0]?.results?.[0];
+          const browser = JSON.parse(fs.readFileSync(browserPath, 'utf8'));
+          const isolation = JSON.parse(fs.readFileSync(isolationEvidencePath, 'utf8'));
+          const isolationRows = JSON.parse(fs.readFileSync(isolationReadbackPath, 'utf8'))?.[0]?.results ?? [];
           const outcomes = new Set(['elleva_upgrade', 'filler_double', 'sculptra_classic_unlock', 'skinbooster_diamond_unlock']);
           if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || !outcomes.has(row.assigned_outcome_key) || row.outcome_key !== row.assigned_outcome_key || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
           if (browser.browser !== true || browser.reloadStable !== true || browser.revealRequests !== 3 || browser.whatsappRequests !== 0 || browser.consoleErrors !== 0) throw new Error('beauty_movement_production_browser_invalid');
+          const byRef = new Map(isolationRows.map((candidate) => [candidate.external_ref, candidate]));
+          const rowA = byRef.get(isolation.inviteRefs.a);
+          const rowB = byRef.get(isolation.inviteRefs.b);
+          const expired = byRef.get(isolation.inviteRefs.expired);
+          if (isolationRows.length !== 3 || !rowA || !rowB || !expired || rowA.invite_status !== 'active' || rowB.invite_status !== 'active' || rowA.confirmed_at_ms !== null || rowB.confirmed_at_ms !== null || Number(rowA.reveal_count) !== 2 || Number(rowB.reveal_count) !== 1 || Number(expired.reveal_count) !== 0 || Number(expired.expires_at_ms) >= Date.now()) throw new Error('beauty_movement_production_context_isolation_readback_invalid');
+          if (isolation.browser !== true || isolation.crossContextAuthorizationRejected !== true || isolation.simultaneousReloadStable !== true || isolation.rawTokensPersistedInEvidence !== false) throw new Error('beauty_movement_production_context_isolation_evidence_invalid');
           console.log(`production persisted smoke passed: outcome=${row.outcome_key} reveals=${row.reveal_count} browserReloadStable=true`);
           NODE
 
@@ -694,7 +738,7 @@ jobs:
           const [statePath, releaseSha, campaignId] = process.argv.slice(2);
           const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
           if (state.success !== true) throw new Error('activation evidence state is not successful');
-          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-production-activation/evidence.json`, `${JSON.stringify({ releaseSha, campaignId, candidateVersion: state.candidateVersion, campaignActivated: true, syntheticFixtureRevoked: true, browserSmoke: 'passed', persistedOutcome: 'present', flag: 'true' }, null, 2)}\n`, { mode: 0o600 });
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-production-activation/evidence.json`, `${JSON.stringify({ releaseSha, campaignId, candidateVersion: state.candidateVersion, campaignActivated: true, syntheticFixtureRevoked: true, browserSmoke: 'passed', contextIsolationSmoke: 'passed', syntheticInviteCount: 4, persistedOutcome: 'present', flag: 'true' }, null, 2)}\n`, { mode: 0o600 });
           NODE
           cat "${ACTIVATION_ROOT}/evidence.json" >> "${GITHUB_STEP_SUMMARY}"
 

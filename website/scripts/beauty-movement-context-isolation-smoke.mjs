@@ -1,0 +1,491 @@
+import fs from "node:fs";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
+
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]{40,180}$/;
+const CONTEXT_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
+const INVITE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/;
+const ROUTES = ["/beleza-em-movimento", "/BelezaEmMovimento"];
+const LEGACY_COOKIE = "ef_beauty_movement_session";
+
+function fail(code, details = {}) {
+  const safe = Object.fromEntries(
+    Object.entries(details).filter(([, value]) => (
+      typeof value === "number"
+      || typeof value === "boolean"
+      || (typeof value === "string" && !TOKEN_PATTERN.test(value) && !value.includes("#c="))
+    )),
+  );
+  throw new Error(`${code}:${JSON.stringify(safe)}`);
+}
+
+function parseArgs(argv) {
+  const values = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    const key = argv[index];
+    const value = argv[index + 1];
+    if (!key?.startsWith("--") || !value) fail("beauty_movement_isolation_smoke_args_invalid");
+    values.set(key.slice(2), value);
+  }
+  const baseUrl = values.get("base-url");
+  const deliveryDirectory = values.get("delivery-directory");
+  const evidenceFile = values.get("evidence-file");
+  if (!baseUrl || !deliveryDirectory || !evidenceFile) fail("beauty_movement_isolation_smoke_args_missing");
+  const parsedBase = new URL(baseUrl);
+  if (!["https:", "http:"].includes(parsedBase.protocol) || parsedBase.pathname !== "/") {
+    fail("beauty_movement_isolation_smoke_base_invalid");
+  }
+  return {
+    baseUrl: parsedBase.origin,
+    deliveryDirectory: path.resolve(deliveryDirectory),
+    evidenceFile: path.resolve(evidenceFile),
+  };
+}
+
+export function parseCsvRow(line) {
+  const cells = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quoted) {
+      if (character === '"' && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = false;
+      } else {
+        current += character;
+      }
+    } else if (character === '"') {
+      quoted = true;
+    } else if (character === ",") {
+      cells.push(current);
+      current = "";
+    } else {
+      current += character;
+    }
+  }
+  if (quoted) fail("beauty_movement_isolation_smoke_csv_quote_invalid");
+  cells.push(current);
+  return cells;
+}
+
+export function readSyntheticInvites(deliveryDirectory) {
+  const files = fs.readdirSync(deliveryDirectory).filter((name) => name.endsWith("-delivery.csv"));
+  if (files.length !== 1) fail("beauty_movement_isolation_smoke_delivery_count_invalid", { count: files.length });
+  const lines = fs.readFileSync(path.join(deliveryDirectory, files[0]), "utf8").trim().split(/\r?\n/);
+  const header = parseCsvRow(lines[0] ?? "").join(",");
+  if (header !== "name,invite_ref,whatsapp,invite_url") fail("beauty_movement_isolation_smoke_delivery_header_invalid");
+  const rows = lines.slice(1).map((line) => {
+    const [name, inviteRef, , inviteUrl] = parseCsvRow(line);
+    if (!name || !INVITE_REF_PATTERN.test(inviteRef ?? "")) fail("beauty_movement_isolation_smoke_delivery_row_invalid");
+    let parsed;
+    try {
+      parsed = new URL(inviteUrl);
+    } catch {
+      fail("beauty_movement_isolation_smoke_invite_url_invalid");
+    }
+    const token = new URLSearchParams(parsed.hash.slice(1)).get("c");
+    if (!TOKEN_PATTERN.test(token ?? "") || !ROUTES.some((route) => parsed.pathname.toLowerCase() === route.toLowerCase())) {
+      fail("beauty_movement_isolation_smoke_invite_shape_invalid");
+    }
+    return { name, inviteRef, token };
+  });
+  const byName = (name) => {
+    const row = rows.find((candidate) => candidate.name === name);
+    if (!row) fail("beauty_movement_isolation_smoke_fixture_missing", { name });
+    return row;
+  };
+  const selected = {
+    primary: byName("Beauty Movement Smoke Primary"),
+    a: byName("Beauty Movement Isolation A"),
+    b: byName("Beauty Movement Isolation B"),
+    expired: byName("Beauty Movement Isolation Expired"),
+  };
+  if (new Set(Object.values(selected).map((invite) => invite.inviteRef)).size !== 4) {
+    fail("beauty_movement_isolation_smoke_invite_ref_collision");
+  }
+  if (new Set(Object.values(selected).map((invite) => invite.token)).size !== 4) {
+    fail("beauty_movement_isolation_smoke_token_collision");
+  }
+  return selected;
+}
+
+function attachDiagnostics(page) {
+  const diagnostics = {
+    consoleErrors: 0,
+    pageErrors: 0,
+    apiFailures: 0,
+    apiResponses: 0,
+    revealRequests: 0,
+    whatsappRequests: 0,
+  };
+  page.on("console", (message) => {
+    if (message.type() === "error") diagnostics.consoleErrors += 1;
+  });
+  page.on("pageerror", () => {
+    diagnostics.pageErrors += 1;
+  });
+  page.on("requestfailed", (request) => {
+    try {
+      if (new URL(request.url()).pathname.startsWith("/api/beleza-em-movimento/")) diagnostics.apiFailures += 1;
+    } catch {
+      // Ignore malformed third-party URLs; no value is retained.
+    }
+  });
+  page.on("response", (response) => {
+    try {
+      if (new URL(response.url()).pathname.startsWith("/api/beleza-em-movimento/")) diagnostics.apiResponses += 1;
+    } catch {
+      // No URL is retained in evidence.
+    }
+  });
+  page.on("request", (request) => {
+    const requestUrl = request.url();
+    if (request.method() === "POST" && requestUrl.includes("/api/beleza-em-movimento/reveal")) {
+      diagnostics.revealRequests += 1;
+    }
+    if (/^https:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(requestUrl)) {
+      diagnostics.whatsappRequests += 1;
+    }
+  });
+  return diagnostics;
+}
+
+async function contextRef(page) {
+  const value = await page.evaluate(() => history.state?.__efBeautyMovementContextRef ?? null);
+  if (!CONTEXT_PATTERN.test(value ?? "")) fail("beauty_movement_isolation_smoke_context_missing");
+  return value;
+}
+
+async function assertScrubbed(page) {
+  const result = await page.evaluate(() => {
+    let inviteStorage = null;
+    try {
+      inviteStorage = window.sessionStorage.getItem("ef:beauty-movement:invite");
+    } catch {
+      inviteStorage = null;
+    }
+    return {
+      hashEmpty: window.location.hash === "",
+      tokenAbsentFromUrl: !window.location.href.includes("#c="),
+      inviteStorageEmpty: inviteStorage === null,
+    };
+  });
+  if (!result.hashEmpty || !result.tokenAbsentFromUrl || !result.inviteStorageEmpty) {
+    fail("beauty_movement_isolation_smoke_handoff_not_scrubbed", result);
+  }
+}
+
+async function waitFresh(page) {
+  const deck = page.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i });
+  await deck.waitFor({ state: "visible", timeout: 60_000 });
+  await assertScrubbed(page);
+}
+
+async function waitAct(page, act) {
+  await page.getByRole("button", { name: `Revelar carta 1 de ${act}`, exact: true })
+    .waitFor({ state: "visible", timeout: 60_000 });
+  await assertScrubbed(page);
+}
+
+async function openInvite(page, baseUrl, invite, route, expectedAct = null) {
+  if (!ROUTES.includes(route)) fail("beauty_movement_isolation_smoke_route_invalid");
+  await page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" });
+  if (expectedAct) await waitAct(page, expectedAct);
+  else await waitFresh(page);
+  return contextRef(page);
+}
+
+async function revealAndAdvance(page, currentAct, nextAct) {
+  const card = page.getByRole("button", {
+    name: `Revelar carta 1 de ${currentAct}`,
+    exact: true,
+  });
+  await card.waitFor({ state: "visible", timeout: 30_000 });
+  const responsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === "POST" && url.pathname === "/api/beleza-em-movimento/reveal";
+  }, { timeout: 30_000 });
+  await card.click();
+  const response = await responsePromise;
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // Status and the public ok flag are both required below.
+  }
+  if (!response.ok() || payload?.ok !== true) {
+    fail("beauty_movement_isolation_smoke_reveal_failed", { status: response.status() });
+  }
+  await page.locator('button[aria-pressed="true"]').waitFor({ state: "visible", timeout: 30_000 });
+  await page.waitForTimeout(5_600);
+  await waitAct(page, nextAct);
+}
+
+async function reloadAt(page, act) {
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitAct(page, act);
+}
+
+async function expectFailClosed(page, target) {
+  await page.goto(target, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => {
+    const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
+    return normalized !== "/beleza-em-movimento" && normalized.toLowerCase() !== "/belezaemmovimento";
+  }, { timeout: 60_000 });
+  const result = await page.evaluate(() => ({
+    hashEmpty: window.location.hash === "",
+    campaignBusy: document.querySelectorAll('[aria-busy="true"]').length,
+    campaignDeck: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
+  }));
+  if (!result.hashEmpty || result.campaignBusy !== 0 || result.campaignDeck !== 0) {
+    fail("beauty_movement_isolation_smoke_fail_closed_invalid", result);
+  }
+}
+
+function assertDiagnostics(label, diagnostics, options = {}) {
+  const allowApiFailures = options.allowApiFailures === true;
+  if (
+    diagnostics.consoleErrors !== 0
+    || diagnostics.pageErrors !== 0
+    || diagnostics.whatsappRequests !== 0
+    || (!allowApiFailures && diagnostics.apiFailures !== 0)
+  ) {
+    fail("beauty_movement_isolation_smoke_browser_error", {
+      label,
+      consoleErrors: diagnostics.consoleErrors,
+      pageErrors: diagnostics.pageErrors,
+      apiFailures: diagnostics.apiFailures,
+      whatsappRequests: diagnostics.whatsappRequests,
+    });
+  }
+}
+
+async function run() {
+  const { baseUrl, deliveryDirectory, evidenceFile } = parseArgs(process.argv.slice(2));
+  const invites = readSyntheticInvites(deliveryDirectory);
+  fs.mkdirSync(path.dirname(evidenceFile), { recursive: true, mode: 0o700 });
+
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const shared = await browser.newContext();
+    const pageA = await shared.newPage();
+    const diagnosticsA = attachDiagnostics(pageA);
+
+    const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0]);
+    await pageA.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i }).click();
+    await revealAndAdvance(pageA, "Beleza", "Movimento");
+    await reloadAt(pageA, "Movimento");
+
+    const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0]);
+    if (firstContextA === firstContextB) fail("beauty_movement_isolation_smoke_context_collision");
+
+    const pageB = await shared.newPage();
+    const diagnosticsB = attachDiagnostics(pageB);
+    const secondContextB = await openInvite(pageB, baseUrl, invites.b, ROUTES[1]);
+    if (secondContextB === firstContextA || secondContextB === firstContextB) {
+      fail("beauty_movement_isolation_smoke_session_context_reused");
+    }
+
+    await pageA.goBack();
+    await waitAct(pageA, "Movimento");
+    if (await contextRef(pageA) !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
+    await pageA.goForward();
+    await waitFresh(pageA);
+    if (await contextRef(pageA) !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
+
+    await pageA.goBack();
+    await waitAct(pageA, "Movimento");
+    await revealAndAdvance(pageA, "Movimento", "Celebração");
+    await revealAndAdvance(pageB, "Beleza", "Movimento");
+
+    await Promise.all([
+      reloadAt(pageA, "Celebração"),
+      reloadAt(pageB, "Movimento"),
+    ]);
+    if (await contextRef(pageA) !== firstContextA || await contextRef(pageB) !== secondContextB) {
+      fail("beauty_movement_isolation_smoke_simultaneous_reload_context_changed");
+    }
+
+    const reopenedA = await shared.newPage();
+    const diagnosticsReopenedA = attachDiagnostics(reopenedA);
+    await openInvite(reopenedA, baseUrl, invites.a, ROUTES[0], "Celebração");
+    const reopenedB = await shared.newPage();
+    const diagnosticsReopenedB = attachDiagnostics(reopenedB);
+    await openInvite(reopenedB, baseUrl, invites.b, ROUTES[1], "Movimento");
+
+    const privateContext = await browser.newContext();
+    const privatePage = await privateContext.newPage();
+    const diagnosticsPrivate = attachDiagnostics(privatePage);
+    await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0]);
+    await privatePage.reload({ waitUntil: "domcontentloaded" });
+    await waitFresh(privatePage);
+
+    // The public exchange limiter allows six attempts per source IP and
+    // minute. Phase one intentionally consumes exactly six exchanges. Waiting
+    // for the next fixed window keeps the smoke representative without adding
+    // a bypass that production users would not have.
+    await pageA.waitForTimeout(61_000);
+
+    const storageUnavailable = await browser.newContext();
+    await storageUnavailable.addInitScript(() => {
+      Object.defineProperty(window, "sessionStorage", {
+        configurable: true,
+        get() {
+          throw new DOMException("Unavailable", "SecurityError");
+        },
+      });
+    });
+    const storagePage = await storageUnavailable.newPage();
+    const diagnosticsStorage = attachDiagnostics(storagePage);
+    await openInvite(storagePage, baseUrl, invites.primary, ROUTES[1]);
+    await storagePage.reload({ waitUntil: "domcontentloaded" });
+    await waitFresh(storagePage);
+
+    const racePage = await shared.newPage();
+    const diagnosticsRace = attachDiagnostics(racePage);
+    await openInvite(racePage, baseUrl, invites.a, ROUTES[0], "Celebração");
+    await racePage.evaluate(({ tokenB, tokenA }) => {
+      window.location.hash = `c=${tokenB}`;
+      window.setTimeout(() => {
+        window.location.hash = `c=${tokenA}`;
+      }, 50);
+    }, { tokenB: invites.b.token, tokenA: invites.a.token });
+    await waitAct(racePage, "Celebração");
+    await assertScrubbed(racePage);
+
+    await shared.addCookies([{
+      name: LEGACY_COOKIE,
+      value: "l".repeat(43),
+      url: `${baseUrl}/`,
+      httpOnly: true,
+      secure: baseUrl.startsWith("https:"),
+      sameSite: "Lax",
+    }]);
+    const expiredPage = await shared.newPage();
+    const diagnosticsExpired = attachDiagnostics(expiredPage);
+    await expectFailClosed(expiredPage, `${baseUrl}${ROUTES[0]}#c=${encodeURIComponent(invites.expired.token)}`);
+    const legacyAfterExpired = (await shared.cookies(baseUrl)).some((cookie) => cookie.name === LEGACY_COOKIE);
+    if (legacyAfterExpired) fail("beauty_movement_isolation_smoke_legacy_cookie_not_cleared");
+
+    const invalidPage = await shared.newPage();
+    const diagnosticsInvalid = attachDiagnostics(invalidPage);
+    await expectFailClosed(invalidPage, `${baseUrl}${ROUTES[1]}#c=invalid`);
+    const directPage = await shared.newPage();
+    const diagnosticsDirect = attachDiagnostics(directPage);
+    await expectFailClosed(directPage, `${baseUrl}${ROUTES[0]}`);
+
+    const sharedCookies = await shared.cookies(`${baseUrl}/api/beleza-em-movimento/state`);
+    const cookieA = sharedCookies.find((cookie) => cookie.name === `ef_bm_ctx_${firstContextA}`);
+    if (!cookieA || !cookieA.httpOnly) fail("beauty_movement_isolation_smoke_http_only_cookie_missing");
+    const mismatchContext = await browser.newContext();
+    await mismatchContext.addCookies([{
+      name: cookieA.name,
+      value: cookieA.value,
+      domain: cookieA.domain,
+      path: cookieA.path,
+      httpOnly: true,
+      secure: cookieA.secure,
+      sameSite: "Lax",
+      expires: cookieA.expires,
+    }, {
+      // A credential copied under B's selector must not authorize B. This is
+      // stronger than only sending B's selector alongside A's cookie name.
+      name: `ef_bm_ctx_${secondContextB}`,
+      value: cookieA.value,
+      domain: cookieA.domain,
+      path: cookieA.path,
+      httpOnly: true,
+      secure: cookieA.secure,
+      sameSite: "Lax",
+      expires: cookieA.expires,
+    }]);
+    const mismatchPage = await mismatchContext.newPage();
+    await mismatchPage.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
+    const authorization = await mismatchPage.evaluate(async ({ refA, refB }) => {
+      const call = async (contextRef) => {
+        const response = await fetch("/api/beleza-em-movimento/state", {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { "X-Beauty-Movement-Context": contextRef },
+        });
+        return response.status;
+      };
+      return { matching: await call(refA), mismatched: await call(refB) };
+    }, { refA: firstContextA, refB: secondContextB });
+    if (authorization.matching !== 200 || authorization.mismatched !== 404) {
+      fail("beauty_movement_isolation_smoke_authorization_invalid", authorization);
+    }
+
+    const diagnostics = [
+      ["a", diagnosticsA],
+      ["b", diagnosticsB],
+      ["reopened-a", diagnosticsReopenedA],
+      ["reopened-b", diagnosticsReopenedB],
+      ["private", diagnosticsPrivate],
+      ["storage", diagnosticsStorage],
+      ["expired", diagnosticsExpired],
+      ["invalid", diagnosticsInvalid],
+      ["direct", diagnosticsDirect],
+    ];
+    for (const [label, value] of diagnostics) assertDiagnostics(label, value);
+    assertDiagnostics("race", diagnosticsRace, { allowApiFailures: true });
+
+    const evidence = {
+      version: 1,
+      browser: true,
+      syntheticInvitesDistinct: true,
+      sameTabStartsFresh: true,
+      twoPagesSameContextIndependent: true,
+      simultaneousReloadStable: true,
+      reopenPersonalizedLinksStable: true,
+      canonicalAndAliasEquivalent: true,
+      backForwardStable: true,
+      rapidSwitchLastNavigationWins: true,
+      privateContextStable: true,
+      exchangeRateLimitWindowRespected: true,
+      storageUnavailableStable: true,
+      invalidTokenFailsClosed: true,
+      expiredTokenFailsClosed: true,
+      fragmentlessRouteFailsClosed: true,
+      crossContextAuthorizationRejected: true,
+      crossCookieCredentialRejected: true,
+      legacyCookieCleared: true,
+      rawTokensPersistedInEvidence: false,
+      whatsappRequests: 0,
+      consoleErrors: 0,
+      revealCounts: { a: diagnosticsA.revealRequests, b: diagnosticsB.revealRequests },
+      inviteRefs: {
+        a: invites.a.inviteRef,
+        b: invites.b.inviteRef,
+        expired: invites.expired.inviteRef,
+      },
+    };
+    fs.writeFileSync(evidenceFile, `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+
+    await Promise.all([
+      mismatchContext.close(),
+      storageUnavailable.close(),
+      privateContext.close(),
+      shared.close(),
+    ]);
+  } finally {
+    await browser.close();
+  }
+}
+
+const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (isDirectExecution) {
+  run().catch((error) => {
+    const message = error instanceof Error ? error.message : "beauty_movement_isolation_smoke_failed";
+    const redacted = message
+      .replace(/#c=[A-Za-z0-9_-]+/g, "#c=[redacted]")
+      .replace(/[A-Za-z0-9_-]{40,180}/g, "[opaque]");
+    console.error(redacted);
+    process.exitCode = 1;
+  });
+}
