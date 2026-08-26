@@ -199,9 +199,28 @@ function checkpointDiagnosticsSnapshot(page) {
   };
 }
 
-async function contextRef(page) {
-  const value = await page.evaluate(() => history.state?.__efBeautyMovementContextRef ?? null);
-  if (!CONTEXT_PATTERN.test(value ?? "")) fail("beauty_movement_isolation_smoke_context_missing");
+function failAtCheckpoint(page, code, checkpoint, details = {}) {
+  fail(code, {
+    checkpoint,
+    ...details,
+    ...checkpointDiagnosticsSnapshot(page),
+  });
+}
+
+async function contextRef(page, checkpoint = "context-ref") {
+  let value = null;
+  try {
+    value = await page.evaluate(() => history.state?.__efBeautyMovementContextRef ?? null);
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_context_missing", checkpoint, {
+      phase: "read",
+    });
+  }
+  if (!CONTEXT_PATTERN.test(value ?? "")) {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_context_missing", checkpoint, {
+      phase: "validation",
+    });
+  }
   return value;
 }
 
@@ -300,7 +319,7 @@ async function openInvite(page, baseUrl, invite, route, expectedAct = null, chec
   ));
   if (expectedAct) await waitAct(page, expectedAct, checkpoint);
   else await waitFresh(page, checkpoint);
-  return contextRef(page);
+  return contextRef(page, checkpoint);
 }
 
 async function revealAndAdvance(page, currentAct, nextAct) {
@@ -310,13 +329,29 @@ async function revealAndAdvance(page, currentAct, nextAct) {
     name: `Revelar carta 1 de ${currentAct}`,
     exact: true,
   });
-  await card.waitFor({ state: "visible", timeout: 30_000 });
-  const responsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return response.request().method() === "POST" && url.pathname === "/api/beleza-em-movimento/reveal";
-  }, { timeout: 30_000 });
-  await card.click();
-  const response = await responsePromise;
+  try {
+    await card.waitFor({ state: "visible", timeout: 30_000 });
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "button",
+      status: 0,
+    });
+  }
+  let response;
+  try {
+    [response] = await Promise.all([
+      page.waitForResponse((candidate) => {
+        const url = new URL(candidate.url());
+        return candidate.request().method() === "POST" && url.pathname === "/api/beleza-em-movimento/reveal";
+      }, { timeout: 30_000 }),
+      card.click(),
+    ]);
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "request",
+      status: 0,
+    });
+  }
   let payload = null;
   try {
     payload = await response.json();
@@ -324,9 +359,19 @@ async function revealAndAdvance(page, currentAct, nextAct) {
     // Status and the public ok flag are both required below.
   }
   if (!response.ok() || payload?.ok !== true) {
-    fail("beauty_movement_isolation_smoke_reveal_failed", { status: response.status() });
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "response",
+      status: response.status(),
+    });
   }
-  await page.locator('button[aria-pressed="true"]').waitFor({ state: "visible", timeout: 30_000 });
+  try {
+    await page.locator('button[aria-pressed="true"]').waitFor({ state: "visible", timeout: 30_000 });
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "selection",
+      status: response.status(),
+    });
+  }
   await page.waitForTimeout(5_600);
   await waitAct(page, nextAct, checkpoint);
 }
@@ -398,10 +443,10 @@ async function run() {
 
     await navigateAtCheckpoint(pageA, "back-a", () => pageA.goBack());
     await waitAct(pageA, "Movimento", "back-a");
-    if (await contextRef(pageA) !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
+    if (await contextRef(pageA, "back-a") !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
     await navigateAtCheckpoint(pageA, "forward-b", () => pageA.goForward());
     await waitFresh(pageA, "forward-b");
-    if (await contextRef(pageA) !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
+    if (await contextRef(pageA, "forward-b") !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
 
     await navigateAtCheckpoint(pageA, "back-a-final", () => pageA.goBack());
     await waitAct(pageA, "Movimento", "back-a-final");
@@ -412,7 +457,8 @@ async function run() {
       reloadAt(pageA, "Celebração", "simultaneous-reload-a"),
       reloadAt(pageB, "Movimento", "simultaneous-reload-b"),
     ]);
-    if (await contextRef(pageA) !== firstContextA || await contextRef(pageB) !== secondContextB) {
+    if (await contextRef(pageA, "simultaneous-reload-a") !== firstContextA
+      || await contextRef(pageB, "simultaneous-reload-b") !== secondContextB) {
       fail("beauty_movement_isolation_smoke_simultaneous_reload_context_changed");
     }
 
