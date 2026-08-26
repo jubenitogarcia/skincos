@@ -255,6 +255,7 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(smoke, /beauty_movement_isolation_smoke_fresh_checkpoint_failure/);
     assert.match(smoke, /checkpointDiagnosticsSnapshot/);
     assert.match(smoke, /failAtCheckpoint/);
+    assert.match(smoke, /assertScrubbed\(page, checkpoint\)/);
     assert.match(smoke, /contextRef\(page, checkpoint = "context-ref"\)/);
     assert.match(smoke, /waitAct\(page, act, checkpoint = "act-transition"\)/);
     assert.match(smoke, /"forward-b"/);

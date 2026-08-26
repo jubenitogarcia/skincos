@@ -224,7 +224,7 @@ async function contextRef(page, checkpoint = "context-ref") {
   return value;
 }
 
-async function assertScrubbed(page) {
+async function assertScrubbed(page, checkpoint) {
   const result = await page.evaluate(() => {
     let inviteStorage = null;
     try {
@@ -239,7 +239,7 @@ async function assertScrubbed(page) {
     };
   });
   if (!result.hashEmpty || !result.tokenAbsentFromUrl || !result.inviteStorageEmpty) {
-    fail("beauty_movement_isolation_smoke_handoff_not_scrubbed", result);
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_handoff_not_scrubbed", checkpoint, result);
   }
 }
 
@@ -276,7 +276,7 @@ async function waitFresh(page, checkpoint) {
   } catch {
     await reportFreshCheckpointFailure(page, checkpoint, "freshness");
   }
-  await assertScrubbed(page);
+  await assertScrubbed(page, checkpoint);
 }
 
 async function readJourneyState(page) {
@@ -309,7 +309,7 @@ async function waitAct(page, act, checkpoint = "act-transition") {
       ...checkpointDiagnosticsSnapshot(page),
     });
   }
-  await assertScrubbed(page);
+  await assertScrubbed(page, checkpoint);
 }
 
 async function openInvite(page, baseUrl, invite, route, expectedAct = null, checkpoint = "open-invite") {
@@ -508,7 +508,7 @@ async function run() {
       }, 50);
     }, { tokenB: invites.b.token, tokenA: invites.a.token });
     await waitAct(racePage, "Celebração", "hash-race-b-to-a");
-    await assertScrubbed(racePage);
+    await assertScrubbed(racePage, "hash-race-b-to-a");
 
     await shared.addCookies([{
       name: LEGACY_COOKIE,
