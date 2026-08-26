@@ -322,6 +322,17 @@ async function openInvite(page, baseUrl, invite, route, expectedAct = null, chec
   return contextRef(page, checkpoint);
 }
 
+async function beginReading(page, act, checkpoint) {
+  resetCheckpointDiagnostics(page);
+  const deck = page.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i });
+  try {
+    await deck.click();
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_deck_start_failed", checkpoint);
+  }
+  await waitAct(page, act, checkpoint);
+}
+
 async function revealAndAdvance(page, currentAct, nextAct, checkpoint) {
   resetCheckpointDiagnostics(page);
   const card = page.getByRole("button", {
@@ -442,7 +453,7 @@ async function run() {
     const diagnosticsA = attachDiagnostics(pageA);
 
     const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0], null, "initial-a");
-    await pageA.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i }).click();
+    await beginReading(pageA, "Beleza", "start-a-reading");
     await revealAndAdvance(pageA, "Beleza", "Movimento", "advance-a-beleza-to-movimento");
     await reloadAt(pageA, "Movimento", "reload-a-movement");
 
@@ -457,6 +468,7 @@ async function run() {
     if (secondContextB === firstContextA || secondContextB === firstContextB) {
       failAtCheckpoint(pageB, "beauty_movement_isolation_smoke_session_context_reused", "parallel-b");
     }
+    await beginReading(pageB, "Beleza", "start-b-reading");
 
     await navigateAtCheckpoint(pageA, "back-a", () => pageA.goBack());
     await waitAct(pageA, "Movimento", "back-a");
