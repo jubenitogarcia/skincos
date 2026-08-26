@@ -9,6 +9,7 @@ const CONTEXT_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 const INVITE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/;
 const ROUTES = ["/beleza-em-movimento", "/BelezaEmMovimento"];
 const LEGACY_COOKIE = "ef_beauty_movement_session";
+const pageDiagnostics = new WeakMap();
 
 function fail(code, details = {}) {
   const safe = Object.fromEntries(
@@ -122,6 +123,8 @@ function attachDiagnostics(page) {
     apiResponses: 0,
     revealRequests: 0,
     whatsappRequests: 0,
+    lastApiStatus: 0,
+    lastApiOperation: "none",
   };
   page.on("console", (message) => {
     if (message.type() === "error") diagnostics.consoleErrors += 1;
@@ -138,7 +141,12 @@ function attachDiagnostics(page) {
   });
   page.on("response", (response) => {
     try {
-      if (new URL(response.url()).pathname.startsWith("/api/beleza-em-movimento/")) diagnostics.apiResponses += 1;
+      const pathname = new URL(response.url()).pathname;
+      if (pathname.startsWith("/api/beleza-em-movimento/")) {
+        diagnostics.apiResponses += 1;
+        diagnostics.lastApiStatus = response.status();
+        diagnostics.lastApiOperation = pathname.split("/").at(-1) ?? "unknown";
+      }
     } catch {
       // No URL is retained in evidence.
     }
@@ -152,6 +160,7 @@ function attachDiagnostics(page) {
       diagnostics.whatsappRequests += 1;
     }
   });
+  pageDiagnostics.set(page, diagnostics);
   return diagnostics;
 }
 
@@ -180,9 +189,31 @@ async function assertScrubbed(page) {
   }
 }
 
-async function waitFresh(page) {
+async function waitFresh(page, checkpoint) {
   const deck = page.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i });
-  await deck.waitFor({ state: "visible", timeout: 60_000 });
+  try {
+    await deck.waitFor({ state: "visible", timeout: 60_000 });
+  } catch {
+    const state = await page.evaluate(() => ({
+      pathname: window.location.pathname,
+      historyLength: window.history.length,
+      hasContextRef: typeof window.history.state?.__efBeautyMovementContextRef === "string",
+      documentVisible: document.visibilityState === "visible",
+      deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
+      busyRegionCount: document.querySelectorAll('[aria-busy="true"]').length,
+    })).catch(() => ({ stateUnavailable: true }));
+    const diagnostics = pageDiagnostics.get(page) ?? {};
+    fail("beauty_movement_isolation_smoke_fresh_timeout", {
+      checkpoint,
+      ...state,
+      apiResponses: diagnostics.apiResponses ?? 0,
+      apiFailures: diagnostics.apiFailures ?? 0,
+      lastApiStatus: diagnostics.lastApiStatus ?? 0,
+      lastApiOperation: diagnostics.lastApiOperation ?? "none",
+      consoleErrors: diagnostics.consoleErrors ?? 0,
+      pageErrors: diagnostics.pageErrors ?? 0,
+    });
+  }
   await assertScrubbed(page);
 }
 
@@ -214,11 +245,11 @@ async function waitAct(page, act) {
   await assertScrubbed(page);
 }
 
-async function openInvite(page, baseUrl, invite, route, expectedAct = null) {
+async function openInvite(page, baseUrl, invite, route, expectedAct = null, checkpoint = "open-invite") {
   if (!ROUTES.includes(route)) fail("beauty_movement_isolation_smoke_route_invalid");
   await page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" });
   if (expectedAct) await waitAct(page, expectedAct);
-  else await waitFresh(page);
+  else await waitFresh(page, checkpoint);
   return contextRef(page);
 }
 
@@ -298,17 +329,17 @@ async function run() {
     const pageA = await shared.newPage();
     const diagnosticsA = attachDiagnostics(pageA);
 
-    const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0]);
+    const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0], null, "initial-a");
     await pageA.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i }).click();
     await revealAndAdvance(pageA, "Beleza", "Movimento");
     await reloadAt(pageA, "Movimento");
 
-    const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0]);
+    const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0], null, "switch-a-to-b");
     if (firstContextA === firstContextB) fail("beauty_movement_isolation_smoke_context_collision");
 
     const pageB = await shared.newPage();
     const diagnosticsB = attachDiagnostics(pageB);
-    const secondContextB = await openInvite(pageB, baseUrl, invites.b, ROUTES[1]);
+    const secondContextB = await openInvite(pageB, baseUrl, invites.b, ROUTES[1], null, "parallel-b");
     if (secondContextB === firstContextA || secondContextB === firstContextB) {
       fail("beauty_movement_isolation_smoke_session_context_reused");
     }
@@ -317,7 +348,7 @@ async function run() {
     await waitAct(pageA, "Movimento");
     if (await contextRef(pageA) !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
     await pageA.goForward();
-    await waitFresh(pageA);
+    await waitFresh(pageA, "forward-b");
     if (await contextRef(pageA) !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
 
     await pageA.goBack();
@@ -343,9 +374,9 @@ async function run() {
     const privateContext = await browser.newContext();
     const privatePage = await privateContext.newPage();
     const diagnosticsPrivate = attachDiagnostics(privatePage);
-    await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0]);
+    await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0], null, "private-primary");
     await privatePage.reload({ waitUntil: "domcontentloaded" });
-    await waitFresh(privatePage);
+    await waitFresh(privatePage, "private-reload");
 
     // The public exchange limiter allows six attempts per source IP and
     // minute. Phase one intentionally consumes exactly six exchanges. Waiting
@@ -364,9 +395,9 @@ async function run() {
     });
     const storagePage = await storageUnavailable.newPage();
     const diagnosticsStorage = attachDiagnostics(storagePage);
-    await openInvite(storagePage, baseUrl, invites.primary, ROUTES[1]);
+    await openInvite(storagePage, baseUrl, invites.primary, ROUTES[1], null, "storage-unavailable");
     await storagePage.reload({ waitUntil: "domcontentloaded" });
-    await waitFresh(storagePage);
+    await waitFresh(storagePage, "storage-reload");
 
     const racePage = await shared.newPage();
     const diagnosticsRace = attachDiagnostics(racePage);
