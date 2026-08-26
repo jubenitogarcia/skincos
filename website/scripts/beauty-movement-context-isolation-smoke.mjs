@@ -9,7 +9,6 @@ const CONTEXT_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 const INVITE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/;
 const ROUTES = ["/beleza-em-movimento", "/BelezaEmMovimento"];
 const LEGACY_COOKIE = "ef_beauty_movement_session";
-const JOURNEY_CONTEXT_OPTIONS = { reducedMotion: "no-preference" };
 
 function fail(code, details = {}) {
   const safe = Object.fromEntries(
@@ -295,10 +294,7 @@ async function run() {
 
   const browser = await chromium.launch({ headless: true });
   try {
-    // This isolation smoke validates the campaign's automatic animated path.
-    // Pin the media profile so the runner host cannot silently select the
-    // manual reduced-motion path and make the journey wait for user input.
-    const shared = await browser.newContext(JOURNEY_CONTEXT_OPTIONS);
+    const shared = await browser.newContext();
     const pageA = await shared.newPage();
     const diagnosticsA = attachDiagnostics(pageA);
 
@@ -344,7 +340,7 @@ async function run() {
     const diagnosticsReopenedB = attachDiagnostics(reopenedB);
     await openInvite(reopenedB, baseUrl, invites.b, ROUTES[1], "Movimento");
 
-    const privateContext = await browser.newContext(JOURNEY_CONTEXT_OPTIONS);
+    const privateContext = await browser.newContext();
     const privatePage = await privateContext.newPage();
     const diagnosticsPrivate = attachDiagnostics(privatePage);
     await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0]);
@@ -357,7 +353,7 @@ async function run() {
     // a bypass that production users would not have.
     await pageA.waitForTimeout(61_000);
 
-    const storageUnavailable = await browser.newContext(JOURNEY_CONTEXT_OPTIONS);
+    const storageUnavailable = await browser.newContext();
     await storageUnavailable.addInitScript(() => {
       Object.defineProperty(window, "sessionStorage", {
         configurable: true,
@@ -408,7 +404,7 @@ async function run() {
     const sharedCookies = await shared.cookies(`${baseUrl}/api/beleza-em-movimento/state`);
     const cookieA = sharedCookies.find((cookie) => cookie.name === `ef_bm_ctx_${firstContextA}`);
     if (!cookieA || !cookieA.httpOnly) fail("beauty_movement_isolation_smoke_http_only_cookie_missing");
-    const mismatchContext = await browser.newContext(JOURNEY_CONTEXT_OPTIONS);
+    const mismatchContext = await browser.newContext();
     await mismatchContext.addCookies([{
       name: cookieA.name,
       value: cookieA.value,
