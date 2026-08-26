@@ -289,6 +289,14 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.doesNotMatch(smoke, /console\.log\(.*token/i);
     assert.match(primarySmoke, /whatsappCtaPresent: true/);
     assert.match(primarySmoke, /contextRestoredAfterReload: true/);
+    assert.match(primarySmoke, /Clique aqui para revelar sua carta especial/);
+    assert.match(primarySmoke, /getByRole\("checkbox"\)\.count\(\) !== 0/);
+    assert.doesNotMatch(primarySmoke, /getByRole\("checkbox"\)\.check\(\)/);
+    for (const workflow of [staging, production]) {
+        assert.match(workflow, /Clique aqui para revelar sua carta especial/);
+        assert.match(workflow, /getByRole\('checkbox'\)\.count\(\) !== 0/);
+        assert.doesNotMatch(workflow, /getByRole\('checkbox'\)\.check\(\)/);
+    }
     assert.match(releaseSmoke, /syntheticFixtureRevoked: true/);
     assert.match(releaseSmoke, /durableValidationRecorded: true/);
     assert.match(releaseSmoke, /persistDurableValidation/);
