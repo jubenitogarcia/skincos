@@ -2,7 +2,7 @@
 
 ## Checkpoint atual — separação do Orb/n8n — 2026-08-24
 
-- O código de `orb/engine` foi extraído com histórico preservado para o
+- O código histórico de `orb/engine` foi extraído com histórico preservado para o
   repositório privado [jubenitogarcia/orb](https://github.com/jubenitogarcia/orb).
 - Este repositório não contém mais código, workflow JSON, units, backup,
   migration ou publisher do Orb; mantém somente contratos de integração,
@@ -10,9 +10,11 @@
 - `C:\CodexRuntime\n8n` e
   `C:\CodexRuntime\operator\admin\skincos\orb` permanecem privados e
   intocados.
-- O corte de produção não foi executado: falta exportação live autenticada e
-  reconciliação de paridade com o ledger. As seções abaixo são snapshots e
-  evidências históricas; não são fonte atual do Orb.
+- O runtime live já opera no namespace independente do Orb. A promoção da
+  release canônica e a ativação do MCP remoto ainda exigem exportação live
+  autenticada, reconciliação de paridade, staging e rollback comprovado. As
+  seções abaixo são snapshots e evidências históricas; não são fonte atual do
+  Orb.
 
 ## Snapshot terminal do Ponto — `origin/main` `6daa6eaee7c4c49f047e97944e70ea1aa320ca61` — 2026-08-05T01:59:29Z
 

@@ -1,5 +1,17 @@
 # DECISIONS
 
+## 2026-08-26 - SKINCOS é consumidor do Orb remoto segmentado
+
+- Decisão: o SKINCOS não hospeda nem replica código, units, workflows, backups
+  ou runtime do Orb. O consumidor preserva `orb.skincos.com.br`, healthchecks e
+  contratos de integração, e referencia os planos MCP remotos `orb_readonly`,
+  `orb_workflows`, `orb_admin` e `orb_ops` apenas por documentação/configuração
+  local do Codex.
+- Compatibilidade: `skincos-n8n` permanece como alias temporário e sem fonte
+  operacional própria. `orb-n8n` no repositório Orb é a instrução canônica.
+- Retenção: worktrees, releases e runtime privados legados permanecem
+  imutáveis; nenhuma exclusão, movimentação ou cópia é feita pelo SKINCOS.
+
 ## 2026-08-24 - Separar Orb/n8n do repositório SKINCOS
 
 - Decisão: o Orb/n8n passa a ser mantido exclusivamente no repositório privado
