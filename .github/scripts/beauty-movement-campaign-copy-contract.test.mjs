@@ -32,6 +32,9 @@ test("campaign copy update is production-only, release-bound and narrowly scoped
   assert.match(workflow, /Verify updated copy through the read-only live campaign API/);
   assert.match(workflow, /campaign-copy/);
   assert.match(workflow, /digest\('base64url'\)/);
+  assert.match(workflow, /node --input-type=module - "\$\{PRE_READBACK\}"/);
+  assert.match(workflow, /import \{ createHmac \} from 'node:crypto';/);
+  assert.match(workflow, /import \{ readFileSync, writeFileSync \} from 'node:fs';/);
   assert.match(workflow, /Revalidate Website production coordination lease before copy rollback/);
   assert.match(workflow, /Restore incumbent campaign copy after a failed post-write attestation/);
   assert.match(workflow, /beauty_movement_campaign_copy_rollback_conflict/);

@@ -265,16 +265,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node - "${PRE_READBACK}" "${EXPECTED_DESCRIPTION}" "${LIVE_COPY_PROBE}" "${CAMPAIGN_ID}" "${PRODUCTION_URL}" <<'NODE'
-          const crypto = require('node:crypto');
-          const fs = require('node:fs');
+          node --input-type=module - "${PRE_READBACK}" "${EXPECTED_DESCRIPTION}" "${LIVE_COPY_PROBE}" "${CAMPAIGN_ID}" "${PRODUCTION_URL}" <<'NODE'
+          import { createHmac } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
           const [preFile, expectedFile, outputFile, campaignId, productionUrl] = process.argv.slice(2);
-          const pre = JSON.parse(fs.readFileSync(preFile, 'utf8'))?.[0]?.results?.[0];
-          const expected = JSON.parse(fs.readFileSync(expectedFile, 'utf8'));
+          const pre = JSON.parse(readFileSync(preFile, 'utf8'))?.[0]?.results?.[0];
+          const expected = JSON.parse(readFileSync(expectedFile, 'utf8'));
           const secret = String(process.env.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY ?? '').trim();
           const inviteRef = typeof pre?.probe_external_ref === 'string' ? pre.probe_external_ref : '';
           if (!secret || !inviteRef || typeof expected?.description !== 'string' || !expected.description) throw new Error('beauty_movement_live_copy_probe_input_invalid');
-          const token = crypto.createHmac('sha256', secret).update(`v1|beauty-movement|delivery|${campaignId}|${inviteRef}`, 'utf8').digest('base64url');
+          const token = createHmac('sha256', secret).update(`v1|beauty-movement|delivery|${campaignId}|${inviteRef}`, 'utf8').digest('base64url');
           const response = await fetch(`${productionUrl}/api/beleza-em-movimento/campaign-copy`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', origin: productionUrl },
@@ -283,7 +283,7 @@ jobs:
           let payload = null;
           try { payload = await response.json(); } catch { payload = null; }
           if (response.status !== 200 || payload?.ok !== true || payload?.campaign?.description !== expected.description) throw new Error('beauty_movement_live_copy_probe_mismatch');
-          fs.writeFileSync(outputFile, `${JSON.stringify({ liveCopyVerified: true, httpStatus: response.status, descriptionLength: expected.description.length })}\n`, { encoding: 'utf8', mode: 0o600 });
+          writeFileSync(outputFile, `${JSON.stringify({ liveCopyVerified: true, httpStatus: response.status, descriptionLength: expected.description.length })}\n`, { encoding: 'utf8', mode: 0o600 });
           console.log(JSON.stringify({ liveCopyVerified: true, httpStatus: response.status, descriptionLength: expected.description.length }));
           NODE
 
