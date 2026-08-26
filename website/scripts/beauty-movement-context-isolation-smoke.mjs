@@ -186,9 +186,31 @@ async function waitFresh(page) {
   await assertScrubbed(page);
 }
 
+async function readJourneyState(page) {
+  return page.evaluate(() => {
+    const table = document.querySelector("[data-hand-stage]");
+    return {
+      motionNoPreference: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      documentVisible: document.visibilityState === "visible",
+      handStage: table?.getAttribute("data-hand-stage") ?? "missing",
+      actIndex: Number(table?.getAttribute("data-act-index") ?? -1),
+      finaleStage: table?.getAttribute("data-finale-stage") ?? "missing",
+      revealButtonCount: Array.from(document.querySelectorAll("button[aria-label]"))
+        .filter((button) => button.getAttribute("aria-label")?.startsWith("Revelar carta ")).length,
+      selectedCardCount: document.querySelectorAll('button[aria-pressed="true"]').length,
+      busyRegionCount: document.querySelectorAll('[aria-busy="true"]').length,
+    };
+  });
+}
+
 async function waitAct(page, act) {
-  await page.getByRole("button", { name: `Revelar carta 1 de ${act}`, exact: true })
-    .waitFor({ state: "visible", timeout: 60_000 });
+  try {
+    await page.getByRole("button", { name: `Revelar carta 1 de ${act}`, exact: true })
+      .waitFor({ state: "visible", timeout: 60_000 });
+  } catch {
+    const state = await readJourneyState(page).catch(() => ({ stateUnavailable: true }));
+    fail("beauty_movement_isolation_smoke_act_timeout", { expectedAct: act, ...state });
+  }
   await assertScrubbed(page);
 }
 
@@ -479,13 +501,23 @@ async function run() {
 }
 
 const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+export function redactBeautyMovementSmokeError(message) {
+  const redactDetails = (value) => value
+    .replace(/#c=[A-Za-z0-9_-]+/g, "#c=[redacted]")
+    .replace(/[A-Za-z0-9_-]{40,180}/g, "[opaque]");
+  if (/^beauty_movement_[a-z0-9_]+$/i.test(message)) return message;
+  const separator = message.indexOf(":");
+  const code = separator >= 0 ? message.slice(0, separator) : "";
+  if (/^beauty_movement_[a-z0-9_]+$/i.test(code)) {
+    return `${code}:${redactDetails(message.slice(separator + 1))}`;
+  }
+  return redactDetails(message);
+}
+
 if (isDirectExecution) {
   run().catch((error) => {
     const message = error instanceof Error ? error.message : "beauty_movement_isolation_smoke_failed";
-    const redacted = message
-      .replace(/#c=[A-Za-z0-9_-]+/g, "#c=[redacted]")
-      .replace(/[A-Za-z0-9_-]{40,180}/g, "[opaque]");
-    console.error(redacted);
+    console.error(redactBeautyMovementSmokeError(message));
     process.exitCode = 1;
   });
 }
