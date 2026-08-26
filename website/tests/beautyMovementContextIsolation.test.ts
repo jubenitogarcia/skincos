@@ -250,6 +250,11 @@ test("governed staging and production smokes execute the same four-invite isolat
         assert.match(workflow, /beauty-movement-context-isolation-smoke\.mjs/);
         assert.match(workflow, /context-isolation-readback\.json/);
     }
+    assert.match(staging, /candidate_build=.*x-app-build/);
+    assert.match(staging, /"\$\{candidate_build\}" == "\$\{RELEASE_SHA\}"/);
+    assert.match(staging, /api\/beleza-em-movimento\/campaign-copy/);
+    assert.match(staging, /campaign_probe_code/);
+    assert.match(staging, /temporary staging campaign did not settle before the browser journey/);
     assert.match(smoke, /sameTabStartsFresh: true/);
     assert.match(smoke, /twoPagesSameContextIndependent: true/);
     assert.match(smoke, /simultaneousReloadStable: true/);

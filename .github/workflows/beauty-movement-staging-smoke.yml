@@ -494,12 +494,19 @@ jobs:
           state.candidateVersion = candidateVersion;
           fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
           NODE
-          for attempt in $(seq 1 12); do
-            code="$(curl -sS -o /dev/null -w '%{http_code}' "${SMOKE_URL}/beleza-em-movimento" || true)"
-            [[ "${code}" == "200" ]] && break
+          candidate_headers="$RUNNER_TEMP/beauty-movement-staging-smoke/candidate-headers.txt"
+          candidate_build=''
+          code=''
+          for attempt in $(seq 1 24); do
+            code="$(curl -sS -D "${candidate_headers}" -o /dev/null -w '%{http_code}' "${SMOKE_URL}/beleza-em-movimento" || true)"
+            candidate_build="$(awk 'tolower($1) == "x-app-build:" { value=$0; sub(/^[^:]+:[[:space:]]*/, "", value); gsub(/\r/, "", value); print value }' "${candidate_headers}" | tail -n 1)"
+            [[ "${code}" == "200" && "${candidate_build}" == "${RELEASE_SHA}" ]] && break
             sleep 5
           done
-          [[ "${code}" == "200" ]] || { echo "temporary staging candidate is not serving the campaign (HTTP ${code})"; exit 1; }
+          [[ "${code}" == "200" && "${candidate_build}" == "${RELEASE_SHA}" ]] || {
+            echo "temporary staging candidate is not serving the attested release (HTTP ${code}; exact build: false)"
+            exit 1
+          }
           invite_url="$(node --input-type=commonjs -e '
           const fs = require("node:fs");
           const path = require("node:path");
@@ -514,6 +521,19 @@ jobs:
           ' "${OUTPUT_DIR}")"
           token="${invite_url##*#c=}"
           [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
+          campaign_probe_code=''
+          for attempt in $(seq 1 24); do
+            campaign_probe_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              -H "origin: ${SMOKE_URL}" -H 'content-type: application/json' \
+              --data "{\"token\":\"${token}\"}" \
+              "${SMOKE_URL}/api/beleza-em-movimento/campaign-copy" || true)"
+            [[ "${campaign_probe_code}" == "200" ]] && break
+            sleep 5
+          done
+          [[ "${campaign_probe_code}" == "200" ]] || {
+            echo "temporary staging campaign did not settle before the browser journey (HTTP ${campaign_probe_code})"
+            exit 1
+          }
           invite_ref="$(node --input-type=commonjs -e '
           const fs = require("node:fs");
           const path = require("node:path");
