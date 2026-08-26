@@ -1,8 +1,10 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
     BEAUTY_MOVEMENT_SESSION_COOKIE,
+    constantTimeEqual,
     createBeautyMovementOpaqueToken,
     decryptBeautyMovementPersonalData,
+    deriveBeautyMovementSessionContextRef,
     encryptBeautyMovementPersonalData,
     hashBeautyMovementInviteToken,
     hashBeautyMovementIp,
@@ -225,6 +227,13 @@ export type BeautyMovementStateResult =
     | { ok: true; state: BeautyMovementPublicState; replay?: boolean }
     | { ok: false; error: BeautyMovementError };
 
+export type BeautyMovementSessionCredential = {
+    /** Non-secret, tab-selected session reference. */
+    contextRef: string;
+    /** Secret credential read only from its context-specific HttpOnly cookie. */
+    sessionToken: string;
+};
+
 /** The raw session token is server-only and must be put into the HttpOnly cookie, never JSON. */
 export type BeautyMovementExchangeResult =
     | {
@@ -233,6 +242,8 @@ export type BeautyMovementExchangeResult =
         sessionToken: string;
         /** Server-only: bounded by invite, campaign and session TTL. */
         sessionExpiresAtMs: number;
+        /** Non-secret selector returned to the tab; useless without its HttpOnly cookie. */
+        contextRef: string;
         state: BeautyMovementPublicState;
         replay?: boolean;
     }
@@ -776,13 +787,18 @@ async function publicState(params: {
 }
 
 async function loadActiveSession(params: {
-    sessionToken: string | null | undefined;
+    credential: BeautyMovementSessionCredential | null | undefined;
     options: BeautyMovementOperationOptions;
 }): Promise<
     | { ok: true; db: BeautyMovementD1; tokenKey: string; piiKey: string; row: SessionInviteRow; sessionTokenHash: string; nowMs: number }
     | { ok: false; result: BeautyMovementStateResult }
 > {
-    if (!isBeautyMovementOpaqueToken(params.sessionToken)) return { ok: false, result: fail("session_unavailable") };
+    if (
+        !isBeautyMovementOpaqueToken(params.credential?.sessionToken)
+        || !isBeautyMovementOpaqueToken(params.credential?.contextRef)
+    ) {
+        return { ok: false, result: fail("session_unavailable") };
+    }
     if (!(await isBeautyMovementEnabled(params.options))) return { ok: false, result: fail("campaign_unavailable") };
     try {
         const [db, tokenKey, piiKey] = await Promise.all([
@@ -790,7 +806,13 @@ async function loadActiveSession(params: {
             resolveTokenHmacKey(params.options),
             resolvePiiKey(params.options),
         ]);
-        const sessionTokenHash = await hashBeautyMovementSessionToken({ secret: tokenKey, token: params.sessionToken });
+        const [sessionTokenHash, expectedContextRef] = await Promise.all([
+            hashBeautyMovementSessionToken({ secret: tokenKey, token: params.credential.sessionToken }),
+            deriveBeautyMovementSessionContextRef({ secret: tokenKey, token: params.credential.sessionToken }),
+        ]);
+        if (!constantTimeEqual(expectedContextRef, params.credential.contextRef)) {
+            return { ok: false, result: fail("session_unavailable") };
+        }
         const row = await findSessionByTokenHash(db, sessionTokenHash);
         const nowMs = now(params.options);
         if (!row || row.session_revoked_at_ms !== null || row.session_expires_at_ms <= nowMs || !inviteIsAvailable(row, nowMs)) {
@@ -803,10 +825,10 @@ async function loadActiveSession(params: {
 }
 
 export async function getBeautyMovementSession(
-    cookie: string | null | undefined,
+    credential: BeautyMovementSessionCredential | null | undefined,
     options: BeautyMovementOperationOptions = {},
 ): Promise<BeautyMovementStateResult> {
-    const loaded = await loadActiveSession({ sessionToken: cookie, options });
+    const loaded = await loadActiveSession({ credential, options });
     if (!loaded.ok) return loaded.result;
     try {
         const state = await publicState({ db: loaded.db, row: loaded.row, piiKey: loaded.piiKey });
@@ -859,7 +881,10 @@ export async function exchangeBeautyMovementInvite(params: {
         }))) return failExchange("rate_limited");
 
         const sessionToken = createBeautyMovementOpaqueToken();
-        const sessionTokenHash = await hashBeautyMovementSessionToken({ secret: tokenKey, token: sessionToken });
+        const [sessionTokenHash, contextRef] = await Promise.all([
+            hashBeautyMovementSessionToken({ secret: tokenKey, token: sessionToken }),
+            deriveBeautyMovementSessionContextRef({ secret: tokenKey, token: sessionToken }),
+        ]);
         const sessionExpiresAtMs = sessionExpiry(row, nowMs);
         await db
             .prepare(
@@ -871,7 +896,7 @@ export async function exchangeBeautyMovementInvite(params: {
             .run();
         const state = await publicState({ db, row, piiKey });
         if (!state) return failExchange("campaign_unavailable");
-        return { ok: true, sessionToken, sessionExpiresAtMs, state };
+        return { ok: true, sessionToken, sessionExpiresAtMs, contextRef, state };
     } catch {
         return failExchange("campaign_unavailable");
     }
@@ -902,6 +927,7 @@ export async function probeBeautyMovementCampaignCopy(params: {
 
 export async function revealBeautyMovementCard(params: {
     sessionToken: string | null | undefined;
+    contextRef: string | null | undefined;
     actIndex: number;
     cardId: string;
     origin: string | null | undefined;
@@ -913,7 +939,12 @@ export async function revealBeautyMovementCard(params: {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(cardId)) return fail("invalid_card");
     if (!options.cardValidator) return fail("card_catalog_unavailable");
 
-    const loaded = await loadActiveSession({ sessionToken: params.sessionToken, options });
+    const loaded = await loadActiveSession({
+        credential: params.sessionToken && params.contextRef
+            ? { sessionToken: params.sessionToken, contextRef: params.contextRef }
+            : null,
+        options,
+    });
     if (!loaded.ok) return loaded.result;
     try {
         const ipHash = await hashBeautyMovementIp({ secret: loaded.tokenKey, ip: params.ip ?? "unknown" });
@@ -974,6 +1005,7 @@ export async function revealBeautyMovementCard(params: {
 
 export async function confirmBeautyMovementInvite(params: {
     sessionToken: string | null | undefined;
+    contextRef: string | null | undefined;
     email?: string | null;
     operationalConsent: boolean;
     origin: string | null | undefined;
@@ -983,7 +1015,12 @@ export async function confirmBeautyMovementInvite(params: {
     const email = normalizeOptionalEmail(params.email);
     if (email === "invalid") return fail("invalid_email");
 
-    const loaded = await loadActiveSession({ sessionToken: params.sessionToken, options });
+    const loaded = await loadActiveSession({
+        credential: params.sessionToken && params.contextRef
+            ? { sessionToken: params.sessionToken, contextRef: params.contextRef }
+            : null,
+        options,
+    });
     if (!loaded.ok) return loaded.result;
     try {
         const ipHash = await hashBeautyMovementIp({ secret: loaded.tokenKey, ip: params.ip ?? "unknown" });

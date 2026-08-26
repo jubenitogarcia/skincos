@@ -96,7 +96,7 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.doesNotMatch(styles, /mobileDeckStageDeal/);
     assert.match(styles, /\.tableStage\[data-hand-stage="deal"\] \.deckStage,[\s\S]*bottom: var\(--bm-mobile-deck-anchor\)/);
     assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.specialCardBackWithAction,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.specialCardBackWithAction \{[\s\S]*justify-content: center[\s\S]*padding: 20px 16px 14px/);
-    assert.match(styles, /\.specialCardModalDialog \.specialCard \{[\s\S]*min-height: clamp\(448px, 145vw, 474px\)/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCard \{[\s\S]*min-height: clamp\(460px, 149vw, 486px\)/);
     assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \{[\s\S]*justify-content: center[\s\S]*gap: clamp\(6px, 1\.6vw, 9px\)[\s\S]*padding: 18px 18px 16px/);
     assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardWhatsappAction \{[\s\S]*margin-top: 4px[\s\S]*margin-bottom: 0/);
     assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardIllustration \{[\s\S]*width: clamp\(160px, 52vw, 188px\)[\s\S]*height: clamp\(148px, 48vw, 174px\)/);

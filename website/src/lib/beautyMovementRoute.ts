@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  BEAUTY_MOVEMENT_SESSION_COOKIE,
+  BEAUTY_MOVEMENT_CONTEXT_HEADER,
+  BEAUTY_MOVEMENT_LEGACY_SESSION_COOKIE,
+  getBeautyMovementSessionCookieName,
+  isBeautyMovementOpaqueToken,
   isBeautyMovementOriginAllowed,
   resolveBeautyMovementAllowedOriginsAtRuntime,
 } from "@/lib/beautyMovementSecurity";
@@ -39,8 +42,18 @@ export function getBeautyMovementClientIp(request: NextRequest): string | null {
   return null;
 }
 
-export function getBeautyMovementSessionToken(request: NextRequest): string | null {
-  return request.cookies.get(BEAUTY_MOVEMENT_SESSION_COOKIE)?.value?.trim() || null;
+export type BeautyMovementSessionCredential = {
+  contextRef: string;
+  sessionToken: string;
+};
+
+export function getBeautyMovementSessionCredential(request: NextRequest): BeautyMovementSessionCredential | null {
+  const contextRef = request.headers.get(BEAUTY_MOVEMENT_CONTEXT_HEADER)?.trim() || null;
+  const cookieName = getBeautyMovementSessionCookieName(contextRef);
+  if (!cookieName || !isBeautyMovementOpaqueToken(contextRef)) return null;
+  const sessionToken = request.cookies.get(cookieName)?.value?.trim() || null;
+  if (!isBeautyMovementOpaqueToken(sessionToken)) return null;
+  return { contextRef, sessionToken };
 }
 
 export async function readBeautyMovementJson(request: NextRequest): Promise<Record<string, unknown> | null> {
@@ -101,22 +114,43 @@ export function nullableEmail(value: unknown): string | null | undefined {
   return email;
 }
 
-export function setBeautyMovementSessionCookie(response: NextResponse, token: string, expiresAtMs: number): void {
+export function setBeautyMovementSessionCookie(
+  response: NextResponse,
+  contextRef: string,
+  token: string,
+  expiresAtMs: number,
+): void {
+  const cookieName = getBeautyMovementSessionCookieName(contextRef);
+  if (!cookieName) throw new Error("beauty_movement_invalid_context_ref");
   response.cookies.set({
-    name: BEAUTY_MOVEMENT_SESSION_COOKIE,
+    name: cookieName,
     value: token,
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    path: "/",
+    path: "/api/beleza-em-movimento",
     expires: new Date(expiresAtMs),
     maxAge: Math.max(1, Math.floor((expiresAtMs - Date.now()) / 1000)),
   });
 }
 
-export function clearBeautyMovementSessionCookie(response: NextResponse): void {
+export function clearBeautyMovementSessionCookie(response: NextResponse, contextRef: string): void {
+  const cookieName = getBeautyMovementSessionCookieName(contextRef);
+  if (!cookieName) return;
   response.cookies.set({
-    name: BEAUTY_MOVEMENT_SESSION_COOKIE,
+    name: cookieName,
+    value: "",
+    path: "/api/beleza-em-movimento",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0,
+  });
+}
+
+export function clearBeautyMovementLegacySessionCookie(response: NextResponse): void {
+  response.cookies.set({
+    name: BEAUTY_MOVEMENT_LEGACY_SESSION_COOKIE,
     value: "",
     path: "/",
     httpOnly: true,

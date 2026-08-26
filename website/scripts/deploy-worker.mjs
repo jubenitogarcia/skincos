@@ -141,6 +141,87 @@ export function writeBeautyMovementEnabledConfig(configPath, content) {
   return outputPath;
 }
 
+export function writeDeployReleaseManifest({
+  filePath,
+  runnerTemp,
+  phase,
+  releaseSha,
+  releaseOwner,
+  previousVersionId,
+  candidateVersionId,
+  activeCampaignCount,
+  previousBuildSha,
+}) {
+  if (!filePath) return null;
+  const root = path.resolve(runnerTemp || "");
+  const target = path.resolve(filePath);
+  if (!root || !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error("deploy_release_manifest_path_invalid");
+  }
+  if (!/^[0-9a-f]{40}$/.test(releaseSha ?? "")) {
+    throw new Error("deploy_release_manifest_sha_invalid");
+  }
+  if (!/^bm-[0-9]{1,30}-[0-9]{1,6}$/.test(releaseOwner ?? "")) {
+    throw new Error("deploy_release_manifest_owner_invalid");
+  }
+  const versionPattern = /^[0-9a-f-]{36}$/i;
+  if (!new Set(["prepared", "candidate"]).has(phase)) {
+    throw new Error("deploy_release_manifest_phase_invalid");
+  }
+  if (
+    (phase === "prepared" && candidateVersionId !== null)
+    || (phase === "candidate" && !versionPattern.test(candidateVersionId ?? ""))
+    || (previousVersionId !== null && !versionPattern.test(previousVersionId ?? ""))
+  ) {
+    throw new Error("deploy_release_manifest_version_invalid");
+  }
+  if (!Number.isInteger(activeCampaignCount) || activeCampaignCount < 0) {
+    throw new Error("deploy_release_manifest_campaign_count_invalid");
+  }
+  if (previousBuildSha !== null && !/^[0-9a-f]{40}$/.test(previousBuildSha ?? "")) {
+    throw new Error("deploy_release_manifest_previous_build_invalid");
+  }
+  const payload = `${JSON.stringify({
+    version: 1,
+    phase,
+    releaseSha,
+    releaseOwner,
+    previousVersionId,
+    candidateVersionId,
+    beautyMovementActiveCampaignCount: activeCampaignCount,
+    previousBuildSha,
+  }, null, 2)}\n`;
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${target}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, payload, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(temporaryPath, target);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
+  }
+  return target;
+}
+
+export function parseCurrentWorkerVersionId(output) {
+  const match = String(output ?? "").match(/\(100%\)\s+([0-9a-f-]{36})/i);
+  if (!match) throw new Error("worker_current_version_unreadable");
+  return match[1];
+}
+
+export function assertProductionReleaseReconciliationContract({
+  productionDeployment,
+  manifestPath,
+  releaseOwner,
+}) {
+  if (!productionDeployment) return;
+  if (
+    !manifestPath
+    || !/^bm-[0-9]{1,30}-[0-9]{1,6}$/.test(releaseOwner ?? "")
+  ) {
+    throw new Error("deploy_production_reconciliation_contract_missing");
+  }
+}
+
 async function readActiveBeautyMovementCampaignCount(configPath, env) {
   try {
     const { stdout } = await runAndCapture(
@@ -199,8 +280,7 @@ function getWranglerEnvironmentArgs(environmentName) {
 async function getCurrentVersionId(configPath, env, wranglerEnvironmentArgs, allowMissingWorker = false) {
   try {
     const { stdout } = await runAndCapture("npx", ["wrangler", "deployments", "list", "-c", configPath, ...wranglerEnvironmentArgs], env);
-    const match = stdout.match(/\(100%\)\s+([0-9a-f-]{36})/i);
-    return match?.[1] ?? null;
+    return parseCurrentWorkerVersionId(stdout);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (allowMissingWorker && message.includes("This Worker does not exist on your account")) {
@@ -236,6 +316,7 @@ async function runPostDeploySmoke({ env, siteUrl, retries, delayMs }) {
 }
 
 export async function main(argv = process.argv.slice(2), processEnv = process.env) {
+  const prepareRollbackOnly = argv.includes("--prepare-rollback-only");
   const configPath = parseOptionalArg(argv, "--config") ?? "wrangler.toml";
   const wranglerEnvironment = parseOptionalArg(argv, "--env");
   const wranglerEnvironmentArgs = getWranglerEnvironmentArgs(wranglerEnvironment);
@@ -249,12 +330,36 @@ export async function main(argv = process.argv.slice(2), processEnv = process.en
   };
 
   const siteUrl = processEnv.DEPLOY_SITE_URL?.trim() || readSiteUrlFromConfig(configPath);
+  const releaseOwner = processEnv.DEPLOY_RELEASE_OWNER?.trim() || null;
+  let previousBuildSha = null;
+  if (processEnv.DEPLOY_ROLLBACK_MANIFEST_PATH) {
+    const response = await fetch(`${siteUrl.replace(/\/$/, "")}/beleza-em-movimento`, {
+      redirect: "manual",
+      headers: { "cache-control": "no-cache" },
+    });
+    const liveBuild = response.headers.get("x-app-build")?.trim() ?? "";
+    if (response.status !== 200 || !/^[0-9a-f]{40}$/.test(liveBuild)) {
+      throw new Error("deploy_previous_build_unattested");
+    }
+    previousBuildSha = liveBuild;
+  }
   const configContent = fs.readFileSync(path.resolve(configPath), "utf8");
+  const productionDeployment = isProductionWebsiteConfig({
+    configPath,
+    wranglerEnvironment,
+    content: configContent,
+  });
+  assertProductionReleaseReconciliationContract({
+    productionDeployment,
+    manifestPath: processEnv.DEPLOY_ROLLBACK_MANIFEST_PATH,
+    releaseOwner,
+  });
   let deploymentConfigPath = configPath;
   let enabledConfigPath = null;
+  let activeCampaignCount = 0;
 
-  if (isProductionWebsiteConfig({ configPath, wranglerEnvironment, content: configContent })) {
-    const activeCampaignCount = await readActiveBeautyMovementCampaignCount(configPath, env);
+  if (productionDeployment) {
+    activeCampaignCount = await readActiveBeautyMovementCampaignCount(configPath, env);
     if (activeCampaignCount > 0) {
       enabledConfigPath = writeBeautyMovementEnabledConfig(configPath, configContent);
       deploymentConfigPath = enabledConfigPath;
@@ -274,13 +379,53 @@ export async function main(argv = process.argv.slice(2), processEnv = process.en
       wranglerEnvironment === "staging",
     );
 
+    writeDeployReleaseManifest({
+      filePath: processEnv.DEPLOY_ROLLBACK_MANIFEST_PATH,
+      runnerTemp: processEnv.RUNNER_TEMP,
+      phase: "prepared",
+      releaseSha: env.NEXT_PUBLIC_BUILD_SHA,
+      releaseOwner,
+      previousVersionId,
+      candidateVersionId: null,
+      activeCampaignCount,
+      previousBuildSha,
+    });
+    if (prepareRollbackOnly) {
+      if (!processEnv.DEPLOY_ROLLBACK_MANIFEST_PATH) {
+        throw new Error("deploy_release_manifest_path_required");
+      }
+      console.log("Production rollback checkpoint prepared before deployment.");
+      return;
+    }
+
     await run("node", ["scripts/assert-production-snapshot.mjs"], env);
     await run("npx", ["opennextjs-cloudflare", "build"], env);
 
     try {
       const deployArgs = ["wrangler", "deploy", "-c", deploymentConfigPath, ...wranglerEnvironmentArgs];
       if (enabledConfigPath) deployArgs.push("--keep-vars", "--var", "BEAUTY_MOVEMENT_ENABLED:true");
+      if (releaseOwner) deployArgs.push("--tag", releaseOwner);
       await run("npx", deployArgs, env);
+      const candidateVersionId = await getCurrentVersionId(
+        configPath,
+        env,
+        wranglerEnvironmentArgs,
+        false,
+      );
+      if (!candidateVersionId || candidateVersionId === previousVersionId) {
+        throw new Error("deployed_worker_version_unattested");
+      }
+      writeDeployReleaseManifest({
+        filePath: processEnv.DEPLOY_ROLLBACK_MANIFEST_PATH,
+        runnerTemp: processEnv.RUNNER_TEMP,
+        phase: "candidate",
+        releaseSha: env.NEXT_PUBLIC_BUILD_SHA,
+        releaseOwner,
+        previousVersionId,
+        candidateVersionId,
+        activeCampaignCount,
+        previousBuildSha,
+      });
       await runPostDeploySmoke({
         env,
         siteUrl,
@@ -291,7 +436,13 @@ export async function main(argv = process.argv.slice(2), processEnv = process.en
     } catch (error) {
       console.error(`Post-deploy validation failed: ${error instanceof Error ? error.message : error}`);
 
-      if (previousVersionId) {
+      if (productionDeployment) {
+        // Production rollback is exclusively owned by the reconciler, which
+        // re-attests the current Worker version, live build and release tag.
+        // The production contract above fails before deployment if the
+        // required manifest or owner is unavailable.
+        console.error("Production rollback delegated to the ownership-attested workflow reconciler.");
+      } else if (previousVersionId) {
         console.error(`Rolling back to previous Worker version ${previousVersionId}...`);
         await run(
           "npx",
