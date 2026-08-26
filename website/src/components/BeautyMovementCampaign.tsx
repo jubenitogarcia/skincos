@@ -15,6 +15,7 @@ import {
   clearBeautyMovementContextRef,
   consumeBeautyMovementInviteHandoff,
   isBeautyMovementContextRef,
+  parseBeautyMovementInviteFragment,
   readBeautyMovementContextRef,
   type BeautyMovementInviteHandoff,
 } from "@/lib/beautyMovementBrowserContext";
@@ -145,24 +146,33 @@ export default function BeautyMovementCampaign() {
       }
     }
 
-    const reinitialize = () => {
+    const reinitializeFromHandoff = () => {
+      pendingHandoffRef.current = null;
+      void initialize();
+    };
+    const reinitializeFromHistory = () => {
+      // Chromium emits popstate before hashchange for same-document fragment
+      // navigation. The synchronous layout handler owns invite fragments, so
+      // let it scrub and dispatch the explicit handoff instead of treating the
+      // transient history entry as a tokenless visit.
+      if (parseBeautyMovementInviteFragment(window.location.hash).attempted) return;
       pendingHandoffRef.current = null;
       void initialize();
     };
     const revalidateRestoredPage = (event: PageTransitionEvent) => {
-      if (event.persisted) reinitialize();
+      if (event.persisted) reinitializeFromHistory();
     };
 
-    window.addEventListener(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitialize);
-    window.addEventListener("popstate", reinitialize);
+    window.addEventListener(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitializeFromHandoff);
+    window.addEventListener("popstate", reinitializeFromHistory);
     window.addEventListener("pageshow", revalidateRestoredPage);
     void initialize();
 
     return () => {
       mounted = false;
       initializationAbortRef.current?.abort();
-      window.removeEventListener(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitialize);
-      window.removeEventListener("popstate", reinitialize);
+      window.removeEventListener(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitializeFromHandoff);
+      window.removeEventListener("popstate", reinitializeFromHistory);
       window.removeEventListener("pageshow", revalidateRestoredPage);
     };
   }, []);

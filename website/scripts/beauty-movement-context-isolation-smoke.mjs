@@ -9,6 +9,7 @@ const CONTEXT_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 const INVITE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/;
 const ROUTES = ["/beleza-em-movimento", "/BelezaEmMovimento"];
 const LEGACY_COOKIE = "ef_beauty_movement_session";
+const pageDiagnostics = new WeakMap();
 
 function fail(code, details = {}) {
   const safe = Object.fromEntries(
@@ -122,6 +123,11 @@ function attachDiagnostics(page) {
     apiResponses: 0,
     revealRequests: 0,
     whatsappRequests: 0,
+    checkpointApiFailures: 0,
+    checkpointApiResponses: 0,
+    checkpointLastApiStatus: 0,
+    checkpointLastApiOperation: "none",
+    checkpointLastApiTransportFailure: false,
   };
   page.on("console", (message) => {
     if (message.type() === "error") diagnostics.consoleErrors += 1;
@@ -131,14 +137,28 @@ function attachDiagnostics(page) {
   });
   page.on("requestfailed", (request) => {
     try {
-      if (new URL(request.url()).pathname.startsWith("/api/beleza-em-movimento/")) diagnostics.apiFailures += 1;
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.startsWith("/api/beleza-em-movimento/")) {
+        diagnostics.apiFailures += 1;
+        diagnostics.checkpointApiFailures += 1;
+        diagnostics.checkpointLastApiStatus = 0;
+        diagnostics.checkpointLastApiOperation = pathname.split("/").at(-1) ?? "unknown";
+        diagnostics.checkpointLastApiTransportFailure = true;
+      }
     } catch {
       // Ignore malformed third-party URLs; no value is retained.
     }
   });
   page.on("response", (response) => {
     try {
-      if (new URL(response.url()).pathname.startsWith("/api/beleza-em-movimento/")) diagnostics.apiResponses += 1;
+      const pathname = new URL(response.url()).pathname;
+      if (pathname.startsWith("/api/beleza-em-movimento/")) {
+        diagnostics.apiResponses += 1;
+        diagnostics.checkpointApiResponses += 1;
+        diagnostics.checkpointLastApiStatus = response.status();
+        diagnostics.checkpointLastApiOperation = pathname.split("/").at(-1) ?? "unknown";
+        diagnostics.checkpointLastApiTransportFailure = false;
+      }
     } catch {
       // No URL is retained in evidence.
     }
@@ -152,16 +172,59 @@ function attachDiagnostics(page) {
       diagnostics.whatsappRequests += 1;
     }
   });
+  pageDiagnostics.set(page, diagnostics);
   return diagnostics;
 }
 
-async function contextRef(page) {
-  const value = await page.evaluate(() => history.state?.__efBeautyMovementContextRef ?? null);
-  if (!CONTEXT_PATTERN.test(value ?? "")) fail("beauty_movement_isolation_smoke_context_missing");
+function resetCheckpointDiagnostics(page) {
+  const diagnostics = pageDiagnostics.get(page);
+  if (!diagnostics) return;
+  diagnostics.checkpointApiFailures = 0;
+  diagnostics.checkpointApiResponses = 0;
+  diagnostics.checkpointLastApiStatus = 0;
+  diagnostics.checkpointLastApiOperation = "none";
+  diagnostics.checkpointLastApiTransportFailure = false;
+}
+
+function checkpointDiagnosticsSnapshot(page) {
+  const diagnostics = pageDiagnostics.get(page) ?? {};
+  return {
+    apiResponses: diagnostics.checkpointApiResponses ?? 0,
+    apiFailures: diagnostics.checkpointApiFailures ?? 0,
+    lastApiStatus: diagnostics.checkpointLastApiStatus ?? 0,
+    lastApiOperation: diagnostics.checkpointLastApiOperation ?? "none",
+    lastApiTransportFailure: diagnostics.checkpointLastApiTransportFailure ?? false,
+    consoleErrors: diagnostics.consoleErrors ?? 0,
+    pageErrors: diagnostics.pageErrors ?? 0,
+  };
+}
+
+function failAtCheckpoint(page, code, checkpoint, details = {}) {
+  fail(code, {
+    checkpoint,
+    ...details,
+    ...checkpointDiagnosticsSnapshot(page),
+  });
+}
+
+async function contextRef(page, checkpoint = "context-ref") {
+  let value = null;
+  try {
+    value = await page.evaluate(() => history.state?.__efBeautyMovementContextRef ?? null);
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_context_missing", checkpoint, {
+      phase: "read",
+    });
+  }
+  if (!CONTEXT_PATTERN.test(value ?? "")) {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_context_missing", checkpoint, {
+      phase: "validation",
+    });
+  }
   return value;
 }
 
-async function assertScrubbed(page) {
+async function assertScrubbed(page, checkpoint) {
   const result = await page.evaluate(() => {
     let inviteStorage = null;
     try {
@@ -176,14 +239,44 @@ async function assertScrubbed(page) {
     };
   });
   if (!result.hashEmpty || !result.tokenAbsentFromUrl || !result.inviteStorageEmpty) {
-    fail("beauty_movement_isolation_smoke_handoff_not_scrubbed", result);
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_handoff_not_scrubbed", checkpoint, result);
   }
 }
 
-async function waitFresh(page) {
+async function reportFreshCheckpointFailure(page, checkpoint, phase) {
+  const state = await page.evaluate(() => ({
+    pathname: window.location.pathname,
+    historyLength: window.history.length,
+    hasContextRef: typeof window.history.state?.__efBeautyMovementContextRef === "string",
+    documentVisible: document.visibilityState === "visible",
+    deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
+    busyRegionCount: document.querySelectorAll('[aria-busy="true"]').length,
+  })).catch(() => ({ stateUnavailable: true }));
+  fail("beauty_movement_isolation_smoke_fresh_checkpoint_failure", {
+    checkpoint,
+    phase,
+    ...state,
+    ...checkpointDiagnosticsSnapshot(page),
+  });
+}
+
+async function navigateAtCheckpoint(page, checkpoint, navigate) {
+  resetCheckpointDiagnostics(page);
+  try {
+    await navigate();
+  } catch {
+    await reportFreshCheckpointFailure(page, checkpoint, "navigation");
+  }
+}
+
+async function waitFresh(page, checkpoint) {
   const deck = page.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i });
-  await deck.waitFor({ state: "visible", timeout: 60_000 });
-  await assertScrubbed(page);
+  try {
+    await deck.waitFor({ state: "visible", timeout: 60_000 });
+  } catch {
+    await reportFreshCheckpointFailure(page, checkpoint, "freshness");
+  }
+  await assertScrubbed(page, checkpoint);
 }
 
 async function readJourneyState(page) {
@@ -203,37 +296,79 @@ async function readJourneyState(page) {
   });
 }
 
-async function waitAct(page, act) {
+async function waitAct(page, act, checkpoint = "act-transition") {
   try {
     await page.getByRole("button", { name: `Revelar carta 1 de ${act}`, exact: true })
       .waitFor({ state: "visible", timeout: 60_000 });
   } catch {
     const state = await readJourneyState(page).catch(() => ({ stateUnavailable: true }));
-    fail("beauty_movement_isolation_smoke_act_timeout", { expectedAct: act, ...state });
+    fail("beauty_movement_isolation_smoke_act_timeout", {
+      checkpoint,
+      expectedAct: act,
+      ...state,
+      ...checkpointDiagnosticsSnapshot(page),
+    });
   }
-  await assertScrubbed(page);
+  await assertScrubbed(page, checkpoint);
 }
 
-async function openInvite(page, baseUrl, invite, route, expectedAct = null) {
+async function openInvite(page, baseUrl, invite, route, expectedAct = null, checkpoint = "open-invite") {
   if (!ROUTES.includes(route)) fail("beauty_movement_isolation_smoke_route_invalid");
-  await page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" });
-  if (expectedAct) await waitAct(page, expectedAct);
-  else await waitFresh(page);
-  return contextRef(page);
+  await navigateAtCheckpoint(page, checkpoint, () => (
+    page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" })
+  ));
+  if (expectedAct) await waitAct(page, expectedAct, checkpoint);
+  else await waitFresh(page, checkpoint);
+  return contextRef(page, checkpoint);
 }
 
-async function revealAndAdvance(page, currentAct, nextAct) {
+async function beginReading(page, act, checkpoint) {
+  resetCheckpointDiagnostics(page);
+  const deck = page.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i });
+  try {
+    await deck.click();
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_deck_start_failed", checkpoint);
+  }
+  await waitAct(page, act, checkpoint);
+}
+
+async function revealAndAdvance(page, currentAct, nextAct, checkpoint) {
+  resetCheckpointDiagnostics(page);
   const card = page.getByRole("button", {
     name: `Revelar carta 1 de ${currentAct}`,
     exact: true,
   });
-  await card.waitFor({ state: "visible", timeout: 30_000 });
-  const responsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return response.request().method() === "POST" && url.pathname === "/api/beleza-em-movimento/reveal";
+  try {
+    await card.waitFor({ state: "visible", timeout: 30_000 });
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "button",
+      status: 0,
+    });
+  }
+  const responsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return candidate.request().method() === "POST" && url.pathname === "/api/beleza-em-movimento/reveal";
   }, { timeout: 30_000 });
-  await card.click();
-  const response = await responsePromise;
+  try {
+    await card.click();
+  } catch {
+    void responsePromise.catch(() => undefined);
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "click",
+      status: 0,
+    });
+  }
+  let response;
+  try {
+    response = await responsePromise;
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "request",
+      status: 0,
+    });
+  }
   let payload = null;
   try {
     payload = await response.json();
@@ -241,38 +376,70 @@ async function revealAndAdvance(page, currentAct, nextAct) {
     // Status and the public ok flag are both required below.
   }
   if (!response.ok() || payload?.ok !== true) {
-    fail("beauty_movement_isolation_smoke_reveal_failed", { status: response.status() });
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "response",
+      status: response.status(),
+    });
   }
-  await page.locator('button[aria-pressed="true"]').waitFor({ state: "visible", timeout: 30_000 });
+  try {
+    await page.locator('button[aria-pressed="true"]').waitFor({ state: "visible", timeout: 30_000 });
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "selection",
+      status: response.status(),
+    });
+  }
   await page.waitForTimeout(5_600);
-  await waitAct(page, nextAct);
+  await waitAct(page, nextAct, checkpoint);
 }
 
-async function reloadAt(page, act) {
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await waitAct(page, act);
+async function reloadAt(page, act, checkpoint) {
+  await navigateAtCheckpoint(page, checkpoint, () => page.reload({ waitUntil: "domcontentloaded" }));
+  await waitAct(page, act, checkpoint);
 }
 
-async function expectFailClosed(page, target) {
-  await page.goto(target, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => {
-    const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
-    return normalized !== "/beleza-em-movimento" && normalized.toLowerCase() !== "/belezaemmovimento";
-  }, { timeout: 60_000 });
+async function expectFailClosed(page, target, checkpoint, expectedApiStatus = 0) {
+  await navigateAtCheckpoint(page, checkpoint, () => page.goto(target, { waitUntil: "domcontentloaded" }));
+  try {
+    await page.waitForFunction(() => {
+      const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
+      const campaignSettled = document.querySelectorAll('[aria-busy="true"]').length === 0
+        && document.querySelectorAll('button[aria-label*="Clique no baralho"]').length === 0;
+      return normalized !== "/beleza-em-movimento"
+        && normalized.toLowerCase() !== "/belezaemmovimento"
+        && window.location.hash === ""
+        && campaignSettled;
+    }, undefined, { timeout: 60_000 });
+  } catch {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_fail_closed_invalid", checkpoint, {
+      phase: "redirect",
+    });
+  }
   const result = await page.evaluate(() => ({
     hashEmpty: window.location.hash === "",
     campaignBusy: document.querySelectorAll('[aria-busy="true"]').length,
     campaignDeck: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
   }));
   if (!result.hashEmpty || result.campaignBusy !== 0 || result.campaignDeck !== 0) {
-    fail("beauty_movement_isolation_smoke_fail_closed_invalid", result);
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_fail_closed_invalid", checkpoint, {
+      phase: "validation",
+      ...result,
+    });
+  }
+  const diagnostics = checkpointDiagnosticsSnapshot(page);
+  if (diagnostics.lastApiStatus !== expectedApiStatus) {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_fail_closed_invalid", checkpoint, {
+      phase: "api-status",
+      expectedApiStatus,
+    });
   }
 }
 
 function assertDiagnostics(label, diagnostics, options = {}) {
   const allowApiFailures = options.allowApiFailures === true;
+  const expectedConsoleErrors = options.expectedConsoleErrors ?? 0;
   if (
-    diagnostics.consoleErrors !== 0
+    diagnostics.consoleErrors !== expectedConsoleErrors
     || diagnostics.pageErrors !== 0
     || diagnostics.whatsappRequests !== 0
     || (!allowApiFailures && diagnostics.apiFailures !== 0)
@@ -298,54 +465,72 @@ async function run() {
     const pageA = await shared.newPage();
     const diagnosticsA = attachDiagnostics(pageA);
 
-    const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0]);
-    await pageA.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i }).click();
-    await revealAndAdvance(pageA, "Beleza", "Movimento");
-    await reloadAt(pageA, "Movimento");
+    const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0], null, "initial-a");
+    await beginReading(pageA, "Beleza", "start-a-reading");
+    await revealAndAdvance(pageA, "Beleza", "Movimento", "advance-a-beleza-to-movimento");
+    await reloadAt(pageA, "Movimento", "reload-a-movement");
 
-    const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0]);
-    if (firstContextA === firstContextB) fail("beauty_movement_isolation_smoke_context_collision");
+    const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0], null, "switch-a-to-b");
+    if (firstContextA === firstContextB) {
+      failAtCheckpoint(pageA, "beauty_movement_isolation_smoke_context_collision", "switch-a-to-b");
+    }
 
     const pageB = await shared.newPage();
     const diagnosticsB = attachDiagnostics(pageB);
-    const secondContextB = await openInvite(pageB, baseUrl, invites.b, ROUTES[1]);
+    const secondContextB = await openInvite(pageB, baseUrl, invites.b, ROUTES[1], null, "parallel-b");
     if (secondContextB === firstContextA || secondContextB === firstContextB) {
-      fail("beauty_movement_isolation_smoke_session_context_reused");
+      failAtCheckpoint(pageB, "beauty_movement_isolation_smoke_session_context_reused", "parallel-b");
+    }
+    await beginReading(pageB, "Beleza", "start-b-reading");
+
+    await navigateAtCheckpoint(pageA, "back-a", () => pageA.goBack());
+    await waitAct(pageA, "Movimento", "back-a");
+    if (await contextRef(pageA, "back-a") !== firstContextA) {
+      failAtCheckpoint(pageA, "beauty_movement_isolation_smoke_back_restored_wrong_context", "back-a");
+    }
+    await navigateAtCheckpoint(pageA, "forward-b", () => pageA.goForward());
+    await waitFresh(pageA, "forward-b");
+    if (await contextRef(pageA, "forward-b") !== firstContextB) {
+      failAtCheckpoint(pageA, "beauty_movement_isolation_smoke_forward_restored_wrong_context", "forward-b");
     }
 
-    await pageA.goBack();
-    await waitAct(pageA, "Movimento");
-    if (await contextRef(pageA) !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
-    await pageA.goForward();
-    await waitFresh(pageA);
-    if (await contextRef(pageA) !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
-
-    await pageA.goBack();
-    await waitAct(pageA, "Movimento");
-    await revealAndAdvance(pageA, "Movimento", "Celebração");
-    await revealAndAdvance(pageB, "Beleza", "Movimento");
+    await navigateAtCheckpoint(pageA, "back-a-final", () => pageA.goBack());
+    await waitAct(pageA, "Movimento", "back-a-final");
+    await revealAndAdvance(pageA, "Movimento", "Celebração", "advance-a-movimento-to-celebracao");
+    await revealAndAdvance(pageB, "Beleza", "Movimento", "advance-b-beleza-to-movimento");
 
     await Promise.all([
-      reloadAt(pageA, "Celebração"),
-      reloadAt(pageB, "Movimento"),
+      reloadAt(pageA, "Celebração", "simultaneous-reload-a"),
+      reloadAt(pageB, "Movimento", "simultaneous-reload-b"),
     ]);
-    if (await contextRef(pageA) !== firstContextA || await contextRef(pageB) !== secondContextB) {
-      fail("beauty_movement_isolation_smoke_simultaneous_reload_context_changed");
+    if (await contextRef(pageA, "simultaneous-reload-a") !== firstContextA) {
+      failAtCheckpoint(
+        pageA,
+        "beauty_movement_isolation_smoke_simultaneous_reload_context_changed",
+        "simultaneous-reload-a",
+      );
+    }
+    if (await contextRef(pageB, "simultaneous-reload-b") !== secondContextB) {
+      failAtCheckpoint(
+        pageB,
+        "beauty_movement_isolation_smoke_simultaneous_reload_context_changed",
+        "simultaneous-reload-b",
+      );
     }
 
     const reopenedA = await shared.newPage();
     const diagnosticsReopenedA = attachDiagnostics(reopenedA);
-    await openInvite(reopenedA, baseUrl, invites.a, ROUTES[0], "Celebração");
+    await openInvite(reopenedA, baseUrl, invites.a, ROUTES[0], "Celebração", "reopen-a");
     const reopenedB = await shared.newPage();
     const diagnosticsReopenedB = attachDiagnostics(reopenedB);
-    await openInvite(reopenedB, baseUrl, invites.b, ROUTES[1], "Movimento");
+    await openInvite(reopenedB, baseUrl, invites.b, ROUTES[1], "Movimento", "reopen-b");
 
     const privateContext = await browser.newContext();
     const privatePage = await privateContext.newPage();
     const diagnosticsPrivate = attachDiagnostics(privatePage);
-    await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0]);
-    await privatePage.reload({ waitUntil: "domcontentloaded" });
-    await waitFresh(privatePage);
+    await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0], null, "private-primary");
+    await navigateAtCheckpoint(privatePage, "private-reload", () => privatePage.reload({ waitUntil: "domcontentloaded" }));
+    await waitFresh(privatePage, "private-reload");
 
     // The public exchange limiter allows six attempts per source IP and
     // minute. Phase one intentionally consumes exactly six exchanges. Waiting
@@ -364,21 +549,22 @@ async function run() {
     });
     const storagePage = await storageUnavailable.newPage();
     const diagnosticsStorage = attachDiagnostics(storagePage);
-    await openInvite(storagePage, baseUrl, invites.primary, ROUTES[1]);
-    await storagePage.reload({ waitUntil: "domcontentloaded" });
-    await waitFresh(storagePage);
+    await openInvite(storagePage, baseUrl, invites.primary, ROUTES[1], null, "storage-unavailable");
+    await navigateAtCheckpoint(storagePage, "storage-reload", () => storagePage.reload({ waitUntil: "domcontentloaded" }));
+    await waitFresh(storagePage, "storage-reload");
 
     const racePage = await shared.newPage();
     const diagnosticsRace = attachDiagnostics(racePage);
-    await openInvite(racePage, baseUrl, invites.a, ROUTES[0], "Celebração");
+    await openInvite(racePage, baseUrl, invites.a, ROUTES[0], "Celebração", "race-seed-a");
+    resetCheckpointDiagnostics(racePage);
     await racePage.evaluate(({ tokenB, tokenA }) => {
       window.location.hash = `c=${tokenB}`;
       window.setTimeout(() => {
         window.location.hash = `c=${tokenA}`;
       }, 50);
     }, { tokenB: invites.b.token, tokenA: invites.a.token });
-    await waitAct(racePage, "Celebração");
-    await assertScrubbed(racePage);
+    await waitAct(racePage, "Celebração", "hash-race-b-to-a");
+    await assertScrubbed(racePage, "hash-race-b-to-a");
 
     await shared.addCookies([{
       name: LEGACY_COOKIE,
@@ -390,16 +576,21 @@ async function run() {
     }]);
     const expiredPage = await shared.newPage();
     const diagnosticsExpired = attachDiagnostics(expiredPage);
-    await expectFailClosed(expiredPage, `${baseUrl}${ROUTES[0]}#c=${encodeURIComponent(invites.expired.token)}`);
+    await expectFailClosed(
+      expiredPage,
+      `${baseUrl}${ROUTES[0]}#c=${encodeURIComponent(invites.expired.token)}`,
+      "expired-invite",
+      404,
+    );
     const legacyAfterExpired = (await shared.cookies(baseUrl)).some((cookie) => cookie.name === LEGACY_COOKIE);
     if (legacyAfterExpired) fail("beauty_movement_isolation_smoke_legacy_cookie_not_cleared");
 
     const invalidPage = await shared.newPage();
     const diagnosticsInvalid = attachDiagnostics(invalidPage);
-    await expectFailClosed(invalidPage, `${baseUrl}${ROUTES[1]}#c=invalid`);
+    await expectFailClosed(invalidPage, `${baseUrl}${ROUTES[1]}#c=invalid`, "invalid-invite");
     const directPage = await shared.newPage();
     const diagnosticsDirect = attachDiagnostics(directPage);
-    await expectFailClosed(directPage, `${baseUrl}${ROUTES[0]}`);
+    await expectFailClosed(directPage, `${baseUrl}${ROUTES[0]}`, "direct-entry");
 
     const sharedCookies = await shared.cookies(`${baseUrl}/api/beleza-em-movimento/state`);
     const cookieA = sharedCookies.find((cookie) => cookie.name === `ef_bm_ctx_${firstContextA}`);
@@ -450,11 +641,11 @@ async function run() {
       ["reopened-b", diagnosticsReopenedB],
       ["private", diagnosticsPrivate],
       ["storage", diagnosticsStorage],
-      ["expired", diagnosticsExpired],
+      ["expired", diagnosticsExpired, { expectedConsoleErrors: 1 }],
       ["invalid", diagnosticsInvalid],
       ["direct", diagnosticsDirect],
     ];
-    for (const [label, value] of diagnostics) assertDiagnostics(label, value);
+    for (const [label, value, options] of diagnostics) assertDiagnostics(label, value, options);
     assertDiagnostics("race", diagnosticsRace, { allowApiFailures: true });
 
     const evidence = {

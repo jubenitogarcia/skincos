@@ -70,6 +70,12 @@ test("campaign identity is selected explicitly per history entry instead of by a
     assert.match(campaign, /AbortController/);
     assert.match(
         campaign,
+        /const reinitializeFromHistory = \(\) => \{[\s\S]*parseBeautyMovementInviteFragment\(window\.location\.hash\)\.attempted\) return;/,
+    );
+    assert.match(campaign, /addEventListener\(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitializeFromHandoff\)/);
+    assert.match(campaign, /addEventListener\("popstate", reinitializeFromHistory\)/);
+    assert.match(
+        campaign,
         /const verified = await requestCampaignState\("\/api\/beleza-em-movimento\/state", \{\s*contextRef: exchange\.contextRef,/,
     );
     assert.match(campaign, /nextState = verified\.state/);
@@ -252,6 +258,29 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(smoke, /name: `ef_bm_ctx_\$\{secondContextB\}`/);
     assert.match(smoke, /rawTokensPersistedInEvidence: false/);
     assert.match(smoke, /beauty_movement_isolation_smoke_act_timeout/);
+    assert.match(smoke, /beauty_movement_isolation_smoke_fresh_checkpoint_failure/);
+    assert.match(smoke, /checkpointDiagnosticsSnapshot/);
+    assert.match(smoke, /failAtCheckpoint/);
+    assert.match(smoke, /assertScrubbed\(page, checkpoint\)/);
+    assert.match(smoke, /contextRef\(page, checkpoint = "context-ref"\)/);
+    assert.match(smoke, /waitAct\(page, act, checkpoint = "act-transition"\)/);
+    assert.match(smoke, /"forward-b"/);
+    assert.match(smoke, /"hash-race-b-to-a"/);
+    assert.match(smoke, /beginReading\(pageA, "Beleza", "start-a-reading"\)/);
+    assert.match(smoke, /beginReading\(pageB, "Beleza", "start-b-reading"\)/);
+    assert.match(smoke, /"advance-a-beleza-to-movimento"/);
+    assert.match(smoke, /"advance-b-beleza-to-movimento"/);
+    assert.match(smoke, /phase: "click"/);
+    assert.match(smoke, /phase: "request"/);
+    assert.match(smoke, /"simultaneous-reload-a"/);
+    assert.match(smoke, /"simultaneous-reload-b"/);
+    assert.match(smoke, /"expired-invite"/);
+    assert.match(smoke, /campaignSettled/);
+    assert.match(smoke, /waitForFunction\([\s\S]*undefined, \{ timeout: 60_000 \}\)/);
+    assert.match(smoke, /"expired-invite",\s*404,/);
+    assert.match(smoke, /\["expired", diagnosticsExpired, \{ expectedConsoleErrors: 1 \}\]/);
+    assert.match(smoke, /navigateAtCheckpoint/);
+    assert.match(smoke, /checkpointLastApiTransportFailure = true/);
     assert.doesNotMatch(smoke, /console\.log\(.*token/i);
     assert.match(primarySmoke, /whatsappCtaPresent: true/);
     assert.match(primarySmoke, /contextRestoredAfterReload: true/);
