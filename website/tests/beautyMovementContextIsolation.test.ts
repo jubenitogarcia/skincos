@@ -19,6 +19,7 @@ import {
 } from "../src/lib/beautyMovementSecurity";
 import {
     buildBeautyMovementReleaseValidationMarker,
+    extractStaticAssetPaths,
     parseWranglerJson,
 } from "../scripts/beauty-movement-production-release-smoke.mjs";
 import {
@@ -185,6 +186,20 @@ test("context references are opaque, domain-separated, and map to one cookie nam
     assert.notEqual(contextRef, sessionHash);
     assert.equal(getBeautyMovementSessionCookieName(contextRef), `ef_bm_ctx_${contextRef}`);
     assert.equal(getBeautyMovementSessionCookieName("invalid"), null);
+});
+
+test("production route attestation ignores serialized trailing escapes in static asset paths", () => {
+    const html = [
+        '<link rel="stylesheet" href="/_next/static/css/layout.css">',
+        "/_next/static/css/layout.css\\",
+        '<script src="/_next/static/chunks/app/page.js"></script>',
+        "/_next/static/chunks/app/page.js\\\\",
+    ].join("\n");
+
+    assert.deepEqual(extractStaticAssetPaths(html), [
+        "/_next/static/chunks/app/page.js",
+        "/_next/static/css/layout.css",
+    ]);
 });
 
 test("governed staging and production smokes execute the same four-invite isolation matrix", async () => {
