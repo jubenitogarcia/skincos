@@ -181,6 +181,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /<strong>\{card\.title\}<\/strong>/);
     assert.match(experience, /<span>\{card\.shortMessage\}<\/span>/);
     assert.match(experience, /type HandStage =\s*\|\s*"waiting"/);
+    assert.match(experience, /const initialActIndex = getCurrentActIndex\(incomingSelections\)/);
+    assert.match(experience, /initialState\.confirmed \|\| initialActIndex > 0 \? "ready" : "waiting"/);
     assert.match(experience, /"expand"\s*\|\s*"deal"/);
     assert.match(experience, /function scheduleDealSequence\(token: number, onReady: \(\) => void\)/);
     assert.match(experience, /tableSurfaceRef/);

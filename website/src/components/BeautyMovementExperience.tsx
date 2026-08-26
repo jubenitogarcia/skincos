@@ -313,14 +313,15 @@ export default function BeautyMovementExperience({
         () => getSelectionsFromReveals(initialState.palette, initialState.reveals),
         [initialState.palette, initialState.reveals],
     );
-    const initialReadingComplete = getCurrentActIndex(incomingSelections) >= BEAUTY_MOVEMENT_ACTS.length;
+    const initialActIndex = getCurrentActIndex(incomingSelections);
+    const initialReadingComplete = initialActIndex >= BEAUTY_MOVEMENT_ACTS.length;
     const [selections, setSelections] = useState<BeautyMovementSelections>(incomingSelections);
     const [displayedActIndex, setDisplayedActIndex] = useState(() =>
-        Math.min(getCurrentActIndex(incomingSelections), BEAUTY_MOVEMENT_ACTS.length - 1),
+        Math.min(initialActIndex, BEAUTY_MOVEMENT_ACTS.length - 1),
     );
     const [introStage, setIntroStage] = useState<IntroStage>("hidden");
     const [handStage, setHandStage] = useState<HandStage>(() =>
-        initialState.confirmed || initialReadingComplete ? "ready" : "waiting",
+        initialState.confirmed || initialActIndex > 0 ? "ready" : "waiting",
     );
     const [confirmed, setConfirmed] = useState(initialState.confirmed);
     const [operationalConsent, setOperationalConsent] = useState(false);
