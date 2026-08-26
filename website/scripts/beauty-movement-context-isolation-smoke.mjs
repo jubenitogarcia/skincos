@@ -398,13 +398,18 @@ async function reloadAt(page, act, checkpoint) {
   await waitAct(page, act, checkpoint);
 }
 
-async function expectFailClosed(page, target, checkpoint) {
+async function expectFailClosed(page, target, checkpoint, expectedApiStatus = 0) {
   await navigateAtCheckpoint(page, checkpoint, () => page.goto(target, { waitUntil: "domcontentloaded" }));
   try {
     await page.waitForFunction(() => {
       const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
-      return normalized !== "/beleza-em-movimento" && normalized.toLowerCase() !== "/belezaemmovimento";
-    }, { timeout: 60_000 });
+      const campaignSettled = document.querySelectorAll('[aria-busy="true"]').length === 0
+        && document.querySelectorAll('button[aria-label*="Clique no baralho"]').length === 0;
+      return normalized !== "/beleza-em-movimento"
+        && normalized.toLowerCase() !== "/belezaemmovimento"
+        && window.location.hash === ""
+        && campaignSettled;
+    }, undefined, { timeout: 60_000 });
   } catch {
     failAtCheckpoint(page, "beauty_movement_isolation_smoke_fail_closed_invalid", checkpoint, {
       phase: "redirect",
@@ -421,12 +426,20 @@ async function expectFailClosed(page, target, checkpoint) {
       ...result,
     });
   }
+  const diagnostics = checkpointDiagnosticsSnapshot(page);
+  if (diagnostics.lastApiStatus !== expectedApiStatus) {
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_fail_closed_invalid", checkpoint, {
+      phase: "api-status",
+      expectedApiStatus,
+    });
+  }
 }
 
 function assertDiagnostics(label, diagnostics, options = {}) {
   const allowApiFailures = options.allowApiFailures === true;
+  const expectedConsoleErrors = options.expectedConsoleErrors ?? 0;
   if (
-    diagnostics.consoleErrors !== 0
+    diagnostics.consoleErrors !== expectedConsoleErrors
     || diagnostics.pageErrors !== 0
     || diagnostics.whatsappRequests !== 0
     || (!allowApiFailures && diagnostics.apiFailures !== 0)
@@ -567,6 +580,7 @@ async function run() {
       expiredPage,
       `${baseUrl}${ROUTES[0]}#c=${encodeURIComponent(invites.expired.token)}`,
       "expired-invite",
+      404,
     );
     const legacyAfterExpired = (await shared.cookies(baseUrl)).some((cookie) => cookie.name === LEGACY_COOKIE);
     if (legacyAfterExpired) fail("beauty_movement_isolation_smoke_legacy_cookie_not_cleared");
@@ -627,11 +641,11 @@ async function run() {
       ["reopened-b", diagnosticsReopenedB],
       ["private", diagnosticsPrivate],
       ["storage", diagnosticsStorage],
-      ["expired", diagnosticsExpired],
+      ["expired", diagnosticsExpired, { expectedConsoleErrors: 1 }],
       ["invalid", diagnosticsInvalid],
       ["direct", diagnosticsDirect],
     ];
-    for (const [label, value] of diagnostics) assertDiagnostics(label, value);
+    for (const [label, value, options] of diagnostics) assertDiagnostics(label, value, options);
     assertDiagnostics("race", diagnosticsRace, { allowApiFailures: true });
 
     const evidence = {

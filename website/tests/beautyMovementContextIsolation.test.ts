@@ -275,6 +275,10 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(smoke, /"simultaneous-reload-a"/);
     assert.match(smoke, /"simultaneous-reload-b"/);
     assert.match(smoke, /"expired-invite"/);
+    assert.match(smoke, /campaignSettled/);
+    assert.match(smoke, /waitForFunction\([\s\S]*undefined, \{ timeout: 60_000 \}\)/);
+    assert.match(smoke, /"expired-invite",\s*404,/);
+    assert.match(smoke, /\["expired", diagnosticsExpired, \{ expectedConsoleErrors: 1 \}\]/);
     assert.match(smoke, /navigateAtCheckpoint/);
     assert.match(smoke, /checkpointLastApiTransportFailure = true/);
     assert.doesNotMatch(smoke, /console\.log\(.*token/i);
