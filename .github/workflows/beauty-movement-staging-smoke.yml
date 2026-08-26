@@ -732,7 +732,8 @@ jobs:
           const evidence = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
           const refs = [evidence.inviteRefs?.a, evidence.inviteRefs?.b, evidence.inviteRefs?.expired];
           if (!refs.every((value) => /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) || new Set(refs).size !== 3) throw new Error("beauty_movement_isolation_refs_invalid");
-          process.stdout.write(refs.map((value) => `'${value}'`).join(","));
+          const quote = String.fromCharCode(39);
+          process.stdout.write(refs.map((value) => quote + value + quote).join(","));
           ' "${isolation_evidence}")"
           isolation_sql="SELECT i.external_ref, i.invite_status, i.confirmed_at_ms, i.expires_at_ms, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_invites i WHERE i.campaign_id = '${CAMPAIGN_ID}' AND i.external_ref IN (${isolation_refs}) ORDER BY i.external_ref;"
           npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${isolation_sql}" --json >"${isolation_readback}"
