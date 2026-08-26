@@ -163,8 +163,24 @@ test("release manifest records a bounded rollback target without campaign data",
 
 test("current Worker version parser selects the active 100 percent deployment", () => {
   assert.equal(
+    parseCurrentWorkerVersionId(JSON.stringify({
+      id: "44444444-4444-4444-8444-444444444444",
+      versions: [{ version_id: "22222222-2222-4222-8222-222222222222", percentage: 100 }],
+    })),
+    "22222222-2222-4222-8222-222222222222",
+  );
+  assert.equal(
     parseCurrentWorkerVersionId("Created: today\n(100%) 33333333-3333-4333-8333-333333333333\n"),
     "33333333-3333-4333-8333-333333333333",
+  );
+  assert.throws(
+    () => parseCurrentWorkerVersionId(JSON.stringify({
+      versions: [
+        { version_id: "22222222-2222-4222-8222-222222222222", percentage: 100 },
+        { version_id: "33333333-3333-4333-8333-333333333333", percentage: 100 },
+      ],
+    })),
+    /worker_current_version_unreadable/,
   );
   assert.throws(() => parseCurrentWorkerVersionId("no active deployment"), /worker_current_version_unreadable/);
 });

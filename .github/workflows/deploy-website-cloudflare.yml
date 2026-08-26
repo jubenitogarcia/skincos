@@ -316,13 +316,13 @@ jobs:
 
       - name: Upload Beauty Movement production release evidence
         id: beautyMovementReleaseEvidence
-        if: ${{ steps.beautyMovementReleaseSmoke.outcome == 'success' }}
+        if: ${{ always() && inputs.target == 'production' && steps.beautyMovementRelease.outputs.active == 'true' && steps.beautyMovementReleaseSmoke.outcome != 'skipped' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: beauty-movement-production-release-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/beauty-movement-production-release-smoke/evidence.json
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Reconcile Beauty Movement production release
         id: beautyMovementReconcile

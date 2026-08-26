@@ -13,6 +13,8 @@ const RELEASE_OWNER_PATTERN = /^bm-[0-9]{1,30}-[0-9]{1,6}$/;
 const PRODUCTION_URL = "https://espacofacial.com";
 const PRODUCTION_DATABASE = "espacofacial-beauty-movement";
 const WRANGLER_VERSION = "4.112.0";
+const ROUTE_ATTESTATION_ATTEMPTS = 6;
+const ROUTE_ATTESTATION_DELAY_MS = 5_000;
 
 function fail(code, details = {}) {
   const safe = Object.fromEntries(
@@ -185,7 +187,7 @@ function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-async function attestRoute(baseUrl, route, releaseSha) {
+async function attestRouteOnce(baseUrl, route, releaseSha) {
   const response = await fetch(`${baseUrl}${route}`, {
     redirect: "manual",
     headers: { "cache-control": "no-cache" },
@@ -214,6 +216,26 @@ async function attestRoute(baseUrl, route, releaseSha) {
     hashes.push(sha256(Buffer.from(await assetResponse.arrayBuffer())));
   }
   return { route, assetCount: hashes.length, assetSetHash: sha256(hashes.sort().join("|")) };
+}
+
+async function attestRoute(baseUrl, route, releaseSha) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= ROUTE_ATTESTATION_ATTEMPTS; attempt += 1) {
+    try {
+      return await attestRouteOnce(baseUrl, route, releaseSha);
+    } catch (error) {
+      lastError = error;
+      if (attempt < ROUTE_ATTESTATION_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, ROUTE_ATTESTATION_DELAY_MS));
+      }
+    }
+  }
+  throw lastError ?? new Error("beauty_movement_release_smoke_route_attestation_failed");
+}
+
+function safeFailureCode(error) {
+  const code = error instanceof Error ? error.message.split(":", 1)[0] : "";
+  return /^[a-z0-9_]{3,100}$/.test(code) ? code : "beauty_movement_release_smoke_unknown_failure";
 }
 
 function syntheticCampaignId() {
@@ -449,27 +471,36 @@ async function run() {
   let primaryError = null;
   let cleanupError = null;
   let finalEvidence = null;
+  let stage = "route_attestation";
   try {
     const [canonical, alias] = await Promise.all([
       attestRoute(options.baseUrl, "/beleza-em-movimento", options.releaseSha),
       attestRoute(options.baseUrl, "/BelezaEmMovimento", options.releaseSha),
     ]);
+    stage = "active_campaign_baseline";
     baselineActiveCount = activeCampaignCount(options);
     if (baselineActiveCount < 1) fail("beauty_movement_release_smoke_active_campaign_missing");
 
+    stage = "fixture_prepare";
     fixture = prepareFixture(options.privateRoot, syntheticCampaignId());
+    stage = "fixture_import";
     importFixture(options, fixture);
+    stage = "fixture_activation";
     activateFixture(options, fixture);
     if (activeCampaignCount(options) !== baselineActiveCount + 1) {
       fail("beauty_movement_release_smoke_fixture_scope_invalid");
     }
+    stage = "browser_journeys";
     const browserEvidence = runBrowserSmokes(options, fixture);
+    stage = "database_readback";
     validateReadback(options, fixture, browserEvidence);
+    stage = "durable_validation";
     persistDurableValidation(options, fixture);
 
     finalEvidence = {
       version: 1,
       releaseSha: options.releaseSha,
+      result: "passed",
       routes: {
         canonical: {
           status: 200,
@@ -512,9 +543,30 @@ async function run() {
   }
 
   if (primaryError || cleanupError) {
+    const failedStage = primaryError ? stage : "fixture_cleanup";
+    const failureCode = safeFailureCode(primaryError ?? cleanupError);
+    const failureEvidence = {
+      schemaVersion: 1,
+      releaseSha: options.releaseSha,
+      result: "failed",
+      failedStage,
+      failureCode,
+      syntheticFixtureCreated: Boolean(fixture),
+      syntheticFixtureRevoked: !cleanupError,
+      cleanupFailed: Boolean(cleanupError),
+      containsCredentials: false,
+      containsPersonalData: false,
+    };
+    fs.writeFileSync(options.evidenceFile, `${JSON.stringify(failureEvidence, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
     fail("beauty_movement_release_smoke_failed", {
       journeyFailed: Boolean(primaryError),
       cleanupFailed: Boolean(cleanupError),
+      failedStage,
+      failureCode,
     });
   }
   fs.writeFileSync(options.evidenceFile, `${JSON.stringify(finalEvidence, null, 2)}\n`, {
