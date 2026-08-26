@@ -127,6 +127,7 @@ function attachDiagnostics(page) {
     checkpointApiResponses: 0,
     checkpointLastApiStatus: 0,
     checkpointLastApiOperation: "none",
+    checkpointLastApiTransportFailure: false,
   };
   page.on("console", (message) => {
     if (message.type() === "error") diagnostics.consoleErrors += 1;
@@ -136,9 +137,13 @@ function attachDiagnostics(page) {
   });
   page.on("requestfailed", (request) => {
     try {
-      if (new URL(request.url()).pathname.startsWith("/api/beleza-em-movimento/")) {
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.startsWith("/api/beleza-em-movimento/")) {
         diagnostics.apiFailures += 1;
         diagnostics.checkpointApiFailures += 1;
+        diagnostics.checkpointLastApiStatus = 0;
+        diagnostics.checkpointLastApiOperation = pathname.split("/").at(-1) ?? "unknown";
+        diagnostics.checkpointLastApiTransportFailure = true;
       }
     } catch {
       // Ignore malformed third-party URLs; no value is retained.
@@ -152,6 +157,7 @@ function attachDiagnostics(page) {
         diagnostics.checkpointApiResponses += 1;
         diagnostics.checkpointLastApiStatus = response.status();
         diagnostics.checkpointLastApiOperation = pathname.split("/").at(-1) ?? "unknown";
+        diagnostics.checkpointLastApiTransportFailure = false;
       }
     } catch {
       // No URL is retained in evidence.
@@ -177,6 +183,7 @@ function resetCheckpointDiagnostics(page) {
   diagnostics.checkpointApiResponses = 0;
   diagnostics.checkpointLastApiStatus = 0;
   diagnostics.checkpointLastApiOperation = "none";
+  diagnostics.checkpointLastApiTransportFailure = false;
 }
 
 async function contextRef(page) {
@@ -204,30 +211,45 @@ async function assertScrubbed(page) {
   }
 }
 
+async function reportFreshCheckpointFailure(page, checkpoint, phase) {
+  const state = await page.evaluate(() => ({
+    pathname: window.location.pathname,
+    historyLength: window.history.length,
+    hasContextRef: typeof window.history.state?.__efBeautyMovementContextRef === "string",
+    documentVisible: document.visibilityState === "visible",
+    deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
+    busyRegionCount: document.querySelectorAll('[aria-busy="true"]').length,
+  })).catch(() => ({ stateUnavailable: true }));
+  const diagnostics = pageDiagnostics.get(page) ?? {};
+  fail("beauty_movement_isolation_smoke_fresh_checkpoint_failure", {
+    checkpoint,
+    phase,
+    ...state,
+    apiResponses: diagnostics.checkpointApiResponses ?? 0,
+    apiFailures: diagnostics.checkpointApiFailures ?? 0,
+    lastApiStatus: diagnostics.checkpointLastApiStatus ?? 0,
+    lastApiOperation: diagnostics.checkpointLastApiOperation ?? "none",
+    lastApiTransportFailure: diagnostics.checkpointLastApiTransportFailure ?? false,
+    consoleErrors: diagnostics.consoleErrors ?? 0,
+    pageErrors: diagnostics.pageErrors ?? 0,
+  });
+}
+
+async function navigateAtCheckpoint(page, checkpoint, navigate) {
+  resetCheckpointDiagnostics(page);
+  try {
+    await navigate();
+  } catch {
+    await reportFreshCheckpointFailure(page, checkpoint, "navigation");
+  }
+}
+
 async function waitFresh(page, checkpoint) {
   const deck = page.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i });
   try {
     await deck.waitFor({ state: "visible", timeout: 60_000 });
   } catch {
-    const state = await page.evaluate(() => ({
-      pathname: window.location.pathname,
-      historyLength: window.history.length,
-      hasContextRef: typeof window.history.state?.__efBeautyMovementContextRef === "string",
-      documentVisible: document.visibilityState === "visible",
-      deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
-      busyRegionCount: document.querySelectorAll('[aria-busy="true"]').length,
-    })).catch(() => ({ stateUnavailable: true }));
-    const diagnostics = pageDiagnostics.get(page) ?? {};
-    fail("beauty_movement_isolation_smoke_fresh_timeout", {
-      checkpoint,
-      ...state,
-      apiResponses: diagnostics.checkpointApiResponses ?? 0,
-      apiFailures: diagnostics.checkpointApiFailures ?? 0,
-      lastApiStatus: diagnostics.checkpointLastApiStatus ?? 0,
-      lastApiOperation: diagnostics.checkpointLastApiOperation ?? "none",
-      consoleErrors: diagnostics.consoleErrors ?? 0,
-      pageErrors: diagnostics.pageErrors ?? 0,
-    });
+    await reportFreshCheckpointFailure(page, checkpoint, "freshness");
   }
   await assertScrubbed(page);
 }
@@ -262,8 +284,9 @@ async function waitAct(page, act) {
 
 async function openInvite(page, baseUrl, invite, route, expectedAct = null, checkpoint = "open-invite") {
   if (!ROUTES.includes(route)) fail("beauty_movement_isolation_smoke_route_invalid");
-  resetCheckpointDiagnostics(page);
-  await page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" });
+  await navigateAtCheckpoint(page, checkpoint, () => (
+    page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" })
+  ));
   if (expectedAct) await waitAct(page, expectedAct);
   else await waitFresh(page, checkpoint);
   return contextRef(page);
@@ -295,8 +318,8 @@ async function revealAndAdvance(page, currentAct, nextAct) {
   await waitAct(page, nextAct);
 }
 
-async function reloadAt(page, act) {
-  await page.reload({ waitUntil: "domcontentloaded" });
+async function reloadAt(page, act, checkpoint) {
+  await navigateAtCheckpoint(page, checkpoint, () => page.reload({ waitUntil: "domcontentloaded" }));
   await waitAct(page, act);
 }
 
@@ -348,7 +371,7 @@ async function run() {
     const firstContextA = await openInvite(pageA, baseUrl, invites.a, ROUTES[0], null, "initial-a");
     await pageA.getByRole("button", { name: /Clique no baralho para começar a sua leitura/i }).click();
     await revealAndAdvance(pageA, "Beleza", "Movimento");
-    await reloadAt(pageA, "Movimento");
+    await reloadAt(pageA, "Movimento", "reload-a-movement");
 
     const firstContextB = await openInvite(pageA, baseUrl, invites.b, ROUTES[0], null, "switch-a-to-b");
     if (firstContextA === firstContextB) fail("beauty_movement_isolation_smoke_context_collision");
@@ -360,22 +383,21 @@ async function run() {
       fail("beauty_movement_isolation_smoke_session_context_reused");
     }
 
-    await pageA.goBack();
+    await navigateAtCheckpoint(pageA, "back-a", () => pageA.goBack());
     await waitAct(pageA, "Movimento");
     if (await contextRef(pageA) !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
-    resetCheckpointDiagnostics(pageA);
-    await pageA.goForward();
+    await navigateAtCheckpoint(pageA, "forward-b", () => pageA.goForward());
     await waitFresh(pageA, "forward-b");
     if (await contextRef(pageA) !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
 
-    await pageA.goBack();
+    await navigateAtCheckpoint(pageA, "back-a-final", () => pageA.goBack());
     await waitAct(pageA, "Movimento");
     await revealAndAdvance(pageA, "Movimento", "Celebração");
     await revealAndAdvance(pageB, "Beleza", "Movimento");
 
     await Promise.all([
-      reloadAt(pageA, "Celebração"),
-      reloadAt(pageB, "Movimento"),
+      reloadAt(pageA, "Celebração", "simultaneous-reload-a"),
+      reloadAt(pageB, "Movimento", "simultaneous-reload-b"),
     ]);
     if (await contextRef(pageA) !== firstContextA || await contextRef(pageB) !== secondContextB) {
       fail("beauty_movement_isolation_smoke_simultaneous_reload_context_changed");
@@ -383,17 +405,16 @@ async function run() {
 
     const reopenedA = await shared.newPage();
     const diagnosticsReopenedA = attachDiagnostics(reopenedA);
-    await openInvite(reopenedA, baseUrl, invites.a, ROUTES[0], "Celebração");
+    await openInvite(reopenedA, baseUrl, invites.a, ROUTES[0], "Celebração", "reopen-a");
     const reopenedB = await shared.newPage();
     const diagnosticsReopenedB = attachDiagnostics(reopenedB);
-    await openInvite(reopenedB, baseUrl, invites.b, ROUTES[1], "Movimento");
+    await openInvite(reopenedB, baseUrl, invites.b, ROUTES[1], "Movimento", "reopen-b");
 
     const privateContext = await browser.newContext();
     const privatePage = await privateContext.newPage();
     const diagnosticsPrivate = attachDiagnostics(privatePage);
     await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0], null, "private-primary");
-    resetCheckpointDiagnostics(privatePage);
-    await privatePage.reload({ waitUntil: "domcontentloaded" });
+    await navigateAtCheckpoint(privatePage, "private-reload", () => privatePage.reload({ waitUntil: "domcontentloaded" }));
     await waitFresh(privatePage, "private-reload");
 
     // The public exchange limiter allows six attempts per source IP and
@@ -414,13 +435,12 @@ async function run() {
     const storagePage = await storageUnavailable.newPage();
     const diagnosticsStorage = attachDiagnostics(storagePage);
     await openInvite(storagePage, baseUrl, invites.primary, ROUTES[1], null, "storage-unavailable");
-    resetCheckpointDiagnostics(storagePage);
-    await storagePage.reload({ waitUntil: "domcontentloaded" });
+    await navigateAtCheckpoint(storagePage, "storage-reload", () => storagePage.reload({ waitUntil: "domcontentloaded" }));
     await waitFresh(storagePage, "storage-reload");
 
     const racePage = await shared.newPage();
     const diagnosticsRace = attachDiagnostics(racePage);
-    await openInvite(racePage, baseUrl, invites.a, ROUTES[0], "Celebração");
+    await openInvite(racePage, baseUrl, invites.a, ROUTES[0], "Celebração", "race-a");
     await racePage.evaluate(({ tokenB, tokenA }) => {
       window.location.hash = `c=${tokenB}`;
       window.setTimeout(() => {

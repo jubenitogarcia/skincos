@@ -252,8 +252,10 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(smoke, /name: `ef_bm_ctx_\$\{secondContextB\}`/);
     assert.match(smoke, /rawTokensPersistedInEvidence: false/);
     assert.match(smoke, /beauty_movement_isolation_smoke_act_timeout/);
-    assert.match(smoke, /beauty_movement_isolation_smoke_fresh_timeout/);
+    assert.match(smoke, /beauty_movement_isolation_smoke_fresh_checkpoint_failure/);
     assert.match(smoke, /"forward-b"/);
+    assert.match(smoke, /navigateAtCheckpoint/);
+    assert.match(smoke, /checkpointLastApiTransportFailure = true/);
     assert.doesNotMatch(smoke, /console\.log\(.*token/i);
     assert.match(primarySmoke, /whatsappCtaPresent: true/);
     assert.match(primarySmoke, /contextRestoredAfterReload: true/);
