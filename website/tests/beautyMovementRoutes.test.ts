@@ -205,7 +205,7 @@ test("invite exchange bounds JSON bodies even when Content-Length is absent", as
     assert.equal(exchangeCalls, 0);
 });
 
-test("reveal validates against the server-owned palette deck and confirmation requires consent", async () => {
+test("reveal validates against the server-owned palette deck and confirmation does not require a checkbox", async () => {
     revealCalls = 0;
     revealError = null;
     confirmError = null;
@@ -223,13 +223,13 @@ test("reveal validates against the server-owned palette deck and confirmation re
     assert.equal(validateCard({ palette: "radiancia", actIndex: 1, cardId: "movimento-potencia" }), false);
 
     confirmCalls = 0;
-    const denied = await confirm(request("/api/beleza-em-movimento/confirm", {
+    const withoutConsent = await confirm(request("/api/beleza-em-movimento/confirm", {
         email: null,
-        operationalConsent: false,
     }, `ef_bm_ctx_${CONTEXT_REF}=${SESSION_TOKEN}`, "https://espacofacial.com", CONTEXT_REF));
-    assert.equal(denied.status, 404);
-    assert.equal(confirmCalls, 0);
+    assert.equal(withoutConsent.status, 200);
+    assert.equal(confirmCalls, 1);
 
+    confirmCalls = 0;
     const accepted = await confirm(request("/api/beleza-em-movimento/confirm", {
         email: "ana@example.com",
         operationalConsent: true,

@@ -98,7 +98,6 @@ export type BeautyMovementRevealCommit =
 
 export type BeautyMovementConfirmationInput = {
     email: string | null;
-    operationalConsent: true;
 };
 
 export type BeautyMovementConfirmationCommit =
@@ -324,8 +323,6 @@ export default function BeautyMovementExperience({
         initialState.confirmed || initialActIndex > 0 ? "ready" : "waiting",
     );
     const [confirmed, setConfirmed] = useState(initialState.confirmed);
-    const [operationalConsent, setOperationalConsent] = useState(false);
-    const [confirmationAttempted, setConfirmationAttempted] = useState(false);
     const [revealPendingCardId, setRevealPendingCardId] = useState<string | null>(null);
     const [isConfirming, setIsConfirming] = useState(false);
     const [confirmedOffer, setConfirmedOffer] = useState<BeautyMovementOffer | null>(initialState.offer ?? null);
@@ -359,7 +356,7 @@ export default function BeautyMovementExperience({
     const finaleCountdownRef = useRef<HTMLDivElement | null>(null);
     const progressListRef = useRef<HTMLOListElement | null>(null);
     const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-    const confirmationActionRef = useRef<HTMLElement | null>(null);
+    const confirmationActionRef = useRef<HTMLButtonElement | null>(null);
     const specialCardModalCloseRef = useRef<HTMLButtonElement | null>(null);
     const specialCardModalDialogRef = useRef<HTMLElement | null>(null);
     const specialCardReopenActionRef = useRef<HTMLButtonElement | null>(null);
@@ -486,15 +483,11 @@ export default function BeautyMovementExperience({
     useEffect(() => {
         if (finaleStage === "confirmation") {
             window.requestAnimationFrame(() => {
-                const confirmationAction = confirmationActionRef.current;
-                const focusTarget = isLocalPreview
-                    ? confirmationAction?.querySelector<HTMLButtonElement>("button")
-                    : confirmationAction;
-                focusTarget?.focus({ preventScroll: true });
+                confirmationActionRef.current?.focus({ preventScroll: true });
             });
             return;
         }
-    }, [finaleStage, isLocalPreview]);
+    }, [finaleStage]);
 
     useEffect(() => {
         if (finaleStage !== "result" || !isSpecialCardModalOpen) return;
@@ -596,7 +589,6 @@ export default function BeautyMovementExperience({
         () => getBeautyMovementReading(initialState.palette, selections),
         [initialState.palette, selections],
     );
-    const consentInvalid = confirmationAttempted && !operationalConsent;
     const primaryWhatsappLabel = initialState.campaign.whatsappLabel?.trim() || "Falar com a equipe";
     const hasCourtesyClass = initialState.velocity?.enabled === true;
 
@@ -1162,11 +1154,7 @@ export default function BeautyMovementExperience({
                             setIsSpecialCardModalOpen(confirmed);
                             if (!confirmed) {
                                 window.requestAnimationFrame(() => {
-                                    const confirmationAction = confirmationActionRef.current;
-                                    const focusTarget = isLocalPreview
-                                        ? confirmationAction?.querySelector<HTMLButtonElement>("button")
-                                        : confirmationAction;
-                                    focusTarget?.focus({ preventScroll: true });
+                                    confirmationActionRef.current?.focus({ preventScroll: true });
                                 });
                             }
                         },
@@ -1435,17 +1423,13 @@ export default function BeautyMovementExperience({
 
     async function handleConfirm() {
         if (confirmInFlightRef.current || finaleStageRef.current !== "confirmation") return;
-        setConfirmationAttempted(true);
         setActionError(null);
-
-        if (!operationalConsent && !isLocalPreview) return;
 
         confirmInFlightRef.current = true;
         setIsConfirming(true);
         try {
             const commit = await onConfirm?.({
                 email: null,
-                operationalConsent: true,
             });
             if (!mountedRef.current) return;
             if (commit && "offer" in commit) setConfirmedOffer(commit.offer ?? null);
@@ -1726,15 +1710,13 @@ export default function BeautyMovementExperience({
                         <div className={revealContentClass}>
                             <strong>A soma da sua leitura está pronta.</strong>
                             {showRevealAction ? (
-                                <div
-                                    className={styles.specialCardRevealAction}
-                                    ref={(node) => {
-                                        if (action === "confirm") confirmationActionRef.current = node;
-                                    }}
-                                >
+                                <div className={styles.specialCardRevealAction}>
                                     {action === "confirm" && actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
                                     <button
-                                        ref={action === "reopen" ? specialCardReopenActionRef : undefined}
+                                        ref={(node) => {
+                                            if (action === "confirm") confirmationActionRef.current = node;
+                                            if (action === "reopen") specialCardReopenActionRef.current = node;
+                                        }}
                                         className={styles.primaryButton}
                                         type="button"
                                         onClick={action === "confirm" ? () => void handleConfirm() : openSpecialCardModal}
@@ -1814,39 +1796,6 @@ export default function BeautyMovementExperience({
                     </div>
                 </div>
             </article>
-        );
-    }
-
-    function renderConfirmationAction() {
-        return (
-            <section
-                className={styles.specialCardConfirmation}
-                ref={confirmationActionRef}
-                tabIndex={-1}
-                aria-labelledby="beauty-movement-special-confirmation-title"
-            >
-                <p className={styles.sectionLabel}>Confirmação</p>
-                <h2 id="beauty-movement-special-confirmation-title">Garanta seu presente e confirme presença.</h2>
-                <label className={`${styles.consentField} ${consentInvalid ? styles.consentFieldInvalid : ""}`.trim()}>
-                    <input
-                        type="checkbox"
-                        checked={operationalConsent}
-                        onChange={(event) => setOperationalConsent(event.target.checked)}
-                        aria-describedby={consentInvalid ? "beauty-movement-consent-error" : undefined}
-                    />
-                    <span>Aceito entrar na lista exclusiva e receber comunicações operacionais sobre este evento.</span>
-                </label>
-                {consentInvalid ? <p className={styles.fieldError} id="beauty-movement-consent-error" role="alert">Confirme o aceite para seguir.</p> : null}
-                {actionError ? <p className={styles.inlineError} role="alert">{actionError}</p> : null}
-                <button
-                    className={styles.primaryButton}
-                    type="button"
-                    onClick={() => void handleConfirm()}
-                    disabled={isConfirming}
-                >
-                    {isConfirming ? "Confirmando…" : "Garantir presente e confirmar presença"}
-                </button>
-            </section>
         );
     }
 
@@ -2073,8 +2022,7 @@ export default function BeautyMovementExperience({
                                 role="group"
                                 aria-label="Carta especial da celebração"
                             >
-                                {!isLocalPreview ? renderConfirmationAction() : null}
-                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none", true, true)}
+                                {renderSpecialCard(false, "confirm", true, true)}
                             </div>
                         ) : finaleStage === "result" ? (
                             <div

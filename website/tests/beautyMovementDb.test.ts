@@ -147,6 +147,11 @@ class FakeBeautyMovementD1 implements BeautyMovementD1 {
             this.invite.outcome_resolved_at_ms = values[3];
             return 1;
         }
+        if (query.includes("operational_consent_at_ms = ?") && query.includes("confirmed_at_ms IS NOT NULL")) {
+            if (this.invite.confirmed_at_ms === null || this.invite.operational_consent_at_ms !== null) return 0;
+            this.invite.operational_consent_at_ms = values[0];
+            return 1;
+        }
         if (query.includes("UPDATE bm_invites") && query.includes("personal_data_ciphertext")) {
             if (query.includes("confirmed_at_ms IS NULL") && this.claimConfirmationElsewhereOnNextWrite) {
                 this.claimConfirmationElsewhereOnNextWrite = false;
@@ -474,7 +479,7 @@ test("beauty movement selects the courtesy WhatsApp message from velocity entitl
     if (legacy.ok) assert.equal(legacy.state.campaign.whatsappMessage, "Olá, quero confirmar minha aula-cortesia.");
 });
 
-test("beauty movement enforces ordered immutable cards and confirms the configured benefit only after consent", async () => {
+test("beauty movement enforces ordered immutable cards and confirms without manufacturing operational consent", async () => {
     const fixture = await makeFixture();
     const exchange = await exchangeBeautyMovementInvite({ token: fixture.token, origin: ORIGIN, ip: "203.0.113.11", nowMs: NOW }, options(fixture.db));
     assert.equal(exchange.ok, true);
@@ -491,15 +496,14 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
     const replacement = await revealBeautyMovementCard({ sessionToken, contextRef, actIndex: 1, cardId: "potencia", origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
     assert.deepEqual(replacement, { ok: false, error: "card_already_revealed" });
 
-    const withoutConsent = await confirmBeautyMovementInvite({ sessionToken, contextRef, operationalConsent: false, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
-    assert.deepEqual(withoutConsent, { ok: false, error: "operational_consent_required" });
-    const confirmed = await confirmBeautyMovementInvite({ sessionToken, contextRef, email: "ana+event@example.com", operationalConsent: true, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
+    const confirmed = await confirmBeautyMovementInvite({ sessionToken, contextRef, email: "ana+event@example.com", origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
     assert.equal(confirmed.ok, true);
     if (!confirmed.ok) return;
     assert.equal(confirmed.state.confirmed, true);
     assert.deepEqual(confirmed.state.offer, getBeautyMovementOffer("elleva_upgrade"));
     assert.equal(confirmed.state.benefit, null);
     assert.equal(fixture.db.invite.outcome_key, "elleva_upgrade");
+    assert.equal(fixture.db.invite.operational_consent_at_ms, null);
     assert.equal(fixture.db.invite.outcome_protocol_version, "beauty-movement-outcomes-v2");
     assert.equal(fixture.db.invite.outcome_snapshot_json, JSON.stringify(getBeautyMovementOffer("elleva_upgrade")));
     assert.deepEqual(confirmed.state.velocity, {
@@ -526,6 +530,7 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
     assert.equal(replay.ok, true);
     if (!replay.ok) return;
     assert.equal(replay.replay, true);
+    assert.equal(fixture.db.invite.operational_consent_at_ms, NOW);
     const stored = await decryptBeautyMovementPersonalData<{ email?: string | null }>({
         version: 1,
         ciphertext: String(fixture.db.invite.personal_data_ciphertext),
@@ -819,5 +824,6 @@ test("beauty movement treats a concurrent confirmation claim as a replay without
     assert.equal(replay.ok, true);
     if (!replay.ok) return;
     assert.equal(replay.replay, true);
+    assert.equal(fixture.db.invite.operational_consent_at_ms, NOW);
     assert.equal(fixture.db.invite.personal_data_ciphertext, ciphertextBeforeClaim);
 });
