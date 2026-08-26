@@ -122,7 +122,7 @@ async function queryRows(args: Args): Promise<ReportRow[]> {
         "c.status AS campaign_status, c.ends_at_ms AS campaign_ends_at_ms",
         "FROM bm_invites i INNER JOIN bm_campaigns c ON c.id = i.campaign_id",
         "LEFT JOIN bm_rewards r ON r.campaign_id = i.campaign_id AND r.reward_id = i.reward_id",
-        `WHERE i.campaign_id = '${args.campaign.replace(/'/g, "''")}' AND i.confirmed_at_ms IS NOT NULL`,
+        `WHERE i.campaign_id = '${args.campaign.replace(/'/g, "''")}' AND i.confirmed_at_ms IS NOT NULL AND i.operational_consent_at_ms IS NOT NULL`,
         "ORDER BY i.confirmed_at_ms DESC, i.updated_at_ms DESC",
     ].join(" ");
     try {

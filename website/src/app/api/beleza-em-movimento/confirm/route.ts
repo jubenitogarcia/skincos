@@ -19,14 +19,14 @@ export async function POST(request: NextRequest) {
   if (!(await hasBeautyMovementAllowedOrigin(request))) return beautyMovementInvalidResponse();
   const body = await readBeautyMovementJson(request);
   const email = nullableEmail(body?.email);
-  if (!body || email === undefined || body.operationalConsent !== true) return beautyMovementInvalidResponse();
+  if (!body || email === undefined) return beautyMovementInvalidResponse();
   const credential = getBeautyMovementSessionCredential(request);
 
   const result = await confirmBeautyMovementInvite({
     sessionToken: credential?.sessionToken,
     contextRef: credential?.contextRef,
     email,
-    operationalConsent: true,
+    operationalConsent: body.operationalConsent === true,
     origin: request.headers.get("origin"),
     ip: getBeautyMovementClientIp(request),
   });

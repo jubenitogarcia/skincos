@@ -34,6 +34,7 @@ test("uses a safe fallback when an invite has no display name", () => {
 });
 
 test("campaign CTA targets the configured clinic number and preserves the message", () => {
+    assert.equal(BEAUTY_MOVEMENT_WHATSAPP_PHONE, "5551995811008");
     const message = buildBeautyMovementWhatsappMessage({
         displayName: "Lia",
         selectedConcepts: "Harmonia · Sintonia · Encontro",

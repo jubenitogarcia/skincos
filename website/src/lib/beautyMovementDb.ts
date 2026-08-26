@@ -219,7 +219,6 @@ export type BeautyMovementError =
     | "invalid_card"
     | "card_already_revealed"
     | "confirmation_requires_three_cards"
-    | "operational_consent_required"
     | "invalid_email"
     | "email_update_not_allowed";
 
@@ -1003,11 +1002,29 @@ export async function revealBeautyMovementCard(params: {
     }
 }
 
+async function persistExplicitOperationalConsent(
+    db: BeautyMovementD1,
+    inviteId: string,
+    nowMs: number,
+): Promise<void> {
+    await db
+        .prepare(
+            `UPDATE bm_invites
+             SET operational_consent_at_ms = ?,
+                 updated_at_ms = ?
+             WHERE id = ?
+               AND confirmed_at_ms IS NOT NULL
+               AND operational_consent_at_ms IS NULL`,
+        )
+        .bind(nowMs, nowMs, inviteId)
+        .run();
+}
+
 export async function confirmBeautyMovementInvite(params: {
     sessionToken: string | null | undefined;
     contextRef: string | null | undefined;
     email?: string | null;
-    operationalConsent: boolean;
+    operationalConsent?: boolean;
     origin: string | null | undefined;
     ip: string | null | undefined;
 }, options: BeautyMovementOperationOptions = {}): Promise<BeautyMovementStateResult> {
@@ -1036,13 +1053,16 @@ export async function confirmBeautyMovementInvite(params: {
             return fail("rate_limited");
         }
         if (loaded.row.confirmed_at_ms !== null) {
+            if (params.operationalConsent === true && loaded.row.operational_consent_at_ms === null) {
+                await persistExplicitOperationalConsent(loaded.db, loaded.row.invite_id, loaded.nowMs);
+            }
             const state = await publicState({ db: loaded.db, row: loaded.row, piiKey: loaded.piiKey });
             return state ? { ok: true, state, replay: true } : fail("campaign_unavailable");
         }
         const reveals = await listReveals(loaded.db, loaded.row.invite_id);
         if (reveals.length !== 3) return fail("confirmation_requires_three_cards");
-        if (!params.operationalConsent) return fail("operational_consent_required");
         await resolveAndPersistOutcome({ db: loaded.db, row: loaded.row, reveals, nowMs: loaded.nowMs });
+        const operationalConsentAtMs = params.operationalConsent === true ? loaded.nowMs : null;
 
         let encrypted: BeautyMovementEncryptedPersonalData | null = null;
         if (email) {
@@ -1077,7 +1097,7 @@ export async function confirmBeautyMovementInvite(params: {
                          updated_at_ms = ?
                      WHERE id = ? AND confirmed_at_ms IS NULL`,
                 )
-                .bind(encrypted.ciphertext, encrypted.iv, loaded.nowMs, loaded.nowMs, loaded.nowMs, loaded.row.invite_id)
+                .bind(encrypted.ciphertext, encrypted.iv, operationalConsentAtMs, loaded.nowMs, loaded.nowMs, loaded.row.invite_id)
                 .run()
             : await loaded.db
                 .prepare(
@@ -1087,14 +1107,18 @@ export async function confirmBeautyMovementInvite(params: {
                          updated_at_ms = ?
                      WHERE id = ? AND confirmed_at_ms IS NULL`,
                 )
-                .bind(loaded.nowMs, loaded.nowMs, loaded.nowMs, loaded.row.invite_id)
+                .bind(operationalConsentAtMs, loaded.nowMs, loaded.nowMs, loaded.row.invite_id)
                 .run();
 
+        const confirmationClaimCount = asRunMeta(confirmationClaim);
+        if (confirmationClaimCount === 0 && params.operationalConsent === true) {
+            await persistExplicitOperationalConsent(loaded.db, loaded.row.invite_id, loaded.nowMs);
+        }
         const refreshed = await findSessionByTokenHash(loaded.db, loaded.sessionTokenHash);
         if (!refreshed || !inviteIsAvailable(refreshed, loaded.nowMs)) return fail("session_unavailable");
         const state = await publicState({ db: loaded.db, row: refreshed, piiKey: loaded.piiKey });
         if (!state) return fail("campaign_unavailable");
-        return asRunMeta(confirmationClaim) > 0
+        return confirmationClaimCount > 0
             ? { ok: true, state }
             : { ok: true, state, replay: true };
     } catch {

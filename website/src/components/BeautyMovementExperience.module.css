@@ -992,6 +992,17 @@
   animation: specialCardFlip 980ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
 }
 
+/* Chromium can occasionally composite children and pseudo-elements from both
+ * 3D faces during a flip. Swap the painted face at the card's edge so the
+ * covered artwork can never remain above the revealed result. */
+.specialCard[data-special-state="revealed"] .specialCardBack {
+  animation: specialCoveredFaceExit 980ms linear both;
+}
+
+.specialCard[data-special-state="revealed"] .specialCardFront {
+  animation: specialRevealedFaceEnter 980ms linear both;
+}
+
 .specialCardFace {
   position: absolute;
   inset: 0;
@@ -1005,10 +1016,14 @@
   border-radius: 14px;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  isolation: isolate;
+  transform-style: flat;
+  will-change: transform, opacity;
   text-align: center;
 }
 
 .specialCardBack {
+  transform: rotateY(0deg) translateZ(0.1px);
   border: 1px solid var(--bm-ink);
   background: var(--bm-ink);
   box-shadow: var(--bm-shadow);
@@ -1083,7 +1098,7 @@
 }
 
 .specialCardFront {
-  transform: rotateY(180deg);
+  transform: rotateY(180deg) translateZ(0.1px);
   border: 1px solid var(--bm-line-strong);
   border-top: 3px solid var(--bm-yellow);
   background: var(--bm-surface);
@@ -1209,6 +1224,14 @@
   animation: cardFlipAndSettle var(--bm-hand-reveal-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
 }
 
+.cardButtonSelected .cardFront {
+  animation: coveredFaceExit var(--bm-hand-reveal-ms) linear both;
+}
+
+.cardButtonSelected .cardBack {
+  animation: revealedFaceEnter var(--bm-hand-reveal-ms) linear both;
+}
+
 .cardButtonSelected {
   z-index: 3;
   animation: cardLiftAndSettle var(--bm-hand-reveal-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
@@ -1239,6 +1262,14 @@
 .tableStage[data-hand-stage="collect"] .cardButtonSelected .cardInner {
   animation: cardFlipToDeck var(--bm-hand-collect-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
   will-change: transform;
+}
+
+.tableStage[data-hand-stage="collect"] .cardButtonSelected .cardFront {
+  animation: coveredFaceReturn var(--bm-hand-collect-ms) linear both;
+}
+
+.tableStage[data-hand-stage="collect"] .cardButtonSelected .cardBack {
+  animation: revealedFaceReturn var(--bm-hand-collect-ms) linear both;
 }
 
 .tableStage[data-hand-stage="deal"] .cardButton {
@@ -1364,6 +1395,10 @@
     transform: rotateY(0deg) scale(1.08) translateY(-5px);
   }
 
+  39% {
+    transform: rotateY(90deg) scale(1.08) translateY(-7px);
+  }
+
   52% {
     transform: rotateY(180deg) scale(1.08) translateY(-8px);
   }
@@ -1374,6 +1409,90 @@
 
   100% {
     transform: rotateY(180deg) scale(1);
+  }
+}
+
+@keyframes coveredFaceExit {
+  0%,
+  38.99% {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  39%,
+  100% {
+    visibility: hidden;
+    opacity: 0;
+  }
+}
+
+@keyframes revealedFaceEnter {
+  0%,
+  38.99% {
+    visibility: hidden;
+    opacity: 0;
+  }
+
+  39%,
+  100% {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+
+@keyframes specialCoveredFaceExit {
+  0%,
+  27.99% {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  28%,
+  100% {
+    visibility: hidden;
+    opacity: 0;
+  }
+}
+
+@keyframes specialRevealedFaceEnter {
+  0%,
+  27.99% {
+    visibility: hidden;
+    opacity: 0;
+  }
+
+  28%,
+  100% {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+
+@keyframes coveredFaceReturn {
+  0%,
+  31.99% {
+    visibility: hidden;
+    opacity: 0;
+  }
+
+  32%,
+  100% {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+
+@keyframes revealedFaceReturn {
+  0%,
+  31.99% {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  32%,
+  100% {
+    visibility: hidden;
+    opacity: 0;
   }
 }
 
@@ -1447,6 +1566,10 @@
 @keyframes cardFlipToDeck {
   from {
     transform: rotateY(180deg) scale(1);
+  }
+
+  32% {
+    transform: rotateY(90deg) scale(0.95);
   }
 
   58% {
@@ -1590,6 +1713,10 @@
     transform: rotateY(0deg) scale(0.92);
   }
 
+  28% {
+    transform: rotateY(90deg) scale(0.98);
+  }
+
   56% {
     transform: rotateY(188deg) scale(1.04);
   }
@@ -1632,9 +1759,14 @@
   overflow: hidden;
   border-radius: inherit;
   backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  isolation: isolate;
+  transform-style: flat;
+  will-change: transform, opacity;
 }
 
 .cardFront {
+  transform: rotateY(0deg) translateZ(0.1px);
   align-items: flex-start;
   justify-content: space-between;
   flex-direction: column;
@@ -1822,7 +1954,7 @@
   background: var(--bm-surface);
   box-shadow: var(--bm-shadow);
   color: var(--bm-ink);
-  transform: rotateY(180deg);
+  transform: rotateY(180deg) translateZ(0.1px);
 }
 
 .cardBack strong {
@@ -3549,6 +3681,14 @@
 
 .tableStage[data-special-modal="open"] .tableSurface {
   pointer-events: none;
+}
+
+/* The result stage keeps a covered card behind the modal so it can be reopened
+ * after closing. Hide only its paint while the modal is open; otherwise that
+ * duplicate covered artwork becomes visible through the rotating modal card at
+ * its 90-degree edge and looks as if it were layered over the revealed prize. */
+.tableStage[data-special-modal="open"] .specialCardStage {
+  visibility: hidden;
 }
 
 @keyframes finaleSurfaceChromeDissolve {

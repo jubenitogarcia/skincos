@@ -7,7 +7,7 @@ import { buildWhatsappRedirectHref } from "@/lib/whatsappTracking";
  * legacy phone aliasing rules. The invite CTA must open the number supplied by
  * the campaign owner exactly as configured.
  */
-export const BEAUTY_MOVEMENT_WHATSAPP_PHONE = "5551998493563" as const;
+export const BEAUTY_MOVEMENT_WHATSAPP_PHONE = "5551995811008" as const;
 
 export type BeautyMovementWhatsappPlacement = "result" | "conditions";
 
