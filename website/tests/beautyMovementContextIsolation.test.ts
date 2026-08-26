@@ -70,6 +70,12 @@ test("campaign identity is selected explicitly per history entry instead of by a
     assert.match(campaign, /AbortController/);
     assert.match(
         campaign,
+        /const reinitializeFromHistory = \(\) => \{[\s\S]*parseBeautyMovementInviteFragment\(window\.location\.hash\)\.attempted\) return;/,
+    );
+    assert.match(campaign, /addEventListener\(BEAUTY_MOVEMENT_HANDOFF_EVENT, reinitializeFromHandoff\)/);
+    assert.match(campaign, /addEventListener\("popstate", reinitializeFromHistory\)/);
+    assert.match(
+        campaign,
         /const verified = await requestCampaignState\("\/api\/beleza-em-movimento\/state", \{\s*contextRef: exchange\.contextRef,/,
     );
     assert.match(campaign, /nextState = verified\.state/);
