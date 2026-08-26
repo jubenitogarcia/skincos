@@ -336,15 +336,22 @@ async function revealAndAdvance(page, currentAct, nextAct, checkpoint) {
       status: 0,
     });
   }
+  const responsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return candidate.request().method() === "POST" && url.pathname === "/api/beleza-em-movimento/reveal";
+  }, { timeout: 30_000 });
+  try {
+    await card.click();
+  } catch {
+    void responsePromise.catch(() => undefined);
+    failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
+      phase: "click",
+      status: 0,
+    });
+  }
   let response;
   try {
-    [response] = await Promise.all([
-      page.waitForResponse((candidate) => {
-        const url = new URL(candidate.url());
-        return candidate.request().method() === "POST" && url.pathname === "/api/beleza-em-movimento/reveal";
-      }, { timeout: 30_000 }),
-      card.click(),
-    ]);
+    response = await responsePromise;
   } catch {
     failAtCheckpoint(page, "beauty_movement_isolation_smoke_reveal_failed", checkpoint, {
       phase: "request",
