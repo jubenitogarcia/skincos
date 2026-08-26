@@ -123,8 +123,10 @@ function attachDiagnostics(page) {
     apiResponses: 0,
     revealRequests: 0,
     whatsappRequests: 0,
-    lastApiStatus: 0,
-    lastApiOperation: "none",
+    checkpointApiFailures: 0,
+    checkpointApiResponses: 0,
+    checkpointLastApiStatus: 0,
+    checkpointLastApiOperation: "none",
   };
   page.on("console", (message) => {
     if (message.type() === "error") diagnostics.consoleErrors += 1;
@@ -134,7 +136,10 @@ function attachDiagnostics(page) {
   });
   page.on("requestfailed", (request) => {
     try {
-      if (new URL(request.url()).pathname.startsWith("/api/beleza-em-movimento/")) diagnostics.apiFailures += 1;
+      if (new URL(request.url()).pathname.startsWith("/api/beleza-em-movimento/")) {
+        diagnostics.apiFailures += 1;
+        diagnostics.checkpointApiFailures += 1;
+      }
     } catch {
       // Ignore malformed third-party URLs; no value is retained.
     }
@@ -144,8 +149,9 @@ function attachDiagnostics(page) {
       const pathname = new URL(response.url()).pathname;
       if (pathname.startsWith("/api/beleza-em-movimento/")) {
         diagnostics.apiResponses += 1;
-        diagnostics.lastApiStatus = response.status();
-        diagnostics.lastApiOperation = pathname.split("/").at(-1) ?? "unknown";
+        diagnostics.checkpointApiResponses += 1;
+        diagnostics.checkpointLastApiStatus = response.status();
+        diagnostics.checkpointLastApiOperation = pathname.split("/").at(-1) ?? "unknown";
       }
     } catch {
       // No URL is retained in evidence.
@@ -162,6 +168,15 @@ function attachDiagnostics(page) {
   });
   pageDiagnostics.set(page, diagnostics);
   return diagnostics;
+}
+
+function resetCheckpointDiagnostics(page) {
+  const diagnostics = pageDiagnostics.get(page);
+  if (!diagnostics) return;
+  diagnostics.checkpointApiFailures = 0;
+  diagnostics.checkpointApiResponses = 0;
+  diagnostics.checkpointLastApiStatus = 0;
+  diagnostics.checkpointLastApiOperation = "none";
 }
 
 async function contextRef(page) {
@@ -206,10 +221,10 @@ async function waitFresh(page, checkpoint) {
     fail("beauty_movement_isolation_smoke_fresh_timeout", {
       checkpoint,
       ...state,
-      apiResponses: diagnostics.apiResponses ?? 0,
-      apiFailures: diagnostics.apiFailures ?? 0,
-      lastApiStatus: diagnostics.lastApiStatus ?? 0,
-      lastApiOperation: diagnostics.lastApiOperation ?? "none",
+      apiResponses: diagnostics.checkpointApiResponses ?? 0,
+      apiFailures: diagnostics.checkpointApiFailures ?? 0,
+      lastApiStatus: diagnostics.checkpointLastApiStatus ?? 0,
+      lastApiOperation: diagnostics.checkpointLastApiOperation ?? "none",
       consoleErrors: diagnostics.consoleErrors ?? 0,
       pageErrors: diagnostics.pageErrors ?? 0,
     });
@@ -247,6 +262,7 @@ async function waitAct(page, act) {
 
 async function openInvite(page, baseUrl, invite, route, expectedAct = null, checkpoint = "open-invite") {
   if (!ROUTES.includes(route)) fail("beauty_movement_isolation_smoke_route_invalid");
+  resetCheckpointDiagnostics(page);
   await page.goto(`${baseUrl}${route}#c=${encodeURIComponent(invite.token)}`, { waitUntil: "domcontentloaded" });
   if (expectedAct) await waitAct(page, expectedAct);
   else await waitFresh(page, checkpoint);
@@ -347,6 +363,7 @@ async function run() {
     await pageA.goBack();
     await waitAct(pageA, "Movimento");
     if (await contextRef(pageA) !== firstContextA) fail("beauty_movement_isolation_smoke_back_restored_wrong_context");
+    resetCheckpointDiagnostics(pageA);
     await pageA.goForward();
     await waitFresh(pageA, "forward-b");
     if (await contextRef(pageA) !== firstContextB) fail("beauty_movement_isolation_smoke_forward_restored_wrong_context");
@@ -375,6 +392,7 @@ async function run() {
     const privatePage = await privateContext.newPage();
     const diagnosticsPrivate = attachDiagnostics(privatePage);
     await openInvite(privatePage, baseUrl, invites.primary, ROUTES[0], null, "private-primary");
+    resetCheckpointDiagnostics(privatePage);
     await privatePage.reload({ waitUntil: "domcontentloaded" });
     await waitFresh(privatePage, "private-reload");
 
@@ -396,6 +414,7 @@ async function run() {
     const storagePage = await storageUnavailable.newPage();
     const diagnosticsStorage = attachDiagnostics(storagePage);
     await openInvite(storagePage, baseUrl, invites.primary, ROUTES[1], null, "storage-unavailable");
+    resetCheckpointDiagnostics(storagePage);
     await storagePage.reload({ waitUntil: "domcontentloaded" });
     await waitFresh(storagePage, "storage-reload");
 
