@@ -158,12 +158,16 @@ async function run() {
     await reveal("Movimento");
     await reveal("Celebração");
 
-    await page.getByRole("heading", { name: /Garanta seu presente e confirme presença/i })
-      .waitFor({ state: "visible", timeout: 30_000 });
-    await page.getByRole("checkbox").check();
+    const specialReveal = page.getByRole("button", {
+      name: /Clique aqui para revelar sua carta especial/i,
+    });
+    await specialReveal.waitFor({ state: "visible", timeout: 30_000 });
+    if (await page.getByRole("checkbox").count() !== 0) {
+      fail("beauty_movement_primary_smoke_obsolete_consent_present");
+    }
     await mutate(
       "/api/beleza-em-movimento/confirm",
-      () => page.getByRole("button", { name: /Garantir presente e confirmar presença/i }).click(),
+      () => specialReveal.click(),
     );
 
     const special = page.locator('article[aria-label^="Carta especial:"]');

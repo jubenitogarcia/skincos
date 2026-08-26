@@ -613,9 +613,10 @@ jobs:
           };
           await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).click();
           await reveal('Beleza'); await reveal('Movimento'); await reveal('Celebração');
-          await page.getByRole('heading', { name: /Garanta seu presente e confirme presença/i }).waitFor({ state: 'visible', timeout: 30000 });
-          await page.getByRole('checkbox').check();
-          const confirmation = await waitForMutationResponse('/api/beleza-em-movimento/confirm', () => page.getByRole('button', { name: /Garantir presente e confirmar presença/i }).click());
+          const specialReveal = page.getByRole('button', { name: /Clique aqui para revelar sua carta especial/i });
+          await specialReveal.waitFor({ state: 'visible', timeout: 30000 });
+          if (await page.getByRole('checkbox').count() !== 0) throw new Error('beauty_movement_production_obsolete_consent_present');
+          const confirmation = await waitForMutationResponse('/api/beleza-em-movimento/confirm', () => specialReveal.click());
           if (!confirmation || confirmation.path !== '/api/beleza-em-movimento/confirm' || confirmation.status < 200 || confirmation.status >= 300 || confirmation.ok !== true) {
             throw new Error(`beauty_movement_production_confirm_response_invalid:${JSON.stringify({ mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12) })}`);
           }

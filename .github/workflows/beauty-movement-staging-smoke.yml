@@ -644,9 +644,10 @@ jobs:
           await reveal('Beleza');
           await reveal('Movimento');
           await reveal('Celebração');
-          await page.getByRole('heading', { name: /Garanta seu presente e confirme presença/i }).waitFor({ state: 'visible', timeout: 30000 });
-          await page.getByRole('checkbox').check();
-          await page.getByRole('button', { name: /Garantir presente e confirmar presença/i }).click();
+          const specialReveal = page.getByRole('button', { name: /Clique aqui para revelar sua carta especial/i });
+          await specialReveal.waitFor({ state: 'visible', timeout: 30000 });
+          if (await page.getByRole('checkbox').count() !== 0) throw new Error('beauty_movement_staging_obsolete_consent_present');
+          await specialReveal.click();
           const special = page.locator('article[aria-label^="Carta especial:"]');
           await special.waitFor({ state: 'visible', timeout: 30000 });
           const firstResultText = await special.innerText();
