@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -19,7 +19,8 @@ import {
 } from "./beauty-movement-velocity-invite-links.mjs";
 
 const hash = (value) => createHash("sha256").update(value, "utf8").digest("hex");
-const tokenHmac = (value) => createHmac("sha256", "velocity-test-token-key").update(value, "utf8").digest("base64url");
+const tokenHmacKey = randomBytes(32);
+const tokenHmac = (value) => createHmac("sha256", tokenHmacKey).update(value, "utf8").digest("base64url");
 const phone = (value) => `51${String(900000000 + value).slice(-9)}`;
 const csv = (rows) => serializeCsv(["name", "whatsapp", "prize"], rows);
 
