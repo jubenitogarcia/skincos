@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -19,6 +19,8 @@ import {
 } from "./beauty-movement-velocity-invite-links.mjs";
 
 const hash = (value) => createHash("sha256").update(value, "utf8").digest("hex");
+const tokenHmacKey = randomBytes(32);
+const tokenHmac = (value) => createHmac("sha256", tokenHmacKey).update(value, "utf8").digest("base64url");
 const phone = (value) => `51${String(900000000 + value).slice(-9)}`;
 const csv = (rows) => serializeCsv(["name", "whatsapp", "prize"], rows);
 
@@ -164,7 +166,8 @@ test("plans and verifies the guarded additive Velocity grant for existing commer
     verifyPromotionApply({ targets, plan, d1Payload: JSON.stringify([{ results: finalRows }]) }),
     { operation: "apply", targetCount: 8, promotionCount: 3 },
   );
-  const tokenRows = preRows.map((row, index) => ({ ...row, invite_token_hmac: `${index.toString(16)}${"a".repeat(63)}` }));
+  const tokenRows = preRows.map((row) => ({ ...row, invite_token_hmac: tokenHmac(row.external_ref) }));
+  assert.match(tokenRows[0].invite_token_hmac, /^[A-Za-z0-9_-]{43}$/);
   const attestation = {
     campaignId: targets.campaignId,
     inviteTokenHmacByRef: Object.fromEntries(tokenRows.map((row) => [row.external_ref, row.invite_token_hmac])),
@@ -173,9 +176,21 @@ test("plans and verifies the guarded additive Velocity grant for existing commer
     verifyPromotionTokenHmacs({ targets, d1Payload: JSON.stringify([{ results: tokenRows }]), deliveryAttestation: attestation }),
     { targetCount: 8, tokenHmacMatch: true },
   );
-  tokenRows[0].invite_token_hmac = "b".repeat(64);
+  tokenRows[0].invite_token_hmac = `${tokenRows[0].invite_token_hmac.slice(0, -1)}${tokenRows[0].invite_token_hmac.endsWith("A") ? "B" : "A"}`;
   assert.throws(
     () => verifyPromotionTokenHmacs({ targets, d1Payload: JSON.stringify([{ results: tokenRows }]), deliveryAttestation: attestation }),
+    /promotion_token_hmac_mismatch/,
+  );
+  tokenRows[0].invite_token_hmac = attestation.inviteTokenHmacByRef[tokenRows[0].external_ref];
+  const malformedAttestation = {
+    ...attestation,
+    inviteTokenHmacByRef: {
+      ...attestation.inviteTokenHmacByRef,
+      [tokenRows[0].external_ref]: "a".repeat(42),
+    },
+  };
+  assert.throws(
+    () => verifyPromotionTokenHmacs({ targets, d1Payload: JSON.stringify([{ results: tokenRows }]), deliveryAttestation: malformedAttestation }),
     /promotion_token_hmac_mismatch/,
   );
   const fullTargets = { ...targets, refs: Array.from({ length: 52 }, (_, index) => `velocity-target-${index + 1}`) };

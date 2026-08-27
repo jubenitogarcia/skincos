@@ -18,6 +18,7 @@ export const VELOCITY_APPEND_EXPECTATIONS = Object.freeze({
 const INPUT_HEADER = ["name", "whatsapp", "prize"];
 const DELIVERY_HEADER = ["name", "invite_ref", "whatsapp", "invite_url"];
 const CAMPAIGN_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{2,79}$/;
+const INVITE_TOKEN_HMAC_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const VELOCITY_BENEFIT = "aula_cortesia_evento";
 const ASSIGNMENT_PROTOCOL_VERSION = "beauty-movement-invite-assignments-v1";
 
@@ -366,7 +367,13 @@ export function verifyPromotionTokenHmacs({ targets, d1Payload, deliveryAttestat
   for (const ref of targets.refs) {
     const expected = expectedByRef[ref];
     const actual = byRef.get(ref)?.invite_token_hmac;
-    if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected) || actual !== expected) fail("promotion_token_hmac_mismatch");
+    if (
+      typeof expected !== "string" ||
+      typeof actual !== "string" ||
+      !INVITE_TOKEN_HMAC_PATTERN.test(expected) ||
+      !INVITE_TOKEN_HMAC_PATTERN.test(actual) ||
+      actual !== expected
+    ) fail("promotion_token_hmac_mismatch");
   }
   return { targetCount: rows.length, tokenHmacMatch: true };
 }
