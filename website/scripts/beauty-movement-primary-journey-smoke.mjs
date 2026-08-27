@@ -3,7 +3,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { readSyntheticInvites } from "./beauty-movement-context-isolation-smoke.mjs";
+import {
+  readSyntheticInvites,
+  redactBeautyMovementSmokeError,
+} from "./beauty-movement-context-isolation-smoke.mjs";
 
 const CONTEXT_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 
@@ -39,12 +42,6 @@ function parseArgs(argv) {
     deliveryDirectory: path.resolve(deliveryDirectory),
     evidenceFile: path.resolve(evidenceFile),
   };
-}
-
-function redact(value) {
-  return String(value)
-    .replace(/#c=[A-Za-z0-9_-]+/g, "#c=[redacted]")
-    .replace(/[A-Za-z0-9_-]{40,180}/g, "[opaque]");
 }
 
 async function run() {
@@ -172,7 +169,9 @@ async function run() {
 
     const special = page.locator('article[aria-label^="Carta especial:"]');
     await special.waitFor({ state: "visible", timeout: 30_000 });
-    const beforeReload = await special.innerText();
+    const revealedFace = special.locator('div[class*="specialCardFront"]');
+    await revealedFace.waitFor({ state: "visible", timeout: 30_000 });
+    const beforeReload = (await revealedFace.innerText()).replace(/\s+/g, " ").trim();
     if (!/combinação|Elleva|Preenchimento|Restylane|Skinbooster|Diamond|Sculptra/i.test(beforeReload)) {
       fail("beauty_movement_primary_smoke_outcome_missing");
     }
@@ -183,7 +182,8 @@ async function run() {
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await special.waitFor({ state: "visible", timeout: 30_000 });
-    const afterReload = await special.innerText();
+    await revealedFace.waitFor({ state: "visible", timeout: 30_000 });
+    const afterReload = (await revealedFace.innerText()).replace(/\s+/g, " ").trim();
     const restoredContext = await page.evaluate(() => history.state?.__efBeautyMovementContextRef ?? null);
     if (
       beforeReload !== afterReload
@@ -232,7 +232,9 @@ const isDirectExecution = process.argv[1]
   && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isDirectExecution) {
   run().catch((error) => {
-    console.error(redact(error instanceof Error ? error.message : "beauty_movement_primary_smoke_failed"));
+    console.error(redactBeautyMovementSmokeError(
+      error instanceof Error ? error.message : "beauty_movement_primary_smoke_failed",
+    ));
     process.exitCode = 1;
   });
 }
