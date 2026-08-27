@@ -1,4 +1,4 @@
-name: Beauty Movement append team invite links
+name: Beauty Movement append Velocity invite links
 
 on:
   workflow_dispatch:
@@ -15,8 +15,16 @@ on:
         description: Existing campaign expiry in ISO-8601
         required: true
         type: string
+      expected_base_input_sha256:
+        description: SHA-256 of the frozen base invite source in the production environment
+        required: true
+        type: string
       expected_extra_input_sha256:
-        description: SHA-256 of the private team CSV in the production environment
+        description: SHA-256 of the preserved private Velocity overlay in the production environment
+        required: true
+        type: string
+      expected_velocity_extra_input_sha256:
+        description: SHA-256 of the additional private Velocity CSV in the production environment
         required: true
         type: string
 
@@ -56,10 +64,10 @@ jobs:
         run: node --experimental-test-module-mocks --import tsx --test tests/beautyMovementImport.test.ts tests/beautyMovementShortLinks.test.ts
 
       - name: Validate this production workflow contract
-        run: node --test .github/scripts/beauty-movement-team-invite-links-contract.test.mjs
+        run: node --test .github/scripts/beauty-movement-team-invite-links-contract.test.mjs .github/scripts/beauty-movement-velocity-invite-links.test.mjs
 
   append:
-    name: Append team invites and attest final short links
+    name: Append Velocity invites and attest final short links
     needs: contract
     runs-on: ubuntu-latest
     environment: production
@@ -71,7 +79,9 @@ jobs:
       RELEASE_SHA: ${{ inputs.release_sha }}
       CAMPAIGN_ID: ${{ inputs.campaign_id }}
       CAMPAIGN_ENDS_AT: ${{ inputs.campaign_ends_at }}
+      EXPECTED_BASE_INPUT_SHA256: ${{ inputs.expected_base_input_sha256 }}
       EXPECTED_EXTRA_INPUT_SHA256: ${{ inputs.expected_extra_input_sha256 }}
+      EXPECTED_VELOCITY_EXTRA_INPUT_SHA256: ${{ inputs.expected_velocity_extra_input_sha256 }}
       WORKFLOW_SHA: ${{ github.sha }}
       PRODUCTION_URL: https://espacofacial.com
       PRODUCTION_D1_DATABASE: espacofacial-beauty-movement
@@ -118,10 +128,12 @@ jobs:
           [[ "${WORKFLOW_SHA}" == "$(git rev-parse --verify HEAD)" ]] || { echo 'checked out SHA differs from workflow SHA'; exit 1; }
           git cat-file -e "${RELEASE_SHA}:website/src/lib/beautyMovementImport.ts" || { echo 'release source does not contain the importer'; exit 1; }
           git cat-file -e "${RELEASE_SHA}:website/src/app/BelezaEmMovimento/page.tsx" || { echo 'release source does not contain the canonical campaign route'; exit 1; }
-          git diff --quiet "${RELEASE_SHA}" -- website/src/lib/beautyMovementImport.ts website/src/lib/beautyMovementSecurity.ts website/src/lib/beautyMovementOutcomes.ts || { echo 'serving/token source differs from the requested release'; exit 1; }
+          git diff --quiet "${RELEASE_SHA}" -- website/src/lib/beautyMovementDb.ts website/src/lib/beautyMovementImport.ts website/src/lib/beautyMovementSecurity.ts website/src/lib/beautyMovementOutcomes.ts || { echo 'serving/token source differs from the requested release'; exit 1; }
           [[ "${CAMPAIGN_ID}" =~ ^[a-z0-9][a-z0-9_-]{2,79}$ ]] || { echo 'campaign_id shape is invalid'; exit 1; }
           [[ "${CAMPAIGN_ENDS_AT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,3})?)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || { echo 'campaign_ends_at must be ISO-8601'; exit 1; }
+          [[ "${EXPECTED_BASE_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo 'expected_base_input_sha256 must be a lowercase SHA-256'; exit 1; }
           [[ "${EXPECTED_EXTRA_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo 'expected_extra_input_sha256 must be a lowercase SHA-256'; exit 1; }
+          [[ "${EXPECTED_VELOCITY_EXTRA_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo 'expected_velocity_extra_input_sha256 must be a lowercase SHA-256'; exit 1; }
           [[ "${PRODUCTION_D1_DATABASE}" == "espacofacial-beauty-movement" ]] || { echo 'production D1 guard failed'; exit 1; }
           [[ "${BOOKING_D1_DATABASE}" == "espacofacial-booking" ]] || { echo 'booking D1 guard failed'; exit 1; }
           root="${RUNNER_TEMP}/beauty-movement-team-invite-links"
@@ -131,13 +143,35 @@ jobs:
             echo "PACKAGE_DIR=${root}/package"
             echo "OUTPUT_DIR=${root}/output"
             echo "BASE_INPUT=${root}/package/base.csv"
-            echo "TEAM_INPUT=${root}/package/team.csv"
+            echo "TEAM_INPUT=${root}/package/source-overlay.csv"
+            echo "APPEND_INPUT=${root}/package/append-overlay.csv"
+            echo "PRESERVED_INPUT=${root}/package/preserved-overlay.csv"
+            echo "VELOCITY_INPUT=${root}/package/velocity.csv"
+            echo "VELOCITY_APPEND_INPUT=${root}/package/velocity-append.csv"
+            echo "VELOCITY_EXISTING_INPUT=${root}/package/velocity-existing.csv"
             echo "COMBINED_INPUT=${root}/package/combined.csv"
+            echo "OVERLAY_META=${root}/package/overlay-meta.json"
             echo "CAMPAIGN_CONFIG=${root}/package/campaign.json"
             echo "PRE_READBACK=${root}/pre-readback.json"
             echo "POST_READBACK=${root}/post-readback.json"
             echo "TEAM_READBACK=${root}/team-readback.json"
             echo "TEAM_QUERY=${root}/team-query.sql"
+            echo "PRESERVED_QUERY=${root}/preserved-query.sql"
+            echo "PRESERVED_TARGETS=${root}/preserved-targets.json"
+            echo "PRESERVED_READBACK=${root}/preserved-readback.json"
+            echo "VELOCITY_QUERY=${root}/velocity-query.sql"
+            echo "VELOCITY_TARGETS=${root}/velocity-targets.json"
+            echo "VELOCITY_FINAL_READBACK=${root}/velocity-final-readback.json"
+            echo "PROMOTION_QUERY=${root}/promotion-query.sql"
+            echo "PROMOTION_TARGETS=${root}/promotion-targets.json"
+            echo "PROMOTION_PRE_READBACK=${root}/promotion-pre-readback.json"
+            echo "PROMOTION_PLAN=${root}/promotion-plan.json"
+            echo "PROMOTION_SQL=${root}/promotion.sql"
+            echo "PROMOTION_ROLLBACK_SQL=${root}/promotion-rollback.sql"
+            echo "INVITE_ROLLBACK_SQL=${root}/invite-rollback.sql"
+            echo "INVITE_ROLLBACK_READBACK_SQL=${root}/invite-rollback-readback.sql"
+            echo "PROMOTION_APPLY_READBACK=${root}/promotion-apply-readback.json"
+            echo "PROMOTION_FINAL_READBACK=${root}/promotion-final-readback.json"
             echo "IMPORT_SUMMARY=${root}/import-summary.json"
             echo "DELIVERY_OUTPUT=${root}/delivery.csv"
             echo "DELIVERY_SUMMARY=${root}/delivery-summary.json"
@@ -151,13 +185,22 @@ jobs:
             echo "SHORT_CONFLICT_READBACK=${root}/short-conflict-readback.json"
             echo "SHORT_APPLY_READBACK=${root}/short-apply-readback.json"
             echo "SHORT_FINAL_READBACK=${root}/short-final-readback.json"
-            echo "TEAM_SHORT_OUTPUT=${root}/team-short-delivery.csv"
-            echo "TEAM_SUMMARY=${root}/team-summary.json"
+            echo "VELOCITY_SHORT_OUTPUT=${root}/velocity-short-delivery.csv"
+            echo "VELOCITY_APPEND_DELIVERY=${root}/velocity-append-delivery.csv"
+            echo "VELOCITY_APPEND_TARGETS=${root}/velocity-append-targets.json"
+            echo "VELOCITY_APPEND_SHORT_OUTPUT=${root}/velocity-append-short-delivery.csv"
+            echo "VELOCITY_APPEND_SHORT_SQL=${root}/velocity-append-short-links.sql"
+            echo "VELOCITY_APPEND_SHORT_CONFLICTS=${root}/velocity-append-short-links-conflicts.sql"
+            echo "VELOCITY_APPEND_SHORT_READBACK_SQL=${root}/velocity-append-short-links-readback.sql"
+            echo "VELOCITY_APPEND_SHORT_ROLLBACK_SQL=${root}/velocity-append-short-links-rollback.sql"
+            echo "VELOCITY_APPEND_SHORT_ATTESTATION=${root}/velocity-append-short-links-attestation.json"
+            echo "VELOCITY_APPEND_SHORT_SUMMARY=${root}/velocity-append-short-links-summary.json"
+            echo "VELOCITY_SUMMARY=${root}/velocity-summary.json"
             echo "LIVE_HEADERS=${root}/live-headers.txt"
             echo "SHORT_PROBE_HEADERS=${root}/short-probe-headers.txt"
           } >> "${GITHUB_ENV}"
 
-      - name: Materialize protected source package and deduplicate the team overlay
+      - name: Materialize protected source package and deduplicate the Velocity overlays
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -166,55 +209,16 @@ jobs:
           BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
           BASE_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV }}
           EXTRA_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_EXTRA_INVITES_CSV }}
+          VELOCITY_EXTRA_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_VELOCITY_EXTRA_INVITES_CSV }}
           PRODUCTION_CAMPAIGN_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON }}
         run: |
           set -euo pipefail
           umask 077
-          for required in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BEAUTY_MOVEMENT_TOKEN_HMAC_KEY BEAUTY_MOVEMENT_PII_KEY BASE_INVITES_CSV EXTRA_INVITES_CSV PRODUCTION_CAMPAIGN_JSON; do
+          for required in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BEAUTY_MOVEMENT_TOKEN_HMAC_KEY BEAUTY_MOVEMENT_PII_KEY BASE_INVITES_CSV EXTRA_INVITES_CSV VELOCITY_EXTRA_INVITES_CSV PRODUCTION_CAMPAIGN_JSON; do
             [[ -n "${!required:-}" ]] || { echo "required production custody is unavailable: ${required}"; exit 1; }
           done
           printf '%s' "${PRODUCTION_CAMPAIGN_JSON}" > "${CAMPAIGN_CONFIG}"
-          BASE_INVITES_CSV="${BASE_INVITES_CSV}" EXTRA_INVITES_CSV="${EXTRA_INVITES_CSV}" EXPECTED_EXTRA_INPUT_SHA256="${EXPECTED_EXTRA_INPUT_SHA256}" TEAM_ROOT="${TEAM_ROOT}" node - <<'NODE'
-          const crypto = require('node:crypto');
-          const fs = require('node:fs');
-          const root = process.env.TEAM_ROOT;
-          const expected = process.env.EXPECTED_EXTRA_INPUT_SHA256;
-          const parse = (value, label) => {
-            const lines = String(value).replace(/\r/g, '').trim().split('\n').filter(Boolean);
-            if (lines.length < 2) throw new Error(`beauty_movement_${label}_empty`);
-            const unquote = (cell) => cell.trim().replace(/^"|"$/g, '').replace(/""/g, '"');
-            const rows = lines.map((line) => {
-              const cells = line.split(',').map(unquote);
-              if (cells.length !== 3 || cells.some((cell) => !cell)) throw new Error(`beauty_movement_${label}_invalid_row`);
-              return cells;
-            });
-            const header = rows.shift().map((cell) => cell.toLowerCase());
-            if (header.join(',') !== 'name,whatsapp,prize') throw new Error(`beauty_movement_${label}_invalid_header`);
-            return rows;
-          };
-          const baseRows = parse(process.env.BASE_INVITES_CSV, 'base');
-          const teamRows = parse(process.env.EXTRA_INVITES_CSV, 'extra');
-          const digits = (value) => value.replace(/\D/g, '');
-          const basePhones = new Set(baseRows.map((row) => digits(row[1])));
-          const teamPhones = new Set();
-          for (const row of teamRows) {
-            if (row[2].toLowerCase() !== 'velocity' || digits(row[1]).length < 8) throw new Error('beauty_movement_extra_not_velocity');
-            const phone = digits(row[1]);
-            if (!teamPhones.add(phone)) throw new Error('beauty_movement_extra_duplicate_whatsapp');
-          }
-          const csv = (rows) => `${['name', 'whatsapp', 'prize'].join(',')}\n${rows.map((row) => row.join(',')).join('\n')}\n`;
-          const teamCsv = csv(teamRows);
-          const newRows = teamRows.filter((row) => !basePhones.has(digits(row[1])));
-          const combinedCsv = csv([...baseRows, ...newRows]);
-          const hash = (value) => crypto.createHash('sha256').update(value, 'utf8').digest('hex');
-          const meta = { extraRows: teamRows.length, newRows: newRows.length, extraSha256: hash(teamCsv), combinedSha256: hash(combinedCsv) };
-          if (meta.extraSha256 !== expected) throw new Error('beauty_movement_extra_input_sha256_mismatch');
-          fs.writeFileSync(process.env.BASE_INPUT, csv(baseRows), { encoding: 'utf8', mode: 0o600 });
-          fs.writeFileSync(process.env.TEAM_INPUT, teamCsv, { encoding: 'utf8', mode: 0o600 });
-          fs.writeFileSync(process.env.COMBINED_INPUT, combinedCsv, { encoding: 'utf8', mode: 0o600 });
-          fs.writeFileSync(`${root}/package/overlay-meta.json`, `${JSON.stringify(meta)}\n`, { encoding: 'utf8', mode: 0o600 });
-          console.log(JSON.stringify({ extraRows: meta.extraRows, newRows: meta.newRows, extraSha256: meta.extraSha256, combinedSha256: meta.combinedSha256 }));
-          NODE
+          node .github/scripts/beauty-movement-velocity-invite-links.mjs materialize
           chmod 600 "${CAMPAIGN_CONFIG}" "${PACKAGE_DIR}"/*.csv "${PACKAGE_DIR}"/*.json
 
       - name: Prove the requested website release is live
@@ -227,6 +231,7 @@ jobs:
           [[ "${live_sha}" == "${RELEASE_SHA}" ]] || { echo 'live website build differs from requested release_sha'; exit 1; }
 
       - name: Confirm the target campaign is active before any D1 write
+        id: campaign_preflight
         working-directory: website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -242,35 +247,14 @@ jobs:
           const row = JSON.parse(fs.readFileSync(file, 'utf8'))?.[0]?.results?.[0];
           if (!row || row.id !== expectedId || row.status !== 'active' || Number(row.ends_at_ms) <= Date.now() || Number(row.ends_at_ms) !== Date.parse(expectedEnds)) throw new Error('beauty_movement_active_campaign_preflight_invalid');
           if (Number(row.invite_count) !== Number(row.active_invite_count)) throw new Error('beauty_movement_active_campaign_has_inactive_invites');
-          console.log(JSON.stringify({ status: row.status, inviteCount: Number(row.invite_count), activeInviteCount: Number(row.active_invite_count) }));
+          const inviteCount = Number(row.invite_count);
+          if (![213, 257].includes(inviteCount)) throw new Error('beauty_movement_active_campaign_preflight_count_invalid');
+          const mode = inviteCount === 213 ? 'first_pass' : 'resume';
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `mode=${mode}\n`);
+          console.log(JSON.stringify({ status: row.status, inviteCount, activeInviteCount: Number(row.active_invite_count), mode }));
           NODE
 
-      - name: Append only new team invitations through the protected importer
-        id: import_team
-        working-directory: website
-        env:
-          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-team-invite-links
-          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
-          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
-          GITHUB_ACTIONS: "true"
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm run --silent beauty-movement:import -- \
-            --apply --remote \
-            --input "${COMBINED_INPUT}" \
-            --campaign "${CAMPAIGN_ID}" \
-            --confirm-campaign "${CAMPAIGN_ID}" \
-            --campaign-ends-at "${CAMPAIGN_ENDS_AT}" \
-            --campaign-config "${CAMPAIGN_CONFIG}" \
-            --database "${PRODUCTION_D1_DATABASE}" \
-            --config wrangler.toml \
-            --out-dir "${OUTPUT_DIR}" > "${IMPORT_SUMMARY}"
-          chmod 600 "${IMPORT_SUMMARY}" "${OUTPUT_DIR}"/*
-
-      - name: Derive the complete short-link plan and prove all 13 team invite refs
+      - name: Derive the complete short-link plan and prove all protected invite refs
         working-directory: website
         env:
           BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-team-invite-links
@@ -297,30 +281,20 @@ jobs:
             --readback "${SHORT_READBACK_SQL}" \
             --attestation "${SHORT_ATTESTATION}" \
             --campaign "${CAMPAIGN_ID}" > "${SHORT_SUMMARY}"
-          TEAM_INPUT="${TEAM_INPUT}" DELIVERY_OUTPUT="${DELIVERY_OUTPUT}" SHORT_OUTPUT="${SHORT_OUTPUT}" TEAM_QUERY="${TEAM_QUERY}" TEAM_SHORT_OUTPUT="${TEAM_SHORT_OUTPUT}" TEAM_SUMMARY="${TEAM_SUMMARY}" CAMPAIGN_ID="${CAMPAIGN_ID}" node - <<'NODE'
-          const crypto = require('node:crypto');
-          const fs = require('node:fs');
-          const parse = (file) => fs.readFileSync(file, 'utf8').replace(/\r/g, '').trim().split('\n').map((line) => line.split(',').map((cell) => cell.replace(/^"|"$/g, '').replace(/""/g, '"')));
-          const team = parse(process.env.TEAM_INPUT);
-          const teamPhones = new Set(team.slice(1).map((row) => row[1].replace(/\D/g, '')));
-          const delivery = parse(process.env.DELIVERY_OUTPUT);
-          const teamDelivery = delivery.filter((row) => teamPhones.has(row[2].replace(/\D/g, '')));
-          if (teamDelivery.length !== teamPhones.size || teamDelivery.length !== 13) throw new Error('beauty_movement_team_delivery_count_invalid');
-          const refs = [...new Set(teamDelivery.map((row) => row[1]))];
-          if (refs.length !== 13) throw new Error('beauty_movement_team_invite_ref_count_invalid');
-          const sqlString = (value) => `'${value.replace(/'/g, "''")}'`;
-          fs.writeFileSync(process.env.TEAM_QUERY, `SELECT external_ref, invite_status, expires_at_ms, confirmed_at_ms FROM bm_invites WHERE campaign_id=${sqlString(process.env.CAMPAIGN_ID)} AND external_ref IN (${refs.map(sqlString).join(',')});\n`, { encoding: 'utf8', mode: 0o600 });
-          const short = parse(process.env.SHORT_OUTPUT);
-          const teamShort = short.filter((row) => teamPhones.has(row[2].replace(/\D/g, '')));
-          if (teamShort.length !== 13 || new Set(teamShort.map((row) => row[2].replace(/\D/g, ''))).size !== 13) throw new Error('beauty_movement_team_short_link_count_invalid');
-          const output = `${short[0].join(',')}\n${teamShort.slice(0).map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\n')}\n`;
-          fs.writeFileSync(process.env.TEAM_SHORT_OUTPUT, output, { encoding: 'utf8', mode: 0o600 });
-          fs.writeFileSync(process.env.TEAM_SUMMARY, `${JSON.stringify({ campaignId: process.env.CAMPAIGN_ID, count: 13, sha256: crypto.createHash('sha256').update(output, 'utf8').digest('hex') })}\n`, { encoding: 'utf8', mode: 0o600 });
-          console.log(JSON.stringify({ teamRows: 13, fullDeliveryRows: delivery.length, fullShortLinkRows: short.length - 1 }));
-          NODE
-          chmod 600 "${DELIVERY_OUTPUT}" "${DELIVERY_SUMMARY}" "${DELIVERY_ATTESTATION}" "${SHORT_OUTPUT}" "${SHORT_SQL}" "${SHORT_CONFLICTS}" "${SHORT_READBACK_SQL}" "${SHORT_ATTESTATION}" "${SHORT_SUMMARY}" "${TEAM_QUERY}" "${TEAM_SHORT_OUTPUT}" "${TEAM_SUMMARY}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs derive
+          npm run --silent beauty-movement:prepare-short-links -- \
+            --input "${VELOCITY_APPEND_DELIVERY}" \
+            --out "${VELOCITY_APPEND_SHORT_OUTPUT}" \
+            --sql "${VELOCITY_APPEND_SHORT_SQL}" \
+            --conflicts "${VELOCITY_APPEND_SHORT_CONFLICTS}" \
+            --readback "${VELOCITY_APPEND_SHORT_READBACK_SQL}" \
+            --rollback "${VELOCITY_APPEND_SHORT_ROLLBACK_SQL}" \
+            --attestation "${VELOCITY_APPEND_SHORT_ATTESTATION}" \
+            --campaign "${CAMPAIGN_ID}" > "${VELOCITY_APPEND_SHORT_SUMMARY}"
+          chmod 600 "${DELIVERY_OUTPUT}" "${DELIVERY_SUMMARY}" "${DELIVERY_ATTESTATION}" "${SHORT_OUTPUT}" "${SHORT_SQL}" "${SHORT_CONFLICTS}" "${SHORT_READBACK_SQL}" "${SHORT_ATTESTATION}" "${SHORT_SUMMARY}" "${PRESERVED_QUERY}" "${PRESERVED_TARGETS}" "${TEAM_QUERY}" "${VELOCITY_QUERY}" "${VELOCITY_TARGETS}" "${PROMOTION_QUERY}" "${PROMOTION_TARGETS}" "${VELOCITY_APPEND_TARGETS}" "${VELOCITY_SHORT_OUTPUT}" "${VELOCITY_APPEND_DELIVERY}" "${VELOCITY_APPEND_SHORT_OUTPUT}" "${VELOCITY_APPEND_SHORT_SQL}" "${VELOCITY_APPEND_SHORT_CONFLICTS}" "${VELOCITY_APPEND_SHORT_READBACK_SQL}" "${VELOCITY_APPEND_SHORT_ROLLBACK_SQL}" "${VELOCITY_APPEND_SHORT_ATTESTATION}" "${VELOCITY_APPEND_SHORT_SUMMARY}" "${VELOCITY_SUMMARY}" "${INVITE_ROLLBACK_SQL}" "${INVITE_ROLLBACK_READBACK_SQL}"
 
-      - name: Read back all team invitations from production D1
+      - name: Prove the complete overlay before resuming a previously appended run
+        if: steps.campaign_preflight.outputs.mode == 'resume'
         working-directory: website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -329,12 +303,109 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${TEAM_QUERY}")" --json > "${TEAM_READBACK}"
-          node - "${TEAM_READBACK}" <<'NODE'
-          const fs = require('node:fs');
-          const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results ?? [];
-          if (rows.length !== 13 || rows.some((row) => row.invite_status !== 'active' || Number(row.expires_at_ms) <= Date.now())) throw new Error('beauty_movement_team_invite_readback_invalid');
-          console.log(JSON.stringify({ activeTeamInvites: rows.length }));
-          NODE
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-overlay
+          chmod 600 "${TEAM_READBACK}"
+
+      - name: Prove every preserved Velocity invitation before the first append
+        if: steps.campaign_preflight.outputs.mode == 'first_pass'
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${PRESERVED_QUERY}")" --json > "${PRESERVED_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-preserved
+          chmod 600 "${PRESERVED_READBACK}"
+
+      - name: Preflight the exact existing commercial invitees receiving the additive Velocity courtesy
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${PROMOTION_QUERY}")" --json > "${PROMOTION_PRE_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-promotion-token-hmacs
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs plan-promotion
+          chmod 600 "${PROMOTION_PRE_READBACK}" "${PROMOTION_PLAN}" "${PROMOTION_SQL}" "${PROMOTION_ROLLBACK_SQL}"
+
+      - name: Preserve private guarded rollback plans for every production mutation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beauty-movement-velocity-rollback-${{ inputs.campaign_id }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/beauty-movement-team-invite-links/promotion-plan.json
+            ${{ runner.temp }}/beauty-movement-team-invite-links/promotion-rollback.sql
+            ${{ runner.temp }}/beauty-movement-team-invite-links/invite-rollback.sql
+            ${{ runner.temp }}/beauty-movement-team-invite-links/invite-rollback-readback.sql
+            ${{ runner.temp }}/beauty-movement-team-invite-links/velocity-append-short-links-rollback.sql
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Append only new Velocity invitations through the protected importer
+        id: import_team
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-team-invite-links
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+          GITHUB_ACTIONS: "true"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent beauty-movement:import -- \
+            --apply --remote \
+            --input "${COMBINED_INPUT}" \
+            --campaign "${CAMPAIGN_ID}" \
+            --confirm-campaign "${CAMPAIGN_ID}" \
+            --campaign-ends-at "${CAMPAIGN_ENDS_AT}" \
+            --campaign-config "${CAMPAIGN_CONFIG}" \
+            --database "${PRODUCTION_D1_DATABASE}" \
+            --config wrangler.toml \
+            --out-dir "${OUTPUT_DIR}" > "${IMPORT_SUMMARY}"
+          chmod 600 "${IMPORT_SUMMARY}" "${OUTPUT_DIR}"/*
+
+      - name: Read back all protected overlay invitations from production D1
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${TEAM_QUERY}")" --json > "${TEAM_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-overlay
+
+      - name: Add the Velocity courtesy without changing existing commercial assignments
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${PROMOTION_SQL}")" --json > "${PROMOTION_APPLY_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-promotion-write
+          chmod 600 "${PROMOTION_APPLY_READBACK}"
+
+      - name: Verify every requested Velocity entitlement and preserve commercial assignments
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${PROMOTION_QUERY}")" --json > "${PROMOTION_FINAL_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-promotion
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${VELOCITY_QUERY}")" --json > "${VELOCITY_FINAL_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-velocity
+          chmod 600 "${PROMOTION_FINAL_READBACK}" "${VELOCITY_FINAL_READBACK}"
 
       - name: Fail closed on divergent existing short-link mappings
         working-directory: website
@@ -372,7 +443,7 @@ jobs:
         shell: bash
         run: npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_SQL}" --json > "${SHORT_APPLY_READBACK}"
 
-      - name: Verify every mapping and a live team redirect
+      - name: Verify every mapping and a live Velocity redirect
         working-directory: website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -398,18 +469,11 @@ jobs:
             if (value(row, 'site_host', 'siteHost') !== 'esfa.co' || value(row, 'source', 'source') !== 'beauty_movement_short_links_v1' || Number(value(row, 'active', 'active')) !== 1 || crypto.createHash('sha256').update(destination).digest('hex') !== (expected[value(row, 'slug_path', 'slugPath')] ?? expected[slug])) throw new Error('beauty_movement_team_short_link_readback_mismatch');
           }
           NODE
-          probe_url="$(node - "${TEAM_SHORT_OUTPUT}" <<'NODE'
-          const fs = require('node:fs');
-          const lines = fs.readFileSync(process.argv[2], 'utf8').trim().split(/\r?\n/);
-          const match = lines[1]?.match(/"(https:\/\/esfa\.co\/[^"\r\n]+)"$/);
-          if (!match) throw new Error('beauty_movement_team_short_probe_unavailable');
-          process.stdout.write(match[1]);
-          NODE
-          )"
+          probe_url="$(node ../.github/scripts/beauty-movement-velocity-invite-links.mjs probe-short-url)"
           status="$(curl -fsS -D "${SHORT_PROBE_HEADERS}" -o /dev/null -w '%{http_code}' "${probe_url}")"
-          [[ "${status}" == "301" ]] || { echo 'team short-link Worker did not return HTTP 301'; exit 1; }
+          [[ "${status}" == "301" ]] || { echo 'Velocity short-link Worker did not return HTTP 301'; exit 1; }
           location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[ ]*/, ""); gsub(/[\r]/, ""); print; exit}' "${SHORT_PROBE_HEADERS}")"
-          [[ "${location}" == https://espacofacial.com/BelezaEmMovimento#c=* ]] || { echo 'team short-link destination is not the canonical campaign route'; exit 1; }
+          [[ "${location}" == https://espacofacial.com/BelezaEmMovimento#c=* ]] || { echo 'Velocity short-link destination is not the canonical campaign route'; exit 1; }
 
       - name: Read back campaign remains active after append
         working-directory: website
@@ -425,16 +489,17 @@ jobs:
           const fs = require('node:fs');
           const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
           if (!row || row.status !== 'active' || Number(row.ends_at_ms) <= Date.now() || Number(row.invite_count) !== Number(row.active_invite_count)) throw new Error('beauty_movement_campaign_post_readback_invalid');
+          if (Number(row.invite_count) !== 257) throw new Error('beauty_movement_campaign_post_readback_count_invalid');
           console.log(JSON.stringify({ status: row.status, inviteCount: Number(row.invite_count), activeInviteCount: Number(row.active_invite_count) }));
           NODE
 
-      - name: Upload the private team delivery list
+      - name: Upload private Velocity delivery and guarded rollback evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: beauty-movement-team-short-delivery-${{ inputs.campaign_id }}-${{ github.run_id }}
+          name: beauty-movement-velocity-short-delivery-${{ inputs.campaign_id }}-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/beauty-movement-team-invite-links/team-short-delivery.csv
-            ${{ runner.temp }}/beauty-movement-team-invite-links/team-summary.json
+            ${{ runner.temp }}/beauty-movement-team-invite-links/velocity-short-delivery.csv
+            ${{ runner.temp }}/beauty-movement-team-invite-links/velocity-summary.json
           if-no-files-found: error
           retention-days: 7
 

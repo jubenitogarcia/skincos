@@ -3,6 +3,7 @@ import test from "node:test";
 import {
     prepareBeautyMovementShortLinks,
     renderBeautyMovementShortLinkConflictSql,
+    renderBeautyMovementShortLinkRollbackSql,
     renderBeautyMovementShortLinkSql,
     serializeBeautyMovementShortLinkCsv,
 } from "../src/lib/beautyMovementShortLinks";
@@ -31,6 +32,11 @@ test("short links use the final five token characters and preserve the canonical
     const conflictSql = renderBeautyMovementShortLinkConflictSql(plan);
     assert.match(conflictSql, /WHERE site_host = 'esfa\.co' AND slug_path IN/);
     assert.equal(conflictSql.includes("id IN"), false);
+    const rollbackSql = renderBeautyMovementShortLinkRollbackSql(plan);
+    assert.match(rollbackSql, /SET active = 0/);
+    assert.match(rollbackSql, /destination_url = 'https:\/\/espacofacial\.com\/BelezaEmMovimento#c=/);
+    assert.match(rollbackSql, /\(SELECT COUNT\(\*\) FROM site_custom_urls/);
+    assert.doesNotMatch(rollbackSql, /\bDELETE\b/);
 });
 
 test("short-link suffix collisions are detected case-insensitively", () => {
