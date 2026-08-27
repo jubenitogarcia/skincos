@@ -54,6 +54,9 @@ test("mobile handoff keeps one rhythm, one deck anchor, and a roomier special-ca
     assert.match(experience, /event\.key === "Escape"/);
     assert.match(experience, /specialCardModalDialogRef\.current/);
     assert.match(experience, /textarea:not\(\[disabled\]\), summary, \[tabindex\]/);
+    assert.match(experience, /aria-labelledby="beauty-movement-special-card-title"/);
+    assert.match(experience, /onKeyDown=\{\(event\) => \{[\s\S]*?closeSpecialCardModal\(\);/);
+    assert.match(experience, /role="button"[\s\S]*?aria-expanded=\{campaignConditionsOpen\}/);
 
     const autoAdvanceTimer = experience.slice(
         experience.indexOf("autoAdvanceTimerRef.current = window.setTimeout"),
