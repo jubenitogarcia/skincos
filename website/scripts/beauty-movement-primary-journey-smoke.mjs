@@ -3,7 +3,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { readSyntheticInvites } from "./beauty-movement-context-isolation-smoke.mjs";
+import {
+  readSyntheticInvites,
+  redactBeautyMovementSmokeError,
+} from "./beauty-movement-context-isolation-smoke.mjs";
 
 const CONTEXT_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 
@@ -39,12 +42,6 @@ function parseArgs(argv) {
     deliveryDirectory: path.resolve(deliveryDirectory),
     evidenceFile: path.resolve(evidenceFile),
   };
-}
-
-function redact(value) {
-  return String(value)
-    .replace(/#c=[A-Za-z0-9_-]+/g, "#c=[redacted]")
-    .replace(/[A-Za-z0-9_-]{40,180}/g, "[opaque]");
 }
 
 async function run() {
@@ -235,7 +232,9 @@ const isDirectExecution = process.argv[1]
   && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isDirectExecution) {
   run().catch((error) => {
-    console.error(redact(error instanceof Error ? error.message : "beauty_movement_primary_smoke_failed"));
+    console.error(redactBeautyMovementSmokeError(
+      error instanceof Error ? error.message : "beauty_movement_primary_smoke_failed",
+    ));
     process.exitCode = 1;
   });
 }

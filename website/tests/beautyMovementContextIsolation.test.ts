@@ -295,6 +295,8 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.doesNotMatch(primarySmoke, /getByRole\("checkbox"\)\.check\(\)/);
     assert.match(primarySmoke, /specialCardFront/);
     assert.doesNotMatch(primarySmoke, /beforeReload = await special\.innerText/);
+    assert.match(primarySmoke, /redactBeautyMovementSmokeError/);
+    assert.doesNotMatch(primarySmoke, /function redact\(/);
     for (const workflow of [staging, production]) {
         assert.match(workflow, /Clique aqui para revelar sua carta especial/);
         assert.match(workflow, /getByRole\('checkbox'\)\.count\(\) !== 0/);
@@ -378,10 +380,15 @@ test("production release smoke parses clean and noisy Wrangler JSON without logg
 });
 
 test("production release smoke preserves a safe child failure code without child output", () => {
+    const childStderr = redactBeautyMovementSmokeError(
+        `beauty_movement_primary_smoke_evidence_invalid:{"opaque":"${"t".repeat(43)}"}`,
+    );
     assert.equal(
-        extractBeautyMovementChildFailureCode(
-            "opaque details\nbeauty_movement_primary_smoke_evidence_invalid:{\"opaque\":\"redacted\"}\n",
-        ),
+        childStderr,
+        'beauty_movement_primary_smoke_evidence_invalid:{"opaque":"[opaque]"}',
+    );
+    assert.equal(
+        extractBeautyMovementChildFailureCode(`opaque details\n${childStderr}\n`),
         "beauty_movement_primary_smoke_evidence_invalid",
     );
     assert.equal(extractBeautyMovementChildFailureCode("generic child failure"), null);
