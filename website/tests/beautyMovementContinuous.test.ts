@@ -95,6 +95,11 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.doesNotMatch(experience, /inlineFinale|renderResultStage|Leitura completa|O seu presente de celebração/);
     assert.match(experience, /isSpecialCardModalOpen/);
     assert.match(experience, /specialCardReopenActionRef/);
+    assert.match(experience, /const cardButtonRefs = useRef<Array<HTMLButtonElement \| null>>\(\[\]\)/);
+    assert.match(experience, /const shouldFocusNextHandRef = useRef\(false\)/);
+    assert.match(experience, /cardButtonRefs\.current\[0\]\?\.focus\(\{ preventScroll: true \}\)/);
+    assert.match(experience, /progressListRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
+    assert.match(experience, /tabIndex=\{-1\}/);
     assert.match(experience, /automática em \{AUTO_ADVANCE_SECONDS\} segundos/);
     assert.doesNotMatch(experience, /confirmationTriggerRef/);
     assert.match(experience, /className=\{styles\.progressButton\}/);
@@ -168,7 +173,9 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.doesNotMatch(experience, /actsStack|revealedStrip/);
     assert.doesNotMatch(experience, /BeautyMovementModalReading/);
     assert.doesNotMatch(experience, /finaleCardGridSettled/);
-    assert.match(experience, /aria-label="Carta especial"/);
+    assert.match(experience, /aria-labelledby="beauty-movement-special-card-title"/);
+    assert.match(experience, /id=\{revealed \? "beauty-movement-special-card-title" : undefined\}/);
+    assert.match(experience, /role="heading"\s+aria-level=\{2\}/);
     assert.match(experience, /className=\{styles\.cardSparkles\}/);
     assert.match(experience, /className=\{styles\.deckStage\}/);
     assert.match(experience, /className=\{styles\.finaleSpecialCardTransform\}/);
@@ -481,7 +488,12 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /if \(action === "reopen"\) specialCardReopenActionRef\.current = node/);
     assert.match(experience, /confirmationActionRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
     assert.doesNotMatch(experience, /confirmationAction\?\.querySelector<HTMLButtonElement>/);
-    assert.match(experience, /onClick=\{action === "confirm" \? \(\) => void handleConfirm\(\) : openSpecialCardModal\}/);
+    assert.match(experience, /const runRevealAction = action === "confirm" \? \(\) => void handleConfirm\(\) : openSpecialCardModal/);
+    assert.match(experience, /onClick=\{runRevealAction\}/);
+    assert.match(experience, /onKeyDown=\{\(event\) => \{[\s\S]*?runRevealAction\(\);/);
+    assert.match(experience, /aria-expanded=\{campaignConditionsOpen\}/);
+    assert.match(experience, /aria-controls="beauty-movement-special-card-conditions"/);
+    assert.match(experience, /setCampaignConditionsOpen\(\(open\) => !open\)/);
     assert.match(styles, /\.cardFace \{[\s\S]*-webkit-backface-visibility: hidden;[\s\S]*isolation: isolate;/);
     assert.match(styles, /\.cardButtonSelected \.cardFront \{[\s\S]*animation: coveredFaceExit var\(--bm-hand-reveal-ms\)/);
     assert.match(styles, /\.cardButtonSelected \.cardBack \{[\s\S]*animation: revealedFaceEnter var\(--bm-hand-reveal-ms\)/);

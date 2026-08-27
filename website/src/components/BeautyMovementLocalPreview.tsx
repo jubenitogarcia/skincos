@@ -54,6 +54,7 @@ function cloneInitialPreviewState(): BeautyMovementExperienceInitialState {
  */
 export default function BeautyMovementLocalPreview() {
     const [state, setState] = useState<BeautyMovementExperienceInitialState>(cloneInitialPreviewState);
+    const [previewRevision, setPreviewRevision] = useState("interactive");
 
     useEffect(() => {
         if (process.env.NODE_ENV === "production") return;
@@ -71,6 +72,10 @@ export default function BeautyMovementLocalPreview() {
             confirmed: true,
             offer: resolved.offer,
         }));
+        // BeautyMovementExperience owns its animation state after mounting.
+        // Remount only for this explicit QA shortcut so the resolved outcome
+        // becomes the initial state without resetting normal interactive reveals.
+        setPreviewRevision(`outcome-${requested}`);
     }, []);
 
     function reveal(actIndex: number, cardId: string) {
@@ -98,6 +103,7 @@ export default function BeautyMovementLocalPreview() {
 
     return (
         <BeautyMovementExperience
+            key={previewRevision}
             initialState={state}
             onReveal={reveal}
             onConfirm={confirm}

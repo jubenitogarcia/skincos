@@ -328,6 +328,7 @@ export default function BeautyMovementExperience({
     const [confirmedOffer, setConfirmedOffer] = useState<BeautyMovementOffer | null>(initialState.offer ?? null);
     const [actionError, setActionError] = useState<string | null>(null);
     const [shareStatus, setShareStatus] = useState<string | null>(null);
+    const [campaignConditionsOpen, setCampaignConditionsOpen] = useState(false);
     const [finaleStage, setFinaleStage] = useState<FinaleStage>(() =>
         initialState.confirmed ? "result" : initialReadingComplete ? "confirmation" : "hidden",
     );
@@ -355,12 +356,14 @@ export default function BeautyMovementExperience({
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
     const finaleCountdownRef = useRef<HTMLDivElement | null>(null);
     const progressListRef = useRef<HTMLOListElement | null>(null);
+    const cardButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const confirmationActionRef = useRef<HTMLButtonElement | null>(null);
     const specialCardModalCloseRef = useRef<HTMLButtonElement | null>(null);
     const specialCardModalDialogRef = useRef<HTMLElement | null>(null);
     const specialCardReopenActionRef = useRef<HTMLButtonElement | null>(null);
     const specialCardModalTriggerRef = useRef<HTMLElement | null>(null);
+    const shouldFocusNextHandRef = useRef(false);
     const selectionsRef = useRef(selections);
     const displayedActIndexRef = useRef(displayedActIndex);
     const introStageRef = useRef(introStage);
@@ -380,6 +383,7 @@ export default function BeautyMovementExperience({
     const progressMotionKeyRef = useRef(0);
 
     const closeSpecialCardModal = useCallback(() => {
+        setCampaignConditionsOpen(false);
         setIsSpecialCardModalOpen(false);
         window.requestAnimationFrame(() => {
             const focusTarget = specialCardModalTriggerRef.current ?? specialCardReopenActionRef.current;
@@ -1124,15 +1128,20 @@ export default function BeautyMovementExperience({
     function handleDeckKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
         if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
 
+        shouldFocusNextHandRef.current = true;
         // Some embedded browsers focus the native button but do not synthesize its click.
         // Prevent the default activation so physical browsers do not invoke the deal twice.
         event.preventDefault();
         startInitialDeal();
+        window.requestAnimationFrame(() => {
+            progressListRef.current?.focus({ preventScroll: true });
+        });
     }
 
     function beginFinale() {
         if (handStageRef.current !== "held" || finaleStageRef.current !== "hidden" || transitionInFlightRef.current) return;
 
+        shouldFocusNextHandRef.current = false;
         transitionInFlightRef.current = true;
         cancelAutoAdvance();
         const handToken = beginHandTransition();
@@ -1461,7 +1470,17 @@ export default function BeautyMovementExperience({
     ) {
         if (isLocalPreview) {
             return (
-                <button className={className} type="button" onClick={handleWhatsappClick}>
+                <button
+                    className={className}
+                    type="button"
+                    onClick={handleWhatsappClick}
+                    onKeyDown={(event) => {
+                        if ((event.key === "Enter" || event.key === " " || event.key === "Spacebar") && !event.repeat) {
+                            event.preventDefault();
+                            handleWhatsappClick();
+                        }
+                    }}
+                >
                     {label}
                 </button>
             );
@@ -1530,6 +1549,22 @@ export default function BeautyMovementExperience({
         finaleStage === "collecting" ||
         finaleStage === "merging";
 
+    useEffect(() => {
+        if (
+            !shouldFocusNextHandRef.current ||
+            handStage !== "ready" ||
+            finaleStage !== "hidden" ||
+            tableSelected
+        ) return;
+
+        shouldFocusNextHandRef.current = false;
+        const focusFrame = window.requestAnimationFrame(() => {
+            cardButtonRefs.current[0]?.focus({ preventScroll: true });
+        });
+
+        return () => window.cancelAnimationFrame(focusFrame);
+    }, [displayedActIndex, finaleStage, handStage, tableSelected]);
+
     function renderRevealedCardContent(card: BeautyMovementCard, actLabel: string) {
         return (
             <>
@@ -1555,9 +1590,16 @@ export default function BeautyMovementExperience({
                 type="button"
                 className={`${styles.cardButton} ${isPending ? styles.cardButtonPending : ""} ${isSelected ? styles.cardButtonSelected : ""}`.trim()}
                 key={card.id}
+                ref={(node) => {
+                    cardButtonRefs.current[cardIndex] = node;
+                }}
                 onClick={() => void handleReveal(displayedActIndex, card)}
                 onKeyDown={(event) => {
                     if ((event.key === "Enter" || event.key === " ") && !event.repeat) {
+                        shouldFocusNextHandRef.current = true;
+                        window.requestAnimationFrame(() => {
+                            progressListRef.current?.focus({ preventScroll: true });
+                        });
                         event.preventDefault();
                         void handleReveal(displayedActIndex, card);
                     }
@@ -1689,6 +1731,7 @@ export default function BeautyMovementExperience({
         const referencePrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.referencePrice) : null;
         const unlockedPrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.unlockedPrice) : null;
         const campaignConditions = revealed ? initialState.campaign.conditionsText?.trim() : null;
+        const runRevealAction = action === "confirm" ? () => void handleConfirm() : openSpecialCardModal;
 
         return (
             <article
@@ -1719,7 +1762,13 @@ export default function BeautyMovementExperience({
                                         }}
                                         className={styles.primaryButton}
                                         type="button"
-                                        onClick={action === "confirm" ? () => void handleConfirm() : openSpecialCardModal}
+                                        onClick={runRevealAction}
+                                        onKeyDown={(event) => {
+                                            if ((event.key === "Enter" || event.key === " " || event.key === "Spacebar") && !event.repeat) {
+                                                event.preventDefault();
+                                                runRevealAction();
+                                            }
+                                        }}
                                         disabled={action === "confirm" ? isConfirming : undefined}
                                     >
                                         {action === "confirm" && isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
@@ -1752,7 +1801,13 @@ export default function BeautyMovementExperience({
                                 <BeautyMovementCardIllustration cardId={iconId} />
                             )}
                         </span>
-                        <strong>{title}</strong>
+                        <strong
+                            id={revealed ? "beauty-movement-special-card-title" : undefined}
+                            role="heading"
+                            aria-level={2}
+                        >
+                            {title}
+                        </strong>
                         {offerPresentation ? (
                             <>
                                 <span className={styles.specialCardOfferDescriptor}>{offerPresentation.descriptor}</span>
@@ -1787,9 +1842,25 @@ export default function BeautyMovementExperience({
                             )
                             : null}
                         {campaignConditions ? (
-                            <details className={styles.specialCardConditions}>
-                                <summary>{initialState.campaign.conditionsLabel?.trim() || "Condições da campanha"}</summary>
-                                <p>{campaignConditions}</p>
+                            <details
+                                className={styles.specialCardConditions}
+                                open={campaignConditionsOpen}
+                                onToggle={(event) => setCampaignConditionsOpen(event.currentTarget.open)}
+                            >
+                                <summary
+                                    role="button"
+                                    aria-expanded={campaignConditionsOpen}
+                                    aria-controls="beauty-movement-special-card-conditions"
+                                    onKeyDown={(event) => {
+                                        if ((event.key === "Enter" || event.key === " " || event.key === "Spacebar") && !event.repeat) {
+                                            event.preventDefault();
+                                            setCampaignConditionsOpen((open) => !open);
+                                        }
+                                    }}
+                                >
+                                    {initialState.campaign.conditionsLabel?.trim() || "Condições da campanha"}
+                                </summary>
+                                <p id="beauty-movement-special-card-conditions">{campaignConditions}</p>
                             </details>
                         ) : null}
                         {revealed && shareStatus ? <span className={styles.specialCardCopy} role="status">{shareStatus}</span> : null}
@@ -1859,6 +1930,7 @@ export default function BeautyMovementExperience({
                                 ref={progressListRef}
                                 className={`${styles.progress} ${progressMotion ? styles.progressMotionActive : ""}`.trim()}
                                 aria-label="Progresso da experiência"
+                                tabIndex={-1}
                             >
                                 {progressMotion ? (
                                     <li
@@ -2068,7 +2140,7 @@ export default function BeautyMovementExperience({
                         className={styles.specialCardModalDialog}
                         role="dialog"
                         aria-modal="true"
-                        aria-label="Carta especial"
+                        aria-labelledby="beauty-movement-special-card-title"
                     >
                         <button
                             ref={specialCardModalCloseRef}
@@ -2076,6 +2148,12 @@ export default function BeautyMovementExperience({
                             type="button"
                             aria-label="Fechar carta especial"
                             onClick={closeSpecialCardModal}
+                            onKeyDown={(event) => {
+                                if ((event.key === "Enter" || event.key === " " || event.key === "Spacebar") && !event.repeat) {
+                                    event.preventDefault();
+                                    closeSpecialCardModal();
+                                }
+                            }}
                         >
                             ×
                         </button>

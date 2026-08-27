@@ -3944,11 +3944,54 @@
 /* Price cards need the campaign conditions in the editorial flow on desktop,
  * otherwise the link lands on top of the WhatsApp action at compact heights. */
 @media (min-width: 721px) {
+  .specialCardModalDialog {
+    width: min(460px, 100%);
+  }
+
+  .specialCardModalDialog .specialCard {
+    width: min(420px, 100%);
+    min-height: 520px;
+  }
+
   .specialCardModalDialog .specialCardWithPrice {
-    min-height: 456px;
+    min-height: 520px;
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer {
+    gap: 6px;
+    padding: 18px 24px 16px;
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer .specialCardIllustration {
+    width: 92px;
+    height: 92px;
+    margin: 2px auto 0;
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer > strong {
+    max-width: 350px;
+    font-size: clamp(2rem, 3vw, 2.5rem);
+  }
+
+  .specialCardModalDialog .specialCardOfferCopy {
+    max-width: 340px;
+    font-size: 0.86rem;
+    line-height: 1.32;
+  }
+
+  .specialCardModalDialog .specialCardGiftNote {
+    max-width: 340px;
+    font-size: 0.76rem;
+  }
+
+  .specialCardModalDialog .specialCardOfferCondition {
+    max-width: 340px;
+    font-size: 0.7rem;
   }
 
   .specialCardModalDialog .specialCardWithPrice .specialCardWhatsappAction {
+    width: min(100%, 320px);
+    min-height: 48px;
     margin-bottom: 0;
   }
 
@@ -3959,7 +4002,7 @@
   }
 
   .specialCardModalDialog .specialCardWithPrice:has(.specialCardConditions[open]) {
-    min-height: 560px;
+    min-height: 620px;
   }
 }
 

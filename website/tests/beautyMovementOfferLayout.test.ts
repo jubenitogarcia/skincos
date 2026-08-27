@@ -15,10 +15,19 @@ test("desktop price offer keeps campaign conditions in the editorial flow", asyn
     const desktopOfferStyles = styles.slice(desktopOfferBlockStart, desktopOfferBlockEnd + 2);
 
     assert.match(desktopOfferStyles, /@media \(min-width: 721px\)\s*\{/);
-    assert.match(desktopOfferStyles, /\.specialCardModalDialog \.specialCardWithPrice\s*\{\s*min-height: 456px;/);
+    assert.match(desktopOfferStyles, /\.specialCardModalDialog\s*\{\s*width: min\(460px, 100%\);/);
     assert.match(
         desktopOfferStyles,
-        /\.specialCardModalDialog \.specialCardWithPrice \.specialCardWhatsappAction\s*\{\s*margin-bottom: 0;/,
+        /\.specialCardModalDialog \.specialCard\s*\{\s*width: min\(420px, 100%\);\s*min-height: 520px;/,
+    );
+    assert.match(desktopOfferStyles, /\.specialCardModalDialog \.specialCardWithPrice\s*\{\s*min-height: 520px;/);
+    assert.match(
+        desktopOfferStyles,
+        /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardIllustration\s*\{\s*width: 92px;\s*height: 92px;/,
+    );
+    assert.match(
+        desktopOfferStyles,
+        /\.specialCardModalDialog \.specialCardWithPrice \.specialCardWhatsappAction\s*\{[^}]*margin-bottom: 0;/,
     );
     assert.match(
         desktopOfferStyles,
@@ -26,6 +35,6 @@ test("desktop price offer keeps campaign conditions in the editorial flow", asyn
     );
     assert.match(
         desktopOfferStyles,
-        /\.specialCardModalDialog \.specialCardWithPrice:has\(\.specialCardConditions\[open\]\)\s*\{\s*min-height: 560px;/,
+        /\.specialCardModalDialog \.specialCardWithPrice:has\(\.specialCardConditions\[open\]\)\s*\{\s*min-height: 620px;/,
     );
 });
