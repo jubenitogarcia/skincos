@@ -175,6 +175,9 @@ async function main(): Promise<void> {
             campaignId: plan.campaignId,
             inputSha256: plan.inputSha256,
             inviteTokenHmacs: plan.invites.map((invite) => invite.inviteTokenHmac).sort(),
+            inviteTokenHmacByRef: Object.fromEntries(plan.invites
+                .map((invite) => [invite.inviteRef, invite.inviteTokenHmac])
+                .sort(([left], [right]) => left.localeCompare(right))),
         })}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
     } catch {
         throw new Error("beauty_movement_delivery_attestation_unavailable");

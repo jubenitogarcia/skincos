@@ -5,6 +5,7 @@ import {
     prepareBeautyMovementShortLinks,
     renderBeautyMovementShortLinkConflictSql,
     renderBeautyMovementShortLinkReadbackSql,
+    renderBeautyMovementShortLinkRollbackSql,
     renderBeautyMovementShortLinkSql,
     serializeBeautyMovementShortLinkCsv,
 } from "../src/lib/beautyMovementShortLinks";
@@ -19,6 +20,7 @@ type ParsedArguments = {
     sql: string;
     conflicts: string;
     readback: string;
+    rollback: string | null;
     attestation: string;
     campaign: string;
 };
@@ -32,7 +34,7 @@ function valueAfter(args: string[], flag: string): string {
 }
 
 function parseArguments(args: string[]): ParsedArguments {
-    const known = new Set(["--input", "--out", "--sql", "--conflicts", "--readback", "--attestation", "--campaign"]);
+    const known = new Set(["--input", "--out", "--sql", "--conflicts", "--readback", "--rollback", "--attestation", "--campaign"]);
     for (const arg of args) if (arg.startsWith("--") && !known.has(arg)) throw new Error("beauty_movement_short_links_unknown_argument");
     return {
         input: valueAfter(args, "--input"),
@@ -40,6 +42,7 @@ function parseArguments(args: string[]): ParsedArguments {
         sql: valueAfter(args, "--sql"),
         conflicts: valueAfter(args, "--conflicts"),
         readback: valueAfter(args, "--readback"),
+        rollback: args.includes("--rollback") ? valueAfter(args, "--rollback") : null,
         attestation: valueAfter(args, "--attestation"),
         campaign: valueAfter(args, "--campaign"),
     };
@@ -114,6 +117,7 @@ async function main(): Promise<void> {
     const sqlPath = privatePath(options.sql);
     const conflictsPath = privatePath(options.conflicts);
     const readbackPath = privatePath(options.readback);
+    const rollbackPath = options.rollback ? privatePath(options.rollback) : null;
     const attestationPath = privatePath(options.attestation);
     const rows = readDeliveryRows(await readFile(inputPath, "utf8").catch(() => { throw new Error("beauty_movement_short_links_input_unavailable"); }));
     const plan = prepareBeautyMovementShortLinks({ rows, campaignId: options.campaign });
@@ -121,6 +125,7 @@ async function main(): Promise<void> {
     await writePrivate(sqlPath, renderBeautyMovementShortLinkSql(plan));
     await writePrivate(conflictsPath, renderBeautyMovementShortLinkConflictSql(plan));
     await writePrivate(readbackPath, renderBeautyMovementShortLinkReadbackSql(plan));
+    if (rollbackPath) await writePrivate(rollbackPath, renderBeautyMovementShortLinkRollbackSql(plan));
     await writePrivate(attestationPath, `${JSON.stringify({ version: 1, campaignId: plan.campaignId, count: plan.links.length, mappingHash: plan.mappingHash, mappingHashes: plan.mappingHashes })}\n`);
     console.log(JSON.stringify({ mode: "beauty_movement_short_links", campaignId: plan.campaignId, count: plan.links.length, mappingHash: plan.mappingHash }));
 }

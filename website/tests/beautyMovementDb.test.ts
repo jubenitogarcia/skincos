@@ -479,6 +479,21 @@ test("beauty movement selects the courtesy WhatsApp message from velocity entitl
     if (legacy.ok) assert.equal(legacy.state.campaign.whatsappMessage, "Olá, quero confirmar minha aula-cortesia.");
 });
 
+test("beauty movement preserves the commercial WhatsApp message for an additive Velocity courtesy", async () => {
+    const fixture = await makeFixture();
+    fixture.db.invite.reward_id = null;
+    fixture.db.invite.velocity_benefit = "aula_cortesia_evento";
+    fixture.db.invite.assigned_outcome_key = "filler_double";
+    fixture.db.invite.assignment_protocol_version = "beauty-movement-invite-assignments-v1";
+    fixture.db.invite.confirmed_at_ms = NOW;
+    const result = await exchangeBeautyMovementInvite(
+        { token: fixture.token, origin: ORIGIN, ip: "203.0.113.21", nowMs: NOW },
+        options(fixture.db),
+    );
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.state.campaign.whatsappMessage, "Olá, quero confirmar a condição do meu convite.");
+});
+
 test("beauty movement enforces ordered immutable cards and confirms without manufacturing operational consent", async () => {
     const fixture = await makeFixture();
     const exchange = await exchangeBeautyMovementInvite({ token: fixture.token, origin: ORIGIN, ip: "203.0.113.11", nowMs: NOW }, options(fixture.db));

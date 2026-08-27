@@ -157,6 +157,29 @@ NULL, NULL, ${sqlString(plan.campaignId)}, NULL, NULL,
     return `${statements.join("\n\n")}\n`;
 }
 
+export function renderBeautyMovementShortLinkRollbackSql(plan: BeautyMovementShortLinkPlan): string {
+    // A rollback deactivates only the exact token-derived mappings created for
+    // this plan. It deliberately does not delete history, and it refuses to
+    // touch a partial or drifted set.
+    const predicates = plan.links.map((link) => [
+        `id = ${sqlString(link.id)}`,
+        `site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)}`,
+        `slug_path = ${sqlString(link.normalizedSlugPath)}`,
+        `destination_url = ${sqlString(link.destinationUrl)}`,
+        `source = ${sqlString(link.source)}`,
+        `placement = ${sqlString(link.placement)}`,
+        `utm_campaign = ${sqlString(plan.campaignId)}`,
+        "active = 1",
+    ].join(" AND "));
+    const exactSet = predicates.map((predicate) => `(${predicate})`).join(" OR ");
+    return `UPDATE site_custom_urls
+SET active = 0,
+    updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000
+WHERE site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)}
+  AND (SELECT COUNT(*) FROM site_custom_urls WHERE site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)} AND (${exactSet})) = ${plan.links.length}
+  AND (${exactSet});\n`;
+}
+
 export function renderBeautyMovementShortLinkConflictSql(plan: BeautyMovementShortLinkPlan): string {
     const slugs = plan.links.map((link) => sqlString(link.normalizedSlugPath)).join(", ");
     return `SELECT id, site_host, slug_path, destination_url, source, active

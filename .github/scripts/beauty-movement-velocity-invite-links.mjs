@@ -169,9 +169,11 @@ export function materializeVelocityInviteInputs({
   const canonical = {
     base: csvFor(baseRows),
     legacy: csvFor(legacyRows),
+    preserved: csvFor(legacyRows),
     velocity: csvFor(velocityRows),
     sourceOverlay: csvFor(sourceOverlayRows),
     append: csvFor(appendRows),
+    velocityAppend: csvFor(velocityAppendRows),
     velocityExisting: csvFor(velocityExistingRows),
     combined: csvFor(combinedRows),
   };
@@ -233,7 +235,43 @@ function sqlString(value) {
 
 function selectSql(campaignId, refs) {
   if (!CAMPAIGN_ID_PATTERN.test(campaignId) || refs.length === 0 || new Set(refs).size !== refs.length) fail("query_scope_invalid");
-  return `SELECT external_ref, invite_status, expires_at_ms, confirmed_at_ms, velocity_benefit, assigned_outcome_key, assignment_protocol_version, outcome_key FROM bm_invites WHERE campaign_id=${sqlString(campaignId)} AND external_ref IN (${refs.map(sqlString).join(",")});\n`;
+  return `SELECT external_ref, invite_token_hmac, invite_status, expires_at_ms, confirmed_at_ms, velocity_benefit, assigned_outcome_key, assignment_protocol_version, outcome_key FROM bm_invites WHERE campaign_id=${sqlString(campaignId)} AND external_ref IN (${refs.map(sqlString).join(",")});\n`;
+}
+
+function inviteTargets(campaignId, refs) {
+  if (!CAMPAIGN_ID_PATTERN.test(campaignId) || refs.length === 0 || new Set(refs).size !== refs.length) fail("target_scope_invalid");
+  return { campaignId, refs, refHash: sha256(refs.slice().sort().join("\n")) };
+}
+
+function appendRollbackPredicate(ref, tableAlias = "") {
+  const column = (name) => tableAlias ? `${tableAlias}.${name}` : name;
+  return [
+    `${column("external_ref")}=${sqlString(ref)}`,
+    `${column("invite_status")}='active'`,
+    `${column("velocity_benefit")}=${sqlString(VELOCITY_BENEFIT)}`,
+    `${column("assigned_outcome_key")} IS NULL`,
+    `${column("assignment_protocol_version")}=${sqlString(ASSIGNMENT_PROTOCOL_VERSION)}`,
+    `${column("confirmed_at_ms")} IS NULL`,
+    `${column("operational_consent_at_ms")} IS NULL`,
+    `${column("outcome_key")} IS NULL`,
+    `NOT EXISTS (SELECT 1 FROM bm_card_reveals AS reveal WHERE reveal.invite_id=${column("id")})`,
+  ].join(" AND ");
+}
+
+function guardedInviteRevokeSql({ campaignId, refs }) {
+  const scope = `campaign_id=${sqlString(campaignId)}`;
+  const candidates = refs.map((ref) => `(${appendRollbackPredicate(ref, "candidate")})`).join(" OR ");
+  const targets = refs.map((ref) => `(${appendRollbackPredicate(ref)})`).join(" OR ");
+  return `UPDATE bm_invites
+SET invite_status='revoked',
+    updated_at_ms=CAST(strftime('%s','now') AS INTEGER) * 1000
+WHERE ${scope}
+  AND (SELECT COUNT(*) FROM bm_invites AS candidate WHERE candidate.campaign_id=${sqlString(campaignId)} AND (${candidates}))=${refs.length}
+  AND (${targets});\n`;
+}
+
+function inviteRollbackReadbackSql(campaignId, refs) {
+  return `SELECT i.external_ref, i.invite_status, i.confirmed_at_ms, i.operational_consent_at_ms, i.outcome_key, (SELECT COUNT(*) FROM bm_card_reveals AS reveal WHERE reveal.invite_id=i.id) AS reveal_count FROM bm_invites AS i WHERE i.campaign_id=${sqlString(campaignId)} AND i.external_ref IN (${refs.map(sqlString).join(",")});\n`;
 }
 
 function writePrivate(file, content) {
@@ -241,24 +279,30 @@ function writePrivate(file, content) {
   writeFileSync(file, content, { encoding: "utf8", mode: 0o600 });
 }
 
-export function deriveVelocityInviteArtifacts({ campaignId, sourceOverlayRows, velocityRows, existingRows, deliveryRows, shortRows }) {
+export function deriveVelocityInviteArtifacts({ campaignId, sourceOverlayRows, preservedRows, velocityRows, velocityAppendRows, existingRows, deliveryRows, shortRows }) {
   const deliveryByPhone = rowsByPhone(deliveryRows, "delivery");
   const shortByPhone = rowsByPhone(shortRows, "short");
   const overlayDelivery = selectDeliveryRows(sourceOverlayRows, deliveryByPhone, "overlay");
   const overlayShort = selectDeliveryRows(sourceOverlayRows, shortByPhone, "overlay_short");
   const velocityDelivery = selectDeliveryRows(velocityRows, deliveryByPhone, "velocity");
   const velocityShort = selectDeliveryRows(velocityRows, shortByPhone, "velocity_short");
+  const velocityAppendDelivery = selectDeliveryRows(velocityAppendRows, deliveryByPhone, "velocity_append");
   const existingDelivery = selectDeliveryRows(existingRows, deliveryByPhone, "velocity_existing");
   const overlayRefs = overlayDelivery.map((row) => row[1]);
+  const preservedRefs = selectDeliveryRows(preservedRows, deliveryByPhone, "preserved").map((row) => row[1]);
   const velocityRefs = velocityDelivery.map((row) => row[1]);
+  const velocityAppendRefs = velocityAppendDelivery.map((row) => row[1]);
   const existingRefs = existingDelivery.map((row) => row[1]);
   if (overlayShort.length !== overlayDelivery.length || velocityShort.length !== velocityDelivery.length) fail("short_link_count_invalid");
-  if (new Set(overlayRefs).size !== overlayRefs.length || new Set(velocityRefs).size !== velocityRefs.length || new Set(existingRefs).size !== existingRefs.length) fail("invite_ref_set_invalid");
+  if (new Set(overlayRefs).size !== overlayRefs.length || new Set(preservedRefs).size !== preservedRefs.length || new Set(velocityRefs).size !== velocityRefs.length || new Set(velocityAppendRefs).size !== velocityAppendRefs.length || new Set(existingRefs).size !== existingRefs.length) fail("invite_ref_set_invalid");
   assertExpected(sourceOverlayRows.length, 65, "source_overlay_rows");
+  assertExpected(preservedRows.length, VELOCITY_APPEND_EXPECTATIONS.preservedExtraRows, "preserved_extra_rows");
   assertExpected(velocityRows.length, VELOCITY_APPEND_EXPECTATIONS.velocityRows, "velocity_rows");
+  assertExpected(velocityAppendRows.length, VELOCITY_APPEND_EXPECTATIONS.velocityRows - VELOCITY_APPEND_EXPECTATIONS.velocityBaseRows, "velocity_append_rows");
   assertExpected(existingRows.length, VELOCITY_APPEND_EXPECTATIONS.velocityBaseRows, "velocity_base_rows");
   return {
     velocityShortCsv: serializeCsv(DELIVERY_HEADER, velocityShort),
+    velocityAppendDeliveryCsv: serializeCsv(DELIVERY_HEADER, velocityAppendDelivery),
     summary: {
       campaignId,
       count: velocityRows.length,
@@ -267,10 +311,15 @@ export function deriveVelocityInviteArtifacts({ campaignId, sourceOverlayRows, v
       sha256: sha256(serializeCsv(DELIVERY_HEADER, velocityShort)),
     },
     teamQuery: selectSql(campaignId, overlayRefs),
+    preservedQuery: selectSql(campaignId, preservedRefs),
     velocityQuery: selectSql(campaignId, velocityRefs),
     promotionQuery: selectSql(campaignId, existingRefs),
-    promotionTargets: { campaignId, refs: existingRefs, refHash: sha256(existingRefs.slice().sort().join("\n")) },
-    velocityTargets: { campaignId, refs: velocityRefs, refHash: sha256(velocityRefs.slice().sort().join("\n")) },
+    preservedTargets: inviteTargets(campaignId, preservedRefs),
+    promotionTargets: inviteTargets(campaignId, existingRefs),
+    velocityTargets: inviteTargets(campaignId, velocityRefs),
+    velocityAppendTargets: inviteTargets(campaignId, velocityAppendRefs),
+    inviteRollbackSql: guardedInviteRevokeSql({ campaignId, refs: velocityAppendRefs }),
+    inviteRollbackReadbackSql: inviteRollbackReadbackSql(campaignId, velocityAppendRefs),
   };
 }
 
@@ -299,6 +348,27 @@ function verifyExpectedRows(rows, targets, label) {
   if (actual.size !== rows.length || actual.size !== targets.refs.length || [...actual.keys()].some((ref) => !targets.refs.includes(ref))) fail(`${label}_scope_invalid`);
   if (rows.some((row) => row.invite_status !== "active" || Number(row.expires_at_ms) <= Date.now())) fail(`${label}_not_active`);
   return actual;
+}
+
+export function verifyPreservedInvites({ targets, d1Payload }) {
+  const rows = d1Rows(d1Payload, "preserved_pre_readback");
+  verifyExpectedRows(rows, targets, "preserved_pre_readback");
+  assertExpected(rows.length, VELOCITY_APPEND_EXPECTATIONS.preservedExtraRows, "preserved_pre_readback_rows");
+  return { activePreservedInvites: rows.length };
+}
+
+export function verifyPromotionTokenHmacs({ targets, d1Payload, deliveryAttestation }) {
+  if (!deliveryAttestation || deliveryAttestation.campaignId !== targets.campaignId) fail("promotion_token_attestation_scope_invalid");
+  const expectedByRef = deliveryAttestation.inviteTokenHmacByRef;
+  if (!expectedByRef || typeof expectedByRef !== "object" || Array.isArray(expectedByRef)) fail("promotion_token_attestation_invalid");
+  const rows = d1Rows(d1Payload, "promotion_token_pre_readback");
+  const byRef = verifyExpectedRows(rows, targets, "promotion_token_pre_readback");
+  for (const ref of targets.refs) {
+    const expected = expectedByRef[ref];
+    const actual = byRef.get(ref)?.invite_token_hmac;
+    if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected) || actual !== expected) fail("promotion_token_hmac_mismatch");
+  }
+  return { targetCount: rows.length, tokenHmacMatch: true };
 }
 
 function requiredText(value, code) {
@@ -484,7 +554,9 @@ function runMaterialize() {
     BASE_INPUT: result.canonical.base,
     TEAM_INPUT: result.canonical.sourceOverlay,
     APPEND_INPUT: result.canonical.append,
+    PRESERVED_INPUT: result.canonical.preserved,
     VELOCITY_INPUT: result.canonical.velocity,
+    VELOCITY_APPEND_INPUT: result.canonical.velocityAppend,
     VELOCITY_EXISTING_INPUT: result.canonical.velocityExisting,
     COMBINED_INPUT: result.canonical.combined,
     OVERLAY_META: `${JSON.stringify(result.meta)}\n`,
@@ -497,18 +569,26 @@ function runDerive() {
   const result = deriveVelocityInviteArtifacts({
     campaignId: required("CAMPAIGN_ID"),
     sourceOverlayRows: readInput(required("TEAM_INPUT"), "source_overlay"),
+    preservedRows: readInput(required("PRESERVED_INPUT"), "preserved"),
     velocityRows: readInput(required("VELOCITY_INPUT"), "velocity"),
+    velocityAppendRows: readInput(required("VELOCITY_APPEND_INPUT"), "velocity_append"),
     existingRows: readInput(required("VELOCITY_EXISTING_INPUT"), "velocity_existing"),
     deliveryRows: readDelivery(required("DELIVERY_OUTPUT"), "delivery"),
     shortRows: readDelivery(required("SHORT_OUTPUT"), "short"),
   });
   writePrivate(required("VELOCITY_SHORT_OUTPUT"), result.velocityShortCsv);
+  writePrivate(required("VELOCITY_APPEND_DELIVERY"), result.velocityAppendDeliveryCsv);
   writePrivate(required("VELOCITY_SUMMARY"), `${JSON.stringify(result.summary)}\n`);
   writePrivate(required("TEAM_QUERY"), result.teamQuery);
+  writePrivate(required("PRESERVED_QUERY"), result.preservedQuery);
   writePrivate(required("VELOCITY_QUERY"), result.velocityQuery);
   writePrivate(required("PROMOTION_QUERY"), result.promotionQuery);
+  writePrivate(required("PRESERVED_TARGETS"), `${JSON.stringify(result.preservedTargets)}\n`);
   writePrivate(required("PROMOTION_TARGETS"), `${JSON.stringify(result.promotionTargets)}\n`);
   writePrivate(required("VELOCITY_TARGETS"), `${JSON.stringify(result.velocityTargets)}\n`);
+  writePrivate(required("VELOCITY_APPEND_TARGETS"), `${JSON.stringify(result.velocityAppendTargets)}\n`);
+  writePrivate(required("INVITE_ROLLBACK_SQL"), result.inviteRollbackSql);
+  writePrivate(required("INVITE_ROLLBACK_READBACK_SQL"), result.inviteRollbackReadbackSql);
   console.log(JSON.stringify({ overlayRows: result.summary.overlayCount, velocityRows: result.summary.count, existingBaseRows: result.summary.existingBaseCount }));
 }
 
@@ -549,6 +629,42 @@ function runVerifyOverlay() {
   console.log(JSON.stringify(result));
 }
 
+function runVerifyPreserved() {
+  const result = verifyPreservedInvites({
+    targets: JSON.parse(readFileSync(required("PRESERVED_TARGETS"), "utf8")),
+    d1Payload: readFileSync(required("PRESERVED_READBACK"), "utf8"),
+  });
+  console.log(JSON.stringify(result));
+}
+
+function runVerifyPromotionTokenHmacs() {
+  const result = verifyPromotionTokenHmacs({
+    targets: JSON.parse(readFileSync(required("PROMOTION_TARGETS"), "utf8")),
+    d1Payload: readFileSync(required("PROMOTION_PRE_READBACK"), "utf8"),
+    deliveryAttestation: JSON.parse(readFileSync(required("DELIVERY_ATTESTATION"), "utf8")),
+  });
+  console.log(JSON.stringify(result));
+}
+
+export function selectVelocityShortProbeUrl(rows) {
+  assertExpected(rows.length, VELOCITY_APPEND_EXPECTATIONS.velocityRows, "velocity_short_rows");
+  const value = requiredText(rows[0]?.[3], "short_probe_unavailable");
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    fail("short_probe_unavailable");
+  }
+  if (url.protocol !== "https:" || url.hostname !== "esfa.co" || !/^\/[A-Za-z0-9_-]{5}\/BelezaEmMovimento$/.test(url.pathname)) fail("short_probe_unavailable");
+  return value;
+}
+
+function runProbeVelocityShort() {
+  const rows = readDelivery(required("VELOCITY_SHORT_OUTPUT"), "velocity_short");
+  const value = selectVelocityShortProbeUrl(rows);
+  process.stdout.write(value);
+}
+
 function runVerifyPromotionWrite() {
   console.log(JSON.stringify(verifyPromotionWrite({
     plan: JSON.parse(readFileSync(required("PROMOTION_PLAN"), "utf8")),
@@ -566,5 +682,8 @@ if (isMain) {
   else if (mode === "verify-promotion") runVerifyPromotion();
   else if (mode === "verify-velocity") runVerifyVelocity();
   else if (mode === "verify-overlay") runVerifyOverlay();
+  else if (mode === "verify-preserved") runVerifyPreserved();
+  else if (mode === "verify-promotion-token-hmacs") runVerifyPromotionTokenHmacs();
+  else if (mode === "probe-short-url") runProbeVelocityShort();
   else fail("mode_required");
 }

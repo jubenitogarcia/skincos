@@ -128,7 +128,7 @@ jobs:
           [[ "${WORKFLOW_SHA}" == "$(git rev-parse --verify HEAD)" ]] || { echo 'checked out SHA differs from workflow SHA'; exit 1; }
           git cat-file -e "${RELEASE_SHA}:website/src/lib/beautyMovementImport.ts" || { echo 'release source does not contain the importer'; exit 1; }
           git cat-file -e "${RELEASE_SHA}:website/src/app/BelezaEmMovimento/page.tsx" || { echo 'release source does not contain the canonical campaign route'; exit 1; }
-          git diff --quiet "${RELEASE_SHA}" -- website/src/lib/beautyMovementImport.ts website/src/lib/beautyMovementSecurity.ts website/src/lib/beautyMovementOutcomes.ts || { echo 'serving/token source differs from the requested release'; exit 1; }
+          git diff --quiet "${RELEASE_SHA}" -- website/src/lib/beautyMovementDb.ts website/src/lib/beautyMovementImport.ts website/src/lib/beautyMovementSecurity.ts website/src/lib/beautyMovementOutcomes.ts || { echo 'serving/token source differs from the requested release'; exit 1; }
           [[ "${CAMPAIGN_ID}" =~ ^[a-z0-9][a-z0-9_-]{2,79}$ ]] || { echo 'campaign_id shape is invalid'; exit 1; }
           [[ "${CAMPAIGN_ENDS_AT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,3})?)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || { echo 'campaign_ends_at must be ISO-8601'; exit 1; }
           [[ "${EXPECTED_BASE_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo 'expected_base_input_sha256 must be a lowercase SHA-256'; exit 1; }
@@ -145,7 +145,9 @@ jobs:
             echo "BASE_INPUT=${root}/package/base.csv"
             echo "TEAM_INPUT=${root}/package/source-overlay.csv"
             echo "APPEND_INPUT=${root}/package/append-overlay.csv"
+            echo "PRESERVED_INPUT=${root}/package/preserved-overlay.csv"
             echo "VELOCITY_INPUT=${root}/package/velocity.csv"
+            echo "VELOCITY_APPEND_INPUT=${root}/package/velocity-append.csv"
             echo "VELOCITY_EXISTING_INPUT=${root}/package/velocity-existing.csv"
             echo "COMBINED_INPUT=${root}/package/combined.csv"
             echo "OVERLAY_META=${root}/package/overlay-meta.json"
@@ -154,6 +156,9 @@ jobs:
             echo "POST_READBACK=${root}/post-readback.json"
             echo "TEAM_READBACK=${root}/team-readback.json"
             echo "TEAM_QUERY=${root}/team-query.sql"
+            echo "PRESERVED_QUERY=${root}/preserved-query.sql"
+            echo "PRESERVED_TARGETS=${root}/preserved-targets.json"
+            echo "PRESERVED_READBACK=${root}/preserved-readback.json"
             echo "VELOCITY_QUERY=${root}/velocity-query.sql"
             echo "VELOCITY_TARGETS=${root}/velocity-targets.json"
             echo "VELOCITY_FINAL_READBACK=${root}/velocity-final-readback.json"
@@ -163,6 +168,8 @@ jobs:
             echo "PROMOTION_PLAN=${root}/promotion-plan.json"
             echo "PROMOTION_SQL=${root}/promotion.sql"
             echo "PROMOTION_ROLLBACK_SQL=${root}/promotion-rollback.sql"
+            echo "INVITE_ROLLBACK_SQL=${root}/invite-rollback.sql"
+            echo "INVITE_ROLLBACK_READBACK_SQL=${root}/invite-rollback-readback.sql"
             echo "PROMOTION_APPLY_READBACK=${root}/promotion-apply-readback.json"
             echo "PROMOTION_FINAL_READBACK=${root}/promotion-final-readback.json"
             echo "IMPORT_SUMMARY=${root}/import-summary.json"
@@ -179,6 +186,15 @@ jobs:
             echo "SHORT_APPLY_READBACK=${root}/short-apply-readback.json"
             echo "SHORT_FINAL_READBACK=${root}/short-final-readback.json"
             echo "VELOCITY_SHORT_OUTPUT=${root}/velocity-short-delivery.csv"
+            echo "VELOCITY_APPEND_DELIVERY=${root}/velocity-append-delivery.csv"
+            echo "VELOCITY_APPEND_TARGETS=${root}/velocity-append-targets.json"
+            echo "VELOCITY_APPEND_SHORT_OUTPUT=${root}/velocity-append-short-delivery.csv"
+            echo "VELOCITY_APPEND_SHORT_SQL=${root}/velocity-append-short-links.sql"
+            echo "VELOCITY_APPEND_SHORT_CONFLICTS=${root}/velocity-append-short-links-conflicts.sql"
+            echo "VELOCITY_APPEND_SHORT_READBACK_SQL=${root}/velocity-append-short-links-readback.sql"
+            echo "VELOCITY_APPEND_SHORT_ROLLBACK_SQL=${root}/velocity-append-short-links-rollback.sql"
+            echo "VELOCITY_APPEND_SHORT_ATTESTATION=${root}/velocity-append-short-links-attestation.json"
+            echo "VELOCITY_APPEND_SHORT_SUMMARY=${root}/velocity-append-short-links-summary.json"
             echo "VELOCITY_SUMMARY=${root}/velocity-summary.json"
             echo "LIVE_HEADERS=${root}/live-headers.txt"
             echo "SHORT_PROBE_HEADERS=${root}/short-probe-headers.txt"
@@ -266,7 +282,16 @@ jobs:
             --attestation "${SHORT_ATTESTATION}" \
             --campaign "${CAMPAIGN_ID}" > "${SHORT_SUMMARY}"
           node ../.github/scripts/beauty-movement-velocity-invite-links.mjs derive
-          chmod 600 "${DELIVERY_OUTPUT}" "${DELIVERY_SUMMARY}" "${DELIVERY_ATTESTATION}" "${SHORT_OUTPUT}" "${SHORT_SQL}" "${SHORT_CONFLICTS}" "${SHORT_READBACK_SQL}" "${SHORT_ATTESTATION}" "${SHORT_SUMMARY}" "${TEAM_QUERY}" "${VELOCITY_QUERY}" "${VELOCITY_TARGETS}" "${PROMOTION_QUERY}" "${PROMOTION_TARGETS}" "${VELOCITY_SHORT_OUTPUT}" "${VELOCITY_SUMMARY}"
+          npm run --silent beauty-movement:prepare-short-links -- \
+            --input "${VELOCITY_APPEND_DELIVERY}" \
+            --out "${VELOCITY_APPEND_SHORT_OUTPUT}" \
+            --sql "${VELOCITY_APPEND_SHORT_SQL}" \
+            --conflicts "${VELOCITY_APPEND_SHORT_CONFLICTS}" \
+            --readback "${VELOCITY_APPEND_SHORT_READBACK_SQL}" \
+            --rollback "${VELOCITY_APPEND_SHORT_ROLLBACK_SQL}" \
+            --attestation "${VELOCITY_APPEND_SHORT_ATTESTATION}" \
+            --campaign "${CAMPAIGN_ID}" > "${VELOCITY_APPEND_SHORT_SUMMARY}"
+          chmod 600 "${DELIVERY_OUTPUT}" "${DELIVERY_SUMMARY}" "${DELIVERY_ATTESTATION}" "${SHORT_OUTPUT}" "${SHORT_SQL}" "${SHORT_CONFLICTS}" "${SHORT_READBACK_SQL}" "${SHORT_ATTESTATION}" "${SHORT_SUMMARY}" "${PRESERVED_QUERY}" "${PRESERVED_TARGETS}" "${TEAM_QUERY}" "${VELOCITY_QUERY}" "${VELOCITY_TARGETS}" "${PROMOTION_QUERY}" "${PROMOTION_TARGETS}" "${VELOCITY_APPEND_TARGETS}" "${VELOCITY_SHORT_OUTPUT}" "${VELOCITY_APPEND_DELIVERY}" "${VELOCITY_APPEND_SHORT_OUTPUT}" "${VELOCITY_APPEND_SHORT_SQL}" "${VELOCITY_APPEND_SHORT_CONFLICTS}" "${VELOCITY_APPEND_SHORT_READBACK_SQL}" "${VELOCITY_APPEND_SHORT_ROLLBACK_SQL}" "${VELOCITY_APPEND_SHORT_ATTESTATION}" "${VELOCITY_APPEND_SHORT_SUMMARY}" "${VELOCITY_SUMMARY}" "${INVITE_ROLLBACK_SQL}" "${INVITE_ROLLBACK_READBACK_SQL}"
 
       - name: Prove the complete overlay before resuming a previously appended run
         if: steps.campaign_preflight.outputs.mode == 'resume'
@@ -281,6 +306,19 @@ jobs:
           node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-overlay
           chmod 600 "${TEAM_READBACK}"
 
+      - name: Prove every preserved Velocity invitation before the first append
+        if: steps.campaign_preflight.outputs.mode == 'first_pass'
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${PRESERVED_QUERY}")" --json > "${PRESERVED_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-preserved
+          chmod 600 "${PRESERVED_READBACK}"
+
       - name: Preflight the exact existing commercial invitees receiving the additive Velocity courtesy
         working-directory: website
         env:
@@ -290,16 +328,20 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${PROMOTION_QUERY}")" --json > "${PROMOTION_PRE_READBACK}"
+          node ../.github/scripts/beauty-movement-velocity-invite-links.mjs verify-promotion-token-hmacs
           node ../.github/scripts/beauty-movement-velocity-invite-links.mjs plan-promotion
           chmod 600 "${PROMOTION_PRE_READBACK}" "${PROMOTION_PLAN}" "${PROMOTION_SQL}" "${PROMOTION_ROLLBACK_SQL}"
 
-      - name: Preserve private guarded rollback evidence before production mutation
+      - name: Preserve private guarded rollback plans for every production mutation
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: beauty-movement-velocity-promotion-rollback-${{ inputs.campaign_id }}-${{ github.run_id }}
+          name: beauty-movement-velocity-rollback-${{ inputs.campaign_id }}-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/beauty-movement-team-invite-links/promotion-plan.json
             ${{ runner.temp }}/beauty-movement-team-invite-links/promotion-rollback.sql
+            ${{ runner.temp }}/beauty-movement-team-invite-links/invite-rollback.sql
+            ${{ runner.temp }}/beauty-movement-team-invite-links/invite-rollback-readback.sql
+            ${{ runner.temp }}/beauty-movement-team-invite-links/velocity-append-short-links-rollback.sql
           if-no-files-found: error
           retention-days: 7
 
@@ -427,14 +469,7 @@ jobs:
             if (value(row, 'site_host', 'siteHost') !== 'esfa.co' || value(row, 'source', 'source') !== 'beauty_movement_short_links_v1' || Number(value(row, 'active', 'active')) !== 1 || crypto.createHash('sha256').update(destination).digest('hex') !== (expected[value(row, 'slug_path', 'slugPath')] ?? expected[slug])) throw new Error('beauty_movement_team_short_link_readback_mismatch');
           }
           NODE
-          probe_url="$(node - "${VELOCITY_SHORT_OUTPUT}" <<'NODE'
-          const fs = require('node:fs');
-          const lines = fs.readFileSync(process.argv[2], 'utf8').trim().split(/\r?\n/);
-          const match = lines[1]?.match(/"(https:\/\/esfa\.co\/[^"\r\n]+)"$/);
-          if (!match) throw new Error('beauty_movement_team_short_probe_unavailable');
-          process.stdout.write(match[1]);
-          NODE
-          )"
+          probe_url="$(node ../.github/scripts/beauty-movement-velocity-invite-links.mjs probe-short-url)"
           status="$(curl -fsS -D "${SHORT_PROBE_HEADERS}" -o /dev/null -w '%{http_code}' "${probe_url}")"
           [[ "${status}" == "301" ]] || { echo 'Velocity short-link Worker did not return HTTP 301'; exit 1; }
           location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[ ]*/, ""); gsub(/[\r]/, ""); print; exit}' "${SHORT_PROBE_HEADERS}")"

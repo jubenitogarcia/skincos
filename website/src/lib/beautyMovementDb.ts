@@ -743,6 +743,8 @@ async function publicState(params: {
     } satisfies BeautyMovementEncryptedPersonalData, params.piiKey);
     const reveals = await listReveals(params.db, params.row.invite_id);
     const confirmed = params.row.confirmed_at_ms !== null;
+    const hasAssignedCommercialOffer = params.row.assignment_protocol_version === BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION
+        && params.row.assigned_outcome_key !== null;
     const { whatsappMessageCourtesy, whatsappMessageCommercial, velocityBenefitLabel, velocityBenefitText, ...campaignView } = campaign;
     const configuredReward = renderReward(params.row);
     const offer = confirmed ? renderStoredOffer(params.row) : null;
@@ -777,7 +779,10 @@ async function publicState(params: {
         confirmed,
         campaign: {
             ...campaignView,
-            whatsappMessage: confirmed && params.row.velocity_benefit === "aula_cortesia_evento"
+            // A Velocity courtesy can be additive to a prepared commercial offer.
+            // Keep that offer's follow-up path authoritative while still exposing
+            // the courtesy in the separate Velocity state above.
+            whatsappMessage: confirmed && params.row.velocity_benefit === "aula_cortesia_evento" && !hasAssignedCommercialOffer
                 ? whatsappMessageCourtesy
                 : whatsappMessageCommercial,
             conditionsText: conditionsParts.length ? conditionsParts.join("\n\n") : null,

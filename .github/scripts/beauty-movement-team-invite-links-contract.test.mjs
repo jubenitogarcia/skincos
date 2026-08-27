@@ -51,9 +51,18 @@ test("Velocity append is active-campaign-only, fail-closed and read back before 
   assert.match(workflow, /beauty-movement-velocity-invite-links\.mjs verify-velocity/);
   assert.match(workflow, /!\[213, 257\]\.includes\(inviteCount\)/);
   assert.match(workflow, /Prove the complete overlay before resuming a previously appended run/);
-  assert.match(workflow, /Preserve private guarded rollback evidence before production mutation/);
+  assert.match(workflow, /Prove every preserved Velocity invitation before the first append/);
+  assert.match(workflow, /beauty-movement-velocity-invite-links\.mjs verify-preserved/);
+  assert.match(workflow, /beauty-movement-velocity-invite-links\.mjs verify-promotion-token-hmacs/);
+  assert.match(workflow, /Preserve private guarded rollback plans for every production mutation/);
   assert.match(workflow, /PROMOTION_ROLLBACK_SQL/);
+  assert.match(workflow, /INVITE_ROLLBACK_SQL/);
+  assert.match(workflow, /VELOCITY_APPEND_SHORT_ROLLBACK_SQL/);
   assert.match(workflow, /promotion-rollback\.sql/);
+  assert.match(workflow, /invite-rollback\.sql/);
+  assert.match(workflow, /velocity-append-short-links-rollback\.sql/);
+  assert.match(workflow, /probe-short-url/);
+  assert.doesNotMatch(workflow, /match\(\/"\(https:\\\/\\\/esfa/);
   assert.match(workflow, /invite_count\) !== 257/);
   assert.match(workflow, /if: \$\{\{ always\(\) \}\}/);
   assert.match(workflow, /Remove runner-local private material/);
@@ -61,8 +70,10 @@ test("Velocity append is active-campaign-only, fail-closed and read back before 
 
   const position = (value) => workflow.indexOf(value);
   assert.ok(position("Derive the complete short-link plan") < position("Append only new Velocity invitations"));
+  assert.ok(position("Prove every preserved Velocity invitation") < position("Append only new Velocity invitations"));
   assert.ok(position("Preflight the exact existing commercial invitees") < position("Append only new Velocity invitations"));
-  assert.ok(position("Preserve private guarded rollback evidence") < position("Append only new Velocity invitations"));
+  assert.ok(position("verify-promotion-token-hmacs") < position("Append only new Velocity invitations"));
+  assert.ok(position("Preserve private guarded rollback plans") < position("Append only new Velocity invitations"));
   assert.ok(position("Add the Velocity courtesy") < position("Apply idempotent short-link mappings"));
 });
 
