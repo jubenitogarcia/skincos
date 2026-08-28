@@ -124,6 +124,10 @@
       "patterns": ["crm/console/**", "inventory/**", ".github/workflows/deploy-finance-ui.yml", ".github/workflows/promotion-gate.yml", ".github/scripts/promotion-*.mjs"],
       "sharedInputs": true
     },
+    "clientes-readonly": {
+      "patterns": ["clientes-readonly/**"],
+      "sharedInputs": true
+    },
     "website": {
       "patterns": ["website/**", "booking/**", ".github/workflows/deploy-website-cloudflare.yml", ".github/workflows/website-instagram-sync.yml", ".github/workflows/sync-website-cloudflare-security.yml"],
       "sharedInputs": true
