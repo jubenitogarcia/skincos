@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 PREPARE="$ROOT_DIR/scripts/runtime/prepare-messaging-whatsapp-release.sh"
 CONTRACT="$ROOT_DIR/scripts/runtime/messaging-whatsapp-release-contract.mjs"
+NODE_BIN="$(command -v node)"
+
+[[ -x "$NODE_BIN" ]] || { echo 'Node runtime is unavailable to the messaging release test.' >&2; exit 1; }
 CANDIDATE_WORKFLOW="$ROOT_DIR/.github/workflows/prepare-release-candidate.yml"
 CONTRACT_WORKFLOW="$ROOT_DIR/.github/workflows/messaging-whatsapp-release-contract.yml"
 
@@ -106,14 +109,14 @@ mkdir -p "$caller_candidate"
 git -C "$ROOT_DIR" archive --format=tar.gz --prefix="skincos-$caller_release_sha/" "$caller_release_sha" >"$caller_candidate/source.tar.gz"
 caller_archive_digest="$(sha256sum "$caller_candidate/source.tar.gz" | awk '{print $1}')"
 printf '%s\n' "$caller_archive_digest" >"$caller_candidate/source.sha256"
-/usr/bin/node - "$caller_candidate/release.json" "$caller_release_sha" "$caller_source_tree" "$caller_archive_digest" <<'NODE'
+"$NODE_BIN" - "$caller_candidate/release.json" "$caller_release_sha" "$caller_source_tree" "$caller_archive_digest" <<'NODE'
 const fs = require('fs');
 const [file, sourceSha, sourceTree, sourceArchiveSha256] = process.argv.slice(2);
 fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, sourceSha, sourceTree, sourceArchiveSha256 }, null, 2) + '\n');
 NODE
-/usr/bin/node "$ROOT_DIR/scripts/codex-global-coordinator.mjs" closure \
+"$NODE_BIN" "$ROOT_DIR/scripts/codex-global-coordinator.mjs" closure \
   --module messaging-whatsapp --source "$caller_release_sha" >"$caller_candidate/messaging-whatsapp-closure.json"
-/usr/bin/node "$ROOT_DIR/scripts/codex-release-manifest.mjs" \
+"$NODE_BIN" "$ROOT_DIR/scripts/codex-release-manifest.mjs" \
   --source "$caller_release_sha" --base "${caller_release_sha}^" --allow-empty \
   --artifact "source-archive=$caller_archive_digest" --output "$caller_candidate/release-manifest.json"
 node "$CONTRACT" verify-candidate \
@@ -149,7 +152,7 @@ git_isolated() {
   env "${git_env_unsets[@]}" git "$@"
 }
 node_isolated() {
-  env "${git_env_unsets[@]}" /usr/bin/node "$@"
+  env "${git_env_unsets[@]}" "$NODE_BIN" "$@"
 }
 git_isolated init --quiet "$source_repo"
 git_isolated -C "$source_repo" -c user.email=messaging-contract@example.invalid \
@@ -164,7 +167,7 @@ mkdir -p "$candidate"
 git_isolated -C "$source_repo" archive --format=tar.gz --prefix="skincos-$release_sha/" "$release_sha" >"$candidate/source.tar.gz"
 archive_digest="$(sha256sum "$candidate/source.tar.gz" | awk '{print $1}')"
 printf '%s\n' "$archive_digest" >"$candidate/source.sha256"
-/usr/bin/node - "$candidate/release.json" "$release_sha" "$source_tree" "$archive_digest" <<'NODE'
+"$NODE_BIN" - "$candidate/release.json" "$release_sha" "$source_tree" "$archive_digest" <<'NODE'
 const fs = require('fs');
 const [file, sourceSha, sourceTree, sourceArchiveSha256] = process.argv.slice(2);
 fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, sourceSha, sourceTree, sourceArchiveSha256 }, null, 2) + '\n');
@@ -187,7 +190,7 @@ grep -Fx 'apply_requires=external-authenticated-release-custody-run-artifact-dig
 # may never run candidate-controlled contract/coordination/runner code before
 # externally authenticated custody exists.
 malicious_marker="$tmp_dir/candidate-contract-executed"
-/usr/bin/node - "$source_repo/scripts/runtime/messaging-whatsapp-release-contract.mjs" "$malicious_marker" <<'NODE'
+"$NODE_BIN" - "$source_repo/scripts/runtime/messaging-whatsapp-release-contract.mjs" "$malicious_marker" <<'NODE'
 const fs = require('fs');
 const [file, marker] = process.argv.slice(2);
 fs.writeFileSync(file, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "executed");\nthrow new Error("candidate contract must not execute");\n`);
@@ -202,7 +205,7 @@ mkdir -p "$malicious_candidate"
 git_isolated -C "$source_repo" archive --format=tar.gz --prefix="skincos-$malicious_release_sha/" "$malicious_release_sha" >"$malicious_candidate/source.tar.gz"
 malicious_archive_digest="$(sha256sum "$malicious_candidate/source.tar.gz" | awk '{print $1}')"
 printf '%s\n' "$malicious_archive_digest" >"$malicious_candidate/source.sha256"
-/usr/bin/node - "$malicious_candidate/release.json" "$malicious_release_sha" "$malicious_source_tree" "$malicious_archive_digest" <<'NODE'
+"$NODE_BIN" - "$malicious_candidate/release.json" "$malicious_release_sha" "$malicious_source_tree" "$malicious_archive_digest" <<'NODE'
 const fs = require('fs');
 const [file, sourceSha, sourceTree, sourceArchiveSha256] = process.argv.slice(2);
 fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, sourceSha, sourceTree, sourceArchiveSha256 }, null, 2) + '\n');

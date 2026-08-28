@@ -3,14 +3,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 LAUNCHER="$ROOT_DIR/scripts/runtime/run-messaging-whatsapp-release.sh"
+HOST_NODE_BIN="$(command -v node)"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
+
+[[ -x "$HOST_NODE_BIN" ]] || { echo 'Node runtime is unavailable to the messaging launcher test.' >&2; exit 1; }
 
 mkdir -p "$tmp_dir/release/node_modules" "$tmp_dir/release/dist" "$tmp_dir/bin"
 printf 'process.exit(0);\n' >"$tmp_dir/release/dist/main.js"
 printf 'PRIVATE_TEST_VALUE=loaded\n' >"$tmp_dir/runtime.env"
 
-/usr/bin/node - "$tmp_dir/release" <<'NODE'
+"$HOST_NODE_BIN" - "$tmp_dir/release" <<'NODE'
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -46,7 +49,7 @@ fs.writeFileSync(path.join(root, '.skincos-release-identity-messaging-whatsapp.j
 NODE
 
 printf '%s\n' '#!/usr/bin/env bash' \
-  'if [[ "$1" == "-" ]]; then exec /usr/bin/node "$@"; fi' \
+  "if [[ \"\$1\" == \"-\" ]]; then exec \"$HOST_NODE_BIN\" \"\$@\"; fi" \
   'test "$PRIVATE_TEST_VALUE" = loaded' \
   'test "$1" = dist/main.js' >"$tmp_dir/bin/node"
 chmod +x "$tmp_dir/bin/node"
