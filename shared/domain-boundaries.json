@@ -78,9 +78,9 @@
     {
       "from": "api",
       "to": "inventory",
-      "contractId": "module-sdk-v1",
-      "path": "shared/module-sdk/README.md",
-      "usage": "publish a gateway-to-Inventory adapter before importing Inventory implementation"
+      "contractId": "service-binding-adapter-v1",
+      "path": "shared/service-adapters/cloudflare-service-binding.js",
+      "usage": "use the Cloudflare service-binding adapter instead of importing Inventory implementation"
     },
     {
       "from": "api",
@@ -108,23 +108,9 @@
     {
       "from": "api/workers/index.js",
       "specifier": "../../inventory/src/worker.js",
-      "replacementContractId": "module-sdk-v1",
+      "replacementContractId": "service-binding-adapter-v1",
       "deadline": "2026-09-30",
-      "reason": "The gateway entrypoint re-exports Inventory runtime classes and must move to a stable service boundary."
-    },
-    {
-      "from": "crm/console/tests/insumosShareRoutes.test.ts",
-      "specifier": "../../../inventory/src/routes/share.js",
-      "replacementContractId": "module-sdk-v1",
-      "deadline": "2026-08-31",
-      "reason": "The CRM test reaches an Inventory implementation instead of asserting its public contract."
-    },
-    {
-      "from": "finance/scripts/staging-ui-smoke.mjs",
-      "specifier": "../../crm/console/node_modules/playwright",
-      "replacementContractId": "module-sdk-v1",
-      "deadline": "2026-08-31",
-      "reason": "The Finance smoke borrows CRM's dependency tree and needs a Finance-owned test-runtime adapter."
+      "reason": "The gateway already forwards traffic through the service-binding adapter, but its legacy Durable Object namespaces require an explicit stateful retirement before this compatibility export can be removed."
     }
   ]
 }
