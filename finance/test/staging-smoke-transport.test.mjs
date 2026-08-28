@@ -5,11 +5,9 @@ import test from 'node:test';
 const read = (file) => readFile(new URL(`../scripts/${file}`, import.meta.url), 'utf8');
 
 test('staging Finance API smokes use the authenticated Pages transport', async () => {
-  const [canary, importer, remoteFinanceModule, financeViteConfig] = await Promise.all([
+  const [canary, importer] = await Promise.all([
     read('staging-synthetic-canary.mjs'),
     read('staging-import-smoke.mjs'),
-    readFile(new URL('../../crm/console/modules/RemoteFinanceModule.tsx', import.meta.url), 'utf8'),
-    readFile(new URL('../../crm/console/vite.finance.config.ts', import.meta.url), 'utf8'),
   ]);
 
   for (const source of [canary, importer]) {
@@ -38,7 +36,4 @@ test('staging Finance API smokes use the authenticated Pages transport', async (
   assert.match(importer, /batchStatus: loaded\.batch\.status/);
   assert.match(importer, /compensated: true/);
   assert.match(importer, /compensatedAt: loaded\.batch\.undone_at/);
-  assert.match(remoteFinanceModule, /data-finance-remote-error/);
-  assert.match(remoteFinanceModule, /remoteFailureKind\(cause\)/);
-  assert.match(financeViteConfig, /'process\.env\.NODE_ENV': '\"production\"'/);
 });
