@@ -148,6 +148,48 @@ test('the handler redacts the incoming actor and projects only visible allowlist
   }])
 })
 
+test('list results stay inside the requested unit even when the actor may read multiple units', async () => {
+  const handler = createClientesReadonlyHandler({
+    readModel: {
+      ready: true,
+      async listClients() {
+        return {
+          items: [
+            { clientId: 'cliente-nh', displayName: 'Novo Hamburgo', unitId: 'novo-hamburgo', status: 'active' },
+            { clientId: 'cliente-poa', displayName: 'Porto Alegre', unitId: 'porto-alegre', status: 'active' },
+          ],
+        }
+      },
+      async getClientById() { return null },
+    },
+    resolveActor: () => ({
+      subject: 'user-gestor-multiu',
+      role: 'GESTOR',
+      unitIds: ['novo-hamburgo', 'porto-alegre'],
+    }),
+  })
+
+  const response = await handler(request('/v1/clientes?unitId=novo-hamburgo'))
+  assert.equal(response.status, 200)
+  assert.deepEqual((await body(response)).data.items.map((item) => item.clientId), ['cliente-nh'])
+})
+
+test('malformed list read-model responses fail closed instead of becoming empty results', async () => {
+  for (const malformed of [undefined, null, [], {}, { items: null }, { items: 'not-an-array' }, { items: [], nextCursor: {} }]) {
+    const handler = createClientesReadonlyHandler({
+      readModel: {
+        ready: true,
+        async listClients() { return malformed },
+        async getClientById() { return null },
+      },
+      resolveActor: () => ({ subject: 'user-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] }),
+    })
+    const response = await handler(request('/v1/clientes?unitId=novo-hamburgo'))
+    assert.equal(response.status, 503)
+    assert.equal((await body(response)).code, 'CLIENTES_READMODEL_UNAVAILABLE')
+  }
+})
+
 test('actor role, unit scope and query surface are all fail-closed', async () => {
   const readModel = {
     ready: true,
@@ -183,6 +225,34 @@ test('actor role, unit scope and query surface are all fail-closed', async () =>
   const foreignUnit = await allowedActor(request('/v1/clientes?unitId=porto-alegre'))
   assert.equal(foreignUnit.status, 403)
   assert.equal((await body(foreignUnit)).code, 'CLIENTES_UNIT_FORBIDDEN')
+  const overlongCursor = await allowedActor(request(`/v1/clientes?unitId=novo-hamburgo&cursor=${'c'.repeat(257)}`))
+  assert.equal(overlongCursor.status, 400)
+  assert.equal((await body(overlongCursor)).code, 'CLIENTES_CURSOR_INVALID')
+  const overlongLimit = await allowedActor(request('/v1/clientes?unitId=novo-hamburgo&limit=1000'))
+  assert.equal(overlongLimit.status, 400)
+  assert.equal((await body(overlongLimit)).code, 'CLIENTES_LIMIT_INVALID')
+})
+
+test('a failing actor adapter is unavailable, while a missing actor stays unauthorized', async () => {
+  let readCalls = 0
+  const readModel = {
+    ready: true,
+    async listClients() { readCalls += 1; return { items: [] } },
+    async getClientById() { return null },
+  }
+  const unavailableActor = createClientesReadonlyHandler({
+    readModel,
+    resolveActor: () => { throw new Error('identity adapter unavailable') },
+  })
+  const unavailableResponse = await unavailableActor(request('/v1/clientes?unitId=novo-hamburgo'))
+  assert.equal(unavailableResponse.status, 503)
+  assert.equal((await body(unavailableResponse)).code, 'CLIENTES_ACTOR_UNAVAILABLE')
+
+  const missingActor = createClientesReadonlyHandler({ readModel, resolveActor: () => null })
+  const missingResponse = await missingActor(request('/v1/clientes?unitId=novo-hamburgo'))
+  assert.equal(missingResponse.status, 401)
+  assert.equal((await body(missingResponse)).code, 'CLIENTES_ACTOR_REQUIRED')
+  assert.equal(readCalls, 0)
 })
 
 test('detail reads cannot reveal a record outside the explicit actor unit scope', async () => {

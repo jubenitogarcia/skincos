@@ -62,19 +62,24 @@ function ready(request, endpoint) {
 
 function actorFailureStatus(code) {
   if (code === 'CLIENTES_ACTOR_REQUIRED') return 401
+  if (code === 'CLIENTES_ACTOR_UNAVAILABLE') return 503
   return 403
 }
 
-function projectVisibleRecord(record, actor) {
+function projectVisibleRecord(record, actor, requestedUnitId = null) {
   const projected = projectClientesReadonlyRecord(record)
-  return projected && actorCanReadClientesUnit(actor, projected.unitId) ? projected : null
+  return projected
+    && actorCanReadClientesUnit(actor, projected.unitId)
+    && (!requestedUnitId || projected.unitId === requestedUnitId)
+    ? projected
+    : null
 }
 
 async function resolvedActor(request, resolveActor) {
   try {
     return normalizeClientesReadonlyActor(await resolveActor(request))
   } catch {
-    return { ok: false, code: 'CLIENTES_ACTOR_REQUIRED' }
+    return { ok: false, code: 'CLIENTES_ACTOR_UNAVAILABLE' }
   }
 }
 
@@ -110,10 +115,17 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
       }
       try {
         const result = await readModel.listClients({ actor: actorResult.actor, query: queryResult.query })
-        const items = Array.isArray(result?.items)
-          ? result.items.map((item) => projectVisibleRecord(item, actorResult.actor)).filter(Boolean)
-          : []
-        const nextCursor = normalizeClientesReadonlyCursor(result?.nextCursor)
+        if (!result || typeof result !== 'object' || Array.isArray(result) || !Array.isArray(result.items)) {
+          return unavailable(request, 'data')
+        }
+        const nextCursor = normalizeClientesReadonlyCursor(result.nextCursor)
+        if (result.nextCursor !== undefined && result.nextCursor !== null
+          && (typeof result.nextCursor !== 'string' || !nextCursor)) {
+          return unavailable(request, 'data')
+        }
+        const items = result.items
+          .map((item) => projectVisibleRecord(item, actorResult.actor, queryResult.query.unitId))
+          .filter(Boolean)
         return response(request, 200, {
           ok: true,
           contract: CLIENTES_READONLY_CONTRACT_VERSION,

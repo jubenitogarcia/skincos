@@ -48,6 +48,13 @@ function text(value, maxLength = 256) {
   return normalized && normalized.length <= maxLength ? normalized : ''
 }
 
+function optionalQueryText(searchParams, key, maxLength) {
+  const value = searchParams.get(key)
+  if (value === null) return { present: false, value: '' }
+  const normalized = String(value).trim()
+  return { present: true, value: normalized, validLength: normalized.length > 0 && normalized.length <= maxLength }
+}
+
 function unique(values) {
   return [...new Set(values)]
 }
@@ -106,10 +113,14 @@ export function parseClientesReadonlyListQuery(searchParams) {
   }
   const unitId = text(searchParams.get('unitId'), 64)
   if (!UNIT_ID_PATTERN.test(unitId)) return { ok: false, code: 'CLIENTES_UNIT_REQUIRED' }
-  const rawCursor = text(searchParams.get('cursor'), 256)
+  const cursorInput = optionalQueryText(searchParams, 'cursor', 256)
+  if (cursorInput.present && !cursorInput.validLength) return { ok: false, code: 'CLIENTES_CURSOR_INVALID' }
+  const rawCursor = cursorInput.value
   const cursor = normalizeClientesReadonlyCursor(rawCursor)
   if (rawCursor && !cursor) return { ok: false, code: 'CLIENTES_CURSOR_INVALID' }
-  const rawLimit = text(searchParams.get('limit'), 3)
+  const limitInput = optionalQueryText(searchParams, 'limit', 3)
+  if (limitInput.present && !limitInput.validLength) return { ok: false, code: 'CLIENTES_LIMIT_INVALID' }
+  const rawLimit = limitInput.value
   const limit = rawLimit ? Number(rawLimit) : 25
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     return { ok: false, code: 'CLIENTES_LIMIT_INVALID' }
