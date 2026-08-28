@@ -224,8 +224,8 @@ jobs:
         if: steps.canary_open.outcome == 'success'
         timeout-minutes: 20
         run: |
-          npm --prefix crm/console ci
-          npm --prefix crm/console exec -- playwright install --with-deps chromium
+          npm --prefix finance ci
+          npm --prefix finance exec -- playwright install --with-deps chromium
       - name: Run isolated Finance shell smoke
         id: ui
         if: steps.canary_open.outcome == 'success'

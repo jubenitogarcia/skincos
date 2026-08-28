@@ -7,13 +7,10 @@
  * the separate controlled import/API smokes.
  */
 import fs from 'node:fs'
-import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-
-const require = createRequire(import.meta.url)
-const { chromium } = require('../../crm/console/node_modules/playwright')
+import { chromium } from 'playwright'
 
 const stagingOrigin = 'https://skincos-staging.pages.dev'
 const baseUrl = new URL(process.env.FINANCE_STAGING_UI_URL || `${stagingOrigin}/?module=finance`)
