@@ -202,6 +202,9 @@ test('malformed list read-model responses fail closed instead of becoming empty 
     { items: [{}] },
     { items: [{ clientId: ['cliente-1'], unitId: 'novo-hamburgo' }] },
     { items: [{ clientId: 'cliente-1', unitId: ['novo-hamburgo'] }] },
+    { items: [{ clientId: 'cliente-1', unitId: 'novo-hamburgo', displayName: ['Ana'] }] },
+    { items: [{ clientId: 'cliente-1', unitId: 'novo-hamburgo', status: ['active'] }] },
+    { items: [{ clientId: 'cliente-1', unitId: 'novo-hamburgo', updatedAt: ['2026-08-28T12:00:00Z'] }] },
   ]) {
     const handler = createClientesReadonlyHandler({
       readModel: {
@@ -376,6 +379,23 @@ test('a failing actor adapter is unavailable, while a missing actor stays unauth
   assert.equal(readCalls, 0)
 })
 
+test('runtime read-model failures report the dependency as unavailable', async () => {
+  const handler = createClientesReadonlyHandler({
+    readModel: {
+      ready: true,
+      async listClients() { throw new Error('read model unavailable') },
+      async getClientById() { return null },
+    },
+    resolveActor: () => ({ subject: 'user-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] }),
+  })
+  const response = await handler(request('/v1/clientes?unitId=novo-hamburgo'))
+  assert.equal(response.status, 503)
+  assert.deepEqual((await body(response)).dependencies, {
+    readModel: { required: true, state: 'unavailable' },
+    actorAdapter: { required: true, state: 'healthy' },
+  })
+})
+
 test('detail reads cannot reveal a record outside the explicit actor unit scope', async () => {
   const handler = createClientesReadonlyHandler({
     readModel: {
@@ -398,6 +418,9 @@ test('detail reads fail closed for malformed or mismatched adapter records', asy
     {},
     { clientId: ['cliente-expected'], displayName: 'Malformed ID', unitId: 'novo-hamburgo', status: 'active' },
     { clientId: 'cliente-expected', displayName: 'Malformed unit', unitId: ['novo-hamburgo'], status: 'active' },
+    { clientId: 'cliente-expected', displayName: ['Malformed display name'], unitId: 'novo-hamburgo', status: 'active' },
+    { clientId: 'cliente-expected', displayName: 'Malformed status', unitId: 'novo-hamburgo', status: ['active'] },
+    { clientId: 'cliente-expected', displayName: 'Malformed timestamp', unitId: 'novo-hamburgo', updatedAt: ['2026-08-28T12:00:00Z'] },
     { clientId: 'cliente-other', displayName: 'Other', unitId: 'novo-hamburgo', status: 'active' },
   ]) {
     const handler = createClientesReadonlyHandler({

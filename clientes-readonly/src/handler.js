@@ -137,16 +137,16 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
       try {
         const result = await readModel.listClients({ actor: actorResult.actor, query: queryResult.query })
         if (!result || typeof result !== 'object' || Array.isArray(result) || !Array.isArray(result.items)) {
-          return unavailable(request, 'data', { readModelReady, actorAdapterReady })
+          return unavailable(request, 'data', { readModelReady: false, actorAdapterReady })
         }
         const nextCursor = normalizeClientesReadonlyCursor(result.nextCursor)
         if (result.nextCursor !== undefined && result.nextCursor !== null
           && (typeof result.nextCursor !== 'string' || !nextCursor)) {
-          return unavailable(request, 'data', { readModelReady, actorAdapterReady })
+          return unavailable(request, 'data', { readModelReady: false, actorAdapterReady })
         }
-        if (result.items.length > queryResult.query.limit) return unavailable(request, 'data', { readModelReady, actorAdapterReady })
+        if (result.items.length > queryResult.query.limit) return unavailable(request, 'data', { readModelReady: false, actorAdapterReady })
         const projectedItems = result.items.map(projectClientesReadonlyRecord)
-        if (projectedItems.some((item) => !item)) return unavailable(request, 'data', { readModelReady, actorAdapterReady })
+        if (projectedItems.some((item) => !item)) return unavailable(request, 'data', { readModelReady: false, actorAdapterReady })
         const items = projectedItems.filter((item) => actorCanReadClientesUnit(actorResult.actor, item.unitId)
           && item.unitId === queryResult.query.unitId)
         return response(request, 200, {
@@ -155,7 +155,7 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
           data: { items, nextCursor },
         })
       } catch {
-        return unavailable(request, 'data', { readModelReady, actorAdapterReady })
+        return unavailable(request, 'data', { readModelReady: false, actorAdapterReady })
       }
     }
 
@@ -164,7 +164,7 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
         actor: actorResult.actor,
         clientId: resolved.clientId,
       }), actorResult.actor, resolved.clientId)
-      if (detail.state === 'unavailable') return unavailable(request, 'data', { readModelReady, actorAdapterReady })
+      if (detail.state === 'unavailable') return unavailable(request, 'data', { readModelReady: false, actorAdapterReady })
       if (detail.state === 'not-found') return error(request, 404, 'CLIENTES_NOT_FOUND')
       return response(request, 200, {
         ok: true,
@@ -172,7 +172,7 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
         data: detail.record,
       })
     } catch {
-      return unavailable(request, 'data', { readModelReady, actorAdapterReady })
+      return unavailable(request, 'data', { readModelReady: false, actorAdapterReady })
     }
   }
 }
