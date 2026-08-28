@@ -72,6 +72,9 @@ test('adapter health, readiness and reads fail closed until the isolated rollout
     configuredAdapterEnv({ SCHEDULE_PUBLIC_READ_ENABLED: 'false' }),
   )
   assert.equal(disabled.status, 503)
+
+  const healthWrite = await adapter.fetch(new Request('https://adapter.internal/health', { method: 'POST' }), configuredAdapterEnv())
+  assert.equal(healthWrite.status, 405)
 })
 
 test('adapter rejects legacy Escala HMACs and methods that would expand its read-only contract', async () => {

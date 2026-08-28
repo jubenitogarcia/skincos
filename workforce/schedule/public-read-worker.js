@@ -81,6 +81,7 @@ export default {
     const id = requestId(request)
 
     if (url.pathname === '/health') {
+      if (request.method !== 'GET') return methodNotAllowed(id)
       if (!runtimeConfigured(env)) return unavailable(id)
       return json({ ok: true, contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION, ready: true }, { headers: { 'x-request-id': id } })
     }
