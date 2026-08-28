@@ -132,9 +132,10 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
           return unavailable(request, 'data')
         }
         if (result.items.length > queryResult.query.limit) return unavailable(request, 'data')
-        const items = result.items
-          .map((item) => projectVisibleRecord(item, actorResult.actor, queryResult.query.unitId))
-          .filter(Boolean)
+        const projectedItems = result.items.map(projectClientesReadonlyRecord)
+        if (projectedItems.some((item) => !item)) return unavailable(request, 'data')
+        const items = projectedItems.filter((item) => actorCanReadClientesUnit(actorResult.actor, item.unitId)
+          && item.unitId === queryResult.query.unitId)
         return response(request, 200, {
           ok: true,
           contract: CLIENTES_READONLY_CONTRACT_VERSION,

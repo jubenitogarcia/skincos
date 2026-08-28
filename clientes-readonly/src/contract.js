@@ -51,8 +51,12 @@ function text(value, maxLength = 256) {
 function optionalQueryText(searchParams, key, maxLength) {
   const value = searchParams.get(key)
   if (value === null) return { present: false, value: '' }
-  const normalized = String(value).trim()
-  return { present: true, value: normalized, validLength: normalized.length > 0 && normalized.length <= maxLength }
+  const textValue = String(value)
+  return {
+    present: true,
+    value: textValue,
+    validLength: textValue.length > 0 && textValue.length <= maxLength && textValue === textValue.trim(),
+  }
 }
 
 function validUpdatedAt(value) {
@@ -106,8 +110,8 @@ export function actorCanReadClientesUnit(actor, unitId) {
 }
 
 export function normalizeClientesReadonlyCursor(value) {
-  const cursor = text(value, 256)
-  return cursor && CURSOR_PATTERN.test(cursor) ? cursor : null
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256) return null
+  return CURSOR_PATTERN.test(value) ? value : null
 }
 
 export function parseClientesReadonlyListQuery(searchParams) {

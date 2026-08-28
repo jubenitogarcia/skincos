@@ -188,7 +188,7 @@ test('list results stay inside the requested unit even when the actor may read m
 })
 
 test('malformed list read-model responses fail closed instead of becoming empty results', async () => {
-  for (const malformed of [undefined, null, [], {}, { items: null }, { items: 'not-an-array' }, { items: [], nextCursor: {} }]) {
+  for (const malformed of [undefined, null, [], {}, { items: null }, { items: 'not-an-array' }, { items: [], nextCursor: {} }, { items: [{}] }]) {
     const handler = createClientesReadonlyHandler({
       readModel: {
         ready: true,
@@ -265,6 +265,26 @@ test('actor role, unit scope and query surface are all fail-closed', async () =>
   const overlongLimit = await allowedActor(request('/v1/clientes?unitId=novo-hamburgo&limit=1000'))
   assert.equal(overlongLimit.status, 400)
   assert.equal((await body(overlongLimit)).code, 'CLIENTES_LIMIT_INVALID')
+  const paddedCursor = await allowedActor(request('/v1/clientes?unitId=novo-hamburgo&cursor=%20cursor-2%20'))
+  assert.equal(paddedCursor.status, 400)
+  assert.equal((await body(paddedCursor)).code, 'CLIENTES_CURSOR_INVALID')
+  const paddedLimit = await allowedActor(request('/v1/clientes?unitId=novo-hamburgo&limit=%2020%20'))
+  assert.equal(paddedLimit.status, 400)
+  assert.equal((await body(paddedLimit)).code, 'CLIENTES_LIMIT_INVALID')
+})
+
+test('list results fail closed when an adapter cursor changes bytes under projection', async () => {
+  const handler = createClientesReadonlyHandler({
+    readModel: {
+      ready: true,
+      async listClients() { return { items: [], nextCursor: ' cursor-2 ' } },
+      async getClientById() { return null },
+    },
+    resolveActor: () => ({ subject: 'user-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] }),
+  })
+  const response = await handler(request('/v1/clientes?unitId=novo-hamburgo'))
+  assert.equal(response.status, 503)
+  assert.equal((await body(response)).code, 'CLIENTES_READMODEL_UNAVAILABLE')
 })
 
 test('a failing actor adapter is unavailable, while a missing actor stays unauthorized', async () => {
