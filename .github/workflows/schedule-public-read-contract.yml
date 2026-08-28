@@ -1,0 +1,36 @@
+name: Schedule Public Read Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "workforce/schedule/**"
+      - ".github/workflows/schedule-public-read-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "workforce/schedule/**"
+      - ".github/workflows/schedule-public-read-contract.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Schedule public read contract (local-only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Run isolated contract tests
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-worker.test.js
+
+      - name: Run no-remote dry run
+        run: node workforce/schedule/scripts/public-read-dry-run.mjs
