@@ -163,6 +163,22 @@
       "patterns": ["backend/scripts/cloudflare-alerting-apply.sh", ".github/workflows/cloudflare-alerting-apply.yml"],
       "sharedInputs": true
     },
+    "messaging-whatsapp": {
+      "patterns": [
+        "messaging/**",
+        "ops/runtime/units/messaging-whatsapp.service",
+        "scripts/runtime/global-coordination-mini-pc.sh",
+        "scripts/runtime/messaging-whatsapp-release-contract.mjs",
+        "scripts/runtime/messaging-whatsapp-release-contract.test.mjs",
+        "scripts/runtime/prepare-messaging-whatsapp-release.sh",
+        "scripts/runtime/rollback-messaging-whatsapp-release.sh",
+        "scripts/runtime/run-messaging-whatsapp-release.sh",
+        "scripts/runtime/test-prepare-messaging-whatsapp-release.sh",
+        "scripts/runtime/test-rollback-messaging-whatsapp-release.sh",
+        "scripts/runtime/test-run-messaging-whatsapp-release.sh"
+      ],
+      "sharedInputs": true
+    },
     "native-runtime": {
       "patterns": [
         "crm/api/**",

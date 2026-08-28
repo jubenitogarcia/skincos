@@ -15,7 +15,7 @@ Environment=EVOLUTION_API_INSTANCES_DIR=__STATE_ROOT__/messaging-whatsapp/instan
 Environment=EVOLUTION_API_STORE_DIR=__STATE_ROOT__/messaging-whatsapp/store
 Environment=NODE20_BIN=/usr/bin
 EnvironmentFile=-__CONFIG_ROOT__/messaging-whatsapp.env
-ExecStart=__REPO_ROOT__/scripts/runtime/run-messaging-whatsapp-release.sh
+ExecStart=/opt/skincos/current/messaging-whatsapp/.skincos-run-messaging-whatsapp-release.sh
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
