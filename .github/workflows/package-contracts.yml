@@ -5,12 +5,14 @@ on:
     paths:
       - 'packages/**'
       - 'scripts/tests/package-tarball-install.test.mjs'
+      - 'scripts/tests/promotion-evidence-contract-interop.test.mjs'
       - '.github/workflows/package-contracts.yml'
   push:
     branches: [main]
     paths:
       - 'packages/**'
       - 'scripts/tests/package-tarball-install.test.mjs'
+      - 'scripts/tests/promotion-evidence-contract-interop.test.mjs'
       - '.github/workflows/package-contracts.yml'
   workflow_dispatch: {}
 
@@ -33,4 +35,5 @@ jobs:
             packages/skincos-contracts/test/public-exports.test.mjs \
             packages/skincos-edge-adapters/test/public-exports.test.mjs \
             packages/skincos-delivery-contract/test/release-identity-v4.test.mjs \
-            scripts/tests/package-tarball-install.test.mjs
+            scripts/tests/package-tarball-install.test.mjs \
+            scripts/tests/promotion-evidence-contract-interop.test.mjs
