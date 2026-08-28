@@ -1,0 +1,11 @@
+{
+  "name": "@skincos/clientes-readonly-boundary",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Fail-closed readonly boundary for the future Clientes product extraction.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/contract.js && node --check src/handler.js && node --check src/index.js"
+  }
+}

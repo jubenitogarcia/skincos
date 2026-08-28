@@ -27,7 +27,7 @@
   ],
   "codeownersBlueprint": [
     {"paths": ["/.github/", "/.githooks/", "/ops/", "/scripts/", "/docs/", "/db/", "/skills/", "/packages/"], "team": "skincos-platform"},
-    {"paths": ["/crm/", "/api/", "/backend/", "/frontend/", "/identity/", "/service/", "/booking/", "/integration/", "/messaging/"], "team": "skincos-crm"},
+    {"paths": ["/crm/", "/api/", "/backend/", "/frontend/", "/identity/", "/service/", "/booking/", "/integration/", "/messaging/", "/clientes-readonly/"], "team": "skincos-crm"},
     {"paths": ["/finance/"], "team": "skincos-finance"},
     {"paths": ["/workforce/"], "team": "skincos-workforce"},
     {"paths": ["/inventory/"], "team": "skincos-inventory"},
