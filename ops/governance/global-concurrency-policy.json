@@ -191,6 +191,7 @@
     "scripts/runtime/ponto-jit-claims.mjs",
     ".github/actions/**",
     ".github/scripts/promotion-*.mjs",
+    ".github/scripts/validate-promotion-source-ref.mjs",
     ".github/workflows/promotion-gate.yml",
     ".github/workflows/global-coordination-release.yml",
     "shared/**",

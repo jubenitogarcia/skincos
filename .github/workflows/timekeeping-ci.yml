@@ -5,8 +5,13 @@ on:
     paths:
       - 'workforce/timekeeping/**'
       - 'api/**'
+      - 'api/workers/legacy-inventory-durable-objects.js'
+      - 'api/wrangler.toml'
       - 'inventory/src/worker.js'
+      - 'inventory/src/legacy-api-jobs.js'
+      - 'inventory/workers/**'
       - 'inventory/tests/releaseHealth.test.mjs'
+      - 'inventory/tests/legacyApiJobsContract.test.mjs'
       - 'inventory/wrangler.toml'
       - 'shared/identity-runtime/**'
       - 'shared/module-availability/**'
@@ -28,11 +33,13 @@ on:
       - '.github/workflows/module-availability.yml'
       - '.github/workflows/ponto-*.yml'
       - '.github/scripts/ponto-*.mjs'
+      - '.github/scripts/inventory-legacy-jobs-release-guard.test.mjs'
       - 'scripts/bootstrap-ponto-jit-runner.ps1'
       - 'scripts/runtime/install-ponto-jit-runner.sh'
       - 'scripts/runtime/ponto-jit-*.mjs'
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
+      - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
       - 'ops/runtime/github-actions-runner/skincos-native-custody.sudoers'
       - 'ops/runtime/units/skincos-ponto-jit-runner.service'
@@ -47,8 +54,13 @@ on:
     paths:
       - 'workforce/timekeeping/**'
       - 'api/**'
+      - 'api/workers/legacy-inventory-durable-objects.js'
+      - 'api/wrangler.toml'
       - 'inventory/src/worker.js'
+      - 'inventory/src/legacy-api-jobs.js'
+      - 'inventory/workers/**'
       - 'inventory/tests/releaseHealth.test.mjs'
+      - 'inventory/tests/legacyApiJobsContract.test.mjs'
       - 'inventory/wrangler.toml'
       - 'shared/identity-runtime/**'
       - 'shared/module-availability/**'
@@ -70,11 +82,13 @@ on:
       - '.github/workflows/module-availability.yml'
       - '.github/workflows/ponto-*.yml'
       - '.github/scripts/ponto-*.mjs'
+      - '.github/scripts/inventory-legacy-jobs-release-guard.test.mjs'
       - 'scripts/bootstrap-ponto-jit-runner.ps1'
       - 'scripts/runtime/install-ponto-jit-runner.sh'
       - 'scripts/runtime/ponto-jit-*.mjs'
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
+      - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
       - 'ops/runtime/github-actions-runner/skincos-native-custody.sudoers'
       - 'ops/runtime/units/skincos-ponto-jit-runner.service'
@@ -102,6 +116,8 @@ jobs:
             api/package-lock.json
             inventory/pnpm-lock.yaml
             crm/console/package-lock.json
+      - name: Verify Inventory/API RPC CI coverage
+        run: node --test .github/scripts/inventory-legacy-jobs-release-guard.test.mjs scripts/tests/timekeeping-ci-inventory-rpc.test.mjs
       - name: Install pinned Timekeeping toolchain
         run: npm --prefix workforce/timekeeping ci --ignore-scripts
       - name: Test Timekeeping domain
@@ -132,6 +148,12 @@ jobs:
           npm --prefix api ci --ignore-scripts
           (cd inventory && corepack pnpm install --frozen-lockfile --ignore-scripts)
           npm --prefix api test
+          node --test inventory/tests/legacyApiJobsContract.test.mjs
+          # The inventory default configuration is production; staging is
+          # intentionally validated separately so service-binding compilation
+          # cannot drift between the two environments.
+          inventory/node_modules/.bin/wrangler deploy --dry-run --config inventory/wrangler.toml --outdir "$RUNNER_TEMP/inventory-production-dry-run"
+          inventory/node_modules/.bin/wrangler deploy --dry-run --config inventory/wrangler.toml --env staging --outdir "$RUNNER_TEMP/inventory-staging-dry-run"
           api/node_modules/.bin/wrangler deploy --dry-run --config api/wrangler.toml --env="" --outdir "$RUNNER_TEMP/api-dry-run"
           api/node_modules/.bin/wrangler deploy --dry-run --config api/wrangler.ponto.toml --env="" --outdir "$RUNNER_TEMP/ponto-core-dry-run"
           api/node_modules/.bin/wrangler deploy --dry-run --config api/wrangler.ponto.toml --env staging --outdir "$RUNNER_TEMP/ponto-core-staging-dry-run"

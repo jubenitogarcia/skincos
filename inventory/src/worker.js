@@ -57,6 +57,7 @@ import {
     d1ListInsumosOptions,
 } from './d1Store.js';
 import { hasUnitScopeAccess, normalizeUnitScope } from '../../shared/identity-contract/index.js';
+import { LEGACY_API_JOBS_RPC_CAPABILITY } from './legacy-api-jobs.js';
 
 const MAX_PROFILE_PHOTO_URL_CHARS = 45000;
 
@@ -228,7 +229,7 @@ export class JobQueue {
             if ((claimed?.meta?.changes || 0) === 0) continue;
 
             try {
-                await runJob({ env: this.env, job });
+                await runInventoryJob({ env: this.env, job });
                 const finishedAt = new Date().toISOString();
                 await this.env.DB.prepare(
                     `UPDATE jobs SET status='DONE', finished_at=?, error=NULL WHERE id=?`
@@ -1040,10 +1041,14 @@ async function refreshNotificationsSnapshotInD1({ env, unidade }) {
     }
 }
 
-async function runJob({ env, job }) {
+export async function runNotificationsRefreshJob({ env, unidade }) {
+    await refreshNotificationsSnapshotInD1({ env, unidade: unidade ? String(unidade) : null });
+}
+
+async function runInventoryJob({ env, job }) {
     const type = String(job?.type || '').toUpperCase();
     if (type === 'NOTIFICATIONS_REFRESH') {
-        await refreshNotificationsSnapshotInD1({ env, unidade: job?.unidade ? String(job.unidade) : null });
+        await runNotificationsRefreshJob({ env, unidade: job?.unidade });
         return;
     }
     throw new Error(`Unknown job type: ${type}`);
@@ -1268,6 +1273,7 @@ export default {
                     runtime: "cloudflare-workers",
                     version: String(env?.APP_VERSION || "unknown"),
                     environment: String(env?.ENVIRONMENT || "unknown"),
+                    legacyApiJobsRpc: LEGACY_API_JOBS_RPC_CAPABILITY,
                     workerVersion: {
                         id: String(env?.CF_VERSION_METADATA?.id || "") || null,
                         tag: String(env?.CF_VERSION_METADATA?.tag || "") || null,

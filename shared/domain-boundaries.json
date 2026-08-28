@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Only registered contracts, SDKs and adapters under shared/ may cross a module boundary. Direct implementation imports are rejected unless listed as time-boxed migration debt.",
+  "description": "Only registered contracts, SDKs and adapters under shared/ may cross a module boundary. Direct implementation imports are rejected unless listed as time-boxed migration debt. Stateful service bridges are separately registered with source and rollout verification.",
   "contracts": [
     {
       "id": "finance-contracts-v1",
@@ -104,13 +104,65 @@
       "usage": "use the registered Identity runtime adapter; do not import Identity implementation directly"
     }
   ],
-  "legacyDirectImports": [
+  "legacyDirectImports": [],
+  "statefulServiceBindings": [
     {
-      "from": "api/workers/index.js",
-      "specifier": "../../inventory/src/worker.js",
-      "replacementContractId": "service-binding-adapter-v1",
-      "deadline": "2026-09-30",
-      "reason": "The gateway already forwards traffic through the service-binding adapter, but its legacy Durable Object namespaces require an explicit stateful retirement before this compatibility export can be removed."
+      "id": "api-inventory-legacy-jobs-rpc-v1",
+      "consumer": "api",
+      "producer": "inventory",
+      "serviceBinding": "INVENTORY_LEGACY_JOBS",
+      "service": {
+        "production": "skincos-insumos",
+        "staging": "skincos-insumos-staging"
+      },
+      "entrypoint": "InventoryLegacyJobsEntrypoint",
+      "rpcMethod": "runNotificationsRefresh",
+      "dtoContract": "legacy-api-notifications-refresh/v1",
+      "healthCapability": "legacy-api-jobs-rpc/v1",
+      "deployOrder": ["inventory", "api"],
+      "rollbackOrder": ["api", "inventory"],
+      "reviewBy": "2026-11-30",
+      "reviewTrigger": "before extracting API or Inventory, changing the JobQueue Durable Object class, or retiring the bridge",
+      "retirementCondition": "retire only after an explicit Durable Objects data-migration and rollback plan is proven; do not use deleted_classes for the existing API namespaces",
+      "verification": [
+        {
+          "path": "api/wrangler.toml",
+          "mustContain": [
+            "binding = \"INVENTORY_LEGACY_JOBS\"",
+            "service = \"skincos-insumos\"",
+            "service = \"skincos-insumos-staging\"",
+            "entrypoint = \"InventoryLegacyJobsEntrypoint\""
+          ]
+        },
+        {
+          "path": "api/workers/legacy-inventory-durable-objects.js",
+          "mustContain": [
+            "env?.INVENTORY_LEGACY_JOBS",
+            "service.runNotificationsRefresh({ unidade: normalized.unidade })"
+          ]
+        },
+        {
+          "path": "inventory/workers/legacy-api-jobs-entrypoint.js",
+          "mustContain": [
+            "export class InventoryLegacyJobsEntrypoint extends WorkerEntrypoint",
+            "async runNotificationsRefresh(input)"
+          ]
+        },
+        {
+          "path": "inventory/src/worker.js",
+          "mustContain": [
+            "legacyApiJobsRpc: LEGACY_API_JOBS_RPC_CAPABILITY"
+          ]
+        },
+        {
+          "path": ".github/workflows/deploy-core-workers.yml",
+          "mustContain": [
+            "inventory_legacy_jobs_release_sha",
+            "legacy-api-jobs-rpc/v1",
+            "Inventory health did not attest the required InventoryLegacyJobsEntrypoint release in two consecutive samples"
+          ]
+        }
+      ]
     }
   ]
 }

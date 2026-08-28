@@ -1,0 +1,29 @@
+{
+  "name": "@jubenitogarcia/skincos-edge-adapters",
+  "version": "1.0.0",
+  "description": "Versioned portable SKINCOS edge service adapters.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./cloudflare-service-binding": "./src/cloudflare-service-binding.js",
+    "./signed-domain-context": "./src/signed-domain-context.js",
+    "./resilience": "./src/resilience.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -96,6 +96,8 @@ jobs:
         run: node .github/scripts/validate-dependency-closures.mjs
       - name: Test dependency closure validator
         run: node --test .github/scripts/validate-dependency-closures.test.mjs
+      - name: Test multi-repository promotion-source policy
+        run: node --test .github/scripts/promotion-evidence.test.mjs .github/scripts/validate-promotion-source-ref.test.mjs
       - run: node .github/scripts/validate-progressive-release.mjs
       - name: Validate module catalog, maturity and dependency graph
         run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
