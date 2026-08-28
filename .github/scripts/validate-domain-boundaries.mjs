@@ -4,7 +4,7 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "../..");
 const policyPath = path.join(root, "shared/domain-boundaries.json");
 const governedRoots = new Set([
-  "ads", "api", "booking", "crm", "finance", "identity", "integration", "inventory", "messaging",
+  "ads", "api", "booking", "clientes-readonly", "crm", "finance", "identity", "integration", "inventory", "messaging",
   "ops", "orb", "platform", "service", "shared", "social", "website", "workforce",
 ]);
 const sourceExtensions = new Set([".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".py"]);

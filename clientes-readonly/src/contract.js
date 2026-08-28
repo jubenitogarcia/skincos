@@ -150,6 +150,7 @@ export function parseClientesReadonlyListQuery(searchParams) {
 
 export function projectClientesReadonlyRecord(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  if (typeof input.clientId !== 'string' || typeof input.unitId !== 'string') return null
   const clientId = text(input.clientId, 128)
   const unitId = text(input.unitId, 64)
   if (!CLIENT_ID_PATTERN.test(clientId) || !UNIT_ID_PATTERN.test(unitId)) return null

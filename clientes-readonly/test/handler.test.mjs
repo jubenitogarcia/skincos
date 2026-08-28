@@ -191,7 +191,18 @@ test('list results stay inside the requested unit even when the actor may read m
 })
 
 test('malformed list read-model responses fail closed instead of becoming empty results', async () => {
-  for (const malformed of [undefined, null, [], {}, { items: null }, { items: 'not-an-array' }, { items: [], nextCursor: {} }, { items: [{}] }]) {
+  for (const malformed of [
+    undefined,
+    null,
+    [],
+    {},
+    { items: null },
+    { items: 'not-an-array' },
+    { items: [], nextCursor: {} },
+    { items: [{}] },
+    { items: [{ clientId: ['cliente-1'], unitId: 'novo-hamburgo' }] },
+    { items: [{ clientId: 'cliente-1', unitId: ['novo-hamburgo'] }] },
+  ]) {
     const handler = createClientesReadonlyHandler({
       readModel: {
         ready: true,
@@ -385,6 +396,8 @@ test('detail reads fail closed for malformed or mismatched adapter records', asy
   for (const record of [
     undefined,
     {},
+    { clientId: ['cliente-expected'], displayName: 'Malformed ID', unitId: 'novo-hamburgo', status: 'active' },
+    { clientId: 'cliente-expected', displayName: 'Malformed unit', unitId: ['novo-hamburgo'], status: 'active' },
     { clientId: 'cliente-other', displayName: 'Other', unitId: 'novo-hamburgo', status: 'active' },
   ]) {
     const handler = createClientesReadonlyHandler({
