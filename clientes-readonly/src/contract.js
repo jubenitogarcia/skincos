@@ -55,6 +55,14 @@ function optionalQueryText(searchParams, key, maxLength) {
   return { present: true, value: normalized, validLength: normalized.length > 0 && normalized.length <= maxLength }
 }
 
+function validUpdatedAt(value) {
+  if (!UPDATED_AT_PATTERN.test(value)) return false
+  const parsed = new Date(value)
+  if (!Number.isFinite(parsed.getTime())) return false
+  const canonical = value.includes('.') ? value : value.replace(/Z$/, '.000Z')
+  return parsed.toISOString() === canonical
+}
+
 function unique(values) {
   return [...new Set(values)]
 }
@@ -140,6 +148,6 @@ export function projectClientesReadonlyRecord(input) {
     displayName: text(input.displayName, 160) || null,
     unitId,
     status: CLIENTES_READONLY_STATUS_VALUES.includes(status) ? status : null,
-    updatedAt: UPDATED_AT_PATTERN.test(updatedAt) ? updatedAt : null,
+    updatedAt: validUpdatedAt(updatedAt) ? updatedAt : null,
   })
 }

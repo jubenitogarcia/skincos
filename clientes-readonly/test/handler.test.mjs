@@ -106,6 +106,13 @@ test('the handler redacts the incoming actor and projects only visible allowlist
               updatedAt: 'not-a-timestamp',
               commercialScore: 999,
             },
+            {
+              clientId: 'cliente-4',
+              displayName: 'Invalid Calendar Value',
+              unitId: 'novo-hamburgo',
+              status: 'active',
+              updatedAt: '2026-99-99T99:99:99Z',
+            },
           ],
           nextCursor: 'cursor-2',
         }
@@ -137,6 +144,12 @@ test('the handler redacts the incoming actor and projects only visible allowlist
         displayName: 'Contract Sanitized',
         unitId: 'novo-hamburgo',
         status: null,
+        updatedAt: null,
+      }, {
+        clientId: 'cliente-4',
+        displayName: 'Invalid Calendar Value',
+        unitId: 'novo-hamburgo',
+        status: 'active',
         updatedAt: null,
       }],
       nextCursor: 'cursor-2',
@@ -188,6 +201,27 @@ test('malformed list read-model responses fail closed instead of becoming empty 
     assert.equal(response.status, 503)
     assert.equal((await body(response)).code, 'CLIENTES_READMODEL_UNAVAILABLE')
   }
+})
+
+test('list read-model results cannot exceed the requested response cap', async () => {
+  const handler = createClientesReadonlyHandler({
+    readModel: {
+      ready: true,
+      async listClients() {
+        return {
+          items: [
+            { clientId: 'cliente-1', displayName: 'One', unitId: 'novo-hamburgo', status: 'active' },
+            { clientId: 'cliente-2', displayName: 'Two', unitId: 'novo-hamburgo', status: 'active' },
+          ],
+        }
+      },
+      async getClientById() { return null },
+    },
+    resolveActor: () => ({ subject: 'user-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] }),
+  })
+  const response = await handler(request('/v1/clientes?unitId=novo-hamburgo&limit=1'))
+  assert.equal(response.status, 503)
+  assert.equal((await body(response)).code, 'CLIENTES_READMODEL_UNAVAILABLE')
 })
 
 test('actor role, unit scope and query surface are all fail-closed', async () => {
@@ -269,4 +303,24 @@ test('detail reads cannot reveal a record outside the explicit actor unit scope'
   const response = await handler(request('/v1/clientes/cliente-2'))
   assert.equal(response.status, 404)
   assert.equal((await body(response)).code, 'CLIENTES_NOT_FOUND')
+})
+
+test('detail reads fail closed for malformed or mismatched adapter records', async () => {
+  for (const record of [
+    undefined,
+    {},
+    { clientId: 'cliente-other', displayName: 'Other', unitId: 'novo-hamburgo', status: 'active' },
+  ]) {
+    const handler = createClientesReadonlyHandler({
+      readModel: {
+        ready: true,
+        async listClients() { return { items: [] } },
+        async getClientById() { return record },
+      },
+      resolveActor: () => ({ subject: 'user-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] }),
+    })
+    const response = await handler(request('/v1/clientes/cliente-expected'))
+    assert.equal(response.status, 503)
+    assert.equal((await body(response)).code, 'CLIENTES_READMODEL_UNAVAILABLE')
+  }
 })

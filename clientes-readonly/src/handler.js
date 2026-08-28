@@ -75,6 +75,14 @@ function projectVisibleRecord(record, actor, requestedUnitId = null) {
     : null
 }
 
+function projectDetailRecord(record, actor, requestedClientId) {
+  if (record === null) return { state: 'not-found' }
+  const projected = projectClientesReadonlyRecord(record)
+  if (!projected || projected.clientId !== requestedClientId) return { state: 'unavailable' }
+  if (!actorCanReadClientesUnit(actor, projected.unitId)) return { state: 'not-found' }
+  return { state: 'visible', record: projected }
+}
+
 async function resolvedActor(request, resolveActor) {
   try {
     return normalizeClientesReadonlyActor(await resolveActor(request))
@@ -123,6 +131,7 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
           && (typeof result.nextCursor !== 'string' || !nextCursor)) {
           return unavailable(request, 'data')
         }
+        if (result.items.length > queryResult.query.limit) return unavailable(request, 'data')
         const items = result.items
           .map((item) => projectVisibleRecord(item, actorResult.actor, queryResult.query.unitId))
           .filter(Boolean)
@@ -137,15 +146,16 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
     }
 
     try {
-      const record = projectVisibleRecord(await readModel.getClientById({
+      const detail = projectDetailRecord(await readModel.getClientById({
         actor: actorResult.actor,
         clientId: resolved.clientId,
-      }), actorResult.actor)
-      if (!record) return error(request, 404, 'CLIENTES_NOT_FOUND')
+      }), actorResult.actor, resolved.clientId)
+      if (detail.state === 'unavailable') return unavailable(request, 'data')
+      if (detail.state === 'not-found') return error(request, 404, 'CLIENTES_NOT_FOUND')
       return response(request, 200, {
         ok: true,
         contract: CLIENTES_READONLY_CONTRACT_VERSION,
-        data: record,
+        data: detail.record,
       })
     } catch {
       return unavailable(request, 'data')
@@ -155,5 +165,6 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
 
 export const __testables = {
   hasReadyReadModel,
+  projectDetailRecord,
   projectVisibleRecord,
 }
