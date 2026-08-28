@@ -4,7 +4,8 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "test": "node --test worker.test.js",
+    "test": "node --test *.test.js",
+    "public-read:dry-run": "node ./scripts/public-read-dry-run.mjs",
     "smoke": "node ./scripts/smoke.mjs",
     "deploy": "wrangler deploy",
     "migrate:remote": "wrangler d1 migrations apply skincos-escala --remote",

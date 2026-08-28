@@ -1,4 +1,10 @@
+import {
+  SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+  verifySchedulePublicReadRequest,
+} from './public-read-contract.js'
+
 const ACTOR_SKEW_MS = 5 * 60 * 1000
+const SCHEDULE_PUBLIC_READ_INTERNAL_PREFIX = '/api/escala/internal/schedule-public-read/v1'
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -175,6 +181,182 @@ function normalizeUnitKey(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '')
     .trim()
+}
+
+function schedulePublicReadUnit(value) {
+  const key = normalizeUnitKey(value)
+  if (key === 'barrashoppingsul') return { slug: 'barrashoppingsul', label: 'BarraShoppingSul' }
+  if (key === 'novohamburgo') return { slug: 'novohamburgo', label: 'Novo Hamburgo' }
+  return null
+}
+
+function schedulePublicReadEnabled(env) {
+  return String(env?.SCHEDULE_PUBLIC_READ_ENABLED || '').trim().toLowerCase() === 'true'
+}
+
+function schedulePublicReadHeaders(corsHeaders, requestId) {
+  return {
+    ...corsHeaders,
+    'cache-control': 'no-store',
+    'x-request-id': requestId,
+    'x-skincos-schedule-public-read-contract': SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+  }
+}
+
+function schedulePublicReadUnavailable(corsHeaders, requestId, error = 'SCHEDULE_PUBLIC_READ_UNAVAILABLE') {
+  return jsonResponse({
+    ok: false,
+    contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+    ready: false,
+    error,
+  }, {
+    status: 503,
+    headers: schedulePublicReadHeaders(corsHeaders, requestId),
+  })
+}
+
+function schedulePublicReadUnauthorized(corsHeaders, requestId) {
+  return jsonResponse({ ok: false, error: 'SCHEDULE_PUBLIC_READ_UNAUTHORIZED' }, {
+    status: 401,
+    headers: schedulePublicReadHeaders(corsHeaders, requestId),
+  })
+}
+
+function schedulePublicReadMethodNotAllowed(corsHeaders, requestId) {
+  return jsonResponse({ ok: false, error: 'METHOD_NOT_ALLOWED' }, {
+    status: 405,
+    headers: schedulePublicReadHeaders(corsHeaders, requestId),
+  })
+}
+
+function schedulePublicReadNotFound(corsHeaders, requestId) {
+  return jsonResponse({ ok: false, error: 'NOT_FOUND' }, {
+    status: 404,
+    headers: schedulePublicReadHeaders(corsHeaders, requestId),
+  })
+}
+
+function schedulePublicReadBadRequest(corsHeaders, requestId, error) {
+  return jsonResponse({ ok: false, error }, {
+    status: 400,
+    headers: schedulePublicReadHeaders(corsHeaders, requestId),
+  })
+}
+
+function parseSchedulePublicReadUnits(value) {
+  try {
+    const parsed = JSON.parse(String(value || '[]'))
+    return Array.isArray(parsed)
+      ? parsed.map((unit) => String(unit || '').trim()).filter(Boolean)
+      : []
+  } catch {
+    return []
+  }
+}
+
+function publicOneLine(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function publicInstagramHandle(value) {
+  const raw = publicOneLine(value)
+  if (!raw) return null
+  const withoutAt = raw.startsWith('@') ? raw.slice(1) : raw
+  const handle = (withoutAt.match(/instagram\.com\/(?:@)?([^/?#]+)/i)?.[1] || withoutAt)
+    .replace(/[^a-zA-Z0-9._]/g, '')
+  return handle || null
+}
+
+async function handleSchedulePublicRead(request, env, url, corsHeaders, requestId) {
+  const secret = String(env?.SCHEDULE_PUBLIC_READ_HMAC_KEY || '').trim()
+  if (!schedulePublicReadEnabled(env) || !secret || !env?.DB) {
+    return schedulePublicReadUnavailable(corsHeaders, requestId)
+  }
+  if (request.method !== 'GET') return schedulePublicReadMethodNotAllowed(corsHeaders, requestId)
+
+  const authorization = await verifySchedulePublicReadRequest(request, secret)
+  if (!authorization.ok) return schedulePublicReadUnauthorized(corsHeaders, requestId)
+
+  const suffix = url.pathname.slice(SCHEDULE_PUBLIC_READ_INTERNAL_PREFIX.length)
+  if (!['/readiness', '/availability', '/professionals'].includes(suffix)) {
+    return schedulePublicReadNotFound(corsHeaders, requestId)
+  }
+
+  try {
+    if (suffix === '/readiness') {
+      await env.DB.prepare('select 1 as ready').first()
+      return jsonResponse({
+        ok: true,
+        contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+        ready: true,
+        dependencies: { schedule: 'available' },
+      }, { headers: schedulePublicReadHeaders(corsHeaders, requestId) })
+    }
+
+    const unit = schedulePublicReadUnit(url.searchParams.get('unit'))
+    if (!unit) return schedulePublicReadBadRequest(corsHeaders, requestId, 'INVALID_UNIT')
+
+    if (suffix === '/availability') {
+      const date = String(url.searchParams.get('date') || '').trim()
+      if (!isValidDate(date)) return schedulePublicReadBadRequest(corsHeaders, requestId, 'INVALID_DATE')
+
+      const [scheduleResult, closedDay, holiday] = await Promise.all([
+        env.DB.prepare(
+          `select professional_name as professional
+           from schedule_entries
+           where unit = ?1 and date = ?2
+           order by professional_name asc`,
+        ).bind(unit.label, date).all(),
+        env.DB.prepare(
+          'select 1 as found from closed_days where unit = ?1 and date = ?2 limit 1',
+        ).bind(unit.label, date).first(),
+        env.DB.prepare(
+          'select 1 as found from holidays where unit = ?1 and date = ?2 limit 1',
+        ).bind(unit.label, date).first(),
+      ])
+      const professionalNames = Array.from(new Set(
+        (scheduleResult.results || []).map((row) => publicOneLine(row.professional)).filter(Boolean),
+      ))
+      return jsonResponse({
+        ok: true,
+        contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+        data: {
+          unit: unit.slug,
+          date,
+          closed: Boolean(closedDay || holiday),
+          professionalNames,
+        },
+      }, { headers: schedulePublicReadHeaders(corsHeaders, requestId) })
+    }
+
+    const result = await env.DB.prepare(
+      `select name, status, role, nickname, instagram, units_json
+       from professionals
+       order by name asc`,
+    ).all()
+    const professionals = (result.results || [])
+      .map((row) => {
+        const units = parseSchedulePublicReadUnits(row.units_json)
+        return {
+          name: publicOneLine(row.name),
+          status: publicOneLine(row.status) || null,
+          role: publicOneLine(row.role) || null,
+          nickname: publicOneLine(row.nickname) || null,
+          instagram: publicInstagramHandle(row.instagram),
+          units,
+        }
+      })
+      .filter((row) => row.name && (!row.status || row.status.toLowerCase() === 'ativo'))
+      .filter((row) => row.units.some((entry) => schedulePublicReadUnit(entry)?.slug === unit.slug))
+
+    return jsonResponse({
+      ok: true,
+      contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+      data: { unit: unit.slug, professionals },
+    }, { headers: schedulePublicReadHeaders(corsHeaders, requestId) })
+  } catch {
+    return schedulePublicReadUnavailable(corsHeaders, requestId, 'SCHEDULE_PUBLIC_READ_NOT_READY')
+  }
 }
 
 async function getTableColumns(env, tableName) {
@@ -1208,6 +1390,13 @@ export default {
 
     if (path === '/health' || path === '/api/escala/health') {
       return jsonResponse({ ok: true }, { headers: { ...corsHeaders, 'x-request-id': requestId } })
+    }
+
+    // This adapter-facing route deliberately bypasses CRM actor parsing. It is
+    // reachable only through its separate, fixed-service HMAC contract and is
+    // read-only; ESCALA_ACTOR_HMAC_KEY remains exclusive to CRM/Ponto flows.
+    if (path.startsWith(SCHEDULE_PUBLIC_READ_INTERNAL_PREFIX)) {
+      return handleSchedulePublicRead(request, env, url, corsHeaders, requestId)
     }
 
     if (!path.startsWith('/api/escala')) {

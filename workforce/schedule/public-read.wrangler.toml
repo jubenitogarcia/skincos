@@ -1,0 +1,28 @@
+# Staged compatibility adapter for the future skincos-workforce-schedule owner.
+# It intentionally has no route, D1 binding, deploy workflow or configured secret.
+# A later staged cut may provision SCHEDULE_PUBLIC_READ_HMAC_KEY to this Worker,
+# the Schedule core and the Website consumer after equivalence validation.
+name = "skincos-schedule-public-read"
+main = "public-read-worker.js"
+compatibility_date = "2026-03-02"
+workers_dev = false
+preview_urls = false
+
+[vars]
+SCHEDULE_PUBLIC_READ_ENABLED = "false"
+
+[[services]]
+binding = "SCHEDULE_CORE"
+service = "skincos-escala-api"
+
+[env.staging]
+name = "skincos-schedule-public-read-staging"
+workers_dev = false
+preview_urls = false
+
+[env.staging.vars]
+SCHEDULE_PUBLIC_READ_ENABLED = "false"
+
+[[env.staging.services]]
+binding = "SCHEDULE_CORE"
+service = "skincos-escala-api-staging"
