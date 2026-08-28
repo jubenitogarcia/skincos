@@ -126,7 +126,7 @@
     },
     "clientes-readonly": {
       "patterns": ["clientes-readonly/**"],
-      "sharedInputs": false
+      "sharedInputs": true
     },
     "website": {
       "patterns": ["website/**", "booking/**", ".github/workflows/deploy-website-cloudflare.yml", ".github/workflows/website-instagram-sync.yml", ".github/workflows/sync-website-cloudflare-security.yml"],
