@@ -1,0 +1,33 @@
+{
+  "name": "@jubenitogarcia/skincos-contracts",
+  "version": "1.0.0",
+  "description": "Versioned portable SKINCOS domain contracts.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./identity": "./src/identity-contract.js",
+    "./finance": "./src/finance/index.js",
+    "./finance/csv": "./src/finance/csv.js",
+    "./finance/moneywiz": "./src/finance/moneywiz.js",
+    "./finance/ef-caixa": "./src/finance/ef-caixa.js",
+    "./module-availability": "./src/module-availability.js",
+    "./observability": "./src/observability.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

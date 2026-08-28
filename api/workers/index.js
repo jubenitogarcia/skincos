@@ -1,4 +1,4 @@
-export { RateLimiter, JobQueue } from '../../inventory/src/worker.js';
+export { RateLimiter, JobQueue } from './legacy-inventory-durable-objects.js';
 import { handleGatewayRequest } from '../src/gateway.js';
 
 export default {

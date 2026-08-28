@@ -69,7 +69,7 @@ for (const required of ["workflow_run:", "workflows: [Global merge authority]", 
 }
 const gate = read(".github/workflows/promotion-gate.yml");
 if (!gate.includes("fetch-depth: 0")) fail("promotion gate must fetch complete main history before validating an immutable rollback SHA");
-for (const required of ["release_sha", "Verify predecessor evidence", "promotion-evidence.mjs verify", "source_sha"]) if (!gate.includes(required)) fail(`immutable promotion gate is missing ${required}`);
+for (const required of ["release_sha", "Verify predecessor evidence", "promotion-evidence.mjs verify", "source_sha", "validate-promotion-source-ref.mjs", "remote_default_branch", "remote_branch_protected"]) if (!gate.includes(required)) fail(`immutable promotion gate is missing ${required}`);
 const coordinator = read(".github/workflows/ponto-progressive-release.yml");
 for (const required of ["single-operator Codex governance", "canonical merged PR and required checks", "ponto-environment-protection.mjs"]) if (!coordinator.includes(required)) fail(`Ponto coordinator is missing ${required}`);
 if (coordinator.includes("Require the independent no-review true-only emergency close path")) fail("Ponto coordinator still names the retired independent-review gate");

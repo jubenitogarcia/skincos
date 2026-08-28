@@ -1,0 +1,36 @@
+name: Package Contract Artifacts
+
+on:
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'scripts/tests/package-tarball-install.test.mjs'
+      - '.github/workflows/package-contracts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'scripts/tests/package-tarball-install.test.mjs'
+      - '.github/workflows/package-contracts.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  package-contract-artifacts:
+    name: Pack and install private package contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.12.0'
+      - name: Test package contracts and isolated tarball installation
+        run: |
+          set -euo pipefail
+          node --test \
+            packages/skincos-contracts/test/public-exports.test.mjs \
+            packages/skincos-edge-adapters/test/public-exports.test.mjs \
+            packages/skincos-delivery-contract/test/release-identity-v4.test.mjs \
+            scripts/tests/package-tarball-install.test.mjs
