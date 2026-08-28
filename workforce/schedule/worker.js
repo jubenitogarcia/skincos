@@ -1,5 +1,7 @@
 import {
   SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+  SCHEDULE_PUBLIC_READ_CORE_SERVICE,
+  normalizeSchedulePublicReadSecret,
   verifySchedulePublicReadRequest,
 } from './public-read-contract.js'
 
@@ -268,13 +270,15 @@ function publicInstagramHandle(value) {
 }
 
 async function handleSchedulePublicRead(request, env, url, corsHeaders, requestId) {
-  const secret = String(env?.SCHEDULE_PUBLIC_READ_HMAC_KEY || '').trim()
+  const secret = normalizeSchedulePublicReadSecret(env?.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY)
   if (!schedulePublicReadEnabled(env) || !secret || !env?.DB) {
     return schedulePublicReadUnavailable(corsHeaders, requestId)
   }
   if (request.method !== 'GET') return schedulePublicReadMethodNotAllowed(corsHeaders, requestId)
 
-  const authorization = await verifySchedulePublicReadRequest(request, secret)
+  const authorization = await verifySchedulePublicReadRequest(request, secret, {
+    allowedService: SCHEDULE_PUBLIC_READ_CORE_SERVICE,
+  })
   if (!authorization.ok) return schedulePublicReadUnauthorized(corsHeaders, requestId)
 
   const suffix = url.pathname.slice(SCHEDULE_PUBLIC_READ_INTERNAL_PREFIX.length)

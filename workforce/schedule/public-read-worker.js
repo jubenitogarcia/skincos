@@ -1,6 +1,9 @@
 import {
   SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
+  SCHEDULE_PUBLIC_READ_CORE_SERVICE,
+  SCHEDULE_PUBLIC_READ_EDGE_SERVICE,
   createSchedulePublicReadHeaders,
+  normalizeSchedulePublicReadSecret,
   verifySchedulePublicReadRequest,
 } from './public-read-contract.js'
 
@@ -24,8 +27,12 @@ function requestId(request) {
 }
 
 function runtimeConfigured(env) {
+  const edgeKey = normalizeSchedulePublicReadSecret(env?.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY)
+  const coreKey = normalizeSchedulePublicReadSecret(env?.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY)
   return String(env?.SCHEDULE_PUBLIC_READ_ENABLED || '').trim().toLowerCase() === 'true'
-    && Boolean(String(env?.SCHEDULE_PUBLIC_READ_HMAC_KEY || '').trim())
+    && Boolean(edgeKey)
+    && Boolean(coreKey)
+    && edgeKey !== coreKey
     && typeof env?.SCHEDULE_CORE?.fetch === 'function'
 }
 
@@ -53,9 +60,10 @@ function unauthorized(id) {
 async function requestCore(request, env, corePath, id) {
   const target = new URL(`https://schedule-core.internal${corePath}`)
   const headers = new Headers(await createSchedulePublicReadHeaders({
-    secret: env.SCHEDULE_PUBLIC_READ_HMAC_KEY,
+    secret: normalizeSchedulePublicReadSecret(env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY),
     url: target,
     method: 'GET',
+    service: SCHEDULE_PUBLIC_READ_CORE_SERVICE,
   }))
   headers.set('x-request-id', id)
   let response
@@ -90,7 +98,11 @@ export default {
     if (request.method !== 'GET') return methodNotAllowed(id)
     if (!runtimeConfigured(env)) return unavailable(id)
 
-    const authorization = await verifySchedulePublicReadRequest(request, env.SCHEDULE_PUBLIC_READ_HMAC_KEY)
+    const authorization = await verifySchedulePublicReadRequest(
+      request,
+      normalizeSchedulePublicReadSecret(env.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY),
+      { allowedService: SCHEDULE_PUBLIC_READ_EDGE_SERVICE },
+    )
     if (!authorization.ok) return unauthorized(id)
 
     const suffix = url.pathname.slice(PUBLIC_PREFIX.length)

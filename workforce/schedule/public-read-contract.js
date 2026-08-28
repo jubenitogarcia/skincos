@@ -1,6 +1,7 @@
 export const SCHEDULE_PUBLIC_READ_CONTRACT_VERSION = 'schedule-public-read/v1'
 export const SCHEDULE_PUBLIC_READ_SIGNATURE_VERSION = 'v1'
-export const SCHEDULE_PUBLIC_READ_SERVICE = 'website-booking'
+export const SCHEDULE_PUBLIC_READ_EDGE_SERVICE = 'website-booking'
+export const SCHEDULE_PUBLIC_READ_CORE_SERVICE = 'schedule-public-read-adapter'
 export const SCHEDULE_PUBLIC_READ_MAX_SKEW_MS = 5 * 60 * 1000
 
 const encoder = new TextEncoder()
@@ -32,6 +33,10 @@ function normalizedMethod(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+export function normalizeSchedulePublicReadSecret(value) {
+  return String(value ?? '').trim()
+}
+
 function signingPayload({ timestamp, nonce, method, path, service }) {
   return [
     SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
@@ -43,10 +48,11 @@ function signingPayload({ timestamp, nonce, method, path, service }) {
   ].join('.')
 }
 
-export async function signSchedulePublicReadRequest({ secret, timestamp, nonce, method, path, service = SCHEDULE_PUBLIC_READ_SERVICE }) {
+export async function signSchedulePublicReadRequest({ secret, timestamp, nonce, method, path, service = SCHEDULE_PUBLIC_READ_EDGE_SERVICE }) {
+  const normalizedSecret = normalizeSchedulePublicReadSecret(secret)
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(String(secret || '')),
+    encoder.encode(normalizedSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign'],
@@ -63,7 +69,7 @@ export async function createSchedulePublicReadHeaders({
   secret,
   url,
   method = 'GET',
-  service = SCHEDULE_PUBLIC_READ_SERVICE,
+  service = SCHEDULE_PUBLIC_READ_EDGE_SERVICE,
   timestamp = String(Date.now()),
   nonce = crypto.randomUUID(),
 } = {}) {
@@ -79,11 +85,11 @@ export async function createSchedulePublicReadHeaders({
 }
 
 export async function verifySchedulePublicReadRequest(request, secret, {
-  allowedService = SCHEDULE_PUBLIC_READ_SERVICE,
+  allowedService = SCHEDULE_PUBLIC_READ_EDGE_SERVICE,
   now = Date.now(),
 } = {}) {
   if (normalizedMethod(request?.method) !== 'GET') return { ok: false, error: 'METHOD_NOT_ALLOWED' }
-  const key = String(secret || '').trim()
+  const key = normalizeSchedulePublicReadSecret(secret)
   if (!key) return { ok: false, error: 'KEY_MISSING' }
 
   const version = String(request.headers.get('x-skincos-schedule-read-version') || '')

@@ -3,25 +3,32 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  SCHEDULE_PUBLIC_READ_CORE_SERVICE,
   createSchedulePublicReadHeaders,
-  verifySchedulePublicReadRequest,
 } from './public-read-contract.js'
 import coreWorker from './worker.js'
 import adapter from './public-read-worker.js'
 import { createPublicReadTestDb } from './public-read-test-support.js'
 
-const key = 'schedule-public-read-adapter-key'
+const edgeKey = 'schedule-public-read-edge-key'
+const coreKey = 'schedule-public-read-core-key'
 
-function configuredAdapterEnv(overrides = {}) {
-  const coreEnv = {
+function configuredCoreEnv(overrides = {}) {
+  return {
     APP_ORIGIN: 'https://crm.local',
     DB: createPublicReadTestDb(),
     SCHEDULE_PUBLIC_READ_ENABLED: 'true',
-    SCHEDULE_PUBLIC_READ_HMAC_KEY: key,
+    SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: coreKey,
+    ...overrides,
   }
+}
+
+function configuredAdapterEnv(overrides = {}) {
+  const coreEnv = configuredCoreEnv()
   return {
     SCHEDULE_PUBLIC_READ_ENABLED: 'true',
-    SCHEDULE_PUBLIC_READ_HMAC_KEY: key,
+    SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: edgeKey,
+    SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: coreKey,
     SCHEDULE_CORE: {
       fetch: (request) => coreWorker.fetch(request, coreEnv),
     },
@@ -29,7 +36,7 @@ function configuredAdapterEnv(overrides = {}) {
   }
 }
 
-async function signedAdapterRequest(path, { secret = key, method = 'GET' } = {}) {
+async function signedAdapterRequest(path, { secret = edgeKey, method = 'GET' } = {}) {
   const url = `https://adapter.internal${path}`
   const headers = await createSchedulePublicReadHeaders({
     secret,
@@ -40,7 +47,7 @@ async function signedAdapterRequest(path, { secret = key, method = 'GET' } = {})
   return new Request(url, { method, headers })
 }
 
-test('adapter forwards a new dedicated HMAC envelope to Schedule core without a public route', async () => {
+test('adapter forwards a distinct core HMAC envelope after Website edge authentication', async () => {
   const response = await adapter.fetch(
     await signedAdapterRequest('/schedule-public-read/v1/availability?unit=novo-hamburgo&date=2026-09-15'),
     configuredAdapterEnv(),
@@ -73,11 +80,17 @@ test('adapter health, readiness and reads fail closed until the isolated rollout
   )
   assert.equal(disabled.status, 503)
 
+  const sharedKeys = await adapter.fetch(
+    new Request('https://adapter.internal/health'),
+    configuredAdapterEnv({ SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ` ${edgeKey} ` }),
+  )
+  assert.equal(sharedKeys.status, 503)
+
   const healthWrite = await adapter.fetch(new Request('https://adapter.internal/health', { method: 'POST' }), configuredAdapterEnv())
   assert.equal(healthWrite.status, 405)
 })
 
-test('adapter rejects legacy Escala HMACs and methods that would expand its read-only contract', async () => {
+test('adapter rejects legacy Escala HMACs and the edge key cannot authenticate direct core access', async () => {
   const path = '/schedule-public-read/v1/professionals?unit=novo-hamburgo'
   const usingLegacyKey = await adapter.fetch(
     await signedAdapterRequest(path, { secret: 'legacy-escala-key' }),
@@ -92,12 +105,29 @@ test('adapter rejects legacy Escala HMACs and methods that would expand its read
   assert.equal(write.status, 405)
 
   const coreUrl = 'https://schedule-core.internal/api/escala/internal/schedule-public-read/v1/professionals?unit=novo-hamburgo'
-  const coreHeaders = await createSchedulePublicReadHeaders({
-    secret: key,
+  const edgeHeaders = await createSchedulePublicReadHeaders({
+    secret: edgeKey,
     url: coreUrl,
+    service: SCHEDULE_PUBLIC_READ_CORE_SERVICE,
     nonce: `schedule-public-read-assert-${crypto.randomUUID()}`,
   })
-  assert.equal((await verifySchedulePublicReadRequest(new Request(coreUrl, { headers: coreHeaders }), key)).ok, true)
+  const directCoreWithEdgeKey = await coreWorker.fetch(
+    new Request(coreUrl, { headers: edgeHeaders }),
+    configuredCoreEnv(),
+  )
+  assert.equal(directCoreWithEdgeKey.status, 401)
+
+  const coreHeaders = await createSchedulePublicReadHeaders({
+    secret: coreKey,
+    url: coreUrl,
+    service: SCHEDULE_PUBLIC_READ_CORE_SERVICE,
+    nonce: `schedule-public-read-core-${crypto.randomUUID()}`,
+  })
+  const directCoreWithCoreKey = await coreWorker.fetch(
+    new Request(coreUrl, { headers: coreHeaders }),
+    configuredCoreEnv(),
+  )
+  assert.equal(directCoreWithCoreKey.status, 200)
 })
 
 test('adapter source stays disabled and isolated until a later staged resource cut', () => {
@@ -107,4 +137,5 @@ test('adapter source stays disabled and isolated until a later staged resource c
   assert.equal(/\broutes\s*=/.test(config), false)
   assert.equal(/\[\[d1_databases\]\]/.test(config), false)
   assert.equal(source.includes('ESCALA_ACTOR_HMAC_KEY'), false)
+  assert.equal(source.includes('SCHEDULE_PUBLIC_READ_HMAC_KEY'), false)
 })

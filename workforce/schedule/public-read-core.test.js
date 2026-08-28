@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  SCHEDULE_PUBLIC_READ_CORE_SERVICE,
   createSchedulePublicReadHeaders,
 } from './public-read-contract.js'
 import worker from './worker.js'
 import { PublicReadTestD1, createPublicReadTestDb } from './public-read-test-support.js'
 
-const publicReadKey = 'schedule-public-read-test-key'
+const coreReadKey = 'schedule-public-read-core-test-key'
+const edgeReadKey = 'schedule-public-read-edge-key-must-not-authorize-core'
 const legacyEscalaKey = 'legacy-escala-key-must-not-authorize-public-read'
 
 function publicReadEnv(db = createPublicReadTestDb(), overrides = {}) {
@@ -15,18 +17,19 @@ function publicReadEnv(db = createPublicReadTestDb(), overrides = {}) {
     APP_ORIGIN: 'https://crm.local',
     DB: db,
     SCHEDULE_PUBLIC_READ_ENABLED: 'true',
-    SCHEDULE_PUBLIC_READ_HMAC_KEY: publicReadKey,
+    SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: coreReadKey,
     ESCALA_ACTOR_HMAC_KEY: legacyEscalaKey,
     ...overrides,
   }
 }
 
-async function signedCoreRequest(path, { secret = publicReadKey, method = 'GET' } = {}) {
+async function signedCoreRequest(path, { secret = coreReadKey, method = 'GET' } = {}) {
   const url = `https://schedule.internal${path}`
   const headers = await createSchedulePublicReadHeaders({
     secret,
     url,
     method,
+    service: SCHEDULE_PUBLIC_READ_CORE_SERVICE,
     nonce: `schedule-public-read-core-${crypto.randomUUID()}`,
   })
   return new Request(url, { method, headers })
@@ -79,6 +82,13 @@ test('Schedule core readiness and public-read routes fail closed without the new
   )
   assert.equal(usingLegacyEscalaKey.status, 401)
   assert.equal((await usingLegacyEscalaKey.json()).error, 'SCHEDULE_PUBLIC_READ_UNAUTHORIZED')
+
+  const usingEdgeReadKey = await worker.fetch(
+    await signedCoreRequest(path, { secret: edgeReadKey }),
+    publicReadEnv(),
+  )
+  assert.equal(usingEdgeReadKey.status, 401)
+  assert.equal((await usingEdgeReadKey.json()).error, 'SCHEDULE_PUBLIC_READ_UNAUTHORIZED')
 
   const unavailableDb = await worker.fetch(
     await signedCoreRequest(path),
