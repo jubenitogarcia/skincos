@@ -34,15 +34,20 @@ function hasReadyReadModel(readModel) {
     && typeof readModel.getClientById === 'function')
 }
 
-function unavailable(request, endpoint) {
+function hasConfiguredActorAdapter(resolveActor) {
+  return typeof resolveActor === 'function'
+}
+
+function unavailable(request, endpoint, { readModelReady, actorAdapterReady }, code = 'CLIENTES_READMODEL_UNAVAILABLE') {
   return response(request, endpoint === 'health' ? 200 : 503, {
     ok: false,
     unit: 'clientes-readonly',
     contract: CLIENTES_READONLY_CONTRACT_VERSION,
     ready: false,
-    code: 'CLIENTES_READMODEL_UNAVAILABLE',
+    code,
     dependencies: {
-      readModel: { required: true, state: 'unavailable' },
+      readModel: { required: true, state: readModelReady ? 'healthy' : 'unavailable' },
+      actorAdapter: { required: true, state: actorAdapterReady ? 'healthy' : 'unavailable' },
     },
   })
 }
@@ -56,6 +61,7 @@ function ready(request, endpoint) {
     endpoint,
     dependencies: {
       readModel: { required: true, state: 'healthy' },
+      actorAdapter: { required: true, state: 'healthy' },
     },
   })
 }
@@ -96,7 +102,7 @@ async function resolvedActor(request, resolveActor) {
  * A caller must explicitly supply a dedicated read-model and actor adapter;
  * otherwise the handler remains read-only and unavailable.
  */
-export function createClientesReadonlyHandler({ readModel = null, resolveActor = () => null } = {}) {
+export function createClientesReadonlyHandler({ readModel = null, resolveActor = null } = {}) {
   return async function handleClientesReadonlyRequest(request) {
     const url = new URL(request.url)
     const resolved = clientesReadonlyRouteFor(url.pathname)
@@ -107,10 +113,17 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
     }
 
     const readModelReady = hasReadyReadModel(readModel)
+    const actorAdapterReady = hasConfiguredActorAdapter(resolveActor)
+    const unavailableDependencies = { readModelReady, actorAdapterReady }
+    const dependencyCode = readModelReady ? 'CLIENTES_ACTOR_UNAVAILABLE' : 'CLIENTES_READMODEL_UNAVAILABLE'
     if (resolved.route.id === 'health' || resolved.route.id === 'readiness') {
-      return readModelReady ? ready(request, resolved.route.id) : unavailable(request, resolved.route.id)
+      return readModelReady && actorAdapterReady
+        ? ready(request, resolved.route.id)
+        : unavailable(request, resolved.route.id, unavailableDependencies, dependencyCode)
     }
-    if (!readModelReady) return unavailable(request, 'data')
+    if (!readModelReady || !actorAdapterReady) {
+      return unavailable(request, 'data', unavailableDependencies, dependencyCode)
+    }
 
     const actorResult = await resolvedActor(request, resolveActor)
     if (!actorResult.ok) return error(request, actorFailureStatus(actorResult.code), actorResult.code)
@@ -124,16 +137,16 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
       try {
         const result = await readModel.listClients({ actor: actorResult.actor, query: queryResult.query })
         if (!result || typeof result !== 'object' || Array.isArray(result) || !Array.isArray(result.items)) {
-          return unavailable(request, 'data')
+          return unavailable(request, 'data', { readModelReady, actorAdapterReady })
         }
         const nextCursor = normalizeClientesReadonlyCursor(result.nextCursor)
         if (result.nextCursor !== undefined && result.nextCursor !== null
           && (typeof result.nextCursor !== 'string' || !nextCursor)) {
-          return unavailable(request, 'data')
+          return unavailable(request, 'data', { readModelReady, actorAdapterReady })
         }
-        if (result.items.length > queryResult.query.limit) return unavailable(request, 'data')
+        if (result.items.length > queryResult.query.limit) return unavailable(request, 'data', { readModelReady, actorAdapterReady })
         const projectedItems = result.items.map(projectClientesReadonlyRecord)
-        if (projectedItems.some((item) => !item)) return unavailable(request, 'data')
+        if (projectedItems.some((item) => !item)) return unavailable(request, 'data', { readModelReady, actorAdapterReady })
         const items = projectedItems.filter((item) => actorCanReadClientesUnit(actorResult.actor, item.unitId)
           && item.unitId === queryResult.query.unitId)
         return response(request, 200, {
@@ -142,7 +155,7 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
           data: { items, nextCursor },
         })
       } catch {
-        return unavailable(request, 'data')
+        return unavailable(request, 'data', { readModelReady, actorAdapterReady })
       }
     }
 
@@ -151,7 +164,7 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
         actor: actorResult.actor,
         clientId: resolved.clientId,
       }), actorResult.actor, resolved.clientId)
-      if (detail.state === 'unavailable') return unavailable(request, 'data')
+      if (detail.state === 'unavailable') return unavailable(request, 'data', { readModelReady, actorAdapterReady })
       if (detail.state === 'not-found') return error(request, 404, 'CLIENTES_NOT_FOUND')
       return response(request, 200, {
         ok: true,
@@ -159,12 +172,13 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
         data: detail.record,
       })
     } catch {
-      return unavailable(request, 'data')
+      return unavailable(request, 'data', { readModelReady, actorAdapterReady })
     }
   }
 }
 
 export const __testables = {
+  hasConfiguredActorAdapter,
   hasReadyReadModel,
   projectDetailRecord,
   projectVisibleRecord,

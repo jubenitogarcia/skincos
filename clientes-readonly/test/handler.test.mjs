@@ -45,7 +45,10 @@ test('health is observable but data and readiness fail closed without a read-mod
     contract: 'clientes-readonly/v1',
     ready: false,
     code: 'CLIENTES_READMODEL_UNAVAILABLE',
-    dependencies: { readModel: { required: true, state: 'unavailable' } },
+    dependencies: {
+      readModel: { required: true, state: 'unavailable' },
+      actorAdapter: { required: true, state: 'unavailable' },
+    },
   })
 
   const readiness = await handler(request('/readiness'))
@@ -271,6 +274,59 @@ test('actor role, unit scope and query surface are all fail-closed', async () =>
   const paddedLimit = await allowedActor(request('/v1/clientes?unitId=novo-hamburgo&limit=%2020%20'))
   assert.equal(paddedLimit.status, 400)
   assert.equal((await body(paddedLimit)).code, 'CLIENTES_LIMIT_INVALID')
+  for (const nonDecimalLimit of ['1e2', '0x1']) {
+    const nonDecimalResponse = await allowedActor(request(`/v1/clientes?unitId=novo-hamburgo&limit=${nonDecimalLimit}`))
+    assert.equal(nonDecimalResponse.status, 400)
+    assert.equal((await body(nonDecimalResponse)).code, 'CLIENTES_LIMIT_INVALID')
+  }
+})
+
+test('actor fields must use the contract primitive types before authorization', async () => {
+  let readCalls = 0
+  const readModel = {
+    ready: true,
+    async listClients() { readCalls += 1; return { items: [] } },
+    async getClientById() { return null },
+  }
+  const malformedActors = [
+    { subject: ['user-1'], role: 'GESTOR', unitIds: ['novo-hamburgo'] },
+    { subject: 'user-1', role: ['GESTOR'], unitIds: ['novo-hamburgo'] },
+    { subject: 'user-1', role: 'GESTOR', unitIds: [{ toString: () => 'novo-hamburgo' }] },
+  ]
+  for (const actor of malformedActors) {
+    const handler = createClientesReadonlyHandler({ readModel, resolveActor: () => actor })
+    const actorResponse = await handler(request('/v1/clientes?unitId=novo-hamburgo'))
+    assert.equal(actorResponse.status, 403)
+    assert.equal((await body(actorResponse)).code, 'CLIENTES_ACTOR_INVALID')
+  }
+  assert.equal(readCalls, 0)
+})
+
+test('readiness requires both a configured actor adapter and a ready read-model', async () => {
+  const readModel = {
+    ready: true,
+    async listClients() { return { items: [] } },
+    async getClientById() { return null },
+  }
+  const missingActorAdapter = createClientesReadonlyHandler({ readModel })
+  const unavailableReadiness = await missingActorAdapter(request('/readiness'))
+  assert.equal(unavailableReadiness.status, 503)
+  assert.deepEqual(await body(unavailableReadiness), {
+    ok: false,
+    unit: 'clientes-readonly',
+    contract: 'clientes-readonly/v1',
+    ready: false,
+    code: 'CLIENTES_ACTOR_UNAVAILABLE',
+    dependencies: {
+      readModel: { required: true, state: 'healthy' },
+      actorAdapter: { required: true, state: 'unavailable' },
+    },
+  })
+
+  const readyHandler = createClientesReadonlyHandler({ readModel, resolveActor: () => null })
+  const readyReadiness = await readyHandler(request('/readiness'))
+  assert.equal(readyReadiness.status, 200)
+  assert.equal((await body(readyReadiness)).ready, true)
 })
 
 test('list results fail closed when an adapter cursor changes bytes under projection', async () => {

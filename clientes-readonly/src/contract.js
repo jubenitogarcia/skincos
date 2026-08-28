@@ -84,16 +84,23 @@ export function normalizeClientesReadonlyActor(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, code: 'CLIENTES_ACTOR_REQUIRED' }
   }
+  if (typeof input.subject !== 'string'
+    || typeof input.role !== 'string'
+    || !Array.isArray(input.unitIds)
+    || input.unitIds.some((unitId) => typeof unitId !== 'string')) {
+    return { ok: false, code: 'CLIENTES_ACTOR_INVALID' }
+  }
   const subject = text(input.subject, 128)
   if (!ACTOR_TEXT_PATTERN.test(subject)) return { ok: false, code: 'CLIENTES_ACTOR_INVALID' }
   const role = text(input.role, 32).toUpperCase()
   if (!CLIENTES_READONLY_ACTOR_ROLES.includes(role)) {
     return { ok: false, code: 'CLIENTES_ACTOR_FORBIDDEN' }
   }
-  const unitIds = unique((Array.isArray(input.unitIds) ? input.unitIds : [])
-    .map((unitId) => text(unitId, 64))
-    .filter((unitId) => UNIT_ID_PATTERN.test(unitId)))
+  const unitIds = unique(input.unitIds.map((unitId) => text(unitId, 64)))
   if (!unitIds.length) return { ok: false, code: 'CLIENTES_UNIT_SCOPE_REQUIRED' }
+  if (unitIds.some((unitId) => !UNIT_ID_PATTERN.test(unitId))) {
+    return { ok: false, code: 'CLIENTES_ACTOR_INVALID' }
+  }
   return {
     ok: true,
     actor: Object.freeze({
@@ -133,6 +140,7 @@ export function parseClientesReadonlyListQuery(searchParams) {
   const limitInput = optionalQueryText(searchParams, 'limit', 3)
   if (limitInput.present && !limitInput.validLength) return { ok: false, code: 'CLIENTES_LIMIT_INVALID' }
   const rawLimit = limitInput.value
+  if (rawLimit && !/^\d+$/.test(rawLimit)) return { ok: false, code: 'CLIENTES_LIMIT_INVALID' }
   const limit = rawLimit ? Number(rawLimit) : 25
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     return { ok: false, code: 'CLIENTES_LIMIT_INVALID' }
