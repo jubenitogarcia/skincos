@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { test } from "node:test";
+import { createPromotionEvidenceV4, verifyPromotionEvidenceV4 } from "../../packages/skincos-delivery-contract/src/index.js";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const sha256 = (character) => character.repeat(64);
@@ -36,7 +37,7 @@ function v4Environment({ sourceSha, sourceTree, ...overrides }) {
     PROMOTION_RELEASE_INPUT_DIGEST: sha256("d"),
     PROMOTION_DEPENDENCY_CLOSURE_DIGEST: sha256("d"),
     PROMOTION_CONTRACT_VERSIONS_JSON: JSON.stringify([
-      { name: "@jubenitogarcia/skincos-contracts", version: "1.0.0", integrity: `sha256:${sha256("e")}` },
+      { name: "@jubenitogarcia/skincos-contracts", version: "1.0.0", integrity: sha256("e") },
     ]),
     PROMOTION_ARTIFACT_IDENTITIES_JSON: JSON.stringify([
       { id: "worker.tgz", digest: sha256("f"), fileDigest: sha256("1") },
@@ -164,7 +165,7 @@ test("v4 binds repository, contract manifest, package versions, and exact artifa
   assert.notEqual(artifactVariant.releaseIdentityDigest, identity.releaseIdentityDigest);
 });
 
-test("writes and verifies cross-repository promotion evidence with a v4 provenance envelope", () => {
+test("writes evidence accepted by the portable v4 delivery contract", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-promotion-evidence-v4-"));
   const evidencePath = path.join(directory, "promotion-evidence.json");
   const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
@@ -195,6 +196,43 @@ test("writes and verifies cross-repository promotion evidence with a v4 provenan
     PROMOTION_EXPECTED_EVIDENCE_RUN_ID: evidence.evidenceRunId,
     PROMOTION_EXPECTED_EVIDENCE_ARTIFACT: evidence.evidenceArtifact,
     PROMOTION_EXPECTED_RELEASE_IDENTITY_DIGEST: evidence.releaseIdentityDigest,
+  });
+
+  const portable = await verifyPromotionEvidenceV4(evidence, {
+    target: "preview",
+    sourceRepository: evidence.sourceRepository,
+    sourceCommit: sourceSha,
+    releaseIdentityDigest: evidence.releaseIdentityDigest,
+  });
+  assert.equal(portable.evidence.releaseIdentityDigest, evidence.releaseIdentityDigest);
+
+  const packageEvidence = await createPromotionEvidenceV4({
+    target: "preview",
+    createdAt: "2026-08-28T14:23:04.000Z",
+    evidenceRepository: evidence.evidenceRepository,
+    evidenceRunId: evidence.evidenceRunId,
+    evidenceArtifact: evidence.evidenceArtifact,
+    releaseIdentity: evidence.releaseIdentity,
+  });
+  const packageEvidencePath = path.join(directory, "package-promotion-evidence.json");
+  fs.writeFileSync(packageEvidencePath, `${JSON.stringify(packageEvidence)}\n`);
+  runPromotion(["verify", packageEvidencePath], {
+    ...env,
+    GITHUB_REPOSITORY: "jubenitogarcia/skincos-release-controller",
+    PROMOTION_EXPECTED_TARGET: "preview",
+    PROMOTION_EXPECTED_SOURCE_REPOSITORY: packageEvidence.sourceRepository,
+    PROMOTION_EXPECTED_SOURCE_COMMIT: sourceSha,
+    PROMOTION_EXPECTED_SOURCE_TREE: sourceTree,
+    PROMOTION_EXPECTED_SOURCE_REF: "refs/heads/main",
+    PROMOTION_EXPECTED_RELEASE_INPUT_DIGEST: sha256("d"),
+    PROMOTION_EXPECTED_DELIVERY_CONTRACT_VERSION: "1.0.0",
+    PROMOTION_EXPECTED_CONTRACT_MANIFEST_DIGEST: sha256("c"),
+    PROMOTION_EXPECTED_CONTRACT_VERSIONS_JSON: env.PROMOTION_CONTRACT_VERSIONS_JSON,
+    PROMOTION_EXPECTED_ARTIFACT_IDENTITIES_JSON: env.PROMOTION_ARTIFACT_IDENTITIES_JSON,
+    PROMOTION_EXPECTED_EVIDENCE_REPOSITORY: packageEvidence.evidenceRepository,
+    PROMOTION_EXPECTED_EVIDENCE_RUN_ID: packageEvidence.evidenceRunId,
+    PROMOTION_EXPECTED_EVIDENCE_ARTIFACT: packageEvidence.evidenceArtifact,
+    PROMOTION_EXPECTED_RELEASE_IDENTITY_DIGEST: packageEvidence.releaseIdentityDigest,
   });
 
   const tampered = { ...evidence, sourceRepository: "jubenitogarcia/other-source" };

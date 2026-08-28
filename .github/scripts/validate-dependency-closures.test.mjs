@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { validateDependencyClosures } from "./validate-dependency-closures.mjs";
 
 function fixture(overrides = {}) {
@@ -118,4 +119,9 @@ test("dependency closure resolves npm scripts to their package helpers", () => {
   });
   assert.deepEqual(result.errors, []);
   assert.equal(result.reports[0].reachableFileCount, 4);
+});
+
+test("promotion source-ref validation remains in every shared release closure", () => {
+  const policy = JSON.parse(readFileSync(new URL("../../ops/governance/global-concurrency-policy.json", import.meta.url), "utf8"));
+  assert.ok(policy.sharedInputs.includes(".github/scripts/validate-promotion-source-ref.mjs"));
 });

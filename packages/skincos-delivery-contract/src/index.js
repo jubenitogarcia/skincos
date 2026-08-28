@@ -40,6 +40,12 @@ function normalizeTimestamp(value, label) {
   return normalized;
 }
 
+function normalizeRunId(value, label) {
+  const normalized = requiredText(value, label, { max: 128 });
+  if (!/^[0-9]+$/.test(normalized)) throw new TypeError(label + ' must be a numeric GitHub Actions run id');
+  return normalized;
+}
+
 function normalizeArtifactDigest(value, label) {
   const normalized = requiredText(value, label, { max: 1024 });
   if (SHA256.test(normalized)) return normalized.toLowerCase();
@@ -50,11 +56,7 @@ function normalizeArtifactDigest(value, label) {
 }
 
 function normalizePackageIntegrity(value, label) {
-  const normalized = requiredText(value, label, { max: 1024 });
-  const integrity = normalized.match(SHA256_INTEGRITY);
-  if (integrity) return 'sha256:' + integrity[1].toLowerCase();
-  if (SRI.test(normalized)) return normalized;
-  throw new TypeError(label + ' must be sha256:<hex> or an SRI integrity value');
+  return normalizeArtifactDigest(value, label);
 }
 
 function freezeArray(entries) {
@@ -103,7 +105,7 @@ function normalizeEvidenceProvenance(value) {
   if (!isPlainObject(value)) throw new TypeError('promotion evidence input must be an object');
   return Object.freeze({
     evidenceRepository: normalizeRepository(value.evidenceRepository, 'evidenceRepository'),
-    evidenceRunId: requiredText(value.evidenceRunId, 'evidenceRunId', { max: 128 }),
+    evidenceRunId: normalizeRunId(value.evidenceRunId, 'evidenceRunId'),
     evidenceArtifact: requiredText(value.evidenceArtifact, 'evidenceArtifact'),
   });
 }
@@ -116,7 +118,7 @@ function normalizeOptionalPredecessor(value) {
   if (supplied.length !== 3) throw new TypeError('predecessor provenance must include repository, run id and artifact together');
   return Object.freeze({
     predecessorRepository: normalizeRepository(value.predecessorRepository, 'predecessorRepository'),
-    predecessorRunId: requiredText(value.predecessorRunId, 'predecessorRunId', { max: 128 }),
+    predecessorRunId: normalizeRunId(value.predecessorRunId, 'predecessorRunId'),
     predecessorArtifact: requiredText(value.predecessorArtifact, 'predecessorArtifact'),
   });
 }
@@ -228,6 +230,12 @@ export async function createPromotionEvidenceV4(value) {
   const predecessor = normalizeOptionalPredecessor(value);
   const target = normalizeTarget(value.target);
   const createdAt = normalizeTimestamp(value.createdAt, 'createdAt');
+  if (!releaseIdentity.artifacts.length) {
+    throw new TypeError('schema v4 promotion evidence requires at least one immutable artifact identity');
+  }
+  if (target !== 'preview' && !predecessor) {
+    throw new TypeError('schema v4 promotion evidence after preview requires predecessor provenance');
+  }
   return Object.freeze({
     schemaVersion: PROMOTION_EVIDENCE_SCHEMA_VERSION,
     unit: releaseIdentity.module,
@@ -246,7 +254,7 @@ export async function createPromotionEvidenceV4(value) {
     ...(predecessor || {}),
     releaseIdentity,
     releaseIdentityDigest: releaseIdentity.releaseIdentityDigest,
-    promotionStrategy: releaseIdentity.artifacts.length ? 'exact-artifacts' : 'immutable-source-identity',
+    promotionStrategy: 'exact-artifacts',
     createdAt,
   });
 }
@@ -259,6 +267,13 @@ export async function verifyPromotionEvidenceV4(value, expected = {}) {
   const identity = await assertReleaseIdentityV4(value.releaseIdentity);
   const provenance = normalizeEvidenceProvenance(value);
   const predecessor = normalizeOptionalPredecessor(value);
+  const target = normalizeTarget(value.target);
+  if (!identity.artifacts.length) {
+    throw new TypeError('schema v4 promotion evidence requires at least one immutable artifact identity');
+  }
+  if (target !== 'preview' && !predecessor) {
+    throw new TypeError('schema v4 promotion evidence after preview requires predecessor provenance');
+  }
   const valid = value.unit === identity.module
     && value.sourceRepository === identity.sourceRepository
     && value.sourceSha === identity.sourceCommit
@@ -275,7 +290,7 @@ export async function verifyPromotionEvidenceV4(value, expected = {}) {
     && value.evidenceRunId === provenance.evidenceRunId
     && value.evidenceArtifact === provenance.evidenceArtifact;
   if (!valid) throw new Error('promotion evidence does not match its release identity');
-  if (normalizedExpected.target && value.target !== normalizeTarget(normalizedExpected.target)) {
+  if (normalizedExpected.target && target !== normalizeTarget(normalizedExpected.target)) {
     throw new Error('promotion evidence target differs from the expected target');
   }
   if (normalizedExpected.sourceRepository && identity.sourceRepository !== normalizeRepository(normalizedExpected.sourceRepository, 'expected.sourceRepository')) {

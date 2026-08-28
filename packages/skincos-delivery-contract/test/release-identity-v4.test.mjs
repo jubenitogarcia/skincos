@@ -24,7 +24,7 @@ function releaseInput() {
     contractManifestDigest: sha256('c'),
     dependencyClosureDigest: sha256('d'),
     contractVersions: [
-      { name: '@jubenitogarcia/skincos-edge-adapters', version: '1.0.0', integrity: 'sha256:' + sha256('e') },
+      { name: '@jubenitogarcia/skincos-edge-adapters', version: '1.0.0', integrity: sha256('e') },
       { name: '@jubenitogarcia/skincos-contracts', version: '1.0.0', integrity: 'sha512-ZmFrZS1wYWNrYWdlLWludGVncml0eQ==' },
     ],
     artifacts: [
@@ -76,4 +76,44 @@ test('promotion evidence v4 keeps evidence and predecessor provenance outside th
     releaseIdentityDigest: evidence.releaseIdentityDigest,
   });
   assert.equal(verified.identity.module, 'meta-ads-report');
+});
+
+test('promotion evidence v4 requires exact artifacts and a post-preview predecessor', async () => {
+  const withoutArtifacts = releaseInput();
+  withoutArtifacts.artifacts = [];
+  await assert.rejects(
+    createPromotionEvidenceV4({
+      target: 'preview',
+      createdAt: '2026-08-28T14:23:04.000Z',
+      evidenceRepository: 'JubenitoGarcia/Skincos-Release-Evidence',
+      evidenceRunId: '33179818924',
+      evidenceArtifact: 'promotion-evidence.json',
+      releaseIdentity: withoutArtifacts,
+    }),
+    /requires at least one immutable artifact identity/,
+  );
+
+  await assert.rejects(
+    createPromotionEvidenceV4({
+      target: 'staging',
+      createdAt: '2026-08-28T14:23:04.000Z',
+      evidenceRepository: 'JubenitoGarcia/Skincos-Release-Evidence',
+      evidenceRunId: '33179818924',
+      evidenceArtifact: 'promotion-evidence.json',
+      releaseIdentity: releaseInput(),
+    }),
+    /after preview requires predecessor provenance/,
+  );
+
+  await assert.rejects(
+    createPromotionEvidenceV4({
+      target: 'preview',
+      createdAt: '2026-08-28T14:23:04.000Z',
+      evidenceRepository: 'JubenitoGarcia/Skincos-Release-Evidence',
+      evidenceRunId: 'not-a-run-id',
+      evidenceArtifact: 'promotion-evidence.json',
+      releaseIdentity: releaseInput(),
+    }),
+    /must be a numeric GitHub Actions run id/,
+  );
 });
