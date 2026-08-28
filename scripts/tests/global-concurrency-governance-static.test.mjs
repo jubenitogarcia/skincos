@@ -536,7 +536,10 @@ test("native mini-PC mutations use the common coordinator and detached closure p
 
   const whatsapp = read("scripts/runtime/prepare-messaging-whatsapp-release.sh");
   assert.match(whatsapp, /--resource release:messaging-whatsapp/);
-  assert.match(whatsapp, /--coordination-closure/);
+  assert.match(whatsapp, /--release-candidate/);
+  assert.match(whatsapp, /messaging-whatsapp-closure\.json/);
+  assert.ok(JSON.parse(read("ops/governance/global-concurrency-policy.json")).releaseClosures["messaging-whatsapp"]);
+  assert.match(read("scripts/runtime/rollback-messaging-whatsapp-release.sh"), /verify-rollback-pair/);
 
   const dns = read("scripts/runtime/route-atendimento-production-dns.sh");
   assert.match(dns, /--resource cloudflare:atendimento:production/);

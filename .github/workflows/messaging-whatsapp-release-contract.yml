@@ -1,0 +1,69 @@
+name: Messaging WhatsApp immutable release contract
+
+on:
+  pull_request:
+    paths:
+      - "messaging/**"
+      - "ops/runtime/units/messaging-whatsapp.service"
+      - "ops/governance/global-concurrency-policy.json"
+      - "ops/governance/global-coordination-core.mjs"
+      - "ops/codex/risk-policy.json"
+      - "scripts/codex-autonomy-lib.mjs"
+      - "scripts/codex-global-coordinator.mjs"
+      - "scripts/codex-global-coordination-workflow.mjs"
+      - "scripts/codex-release-manifest.mjs"
+      - "scripts/runtime/global-coordination-mini-pc.sh"
+      - "scripts/runtime/messaging-whatsapp-release-contract.mjs"
+      - "scripts/runtime/messaging-whatsapp-release-contract.test.mjs"
+      - "scripts/runtime/prepare-messaging-whatsapp-release.sh"
+      - "scripts/runtime/rollback-messaging-whatsapp-release.sh"
+      - "scripts/runtime/run-messaging-whatsapp-release.sh"
+      - "scripts/runtime/test-prepare-messaging-whatsapp-release.sh"
+      - "scripts/runtime/test-rollback-messaging-whatsapp-release.sh"
+      - "scripts/runtime/test-run-messaging-whatsapp-release.sh"
+      - ".github/workflows/prepare-release-candidate.yml"
+      - ".github/workflows/messaging-whatsapp-release-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "messaging/**"
+      - "ops/runtime/units/messaging-whatsapp.service"
+      - "ops/governance/global-concurrency-policy.json"
+      - "ops/governance/global-coordination-core.mjs"
+      - "ops/codex/risk-policy.json"
+      - "scripts/codex-autonomy-lib.mjs"
+      - "scripts/codex-global-coordinator.mjs"
+      - "scripts/codex-global-coordination-workflow.mjs"
+      - "scripts/codex-release-manifest.mjs"
+      - "scripts/runtime/global-coordination-mini-pc.sh"
+      - "scripts/runtime/messaging-whatsapp-release-contract.mjs"
+      - "scripts/runtime/messaging-whatsapp-release-contract.test.mjs"
+      - "scripts/runtime/prepare-messaging-whatsapp-release.sh"
+      - "scripts/runtime/rollback-messaging-whatsapp-release.sh"
+      - "scripts/runtime/run-messaging-whatsapp-release.sh"
+      - "scripts/runtime/test-prepare-messaging-whatsapp-release.sh"
+      - "scripts/runtime/test-rollback-messaging-whatsapp-release.sh"
+      - "scripts/runtime/test-run-messaging-whatsapp-release.sh"
+      - ".github/workflows/prepare-release-candidate.yml"
+      - ".github/workflows/messaging-whatsapp-release-contract.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Validate immutable candidate, provenance and rollback boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - name: Test release candidate identity and negative provenance cases
+        run: node --test scripts/runtime/messaging-whatsapp-release-contract.test.mjs
+      - name: Test preparation, launcher and rollback guards
+        run: |
+          bash scripts/runtime/test-prepare-messaging-whatsapp-release.sh
+          bash scripts/runtime/test-run-messaging-whatsapp-release.sh
+          bash scripts/runtime/test-rollback-messaging-whatsapp-release.sh
