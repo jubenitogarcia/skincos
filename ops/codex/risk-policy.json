@@ -63,6 +63,20 @@
       "id": "runtime",
       "patterns": ["platform/**", "ops/runtime/**", "messaging/**", "service/**"],
       "releaseInput": true
+    },
+    {
+      "id": "schedule-public-read-adapter",
+      "patterns": [
+        "workforce/schedule/public-read-*.js",
+        "workforce/schedule/public-read.wrangler.toml",
+        "workforce/schedule/scripts/public-read-*.mjs",
+        "workforce/schedule/package.json",
+        "platform/deploy/operational-units.json",
+        ".github/actions/global-coordination-acquire/**",
+        ".github/actions/global-coordination-check/**",
+        ".github/actions/global-coordination-release/**"
+      ],
+      "releaseInput": true
     }
   ],
   "languageRules": [
