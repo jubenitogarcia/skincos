@@ -100,13 +100,9 @@ jobs:
             echo "::error::Missing GitHub secret SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY for staging core opt-in."
             exit 1
           fi
-          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' ]]; then
-            node --input-type=module <<'NODE'
-            const actor = String(process.env.ESCALA_ACTOR_HMAC_KEY || '').trim()
-            const core = String(process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY || '').trim()
-            if (!actor || !core) throw new Error('core capability secrets must be non-empty')
-            if (actor === core) throw new Error('Schedule public-read core capability must differ from ESCALA_ACTOR_HMAC_KEY')
-            NODE
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$ESCALA_ACTOR_HMAC_KEY" == "$SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY" ]]; then
+            echo '::error::Schedule public-read core capability must differ from ESCALA_ACTOR_HMAC_KEY'
+            exit 1
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
