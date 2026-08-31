@@ -1,0 +1,24 @@
+{
+  "contract": "clientes-readonly/staging-release/v1",
+  "target": "staging",
+  "enabled": false,
+  "syntheticOnly": true,
+  "singlePublisher": false,
+  "publisher": {
+    "owner": "",
+    "workflow": ""
+  },
+  "publicRoute": false,
+  "actorAdapter": {
+    "secretConfigured": false,
+    "replayStoreConfigured": false,
+    "owner": ""
+  },
+  "readModel": {
+    "serviceConfigured": false,
+    "interfaceVersion": "clientes-readonly/read-model/v1",
+    "owner": "",
+    "dataOwner": "",
+    "migrationsOwner": ""
+  }
+}
