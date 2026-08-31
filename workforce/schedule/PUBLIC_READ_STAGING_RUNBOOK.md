@@ -43,7 +43,9 @@ em staging.
 - O ambiente GitHub `staging` fornece os nomes
   `SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY` e
   `SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY`. Os valores normalizados são testados
-  como não vazios e diferentes, sem serem impressos ou incluídos em artefatos.
+  como não vazios e diferentes entre si; a chave edge também precisa diferir da
+  chave legada `ESCALA_ACTOR_HMAC_KEY`. Nenhum valor é impresso ou incluído em
+  artefatos.
 - `ENABLE_SCHEDULE_PUBLIC_READ_STAGING=true` é exigido apenas para ativar o
   candidato. A opção `disable` continua disponível para fechar o adaptador.
 - O bootstrap não recebe chaves HMAC, não usa `--secrets-file` e fixa
@@ -55,7 +57,11 @@ em staging.
 - Quando o core é habilitado, o publicador canônico cria uma única versão não
   publicada com `ESCALA_ACTOR_HMAC_KEY` e
   `SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY` por `stdin` em memória; só então a
-  promove por tag. Esse caminho também não usa `secret put`.
+  promove por tag. Cada promoção por versão recebe explicitamente as credenciais
+  Cloudflare necessárias. Após a promoção, o core recebe um smoke autenticado;
+  se esse smoke ou a geração/upload das evidências falhar, o mesmo lease cria e
+  promove uma versão com a projeção desabilitada e prova `503` no endpoint
+  interno. Esse caminho também não usa `secret put`.
 - A coordenação global usa o recurso
   `deploy:schedule-public-read-adapter:staging` e é revalidada antes de cada
   mutação Cloudflare.
@@ -114,7 +120,8 @@ revalida o lease, cria uma versão desabilitada com
 novamente e só então a promove. Em seguida prova que `/health` retorna
 `503 SCHEDULE_PUBLIC_READ_UNAVAILABLE`. Esse fallback só é alcançável após a
 prova de bootstrap; assim, uma migration ou a primeira criação do Worker nunca
-é enviada por `versions upload`.
+é enviada por `versions upload`. Se qualquer revalidação do lease falhar, a
+mutação seguinte é bloqueada; não há promoção sem lease válido.
 
 Para interromper posteriormente uma versão saudável de staging, execute o
 mesmo workflow com `target=staging` e `operation=disable`, usando o mesmo SHA

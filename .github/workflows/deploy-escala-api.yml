@@ -300,13 +300,17 @@ jobs:
           npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false"
 
       - name: Deploy explicit Schedule public-read core candidate (staging)
+        id: schedule-public-read-core-candidate-deploy
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
         env:
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
           CANDIDATE_TAG: ${{ steps.schedule-public-read-core-candidate-version.outputs.tag }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           [[ -n "$CANDIDATE_TAG" ]] || { echo 'unpublished core candidate tag is missing'; exit 1; }
+          echo 'mutated=true' >> "$GITHUB_OUTPUT"
           npx --yes wrangler@4 versions deploy --config workforce/schedule/wrangler.toml --env staging --version-tag "${CANDIDATE_TAG}@100%" --yes --message "escala-api:staging-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}"
 
       - name: Smoke check Escala API (production)
@@ -326,6 +330,14 @@ jobs:
         run: |
           set -euo pipefail
           node workforce/schedule/scripts/smoke.mjs
+
+      - name: Run authenticated Schedule public-read core smoke (staging)
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
+        env:
+          SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL: https://escala-api-staging.skincos.com.br
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE: ready
+        run: node workforce/schedule/scripts/public-read-core-staging-smoke.mjs
 
       - name: Write Schedule public-read core opt-in evidence
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
@@ -357,6 +369,67 @@ jobs:
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
           retention-days: 14
           if-no-files-found: error
+
+      - name: Check Escala API deployment lease before automatic disabled Schedule public-read core fallback version
+        id: schedule-public-read-core-automatic-disabled-version-lease
+        if: ${{ failure() && steps.schedule-public-read-core-candidate-deploy.outputs.mutated == 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Create automatic disabled Schedule public-read core fallback version
+        id: schedule-public-read-core-automatic-disabled-version
+        if: ${{ failure() && steps.schedule-public-read-core-candidate-deploy.outputs.mutated == 'true' && steps.schedule-public-read-core-automatic-disabled-version-lease.outcome == 'success' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          disabled_tag="escala-api-staging-schedule-public-read-disabled-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$disabled_tag" >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4 versions upload --config workforce/schedule/wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "escala-api:staging-schedule-public-read-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+
+      - name: Check Escala API deployment lease before automatic disabled Schedule public-read core fallback deployment
+        id: schedule-public-read-core-automatic-disabled-deployment-lease
+        if: ${{ failure() && steps.schedule-public-read-core-candidate-deploy.outputs.mutated == 'true' && steps.schedule-public-read-core-automatic-disabled-version.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Deploy automatic disabled Schedule public-read core fallback
+        id: schedule-public-read-core-automatic-disabled-fallback
+        if: ${{ failure() && steps.schedule-public-read-core-candidate-deploy.outputs.mutated == 'true' && steps.schedule-public-read-core-automatic-disabled-deployment-lease.outcome == 'success' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          DISABLED_TAG: ${{ steps.schedule-public-read-core-automatic-disabled-version.outputs.tag }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DISABLED_TAG" ]] || { echo 'automatic disabled core version tag is missing'; exit 1; }
+          npx --yes wrangler@4 versions deploy --config workforce/schedule/wrangler.toml --env staging --version-tag "${DISABLED_TAG}@100%" --yes --message "escala-api:staging-schedule-public-read-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+
+      - name: Prove automatic disabled Schedule public-read core fallback
+        if: ${{ steps.schedule-public-read-core-automatic-disabled-fallback.outcome == 'success' }}
+        env:
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL: https://escala-api-staging.skincos.com.br
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE: disabled
+        run: node workforce/schedule/scripts/public-read-core-staging-smoke.mjs
 
       - name: Release Escala API deployment lease
         if: ${{ always() && steps.guard.outputs.skip != 'true' }}

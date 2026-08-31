@@ -7,8 +7,17 @@ const coreWorkflow = readFileSync(new URL('../../.github/workflows/deploy-escala
 const adapterConfig = readFileSync(new URL('./public-read.wrangler.toml', import.meta.url), 'utf8')
 const coreConfig = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8')
 const smoke = readFileSync(new URL('./scripts/public-read-staging-smoke.mjs', import.meta.url), 'utf8')
+const coreSmoke = readFileSync(new URL('./scripts/public-read-core-staging-smoke.mjs', import.meta.url), 'utf8')
 const units = JSON.parse(readFileSync(new URL('../../platform/deploy/operational-units.json', import.meta.url), 'utf8'))
 const singleWriter = JSON.parse(readFileSync(new URL('../../.github/governance/cloudflare-single-writer-policy.json', import.meta.url), 'utf8'))
+
+function stepSection(document, name, nextName) {
+  const start = document.indexOf(`- name: ${name}`)
+  const end = nextName ? document.indexOf(`- name: ${nextName}`, start + 1) : document.length
+  assert.ok(start >= 0, `workflow is missing step: ${name}`)
+  assert.ok(end > start, `workflow has no complete step section: ${name}`)
+  return document.slice(start, end)
+}
 
 test('Schedule public-read adapter is a manual preview/staging-only publisher', () => {
   assert.match(workflow, /workflow_dispatch:/)
@@ -44,7 +53,9 @@ test('Schedule public-read adapter requires a disabled Durable Object bootstrap 
   assert.match(workflow, /ENABLE_SCHEDULE_PUBLIC_READ_STAGING/)
   assert.match(workflow, /SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY/)
   assert.match(workflow, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
+  assert.match(workflow, /ESCALA_ACTOR_HMAC_KEY/)
   assert.match(workflow, /edge and core Schedule public-read HMAC keys must differ/)
+  assert.match(workflow, /edge capability must differ from ESCALA_ACTOR_HMAC_KEY/)
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-acquire/)
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-check/)
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-release/)
@@ -87,7 +98,21 @@ test('Schedule public-read adapter requires a disabled Durable Object bootstrap 
   assert.match(workflow, /Check adapter lease before automatic disabled version creation/)
   assert.match(workflow, /Check adapter lease before automatic disabled deployment/)
   assert.match(workflow, /Prove automatic disabled fallback/)
+  assert.match(workflow, /automatic-disabled-version-lease/)
+  assert.match(workflow, /automatic-disabled-deployment-lease/)
+  assert.match(workflow, /steps\.automatic-disabled-version-lease\.outcome == 'success'/)
+  assert.match(workflow, /steps\.automatic-disabled-deployment-lease\.outcome == 'success'/)
   assert.ok((workflow.match(/global-coordination-check/g) || []).length >= 7)
+  for (const [name, nextName] of [
+    ['Deploy HMAC-gated adapter candidate to staging', 'Run synthetic authenticated staging smoke'],
+    ['Deploy automatic disabled fallback', 'Prove automatic disabled fallback'],
+    ['Deploy staging adapter disabled by explicit rollback dispatch', 'Prove explicit disabled rollback'],
+  ]) {
+    const section = stepSection(workflow, name, nextName)
+    assert.match(section, /versions deploy/)
+    assert.match(section, /CLOUDFLARE_API_TOKEN/)
+    assert.match(section, /CLOUDFLARE_ACCOUNT_ID/)
+  }
 })
 
 test('Schedule public-read defaults disabled and only the canonical core publisher can opt in for staging', () => {
@@ -106,10 +131,36 @@ test('Schedule public-read defaults disabled and only the canonical core publish
   assert.match(coreWorkflow, /Create unpublished Schedule public-read core candidate with both capabilities/)
   assert.match(coreWorkflow, /--secrets-file \/dev\/stdin/)
   assert.match(coreWorkflow, /Deploy explicit Schedule public-read core candidate \(staging\)/)
+  assert.match(coreWorkflow, /schedule-public-read-core-candidate-deploy/)
+  assert.match(coreWorkflow, /Run authenticated Schedule public-read core smoke \(staging\)/)
   assert.match(coreWorkflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:true"/)
   assert.match(coreWorkflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:false"/)
   assert.match(coreWorkflow, /schedule-public-read-core-opt-in-evidence/)
+  assert.match(coreWorkflow, /Check Escala API deployment lease before automatic disabled Schedule public-read core fallback version/)
+  assert.match(coreWorkflow, /Check Escala API deployment lease before automatic disabled Schedule public-read core fallback deployment/)
+  assert.match(coreWorkflow, /Deploy automatic disabled Schedule public-read core fallback/)
+  assert.match(coreWorkflow, /Prove automatic disabled Schedule public-read core fallback/)
+  assert.match(coreWorkflow, /schedule-public-read-core-automatic-disabled-version-lease/)
+  assert.match(coreWorkflow, /schedule-public-read-core-automatic-disabled-deployment-lease/)
+  assert.match(coreWorkflow, /steps\.schedule-public-read-core-automatic-disabled-version-lease\.outcome == 'success'/)
+  assert.match(coreWorkflow, /steps\.schedule-public-read-core-automatic-disabled-deployment-lease\.outcome == 'success'/)
   assert.doesNotMatch(coreWorkflow, /secret put SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
+  const candidateDeploySection = stepSection(coreWorkflow, 'Deploy explicit Schedule public-read core candidate (staging)', 'Smoke check Escala API (production)')
+  assert.match(candidateDeploySection, /CLOUDFLARE_API_TOKEN/)
+  assert.match(candidateDeploySection, /CLOUDFLARE_ACCOUNT_ID/)
+  assert.match(candidateDeploySection, /mutated=true/)
+  const fallbackSection = stepSection(coreWorkflow, 'Create automatic disabled Schedule public-read core fallback version', 'Check Escala API deployment lease before automatic disabled Schedule public-read core fallback deployment')
+  assert.match(fallbackSection, /CLOUDFLARE_API_TOKEN/)
+  assert.match(fallbackSection, /CLOUDFLARE_ACCOUNT_ID/)
+  assert.match(fallbackSection, /versions upload/)
+  const fallbackDeploySection = stepSection(coreWorkflow, 'Deploy automatic disabled Schedule public-read core fallback', 'Prove automatic disabled Schedule public-read core fallback')
+  assert.match(fallbackDeploySection, /CLOUDFLARE_API_TOKEN/)
+  assert.match(fallbackDeploySection, /CLOUDFLARE_ACCOUNT_ID/)
+  assert.match(fallbackDeploySection, /versions deploy/)
+  const fullFallbackSection = stepSection(coreWorkflow, 'Check Escala API deployment lease before automatic disabled Schedule public-read core fallback version', 'Release Escala API deployment lease')
+  assert.match(fullFallbackSection, /versions upload/)
+  assert.match(fullFallbackSection, /versions deploy/)
+  assert.match(fullFallbackSection, /SCHEDULE_PUBLIC_READ_ENABLED:false/)
   const productionSection = coreWorkflow.slice(
     coreWorkflow.indexOf('Deploy Escala worker (production)'),
     coreWorkflow.indexOf('Sync Escala worker secret (staging)'),
@@ -126,6 +177,16 @@ test('Schedule public-read staging smoke is synthetic, authenticated, and does n
   assert.match(smoke, /SCHEDULE_PUBLIC_READ_UNAUTHORIZED/)
   assert.match(smoke, /SCHEDULE_PUBLIC_READ_UNAVAILABLE/)
   assert.doesNotMatch(smoke, /console\.log\([^\n]*(?:EDGE_HMAC|CORE_HMAC|edgeKey)/)
+})
+
+test('Schedule public-read core staging smoke uses only the core capability and proves disabled rollback', () => {
+  assert.match(coreSmoke, /allowedOrigin = 'https:\/\/escala-api-staging\.skincos\.com\.br'/)
+  assert.match(coreSmoke, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
+  assert.match(coreSmoke, /SCHEDULE_PUBLIC_READ_CORE_SERVICE/)
+  assert.doesNotMatch(coreSmoke, /SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY/)
+  assert.doesNotMatch(coreSmoke, /ESCALA_ACTOR_HMAC_KEY/)
+  assert.match(coreSmoke, /SCHEDULE_PUBLIC_READ_UNAVAILABLE/)
+  assert.doesNotMatch(coreSmoke, /console\.log\([^\n]*(?:CORE_HMAC|coreKey)/)
 })
 
 test('deployment catalog and single-writer policy assign only the isolated adapter Worker', () => {
