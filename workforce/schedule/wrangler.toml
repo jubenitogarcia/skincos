@@ -11,6 +11,7 @@ migrations_dir = "migrations-d1"
 
 [vars]
 APP_ORIGIN = "https://crm.skincos.com.br"
+SCHEDULE_PUBLIC_READ_ENABLED = "false"
 
 [env.staging]
 name = "skincos-escala-api-staging"
@@ -24,3 +25,4 @@ migrations_dir = "migrations-d1"
 
 [env.staging.vars]
 APP_ORIGIN = "https://crm-staging.skincos.com.br"
+SCHEDULE_PUBLIC_READ_ENABLED = "false"

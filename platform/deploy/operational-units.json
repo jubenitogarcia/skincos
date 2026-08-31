@@ -148,10 +148,21 @@
       "concurrencyPrefix": "deploy-escala-api-",
       "publishes": ["Worker:skincos-escala", "Worker:skincos-escala-staging"],
       "resources": ["Escala Worker", "skincos-escala", "skincos-escala-staging"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "ESCALA_ACTOR_HMAC_KEY"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "ESCALA_ACTOR_HMAC_KEY", "SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY"],
       "migrationPaths": ["workforce/schedule/migrations-d1"],
       "environments": ["preview", "staging", "production"],
       "promotion": {"stagingSupported": true}
+    },
+    {
+      "id": "schedule-public-read-adapter",
+      "workflow": ".github/workflows/deploy-schedule-public-read-adapter.yml",
+      "concurrencyPrefix": "deploy-schedule-public-read-adapter-",
+      "publishes": ["Worker:skincos-schedule-public-read-staging"],
+      "resources": ["isolated Schedule public-read staging Worker", "per-nonce Schedule public-read Durable Object", "read-only service binding to skincos-escala-api-staging"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY", "SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY"],
+      "migrationPaths": ["workforce/schedule/public-read.wrangler.toml"],
+      "environments": ["preview", "staging"],
+      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "stagingOnly": true, "bootstrap": "canonical bootstrap-disabled staging dispatch applies the Durable Object lifecycle only while the adapter remains disabled", "rollback": "canonical disabled staging dispatch after a matching bootstrap proof; no core Schedule publication"}
     },
     {
       "id": "timekeeping",
