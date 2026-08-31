@@ -81,6 +81,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
           SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
+          SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
         run: |
           set -euo pipefail
           if [[ "${ENABLE:-true}" != "true" ]]; then
@@ -102,6 +104,15 @@ jobs:
           fi
           if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$ESCALA_ACTOR_HMAC_KEY" == "$SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY" ]]; then
             echo '::error::Schedule public-read core capability must differ from ESCALA_ACTOR_HMAC_KEY'
+            exit 1
+          fi
+          if [[ -n "${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-}" ]]; then
+            if [[ -z "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" || "$SKINCOS_GLOBAL_COORDINATION_KEY_ID" == 'legacy-v1' ]]; then
+              echo '::error::Active global coordination custody requires a non-legacy key ID.'
+              exit 1
+            fi
+          elif [[ -n "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" && "$SKINCOS_GLOBAL_COORDINATION_KEY_ID" != 'legacy-v1' ]]; then
+            echo '::error::Pinned global coordination custody requires the active coordination key.'
             exit 1
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -129,7 +140,8 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: global:crm-cloudflare-writer
           module: escala-api
           source_sha: ${{ needs.promotion.outputs.source_sha }}
@@ -146,7 +158,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Sync Escala worker secret (production)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -170,7 +183,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Apply Escala D1 migrations (production)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -192,7 +206,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Deploy Escala worker (production)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -225,7 +240,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Apply Escala D1 migrations (staging)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
@@ -247,7 +263,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Create unpublished Schedule public-read core candidate with both capabilities
         id: schedule-public-read-core-candidate-version
@@ -284,7 +301,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Deploy Escala worker (staging, default public-read disabled)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && !inputs.enable_schedule_public_read }}
@@ -378,7 +396,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Create automatic disabled Schedule public-read core fallback version
         id: schedule-public-read-core-automatic-disabled-version
@@ -405,7 +424,8 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Deploy automatic disabled Schedule public-read core fallback
         id: schedule-public-read-core-automatic-disabled-fallback
@@ -433,5 +453,6 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
