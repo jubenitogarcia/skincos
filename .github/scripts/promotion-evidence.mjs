@@ -23,6 +23,10 @@ const releaseSurfacesByUnit = {
   "token-vault": ["runtime", "github-governance"],
   "finance-ui": ["website"],
   "escala-api": ["runtime"],
+  // The adapter has an isolated Worker/Durable Object artifact.  Its source
+  // is neither a generic runtime nor the core Schedule release surface; bind
+  // its own inputs plus the canonical promotion and coordination guards.
+  "schedule-public-read-adapter": ["schedule-public-read-adapter", "global-coordination", "github-governance"],
   "meta-ads-report": ["runtime"],
   "public-website-release": ["website"],
   "beauty-movement-production-activation": ["website"],
