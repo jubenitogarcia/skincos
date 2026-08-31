@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: '22.12.0'
           cache: npm
-          cache-dependency-path: crm/console/package-lock.json
+          cache-dependency-path: finance/ui/package-lock.json
       - name: Guard isolated Pages project
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -53,18 +53,18 @@ jobs:
           set -euo pipefail
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PROJECT; do [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }; done
       - run: npm ci
-        working-directory: crm/console
+        working-directory: finance/ui
       - name: Build immutable Finance artifact
         run: |
           set -euo pipefail
-          npx vite build --config vite.finance.config.ts
-          cat > dist-finance/_headers <<'EOF'
+          npm run build
+          cat > dist/_headers <<'EOF'
           /*
             Access-Control-Allow-Origin: *
             Access-Control-Allow-Methods: GET, HEAD, OPTIONS
             Cache-Control: no-store
           EOF
-        working-directory: crm/console
+        working-directory: finance/ui
       - name: Acquire Finance UI deployment lease
         uses: ./.github/actions/global-coordination-acquire
         with:
@@ -96,20 +96,19 @@ jobs:
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          # crm/console/wrangler.toml belongs to the shell Pages deployment and
-          # contains Worker-only secret declarations. Pages does not allow a
-          # custom config path, so deploy from a temporary directory without
-          # inheriting the shell config.
+          # The CRM Pages config belongs only to the shell. Publish from a
+          # temporary directory so this independent artifact never inherits
+          # shell Worker bindings or configuration.
           FINANCE_PAGES_DIR="$RUNNER_TEMP/finance-pages"
           mkdir -p "$FINANCE_PAGES_DIR"
-          cp -R dist-finance/. "$FINANCE_PAGES_DIR/"
+          cp -R dist/. "$FINANCE_PAGES_DIR/"
           pushd "$FINANCE_PAGES_DIR" >/dev/null
           npx --yes wrangler@4.114.0 pages deploy . \
             --project-name "$PROJECT" \
             --branch "$BRANCH" \
             --commit-hash "$RELEASE_SHA"
           popd >/dev/null
-        working-directory: crm/console
+        working-directory: finance/ui
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
         env:

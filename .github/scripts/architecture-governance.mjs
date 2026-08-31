@@ -112,6 +112,7 @@ const DOMAIN_PATTERNS = Object.freeze({
     "finance/**",
     "crm/console/**/*finance*",
     "crm/console/Finance*",
+    "crm/console/modules/RemoteFinanceModule.tsx",
     ".github/scripts/validate-finance-*",
     ".github/workflows/finance-*.yml",
     "ops/module-governance/finance-*",
