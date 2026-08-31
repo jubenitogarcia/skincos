@@ -5,6 +5,7 @@
   "enabled": false,
   "syntheticOnly": true,
   "sourceSha": "",
+  "initialDeployment": false,
   "predecessorReleaseSha": "",
   "singlePublisher": false,
   "publisher": {
@@ -17,8 +18,10 @@
     "passed": false
   },
   "rollback": {
+    "mode": "restore-predecessor",
     "artifactSha": "",
-    "tested": false
+    "tested": false,
+    "workflow": ""
   },
   "actorAdapter": {
     "secretConfigured": false,

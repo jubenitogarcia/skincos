@@ -19,12 +19,18 @@ function readyPlan(overrides = {}) {
     enabled: true,
     syntheticOnly: true,
     sourceSha: 'a'.repeat(40),
+    initialDeployment: false,
     predecessorReleaseSha: 'b'.repeat(40),
     singlePublisher: true,
     publisher: { owner: 'skincos-clientes-readonly', workflow: 'isolated-staging-release' },
     publicRoute: false,
     syntheticSmoke: { implemented: true, passed: true },
-    rollback: { artifactSha: 'b'.repeat(40), tested: true },
+    rollback: {
+      mode: 'restore-predecessor',
+      artifactSha: 'b'.repeat(40),
+      tested: true,
+      workflow: 'isolated-staging-release',
+    },
     actorAdapter: { secretConfigured: true, replayStoreConfigured: true, owner: 'skincos-clientes-readonly' },
     readModel: {
       serviceConfigured: true,
@@ -59,7 +65,14 @@ test('a staging release requires one publisher, a predecessor and dedicated depe
   const competingPublisher = assessClientesReadonlyStagingRelease(readyPlan({ singlePublisher: false }))
   assert.equal(competingPublisher.ok, false)
   assert.ok(competingPublisher.reasons.includes('CLIENTES_RELEASE_SINGLE_PUBLISHER_REQUIRED'))
-  const untestedRollback = assessClientesReadonlyStagingRelease(readyPlan({ rollback: { artifactSha: 'b'.repeat(40), tested: false } }))
+  const untestedRollback = assessClientesReadonlyStagingRelease(readyPlan({
+    rollback: {
+      mode: 'restore-predecessor',
+      artifactSha: 'b'.repeat(40),
+      tested: false,
+      workflow: 'isolated-staging-release',
+    },
+  }))
   assert.equal(untestedRollback.ok, false)
   assert.ok(untestedRollback.reasons.includes('CLIENTES_RELEASE_ROLLBACK_REQUIRED'))
 })
@@ -73,4 +86,38 @@ test('a rollback can only select the recorded predecessor artifact', () => {
   const wrongRollbackArtifact = assessClientesReadonlyStagingRelease(readyPlan({ operation: 'rollback' }))
   assert.equal(wrongRollbackArtifact.ok, false)
   assert.ok(wrongRollbackArtifact.reasons.includes('CLIENTES_RELEASE_ROLLBACK_TARGET_INVALID'))
+})
+
+test('initial staging deployment uses a tested disable rollback instead of inventing a predecessor', () => {
+  const sourceSha = 'c'.repeat(40)
+  const initialDeployment = assessClientesReadonlyStagingRelease(readyPlan({
+    sourceSha,
+    initialDeployment: true,
+    predecessorReleaseSha: '',
+    rollback: {
+      mode: 'disable',
+      artifactSha: sourceSha,
+      tested: true,
+      workflow: 'isolated-staging-release',
+    },
+  }))
+  assert.equal(initialDeployment.ok, true)
+
+  const inventedPredecessor = assessClientesReadonlyStagingRelease(readyPlan({
+    initialDeployment: true,
+  }))
+  assert.equal(inventedPredecessor.ok, false)
+  assert.ok(inventedPredecessor.reasons.includes('CLIENTES_RELEASE_INITIAL_PREDECESSOR_FORBIDDEN'))
+  assert.ok(inventedPredecessor.reasons.includes('CLIENTES_RELEASE_INITIAL_ROLLBACK_REQUIRED'))
+})
+
+test('an eligible plan binds its evidence to the exact checked-out source SHA', () => {
+  const matching = assessClientesReadonlyStagingRelease(readyPlan(), { expectedSourceSha: 'a'.repeat(40) })
+  assert.equal(matching.ok, true)
+  const stale = assessClientesReadonlyStagingRelease(readyPlan(), { expectedSourceSha: 'd'.repeat(40) })
+  assert.equal(stale.ok, false)
+  assert.ok(stale.reasons.includes('CLIENTES_RELEASE_SOURCE_SHA_MISMATCH'))
+  const absent = assessClientesReadonlyStagingRelease(readyPlan(), { expectedSourceSha: '' })
+  assert.equal(absent.ok, false)
+  assert.ok(absent.reasons.includes('CLIENTES_RELEASE_EXPECTED_SOURCE_SHA_REQUIRED'))
 })

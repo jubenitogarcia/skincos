@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import {
   CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+  CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
   createClientesReadonlyActorHeaders,
   createClientesReadonlyRuntime,
 } from '../src/index.js'
@@ -31,7 +32,12 @@ const env = {
   CLIENTES_READONLY_ACTOR_REPLAY: createReplayStore(),
   CLIENTES_READONLY_READ_MODEL: {
     async readiness() {
-      return { contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION, ready: true }
+      return {
+        contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+        mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+        syntheticOnly: true,
+        ready: true,
+      }
     },
     async listClientesReadonly({ actor, query }) {
       assert.deepEqual(actor, { subject: 'synthetic-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] })

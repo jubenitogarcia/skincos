@@ -6,6 +6,8 @@ import {
 export const CLIENTES_READONLY_ACTOR_AUDIENCE = 'clientes-readonly'
 export const CLIENTES_READONLY_ACTOR_SIGNATURE_VERSION = 'v1'
 export const CLIENTES_READONLY_ACTOR_MAX_AGE_MS = 60_000
+export const CLIENTES_READONLY_ACTOR_MAX_FUTURE_SKEW_MS = 5_000
+export const CLIENTES_READONLY_ACTOR_MIN_SECRET_BYTES = 32
 export const CLIENTES_READONLY_ACTOR_CONTEXT_HEADER = 'x-skincos-clientes-actor-context'
 export const CLIENTES_READONLY_ACTOR_SIGNATURE_HEADER = 'x-skincos-clientes-actor-signature'
 export const CLIENTES_READONLY_ACTOR_VERSION_HEADER = 'x-skincos-clientes-actor-version'
@@ -59,13 +61,18 @@ function normalizedMethod(value) {
 }
 
 function normalizedSecret(value) {
-  return text(value, 4096)
+  const candidate = text(value, 4096)
+  return encoder.encode(candidate).byteLength >= CLIENTES_READONLY_ACTOR_MIN_SECRET_BYTES
+    ? candidate
+    : ''
 }
 
 function validSignedContext(value, request, now) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   if (value.version !== 1 || value.audience !== CLIENTES_READONLY_ACTOR_AUDIENCE) return false
-  if (!Number.isInteger(value.issuedAt) || Math.abs(now - value.issuedAt) > CLIENTES_READONLY_ACTOR_MAX_AGE_MS) return false
+  if (!Number.isSafeInteger(value.issuedAt)) return false
+  const ageMs = now - value.issuedAt
+  if (ageMs > CLIENTES_READONLY_ACTOR_MAX_AGE_MS || ageMs < -CLIENTES_READONLY_ACTOR_MAX_FUTURE_SKEW_MS) return false
   if (!NONCE_PATTERN.test(String(value.nonce || ''))) return false
   if (!['GET', 'HEAD'].includes(value.method) || value.method !== normalizedMethod(request.method)) return false
   if (typeof value.path !== 'string' || value.path !== requestPath(request)) return false
@@ -78,8 +85,19 @@ async function sign(secret, context) {
   return base64UrlEncode(signature)
 }
 
-async function replayKey(context) {
-  const digest = await crypto.subtle.digest(SHA_256, encoder.encode(context))
+function replayExpiry(issuedAt, now) {
+  return Math.min(
+    issuedAt + CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
+    now + CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
+  )
+}
+
+async function replayKey({ audience, nonce } = {}) {
+  const canonicalNonce = audience === CLIENTES_READONLY_ACTOR_AUDIENCE && NONCE_PATTERN.test(String(nonce || ''))
+    ? JSON.stringify({ audience, nonce: String(nonce) })
+    : ''
+  if (!canonicalNonce) throw new TypeError('A valid readonly audience and nonce are required')
+  const digest = await crypto.subtle.digest(SHA_256, encoder.encode(canonicalNonce))
   return `${CLIENTES_READONLY_CONTRACT_VERSION}:actor:${base64UrlEncode(digest)}`
 }
 
@@ -154,7 +172,8 @@ export function createClientesReadonlyAuthenticatedActorAdapter({ secret, replay
     } catch {
       parsed = null
     }
-    if (!parsed || !validSignedContext(parsed, request, now())) {
+    const observedAt = now()
+    if (!parsed || !validSignedContext(parsed, request, observedAt)) {
       return { ok: false, code: 'CLIENTES_ACTOR_FORBIDDEN' }
     }
 
@@ -173,8 +192,8 @@ export function createClientesReadonlyAuthenticatedActorAdapter({ secret, replay
 
     try {
       const claimed = await replayStore.claimNonce({
-        key: await replayKey(context),
-        expiresAtMs: parsed.issuedAt + CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
+        key: await replayKey({ audience: parsed.audience, nonce: parsed.nonce }),
+        expiresAtMs: replayExpiry(parsed.issuedAt, observedAt),
       })
       if (claimed?.accepted !== true) {
         return { ok: false, code: claimed?.code === 'CLIENTES_ACTOR_REPLAYED' ? claimed.code : 'CLIENTES_ACTOR_REPLAYED' }
@@ -203,6 +222,7 @@ export const __testables = {
   constantTimeEqual,
   configuredReplayStore,
   replayKey,
+  replayExpiry,
   requestPath,
   validSignedContext,
 }

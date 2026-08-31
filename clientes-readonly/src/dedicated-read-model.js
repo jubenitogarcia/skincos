@@ -1,6 +1,7 @@
 import { normalizeClientesReadonlyActor } from './contract.js'
 
 export const CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION = 'clientes-readonly/read-model/v1'
+export const CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE = 'synthetic-only'
 
 function configuredReadModelBinding(binding) {
   return Boolean(binding
@@ -32,14 +33,20 @@ export function createDedicatedClientesReadonlyReadModel(binding) {
     async isReady() {
       const result = await binding.readiness({
         contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
-        mode: 'read-only',
+        mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+        syntheticOnly: true,
       })
-      return result?.ready === true && result?.contract === CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION
+      return result?.ready === true
+        && result?.contract === CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION
+        && result?.mode === CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE
+        && result?.syntheticOnly === true
     },
     async listClients(value) {
       const input = readonlyInput(value)
       return binding.listClientesReadonly({
         contract: input.contract,
+        mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+        syntheticOnly: true,
         actor: input.actor,
         query: input.query,
       })
@@ -48,6 +55,8 @@ export function createDedicatedClientesReadonlyReadModel(binding) {
       const input = readonlyInput(value)
       return binding.getClienteReadonlyById({
         contract: input.contract,
+        mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+        syntheticOnly: true,
         actor: input.actor,
         clientId: input.clientId,
       })

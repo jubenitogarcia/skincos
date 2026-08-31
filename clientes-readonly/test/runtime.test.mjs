@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+  CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
   createClientesReadonlyActorHeaders,
   createClientesReadonlyRuntime,
   validateClientesReadonlyRuntimeConfig,
@@ -32,7 +33,14 @@ function readyEnvironment(overrides = {}) {
     CLIENTES_READONLY_ACTOR_HMAC_KEY: secret,
     CLIENTES_READONLY_ACTOR_REPLAY: replayStore(),
     CLIENTES_READONLY_READ_MODEL: {
-      async readiness() { return { contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION, ready: true } },
+      async readiness() {
+        return {
+          contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+          mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+          syntheticOnly: true,
+          ready: true,
+        }
+      },
       async listClientesReadonly() {
         return { items: [{ clientId: 'synthetic-client-1', displayName: 'Synthetic Client', unitId: 'novo-hamburgo', status: 'active' }] }
       },
@@ -70,7 +78,14 @@ test('disabled runtime remains observable and rejects writes without resolving a
 test('configured staging runtime executes a synthetic signed read and redacts adapter-only fields', async () => {
   const env = readyEnvironment({
     CLIENTES_READONLY_READ_MODEL: {
-      async readiness() { return { contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION, ready: true } },
+      async readiness() {
+        return {
+          contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+          mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+          syntheticOnly: true,
+          ready: true,
+        }
+      },
       async listClientesReadonly() {
         return { items: [{
           clientId: 'synthetic-client-1',
@@ -100,4 +115,12 @@ test('configured staging runtime executes a synthetic signed read and redacts ad
     status: 'active',
     updatedAt: null,
   }])
+})
+
+test('configured health and readiness attest the exact deployed release SHA', async () => {
+  const runtime = createClientesReadonlyRuntime(readyEnvironment())
+  const health = await runtime.fetch(new Request('https://clientes-readonly.test/health'))
+  const readiness = await runtime.fetch(new Request('https://clientes-readonly.test/readiness'))
+  assert.equal((await health.json()).release.sha, 'a'.repeat(40))
+  assert.equal((await readiness.json()).release.sha, 'a'.repeat(40))
 })

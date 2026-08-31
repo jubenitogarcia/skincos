@@ -51,4 +51,5 @@ jobs:
           set -euo pipefail
           node clientes-readonly/scripts/release-gate.mjs \
             --plan clientes-readonly/release/staging-gate.json \
-            --require-ready
+            --require-ready \
+            --expected-source-sha "$GITHUB_SHA"

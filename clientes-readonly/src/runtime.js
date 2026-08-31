@@ -84,12 +84,13 @@ export function createClientesReadonlyRuntime(env = {}) {
   if (!validateClientesReadonlyRuntimeConfig(env).ok) {
     return Object.freeze({ fetch: runtimeUnavailableHandler() })
   }
+  const releaseSha = value(env, 'CLIENTES_READONLY_RELEASE_SHA')
   const resolveActor = createClientesReadonlyAuthenticatedActorAdapter({
     secret: env.CLIENTES_READONLY_ACTOR_HMAC_KEY,
     replayStore: env.CLIENTES_READONLY_ACTOR_REPLAY,
   })
   const readModel = createDedicatedClientesReadonlyReadModel(env.CLIENTES_READONLY_READ_MODEL)
-  return Object.freeze({ fetch: createClientesReadonlyHandler({ readModel, resolveActor }) })
+  return Object.freeze({ fetch: createClientesReadonlyHandler({ readModel, resolveActor, releaseSha }) })
 }
 
 export const __testables = {

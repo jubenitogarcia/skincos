@@ -27,5 +27,6 @@ test('the release-gate workflow has no deploy command, credential or Cloudflare 
   assert.match(workflow, /name: Clientes Readonly Release Gate/)
   assert.match(workflow, /npm --prefix clientes-readonly run smoke:synthetic/)
   assert.match(workflow, /--require-ready/)
+  assert.match(workflow, /--expected-source-sha "\$GITHUB_SHA"/)
   assert.doesNotMatch(workflow, /\bwrangler\b|\bCLOUDFLARE\b|secrets\./i)
 })

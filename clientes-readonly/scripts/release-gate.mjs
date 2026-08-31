@@ -10,8 +10,10 @@ function argument(name) {
 }
 
 const planPath = argument('--plan')
+const requireReady = process.argv.includes('--require-ready')
+const expectedSourceSha = argument('--expected-source-sha')
 if (!planPath) {
-  console.error('Usage: node scripts/release-gate.mjs --plan <path> [--require-ready]')
+  console.error('Usage: node scripts/release-gate.mjs --plan <path> [--require-ready --expected-source-sha <sha>]')
   process.exit(2)
 }
 
@@ -24,6 +26,8 @@ try {
   process.exit(2)
 }
 
-const result = assessClientesReadonlyStagingRelease(plan)
+const result = assessClientesReadonlyStagingRelease(plan, {
+  expectedSourceSha: requireReady ? expectedSourceSha : undefined,
+})
 console.log(JSON.stringify(result))
-if (process.argv.includes('--require-ready') && !result.ok) process.exit(1)
+if (requireReady && !result.ok) process.exit(1)

@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+  CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
   createDedicatedClientesReadonlyReadModel,
 } from '../src/index.js'
 
@@ -19,7 +20,12 @@ test('the adapter forwards only the contracted actor and query to its dedicated 
   const readModel = createDedicatedClientesReadonlyReadModel({
     async readiness(input) {
       observed.push(['readiness', input])
-      return { contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION, ready: true }
+      return {
+        contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+        mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+        syntheticOnly: true,
+        ready: true,
+      }
     },
     async listClientesReadonly(input) {
       observed.push(['list', input])
@@ -35,14 +41,22 @@ test('the adapter forwards only the contracted actor and query to its dedicated 
   await readModel.listClients({ actor, query: { unitId: 'novo-hamburgo', cursor: null, limit: 25 } })
   await readModel.getClientById({ actor, clientId: 'synthetic-client-1' })
   assert.deepEqual(observed, [
-    ['readiness', { contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION, mode: 'read-only' }],
+    ['readiness', {
+      contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+      mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+      syntheticOnly: true,
+    }],
     ['list', {
       contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+      mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+      syntheticOnly: true,
       actor: { subject: 'synthetic-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] },
       query: { unitId: 'novo-hamburgo', cursor: null, limit: 25 },
     }],
     ['detail', {
       contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+      mode: CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+      syntheticOnly: true,
       actor: { subject: 'synthetic-gestor-1', role: 'GESTOR', unitIds: ['novo-hamburgo'] },
       clientId: 'synthetic-client-1',
     }],
@@ -52,6 +66,17 @@ test('the adapter forwards only the contracted actor and query to its dedicated 
 test('an unhealthy dedicated binding makes the handler readiness fail closed', async () => {
   const readModel = createDedicatedClientesReadonlyReadModel({
     async readiness() { return { contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION, ready: false } },
+    async listClientesReadonly() { return { items: [] } },
+    async getClienteReadonlyById() { return null },
+  })
+  assert.equal(await readModel.isReady(), false)
+})
+
+test('a binding cannot claim readiness without attesting its synthetic-only dataset mode', async () => {
+  const readModel = createDedicatedClientesReadonlyReadModel({
+    async readiness() {
+      return { contract: CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION, mode: 'read-only', ready: true }
+    },
     async listClientesReadonly() { return { items: [] } },
     async getClienteReadonlyById() { return null },
   })
