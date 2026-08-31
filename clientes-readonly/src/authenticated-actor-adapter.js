@@ -8,6 +8,7 @@ export const CLIENTES_READONLY_ACTOR_SIGNATURE_VERSION = 'v1'
 export const CLIENTES_READONLY_ACTOR_MAX_AGE_MS = 60_000
 export const CLIENTES_READONLY_ACTOR_MAX_FUTURE_SKEW_MS = 5_000
 export const CLIENTES_READONLY_ACTOR_MIN_SECRET_BYTES = 32
+export const CLIENTES_READONLY_ACTOR_CONTEXT_MAX_CHARS = 4_096
 export const CLIENTES_READONLY_ACTOR_CONTEXT_HEADER = 'x-skincos-clientes-actor-context'
 export const CLIENTES_READONLY_ACTOR_SIGNATURE_HEADER = 'x-skincos-clientes-actor-signature'
 export const CLIENTES_READONLY_ACTOR_VERSION_HEADER = 'x-skincos-clientes-actor-version'
@@ -138,6 +139,12 @@ export async function createClientesReadonlyActorHeaders({
     path: `${requestUrl.pathname}${requestUrl.search}`,
     actor: actorResult.actor,
   })))
+  // Keep the signer and verifier on the same hard envelope boundary. The
+  // actor normalizer caps unit scopes, and this final check also protects the
+  // full request path from producing a credential the verifier will reject.
+  if (context.length > CLIENTES_READONLY_ACTOR_CONTEXT_MAX_CHARS) {
+    throw new TypeError('Readonly actor envelope exceeds the supported context limit')
+  }
   return {
     [CLIENTES_READONLY_ACTOR_VERSION_HEADER]: CLIENTES_READONLY_ACTOR_SIGNATURE_VERSION,
     [CLIENTES_READONLY_ACTOR_CONTEXT_HEADER]: context,
@@ -158,7 +165,7 @@ export function createClientesReadonlyAuthenticatedActorAdapter({ secret, replay
     if (!configured) return { ok: false, code: 'CLIENTES_ACTOR_UNAVAILABLE' }
 
     const version = text(request?.headers?.get(CLIENTES_READONLY_ACTOR_VERSION_HEADER), 16)
-    const context = text(request?.headers?.get(CLIENTES_READONLY_ACTOR_CONTEXT_HEADER), 4096)
+    const context = text(request?.headers?.get(CLIENTES_READONLY_ACTOR_CONTEXT_HEADER), CLIENTES_READONLY_ACTOR_CONTEXT_MAX_CHARS)
     const signature = text(request?.headers?.get(CLIENTES_READONLY_ACTOR_SIGNATURE_HEADER), 256)
     if (!version && !context && !signature) return null
     if (version !== CLIENTES_READONLY_ACTOR_SIGNATURE_VERSION || !context || !signature) {

@@ -23,7 +23,9 @@ The future deployment must configure both dependencies independently:
 
 - `CLIENTES_READONLY_ACTOR_HMAC_KEY` stays in the isolated secret store. The
   actor adapter accepts only a short-lived HMAC envelope that is bound to the
-  HTTP method and full path; browser identity headers are ignored.
+  HTTP method and full path; browser identity headers are ignored. An actor can
+  carry at most 24 unit scopes, and the signer refuses any envelope longer than
+  the verifier's 4,096-character context boundary.
 - `CLIENTES_READONLY_ACTOR_REPLAY` implements `isReady()` and
   `claimNonce({ key, expiresAtMs })`. It is a dedicated replay ledger; an
   unavailable or repeated nonce fails closed.
@@ -45,24 +47,38 @@ contains no D1, KV, R2, service, route, trigger, secret, or production
 environment. Consequently it cannot bind a CRM source or publish a ready
 runtime by default.
 
-`release/staging-gate.json` is the source-of-truth release declaration. It is
-committed as not ready and `npm run release:gate` reports the missing facts.
-Before a separate owner may add the sole deploy command, its plan must prove:
+`release/staging-gate.json` is the versioned policy/pre-cut declaration. It is
+committed as not ready and `npm run release:gate` reports the missing facts. It
+contains no candidate SHA, smoke record, predecessor, or rollback artifact:
+those release-instance facts must be supplied in an external, generated
+evidence file. The gate rejects a checked-in `sourceSha` so a commit never has
+to self-reference its own identity.
+
+The future release workflow must generate that file outside the checkout with
+`scripts/release-evidence.mjs`, bind it to the exact checked-out SHA and tree,
+and then pass it using `--release-evidence` together with
+`--expected-source-sha`. The current workflow creates only this identity
+record; it cannot manufacture smoke, rollback, publisher, actor-custody, or
+read-model evidence, so the pre-cut state remains fail-closed.
+
+Before a separate owner may add the sole deploy command, its plan plus external
+evidence must prove:
 
 1. exact source and predecessor release SHAs, with a non-initial predecessor
    distinct from the release being evaluated;
 2. a named single publisher/workflow, reused for rollback, and no public route;
 3. a dedicated read-model service, data owner and migrations owner;
 4. separate actor secret and replay-store custody;
-5. a passing synthetic smoke and a tested rollback selection using the recorded
-   predecessor artifact.
+5. a passing synthetic smoke bound to that exact source and a tested rollback
+   selection using the recorded predecessor artifact.
 
-Rollback is never a redeploy from CRM. The gate requires a previously recorded
-predecessor SHA distinct from the current source, a matching rollback artifact,
-a recorded rollback test, and the same sole publisher workflow declared for the
-release. A rollback operation must select that exact predecessor. The future
-single publisher must keep the release disabled until those facts have external
-evidence. No data rollback or destructive action is defined here.
+Rollback is never a redeploy from CRM. The external evidence requires a
+previously recorded predecessor SHA distinct from the current source, a matching
+rollback artifact, a recorded rollback test, and the same sole publisher
+workflow declared in the plan. A rollback operation must select that exact
+predecessor. The future single publisher must keep the release disabled until
+those facts have external evidence. No data rollback or destructive action is
+defined here.
 
 ## Local validation
 

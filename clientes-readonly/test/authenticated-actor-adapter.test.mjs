@@ -3,13 +3,16 @@ import test from 'node:test'
 
 import {
   CLIENTES_READONLY_ACTOR_CONTEXT_HEADER,
+  CLIENTES_READONLY_ACTOR_CONTEXT_MAX_CHARS,
   CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
   CLIENTES_READONLY_ACTOR_MAX_FUTURE_SKEW_MS,
   CLIENTES_READONLY_ACTOR_MIN_SECRET_BYTES,
+  CLIENTES_READONLY_ACTOR_MAX_UNIT_IDS,
   CLIENTES_READONLY_ACTOR_SIGNATURE_HEADER,
   CLIENTES_READONLY_ACTOR_VERSION_HEADER,
   createClientesReadonlyActorHeaders,
   createClientesReadonlyAuthenticatedActorAdapter,
+  normalizeClientesReadonlyActor,
 } from '../src/index.js'
 
 const secret = 'synthetic-only-clientes-readonly-hmac-key-0123456789'
@@ -166,4 +169,54 @@ test('actor adapter fails closed when signature or replay custody is absent', as
   assert.deepEqual(await readyAdapter(new Request(url, { headers })), { ok: false, code: 'CLIENTES_ACTOR_FORBIDDEN' })
   assert.ok(headers[CLIENTES_READONLY_ACTOR_CONTEXT_HEADER])
   assert.equal(headers[CLIENTES_READONLY_ACTOR_VERSION_HEADER], 'v1')
+})
+
+test('actor adapter caps unit scopes and never signs an envelope beyond its verifier boundary', async () => {
+  const permittedUnits = Array.from({ length: CLIENTES_READONLY_ACTOR_MAX_UNIT_IDS }, (_, index) => `unit-${index + 1}`)
+  const withinLimit = { subject: 'synthetic-gestor-1', role: 'GESTOR', unitIds: permittedUnits }
+  const normalized = normalizeClientesReadonlyActor(withinLimit)
+  assert.equal(normalized.ok, true)
+
+  const url = 'https://clientes-readonly.test/v1/clientes?unitId=unit-1'
+  const headers = await createClientesReadonlyActorHeaders({
+    secret,
+    url,
+    actor: withinLimit,
+    issuedAt: timestamp,
+    nonce: 'clientes-readonly-maximum-unit-scope-0001',
+  })
+  assert.ok(headers[CLIENTES_READONLY_ACTOR_CONTEXT_HEADER].length <= CLIENTES_READONLY_ACTOR_CONTEXT_MAX_CHARS)
+  const adapter = createClientesReadonlyAuthenticatedActorAdapter({ secret, replayStore: replayStore(), now: () => timestamp })
+  assert.equal((await adapter(new Request(url, { headers }))).unitIds.length, CLIENTES_READONLY_ACTOR_MAX_UNIT_IDS)
+
+  const tooManyUnits = {
+    subject: 'synthetic-gestor-1',
+    role: 'GESTOR',
+    unitIds: Array.from({ length: CLIENTES_READONLY_ACTOR_MAX_UNIT_IDS + 1 }, (_, index) => `unit-${index + 1}`),
+  }
+  assert.deepEqual(normalizeClientesReadonlyActor(tooManyUnits), {
+    ok: false,
+    code: 'CLIENTES_UNIT_SCOPE_LIMIT_EXCEEDED',
+  })
+  await assert.rejects(
+    createClientesReadonlyActorHeaders({
+      secret,
+      url,
+      actor: tooManyUnits,
+      issuedAt: timestamp,
+      nonce: 'clientes-readonly-over-limit-unit-scope-0001',
+    }),
+    /valid readonly actor/i,
+  )
+
+  await assert.rejects(
+    createClientesReadonlyActorHeaders({
+      secret,
+      url: `https://clientes-readonly.test/${'x'.repeat(CLIENTES_READONLY_ACTOR_CONTEXT_MAX_CHARS)}`,
+      actor: withinLimit,
+      issuedAt: timestamp,
+      nonce: 'clientes-readonly-oversized-envelope-0001',
+    }),
+    /supported context limit/i,
+  )
 })
