@@ -81,7 +81,7 @@ jobs:
           grep -q 'workers_dev = true' workforce/schedule/public-read.wrangler.toml || { echo 'isolated staging workers.dev surface is missing'; exit 1; }
 
       - name: Run isolated adapter contract tests
-        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-ready-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js
 
       - name: Validate staging adapter configuration without a remote mutation
         run: npx --yes wrangler@4.120.0 deploy --dry-run --config workforce/schedule/public-read.wrangler.toml --env staging --outdir "$RUNNER_TEMP/schedule-public-read-adapter-preview"
@@ -134,7 +134,7 @@ jobs:
           grep -q 'service = "skincos-escala-api-staging"' workforce/schedule/public-read.wrangler.toml || { echo 'adapter must bind only the isolated staging Schedule core'; exit 1; }
 
       - name: Run isolated adapter contract tests
-        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-ready-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js
 
       - name: Verify exact Escala staging predecessor for candidate enablement
         if: ${{ inputs.operation == 'deploy' }}
