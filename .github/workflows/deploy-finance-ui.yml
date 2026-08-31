@@ -39,11 +39,39 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
+      - name: Resolve Finance UI artifact layout
+        id: source-layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rollback SHA can predate the standalone finance/ui package. The
+          # workflow itself stays current on main, while the immutable checkout
+          # selects the matching source layout without falling back at runtime.
+          if [[ -f finance/ui/package.json && -f finance/ui/package-lock.json && -f finance/ui/vite.config.ts ]]; then
+            layout=standalone
+            working_directory=finance/ui
+            package_lock=finance/ui/package-lock.json
+            artifact_directory=dist
+          elif [[ -f crm/console/package.json && -f crm/console/package-lock.json && -f crm/console/vite.finance.config.ts && -f crm/console/finance-remote/entry.tsx ]]; then
+            layout=legacy-crm-console
+            working_directory=crm/console
+            package_lock=crm/console/package-lock.json
+            artifact_directory=dist-finance
+          else
+            echo '::error::The immutable release SHA has neither a standalone nor a legacy Finance UI artifact source.'
+            exit 1
+          fi
+          {
+            echo "layout=$layout"
+            echo "working_directory=$working_directory"
+            echo "package_lock=$package_lock"
+            echo "artifact_directory=$artifact_directory"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22.12.0'
           cache: npm
-          cache-dependency-path: finance/ui/package-lock.json
+          cache-dependency-path: ${{ steps.source-layout.outputs.package_lock }}
       - name: Guard isolated Pages project
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -53,18 +81,25 @@ jobs:
           set -euo pipefail
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PROJECT; do [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }; done
       - run: npm ci
-        working-directory: finance/ui
+        working-directory: ${{ steps.source-layout.outputs.working_directory }}
       - name: Build immutable Finance artifact
+        env:
+          FINANCE_UI_LAYOUT: ${{ steps.source-layout.outputs.layout }}
+          FINANCE_UI_ARTIFACT_DIRECTORY: ${{ steps.source-layout.outputs.artifact_directory }}
         run: |
           set -euo pipefail
-          npm run build
-          cat > dist/_headers <<'EOF'
+          case "$FINANCE_UI_LAYOUT" in
+            standalone) npm run build ;;
+            legacy-crm-console) npx vite build --config vite.finance.config.ts ;;
+            *) echo "Unknown Finance UI artifact layout: $FINANCE_UI_LAYOUT"; exit 1 ;;
+          esac
+          cat > "$FINANCE_UI_ARTIFACT_DIRECTORY/_headers" <<'EOF'
           /*
             Access-Control-Allow-Origin: *
             Access-Control-Allow-Methods: GET, HEAD, OPTIONS
             Cache-Control: no-store
           EOF
-        working-directory: finance/ui
+        working-directory: ${{ steps.source-layout.outputs.working_directory }}
       - name: Acquire Finance UI deployment lease
         uses: ./.github/actions/global-coordination-acquire
         with:
@@ -94,6 +129,7 @@ jobs:
           PROJECT: ${{ inputs.target == 'production' && vars.FINANCE_UI_PAGES_PROJECT_PRODUCTION || vars.FINANCE_UI_PAGES_PROJECT_STAGING }}
           BRANCH: ${{ inputs.target == 'production' && 'main' || 'staging' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          FINANCE_UI_ARTIFACT_DIRECTORY: ${{ steps.source-layout.outputs.artifact_directory }}
         run: |
           set -euo pipefail
           # The CRM Pages config belongs only to the shell. Publish from a
@@ -101,14 +137,14 @@ jobs:
           # shell Worker bindings or configuration.
           FINANCE_PAGES_DIR="$RUNNER_TEMP/finance-pages"
           mkdir -p "$FINANCE_PAGES_DIR"
-          cp -R dist/. "$FINANCE_PAGES_DIR/"
+          cp -R "$FINANCE_UI_ARTIFACT_DIRECTORY"/. "$FINANCE_PAGES_DIR/"
           pushd "$FINANCE_PAGES_DIR" >/dev/null
           npx --yes wrangler@4.114.0 pages deploy . \
             --project-name "$PROJECT" \
             --branch "$BRANCH" \
             --commit-hash "$RELEASE_SHA"
           popd >/dev/null
-        working-directory: finance/ui
+        working-directory: ${{ steps.source-layout.outputs.working_directory }}
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
         env:
