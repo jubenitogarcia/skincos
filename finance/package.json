@@ -6,6 +6,11 @@
     "test": "node --test --test-timeout=300000 test/*.test.mjs",
     "check": "node --check api/worker.js && node --check worker.js"
   },
+  "dependencies": {
+    "@jubenitogarcia/skincos-edge-adapters": "0.1.0",
+    "@jubenitogarcia/skincos-finance-contracts": "0.1.0",
+    "@jubenitogarcia/skincos-platform-contracts": "0.1.0"
+  },
   "devDependencies": {
     "miniflare": "4.20260722.0",
     "playwright": "1.58.0"

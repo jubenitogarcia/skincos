@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { handleFinance } from '../worker.js';
-import { canaryBucket, canUseCanary } from '../../shared/module-availability/worker.js';
+import { canaryBucket, canUseCanary } from '@jubenitogarcia/skincos-platform-contracts/module-availability';
 
 test('Finance exposes health without a public domain route and honors runtime maintenance', async () => {
   const health = await handleFinance(new Request('https://finance.internal/health'), {}, {});

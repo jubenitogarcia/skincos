@@ -39,6 +39,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   finance-domain:
@@ -55,6 +56,8 @@ jobs:
             api/package-lock.json
             crm/console/package-lock.json
       - name: Install pinned Finance toolchain without lifecycle scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
         run: npm --prefix finance ci --ignore-scripts
       - name: Check Finance worker sources
         run: npm --prefix finance run check

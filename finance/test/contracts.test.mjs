@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { asCurrency, asIsoDate, asMinorAmount, FinanceContractError } from '../../shared/finance-contracts/index.js';
+import { asCurrency, asIsoDate, asMinorAmount, FinanceContractError } from '@jubenitogarcia/skincos-finance-contracts';
 
 test('finance monetary contract accepts integer minor units only', () => {
   assert.equal(asMinorAmount(1250), 1250);

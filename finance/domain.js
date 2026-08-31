@@ -1,4 +1,4 @@
-import { FinanceContractError } from '../shared/finance-contracts/index.js';
+import { FinanceContractError } from '@jubenitogarcia/skincos-finance-contracts';
 
 export function buildPostedJournal({ type, amountMinor, sourceLedgerId, destinationLedgerId, categoryLedgerId }) {
   if (!sourceLedgerId || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new FinanceContractError('VALIDATION_ERROR', 'Razão financeiro inválido.');
