@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 const workflow = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8')
+const contractWorkflow = readFileSync(new URL('../../.github/workflows/schedule-public-read-contract.yml', import.meta.url), 'utf8')
 const coreWorkflow = readFileSync(new URL('../../.github/workflows/deploy-escala-api.yml', import.meta.url), 'utf8')
 const adapterConfig = readFileSync(new URL('./public-read.wrangler.toml', import.meta.url), 'utf8')
 const coreConfig = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8')
@@ -80,6 +81,13 @@ test('Schedule public-read adapter is a manual preview/staging-only publisher', 
   assert.match(workflow, /environment: staging/)
   assert.match(workflow, /DISPATCH_REF.*refs\/heads\/main/)
   assert.match(workflow, /RUN_ATTEMPT.*== '1'/)
+})
+
+test('Schedule public-read contract runners execute bounded disabled and ready health convergence coverage', () => {
+  assert.equal((workflow.match(/public-read-disabled-health\.test\.js/g) || []).length, 2)
+  assert.equal((workflow.match(/public-read-ready-health\.test\.js/g) || []).length, 2)
+  assert.match(contractWorkflow, /public-read-disabled-health\.test\.js/)
+  assert.match(contractWorkflow, /public-read-ready-health\.test\.js/)
 })
 
 test('Schedule public-read adapter keeps core publication and Website outside its writer scope', () => {
