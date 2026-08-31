@@ -28,14 +28,34 @@ function error(request, status, code, headers) {
   }, headers)
 }
 
-function hasReadyReadModel(readModel) {
+function hasConfiguredReadModel(readModel) {
   return Boolean(readModel?.ready === true
     && typeof readModel.listClients === 'function'
     && typeof readModel.getClientById === 'function')
 }
 
+async function hasReadyReadModel(readModel) {
+  if (!hasConfiguredReadModel(readModel)) return false
+  if (typeof readModel.isReady !== 'function') return true
+  try {
+    return (await readModel.isReady()) === true
+  } catch {
+    return false
+  }
+}
+
 function hasConfiguredActorAdapter(resolveActor) {
   return typeof resolveActor === 'function'
+}
+
+async function hasReadyActorAdapter(resolveActor) {
+  if (!hasConfiguredActorAdapter(resolveActor)) return false
+  if (typeof resolveActor.isReady !== 'function') return true
+  try {
+    return (await resolveActor.isReady()) === true
+  } catch {
+    return false
+  }
 }
 
 function unavailable(request, endpoint, { readModelReady, actorAdapterReady }, code = 'CLIENTES_READMODEL_UNAVAILABLE') {
@@ -91,7 +111,9 @@ function projectDetailRecord(record, actor, requestedClientId) {
 
 async function resolvedActor(request, resolveActor) {
   try {
-    return normalizeClientesReadonlyActor(await resolveActor(request))
+    const result = await resolveActor(request)
+    if (result?.ok === false && typeof result.code === 'string') return result
+    return normalizeClientesReadonlyActor(result)
   } catch {
     return { ok: false, code: 'CLIENTES_ACTOR_UNAVAILABLE' }
   }
@@ -112,8 +134,8 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
       return error(request, 405, 'READ_ONLY_RUNTIME', { allow: resolved.route.methods.join(', ') })
     }
 
-    const readModelReady = hasReadyReadModel(readModel)
-    const actorAdapterReady = hasConfiguredActorAdapter(resolveActor)
+    const readModelReady = await hasReadyReadModel(readModel)
+    const actorAdapterReady = await hasReadyActorAdapter(resolveActor)
     const unavailableDependencies = { readModelReady, actorAdapterReady }
     const dependencyCode = readModelReady ? 'CLIENTES_ACTOR_UNAVAILABLE' : 'CLIENTES_READMODEL_UNAVAILABLE'
     if (resolved.route.id === 'health' || resolved.route.id === 'readiness') {
@@ -179,6 +201,8 @@ export function createClientesReadonlyHandler({ readModel = null, resolveActor =
 
 export const __testables = {
   hasConfiguredActorAdapter,
+  hasConfiguredReadModel,
+  hasReadyActorAdapter,
   hasReadyReadModel,
   projectDetailRecord,
   projectVisibleRecord,

@@ -1,0 +1,54 @@
+name: Clientes Readonly Release Gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "clientes-readonly/**"
+      - ".github/workflows/clientes-readonly-release-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "clientes-readonly/**"
+      - ".github/workflows/clientes-readonly-release-gate.yml"
+  workflow_dispatch:
+    inputs:
+      require_ready:
+        description: Fail unless the separately recorded staging release plan is fully eligible
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    name: Clientes readonly boundary and synthetic smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Validate isolated source
+        run: |
+          set -euo pipefail
+          npm --prefix clientes-readonly run check
+          npm --prefix clientes-readonly run test
+          npm --prefix clientes-readonly run smoke:synthetic
+
+      - name: Record current release eligibility without deployment
+        run: |
+          set -euo pipefail
+          npm --prefix clientes-readonly run release:gate
+
+      - name: Require an independently provisioned staging plan
+        if: github.event_name == 'workflow_dispatch' && inputs.require_ready
+        run: |
+          set -euo pipefail
+          node clientes-readonly/scripts/release-gate.mjs \
+            --plan clientes-readonly/release/staging-gate.json \
+            --require-ready

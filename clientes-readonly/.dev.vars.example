@@ -1,0 +1,8 @@
+# This example intentionally cannot make the runtime ready.
+# Store real values only in the isolated staging secret store after the release gate is green.
+CLIENTES_READONLY_DEPLOY_ENABLED=false
+CLIENTES_READONLY_ENVIRONMENT=staging
+CLIENTES_READONLY_SYNTHETIC_ONLY=true
+CLIENTES_READONLY_RELEASE_SHA=
+CLIENTES_READONLY_READ_MODEL_VERSION=clientes-readonly/read-model/v1
+# CLIENTES_READONLY_ACTOR_HMAC_KEY is a secret; do not place it in this file.

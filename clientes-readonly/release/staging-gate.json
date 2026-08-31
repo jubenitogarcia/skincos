@@ -1,0 +1,35 @@
+{
+  "contract": "clientes-readonly/staging-release/v1",
+  "target": "staging",
+  "operation": "deploy",
+  "enabled": false,
+  "syntheticOnly": true,
+  "sourceSha": "",
+  "predecessorReleaseSha": "",
+  "singlePublisher": false,
+  "publisher": {
+    "owner": "",
+    "workflow": ""
+  },
+  "publicRoute": false,
+  "syntheticSmoke": {
+    "implemented": true,
+    "passed": false
+  },
+  "rollback": {
+    "artifactSha": "",
+    "tested": false
+  },
+  "actorAdapter": {
+    "secretConfigured": false,
+    "replayStoreConfigured": false,
+    "owner": ""
+  },
+  "readModel": {
+    "serviceConfigured": false,
+    "interfaceVersion": "clientes-readonly/read-model/v1",
+    "owner": "",
+    "dataOwner": "",
+    "migrationsOwner": ""
+  }
+}
