@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 const workflow = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8')
@@ -18,6 +21,44 @@ function stepSection(document, name, nextName) {
   assert.ok(start >= 0, `workflow is missing step: ${name}`)
   assert.ok(end > start, `workflow has no complete step section: ${name}`)
   return document.slice(start, end)
+}
+
+function runBlock(step) {
+  const match = step.match(/        run: \|\r?\n([\s\S]*)$/)
+  assert.ok(match, 'workflow step is missing a literal run block')
+  return match[1]
+    .split(/\r?\n/)
+    .map((line) => line.startsWith('          ') ? line.slice(10) : line)
+    .join('\n')
+}
+
+function runEscalaDeployGuard(overrides = {}) {
+  const guard = stepSection(coreWorkflow, 'Guard Escala deploy settings', 'Checkout')
+  const root = mkdtempSync(join(tmpdir(), 'skincos-escala-deploy-guard-'))
+  const githubOutput = join(root, 'github-output')
+  const env = {
+    ...process.env,
+    ENABLE: 'true',
+    ENABLE_SCHEDULE_PUBLIC_READ: 'true',
+    CLOUDFLARE_API_TOKEN: 'fake-cloudflare-token',
+    CLOUDFLARE_ACCOUNT_ID: 'fake-cloudflare-account',
+    ESCALA_ACTOR_HMAC_KEY: 'fake-actor-capability',
+    SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: 'fake-core-capability',
+    GITHUB_OUTPUT: githubOutput,
+    ...overrides,
+  }
+  const script = runBlock(guard)
+
+  try {
+    return {
+      script,
+      syntax: spawnSync('bash', ['-n'], { input: script, encoding: 'utf8', env }),
+      result: spawnSync('bash', ['-c', script], { encoding: 'utf8', env }),
+      githubOutput: existsSync(githubOutput) ? readFileSync(githubOutput, 'utf8') : '',
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 }
 
 test('Schedule public-read adapter is a manual preview/staging-only publisher', () => {
@@ -168,6 +209,31 @@ test('Schedule public-read defaults disabled and only the canonical core publish
   )
   assert.match(productionSection, /SCHEDULE_PUBLIC_READ_ENABLED:false/)
   assert.doesNotMatch(productionSection, /SCHEDULE_PUBLIC_READ_ENABLED:true/)
+})
+
+test('Escala core opt-in guard is executable, accepts distinct capabilities, and never emits them', () => {
+  const { script, syntax, result, githubOutput } = runEscalaDeployGuard()
+
+  assert.doesNotMatch(script, /<<['"]?NODE/)
+  assert.match(script, /\[\[ "\$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "\$ESCALA_ACTOR_HMAC_KEY" == "\$SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY" \]\]/)
+  assert.equal(syntax.status, 0, syntax.stderr)
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(githubOutput, 'skip=false\n')
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /fake-actor-capability|fake-core-capability/)
+})
+
+test('Escala core opt-in guard rejects equal capabilities without disclosing them', () => {
+  const capability = 'fake-equal-capability'
+  const { syntax, result, githubOutput } = runEscalaDeployGuard({
+    ESCALA_ACTOR_HMAC_KEY: capability,
+    SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: capability,
+  })
+
+  assert.equal(syntax.status, 0, syntax.stderr)
+  assert.notEqual(result.status, 0)
+  assert.match(`${result.stdout}${result.stderr}`, /must differ from ESCALA_ACTOR_HMAC_KEY/)
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, new RegExp(capability))
+  assert.equal(githubOutput, '')
 })
 
 test('Schedule public-read staging smoke is synthetic, authenticated, and does not handle the core key', () => {
