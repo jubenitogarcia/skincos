@@ -5,7 +5,7 @@ import {
   createSchedulePublicReadHeaders,
   verifySchedulePublicReadRequest,
 } from '../public-read-contract.js'
-import adapter from '../public-read-worker.js'
+import adapter from '../public-read-adapter-runtime.js'
 
 const edgeKey = 'local-only-schedule-public-read-edge-key'
 const coreKey = 'local-only-schedule-public-read-core-key'

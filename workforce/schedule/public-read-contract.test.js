@@ -21,7 +21,11 @@ test('schedule public read HMAC binds exact read request and fixed Website edge 
   })
   const request = new Request(target, { headers })
 
-  assert.deepEqual(await verifySchedulePublicReadRequest(request, key), { ok: true, service: SCHEDULE_PUBLIC_READ_EDGE_SERVICE })
+  assert.deepEqual(await verifySchedulePublicReadRequest(request, key), {
+    ok: true,
+    service: SCHEDULE_PUBLIC_READ_EDGE_SERVICE,
+    timestamp: Number(timestamp),
+  })
   assert.equal((await verifySchedulePublicReadRequest(new Request('https://schedule.local/schedule-public-read/v1/availability?unit=novo-hamburgo&date=2026-09-16', { headers }), key)).ok, false)
   assert.equal((await verifySchedulePublicReadRequest(new Request(target, { method: 'POST', headers }), key)).error, 'METHOD_NOT_ALLOWED')
   assert.equal((await verifySchedulePublicReadRequest(request, 'another-key')).ok, false)
@@ -44,6 +48,14 @@ test('schedule public read HMAC rejects stale nonces and another service identit
     nonce: 'schedule-public-read-contract-0003',
   })
   assert.equal((await verifySchedulePublicReadRequest(new Request(target, { headers: wrongServiceHeaders }), key)).ok, false)
+
+  const fractionalTimestampHeaders = await createSchedulePublicReadHeaders({
+    secret: key,
+    url: target,
+    timestamp: `${Date.now()}.5`,
+    nonce: 'schedule-public-read-contract-0005',
+  })
+  assert.equal((await verifySchedulePublicReadRequest(new Request(target, { headers: fractionalTimestampHeaders }), key)).ok, false)
 })
 
 test('schedule public read signer and verifier normalize keys and keep hop identities distinct', async () => {
@@ -58,11 +70,11 @@ test('schedule public read signer and verifier normalize keys and keep hop ident
 
   assert.deepEqual(
     await verifySchedulePublicReadRequest(request, coreKey, { allowedService: SCHEDULE_PUBLIC_READ_CORE_SERVICE }),
-    { ok: true, service: SCHEDULE_PUBLIC_READ_CORE_SERVICE },
+    { ok: true, service: SCHEDULE_PUBLIC_READ_CORE_SERVICE, timestamp: Number(headers['x-skincos-schedule-read-ts']) },
   )
   assert.deepEqual(
     await verifySchedulePublicReadRequest(request, `\t${coreKey}\n`, { allowedService: SCHEDULE_PUBLIC_READ_CORE_SERVICE }),
-    { ok: true, service: SCHEDULE_PUBLIC_READ_CORE_SERVICE },
+    { ok: true, service: SCHEDULE_PUBLIC_READ_CORE_SERVICE, timestamp: Number(headers['x-skincos-schedule-read-ts']) },
   )
   assert.equal((await verifySchedulePublicReadRequest(request, coreKey)).ok, false)
 })
