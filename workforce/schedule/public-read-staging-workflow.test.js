@@ -18,6 +18,10 @@ test('Schedule public-read adapter is a manual preview/staging-only publisher', 
   assert.match(workflow, /unit: schedule-public-read-adapter/)
   assert.match(workflow, /release_sha: \$\{\{ inputs\.release_sha \}\}/)
   assert.match(workflow, /preview_run_id: \$\{\{ inputs\.preview_run_id \}\}/)
+  assert.match(workflow, /bootstrap_run_id:/)
+  assert.match(workflow, /options: \[bootstrap-disabled, deploy, disable\]/)
+  assert.match(workflow, /bootstrap-disabled creates its own proof and must not accept a prior bootstrap run id/)
+  assert.match(workflow, /deploy and disable require the successful disabled bootstrap run id before any versions upload/)
   assert.match(workflow, /environment: preview/)
   assert.match(workflow, /environment: staging/)
   assert.match(workflow, /DISPATCH_REF.*refs\/heads\/main/)
@@ -36,7 +40,7 @@ test('Schedule public-read adapter keeps core publication and Website outside it
   assert.match(workflow, /adapter must not gain a direct D1 binding/)
 })
 
-test('Schedule public-read adapter requires separate custody, a fenced lease, unpublished candidate construction, and a fail-closed rollback', () => {
+test('Schedule public-read adapter requires a disabled Durable Object bootstrap before versioned candidates or rollbacks', () => {
   assert.match(workflow, /ENABLE_SCHEDULE_PUBLIC_READ_STAGING/)
   assert.match(workflow, /SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY/)
   assert.match(workflow, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
@@ -45,20 +49,45 @@ test('Schedule public-read adapter requires separate custody, a fenced lease, un
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-check/)
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-release/)
   assert.match(workflow, /resource: deploy:schedule-public-read-adapter:staging/)
+  assert.match(workflow, /Verify disabled bootstrap proof before versioned adapter mutation/)
+  assert.match(workflow, /schedule-public-read-adapter-bootstrap-evidence/)
+  assert.match(workflow, /public-read-bootstrap-evidence\.mjs verify/)
+  assert.match(workflow, /SCHEDULE_PUBLIC_READ_EXPECTED_SOURCE_SHA="\$RELEASE_SHA"/)
+  assert.match(workflow, /SCHEDULE_PUBLIC_READ_EXPECTED_LIFECYCLE_CONFIG_DIGEST/)
+  assert.match(workflow, /deployments list --json/)
+  assert.match(workflow, /Bootstrap disabled staging adapter and Durable Object lifecycle/)
+  assert.match(workflow, /Prove disabled bootstrap/)
   assert.match(workflow, /versions upload/)
   assert.match(workflow, /--secrets-file \/dev\/stdin/)
   assert.match(workflow, /versions deploy/)
   assert.match(workflow, /--version-tag "\$\{CANDIDATE_TAG\}@100%"/)
   assert.doesNotMatch(workflow, /\bsecret put\b/)
-  for (const line of workflow.split('\n').filter((entry) => /\bwrangler@[^\s]+ deploy\b/.test(entry))) {
+  const deployLines = workflow.split('\n').filter((entry) => /\bwrangler@[^\s]+ deploy\b/.test(entry))
+  const nonDryRunDeploys = deployLines.filter((entry) => !entry.includes('--dry-run'))
+  assert.equal(nonDryRunDeploys.length, 1)
+  const bootstrapStart = workflow.indexOf('Bootstrap disabled staging adapter and Durable Object lifecycle')
+  const bootstrapEnd = workflow.indexOf('Verify core staging secret inventory before adapter mutation')
+  const bootstrapSection = workflow.slice(bootstrapStart, bootstrapEnd)
+  assert.match(bootstrapSection, /wrangler@4\.120\.0 deploy/)
+  assert.match(nonDryRunDeploys[0], /SCHEDULE_PUBLIC_READ_ENABLED:false/)
+  assert.doesNotMatch(nonDryRunDeploys[0], /SCHEDULE_PUBLIC_READ_ENABLED:true/)
+  assert.doesNotMatch(nonDryRunDeploys[0], /--secrets-file/)
+  assert.doesNotMatch(bootstrapSection, /versions upload/)
+  assert.doesNotMatch(bootstrapSection, /SCHEDULE_PUBLIC_READ_(?:EDGE|CORE)_HMAC_KEY/)
+  for (const line of deployLines.filter((entry) => entry.includes('--dry-run'))) {
     assert.match(line, /--dry-run/)
+  }
+  const bootstrapProofIndex = workflow.indexOf('Verify disabled bootstrap proof before versioned adapter mutation')
+  assert.ok(bootstrapProofIndex >= 0)
+  for (const index of [...workflow.matchAll(/wrangler@[^\s]+ versions upload/g)].map((match) => match.index)) {
+    assert.ok(index > bootstrapProofIndex)
   }
   assert.match(workflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:true"/)
   assert.match(workflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:false"/)
   assert.match(workflow, /Check adapter lease before automatic disabled version creation/)
   assert.match(workflow, /Check adapter lease before automatic disabled deployment/)
   assert.match(workflow, /Prove automatic disabled fallback/)
-  assert.ok((workflow.match(/global-coordination-check/g) || []).length >= 6)
+  assert.ok((workflow.match(/global-coordination-check/g) || []).length >= 7)
 })
 
 test('Schedule public-read defaults disabled and only the canonical core publisher can opt in for staging', () => {
@@ -104,7 +133,7 @@ test('deployment catalog and single-writer policy assign only the isolated adapt
   assert.ok(unit)
   assert.deepEqual(unit.environments, ['preview', 'staging'])
   assert.deepEqual(unit.publishes, ['Worker:skincos-schedule-public-read-staging'])
-  assert.deepEqual(unit.migrationPaths, [])
+  assert.deepEqual(unit.migrationPaths, ['workforce/schedule/public-read.wrangler.toml'])
   assert.equal(unit.workflow, '.github/workflows/deploy-schedule-public-read-adapter.yml')
 
   const group = singleWriter.coordinationGroups.find((entry) => entry.id === 'schedule-public-read-adapter-writer')

@@ -7,7 +7,10 @@ The staging adapter configuration has an isolated Worker name and a
 per-nonce Durable Object guard, but it is disabled by default. It remains
 unusable until the canonical Schedule staging workflow records its explicit
 core opt-in for the same immutable SHA and the adapter workflow passes its own
-separate staging gates.
+separate staging gates. Its Durable Object lifecycle is initialized only by the
+adapter workflow's explicit `bootstrap-disabled` staging operation; that
+operation keeps the feature disabled and proves `503` before it writes its
+bootstrap evidence.
 
 ## Contract
 
@@ -52,15 +55,24 @@ returns `409 SCHEDULE_PUBLIC_READ_REPLAYED` on another use. Guard failure is
 The current Website still reads `SKINCOS_ESCALA_DB` directly and its booking
 routes keep their existing behavior. Before a future consumer migration:
 
-1. Provision two different normalized values: the edge key to Website and
+1. Bootstrap the isolated staging Worker with
+   `operation=bootstrap-disabled`. That is the only non-dry-run
+   `wrangler deploy` path and it passes
+   `SCHEDULE_PUBLIC_READ_ENABLED=false` without either HMAC key. It creates the
+   Worker and Durable Object lifecycle, then records a same-SHA, attempt-1
+   artifact with the complete adapter configuration digest after a disabled
+   smoke. A later `deploy` or `disable` refuses `versions upload` until that
+   exact proof and an extant Worker deployment are verified. A configuration or
+   lifecycle change therefore requires another disabled bootstrap.
+2. Provision two different normalized values: the edge key to Website and
    adapter only, and the core key to adapter and Schedule core only. The core
    key must be synchronized only by the canonical Schedule staging publisher,
    which emits same-SHA `schedule-public-read-core-opt-in-evidence`; the
    adapter never publishes or mutates the core. The staging Worker owns a
    per-nonce Durable Object guard; do not replace it with eventually consistent
    storage.
-2. Compare direct-D1 and adapter responses for synthetic availability and
+3. Compare direct-D1 and adapter responses for synthetic availability and
    profiles, then prove readiness and rollback.
-3. Decide the customer-facing behavior when Schedule is unavailable: preserve
+4. Decide the customer-facing behavior when Schedule is unavailable: preserve
    the current fallback or return a booking-unavailable response. This contract
    does not make that product decision.

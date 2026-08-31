@@ -160,9 +160,9 @@
       "publishes": ["Worker:skincos-schedule-public-read-staging"],
       "resources": ["isolated Schedule public-read staging Worker", "per-nonce Schedule public-read Durable Object", "read-only service binding to skincos-escala-api-staging"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY", "SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY"],
-      "migrationPaths": [],
+      "migrationPaths": ["workforce/schedule/public-read.wrangler.toml"],
       "environments": ["preview", "staging"],
-      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "stagingOnly": true, "rollback": "canonical disabled staging dispatch; no core Schedule publication"}
+      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "stagingOnly": true, "bootstrap": "canonical bootstrap-disabled staging dispatch applies the Durable Object lifecycle only while the adapter remains disabled", "rollback": "canonical disabled staging dispatch after a matching bootstrap proof; no core Schedule publication"}
     },
     {
       "id": "timekeeping",
