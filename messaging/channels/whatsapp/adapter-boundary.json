@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "candidateRepository": "skincos-whatsapp-adapter",
   "status": "pre-cut",
   "baseline": {
@@ -13,16 +13,42 @@
     "engineRole": "one externally pinned Evolution API runtime; it is not source owned by skincos-whatsapp-adapter",
     "platformRole": "native-host lifecycle and global coordination remain Platform/Ops owned until a signed cross-repository custody interface exists"
   },
-  "directTransferClosure": [
-    "crm/api/services/evolutionOrchestrator.js",
-    "crm/api/services/whatsappOrchestrator.js",
-    "crm/api/services/__tests__/evolutionOrchestrator.test.js",
-    "crm/api/services/__tests__/whatsappOrchestrator.basic.test.js",
-    "docs/architecture/whatsapp-adapter-extraction.md",
-    "messaging/channels/whatsapp/adapter-boundary.json",
-    "scripts/tests/whatsapp-adapter-boundary.test.mjs",
-    "scripts/validate-whatsapp-adapter-boundary.mjs"
-  ],
+  "portableClosure": {
+    "layout": [
+      {
+        "source": "messaging/channels/whatsapp/adapter-package.json",
+        "target": "package.json"
+      },
+      {
+        "source": "messaging/channels/whatsapp/adapter-README.md",
+        "target": "README.md"
+      },
+      {
+        "source": "messaging/channels/whatsapp/adapter-boundary.json",
+        "target": "adapter-boundary.json"
+      },
+      {
+        "source": "crm/api/services/evolutionOrchestrator.js",
+        "target": "crm/api/services/evolutionOrchestrator.js"
+      },
+      {
+        "source": "crm/api/services/whatsappOrchestrator.js",
+        "target": "crm/api/services/whatsappOrchestrator.js"
+      },
+      {
+        "source": "crm/api/services/__tests__/evolutionOrchestrator.test.js",
+        "target": "crm/api/services/__tests__/evolutionOrchestrator.test.js"
+      },
+      {
+        "source": "crm/api/services/__tests__/whatsappOrchestrator.basic.test.js",
+        "target": "crm/api/services/__tests__/whatsappOrchestrator.basic.test.js"
+      },
+      {
+        "source": "scripts/validate-whatsapp-adapter-candidate.mjs",
+        "target": "scripts/validate-whatsapp-adapter-candidate.mjs"
+      }
+    ]
+  },
   "custodyReleaseBaseline": {
     "transferMode": "rewrite-after-pinned-upstream-input",
     "sourcePaths": [
@@ -102,6 +128,12 @@
     ]
   },
   "cutoverGate": {
+    "requiredEvidence": [
+      "exactPrivatePackageForCrm",
+      "pinnedUpstreamArtifact",
+      "signedPlatformOpsCustody",
+      "singlePublisherServiceAndRollback"
+    ],
     "requiredBeforeRepositoryCreation": [
       "package the direct adapter closure with an exact private version for CRM",
       "replace the embedded engine source input with a pinned external upstream artifact and digest",

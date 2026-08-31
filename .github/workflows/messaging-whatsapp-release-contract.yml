@@ -27,8 +27,10 @@ on:
       - "scripts/runtime/test-prepare-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-rollback-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-run-messaging-whatsapp-release.sh"
-      - "scripts/validate-whatsapp-adapter-boundary.mjs"
+      - "scripts/validate-whatsapp-adapter-baseline.mjs"
+      - "scripts/validate-whatsapp-adapter-candidate.mjs"
       - "scripts/tests/whatsapp-adapter-boundary.test.mjs"
+      - "scripts/tests/whatsapp-adapter-candidate.test.mjs"
       - ".github/workflows/prepare-release-candidate.yml"
       - ".github/workflows/messaging-whatsapp-release-contract.yml"
   push:
@@ -58,8 +60,10 @@ on:
       - "scripts/runtime/test-prepare-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-rollback-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-run-messaging-whatsapp-release.sh"
-      - "scripts/validate-whatsapp-adapter-boundary.mjs"
+      - "scripts/validate-whatsapp-adapter-baseline.mjs"
+      - "scripts/validate-whatsapp-adapter-candidate.mjs"
       - "scripts/tests/whatsapp-adapter-boundary.test.mjs"
+      - "scripts/tests/whatsapp-adapter-candidate.test.mjs"
       - ".github/workflows/prepare-release-candidate.yml"
       - ".github/workflows/messaging-whatsapp-release-contract.yml"
   workflow_dispatch: {}
@@ -74,9 +78,9 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # The preparation contract derives a manifest against HEAD^; retain
-          # only that immutable parent instead of relying on a full clone.
-          fetch-depth: 2
+          # The pre-cut boundary pins a reviewed historical Git tree. Retain
+          # that object so the baseline validator can verify it directly.
+          fetch-depth: 0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
@@ -87,8 +91,8 @@ jobs:
           bash scripts/runtime/test-prepare-messaging-whatsapp-release.sh
           bash scripts/runtime/test-run-messaging-whatsapp-release.sh
           bash scripts/runtime/test-rollback-messaging-whatsapp-release.sh
-      - name: Test the future adapter ownership boundary
+      - name: Test the monorepo baseline and portable future adapter candidate
         run: |
-          node scripts/validate-whatsapp-adapter-boundary.mjs
-          node --test scripts/tests/whatsapp-adapter-boundary.test.mjs
+          node scripts/validate-whatsapp-adapter-baseline.mjs
+          node --test scripts/tests/whatsapp-adapter-boundary.test.mjs scripts/tests/whatsapp-adapter-candidate.test.mjs
           node --test crm/api/services/__tests__/whatsappOrchestrator.basic.test.js crm/api/services/__tests__/evolutionOrchestrator.test.js

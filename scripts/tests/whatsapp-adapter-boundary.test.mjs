@@ -6,11 +6,9 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   CUSTODY_RELEASE_BASELINE,
-  DIRECT_TRANSFER_CLOSURE,
-  EXCLUDED_SOURCE_PATHS,
-  SHARED_PLATFORM_INPUTS,
-  validateWhatsappAdapterBoundary
-} from '../validate-whatsapp-adapter-boundary.mjs'
+  validateWhatsappAdapterBaseline
+} from '../validate-whatsapp-adapter-baseline.mjs'
+import { BASELINE_SOURCE_COMMIT, PORTABLE_LAYOUT } from '../validate-whatsapp-adapter-candidate.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..', '..')
@@ -21,107 +19,109 @@ function readManifest() {
 }
 
 function withTemporaryManifest(mutator, callback) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skincos-whatsapp-adapter-boundary-'))
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'skincos-whatsapp-adapter-baseline-'))
   try {
     const manifest = readManifest()
     mutator(manifest)
-    const file = path.join(dir, 'adapter-boundary.json')
-    fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+    const file = path.join(directory, 'adapter-boundary.json')
+    fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + '\n')
     callback(file)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    fs.rmSync(directory, { recursive: true, force: true })
   }
 }
 
-function copySource(fromRoot, toRoot, relative) {
-  const source = path.join(fromRoot, relative)
-  const destination = path.join(toRoot, relative)
-  fs.mkdirSync(path.dirname(destination), { recursive: true })
-  fs.copyFileSync(source, destination)
-}
-
-function createFixture() {
-  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'skincos-whatsapp-adapter-fixture-'))
-  const paths = new Set([
-    ...DIRECT_TRANSFER_CLOSURE,
-    ...CUSTODY_RELEASE_BASELINE,
-    ...SHARED_PLATFORM_INPUTS,
-    'crm/api/services/waMessageMetaStore.js'
-  ])
-  for (const entry of paths) copySource(ROOT, fixture, entry)
-  return fixture
-}
-
-test('validates the reviewed pre-cut WhatsApp adapter boundary', () => {
-  const result = validateWhatsappAdapterBoundary({ root: ROOT })
+test('validates the reviewed monorepo WhatsApp adapter baseline', () => {
+  const result = validateWhatsappAdapterBaseline({ root: ROOT })
   assert.deepEqual(result, {
     ok: true,
-    candidateRepository: 'skincos-whatsapp-adapter',
     status: 'pre-cut',
-    directTransferFiles: DIRECT_TRANSFER_CLOSURE.length,
+    baselineSourceCommit: BASELINE_SOURCE_COMMIT,
+    portableSourceFiles: PORTABLE_LAYOUT.length,
     custodyBaselineFiles: CUSTODY_RELEASE_BASELINE.length,
-    excludedEnginePath: EXCLUDED_SOURCE_PATHS[0],
     singleServiceUnit: 'messaging-whatsapp.service'
   })
 })
 
-test('rejects an Evolution source file in the direct adapter closure', () => {
+test('pins the baseline Git commit and tree instead of accepting merely well-formed values', () => {
   withTemporaryManifest((manifest) => {
-    manifest.directTransferClosure.push('messaging/channels/whatsapp/engine/package.json')
+    manifest.baseline.sourceTree = '0'.repeat(40)
   }, (manifestFile) => {
     assert.throws(
-      () => validateWhatsappAdapterBoundary({ root: ROOT, manifestFile }),
-      /directTransferClosure must match the reviewed source list exactly/
+      () => validateWhatsappAdapterBaseline({ root: ROOT, manifestFile }),
+      /baseline source commit and tree must match the reviewed values exactly/
     )
   })
 })
 
-test('rejects CRM-owned message metadata from the adapter closure', () => {
+test('rejects Evolution source from the portable source layout', () => {
   withTemporaryManifest((manifest) => {
-    manifest.directTransferClosure.push('crm/api/services/waMessageMetaStore.js')
+    manifest.portableClosure.layout[0].source = 'messaging/channels/whatsapp/engine/package.json'
   }, (manifestFile) => {
     assert.throws(
-      () => validateWhatsappAdapterBoundary({ root: ROOT, manifestFile }),
-      /directTransferClosure must match the reviewed source list exactly/
+      () => validateWhatsappAdapterBaseline({ root: ROOT, manifestFile }),
+      /portableClosure\.layout must match the reviewed layout exactly/
     )
   })
 })
 
-test('rejects treating unreworked native custody scripts as portable adapter code', () => {
+test('rejects CRM message metadata from the portable source layout', () => {
   withTemporaryManifest((manifest) => {
-    manifest.directTransferClosure.push('scripts/runtime/prepare-messaging-whatsapp-release.sh')
+    manifest.portableClosure.layout.push({
+      source: 'crm/api/services/waMessageMetaStore.js',
+      target: 'crm/api/services/waMessageMetaStore.js'
+    })
   }, (manifestFile) => {
     assert.throws(
-      () => validateWhatsappAdapterBoundary({ root: ROOT, manifestFile }),
-      /directTransferClosure must match the reviewed source list exactly/
+      () => validateWhatsappAdapterBaseline({ root: ROOT, manifestFile }),
+      /portableClosure\.layout must match the reviewed layout exactly/
     )
   })
 })
 
-test('rejects a second process launcher in the portable CRM adapter', () => {
-  const fixture = createFixture()
-  try {
-    const adapter = path.join(fixture, 'crm/api/services/whatsappOrchestrator.js')
-    fs.appendFileSync(adapter, "\nimport { spawn } from 'node:child_process'\n")
+test('rejects unreworked native custody from the portable source layout', () => {
+  withTemporaryManifest((manifest) => {
+    manifest.portableClosure.layout.push({
+      source: 'scripts/runtime/prepare-messaging-whatsapp-release.sh',
+      target: 'scripts/runtime/prepare-messaging-whatsapp-release.sh'
+    })
+  }, (manifestFile) => {
     assert.throws(
-      () => validateWhatsappAdapterBoundary({ root: fixture }),
-      /CRM compatibility adapter must not contain "child_process"/
+      () => validateWhatsappAdapterBaseline({ root: ROOT, manifestFile }),
+      /portableClosure\.layout must match the reviewed layout exactly/
     )
-  } finally {
-    fs.rmSync(fixture, { recursive: true, force: true })
-  }
+  })
 })
 
-test('rejects a second ExecStart in the native service template', () => {
-  const fixture = createFixture()
-  try {
-    const service = path.join(fixture, 'ops/runtime/units/messaging-whatsapp.service')
-    fs.appendFileSync(service, '\nExecStart=/usr/bin/false\n')
+test('rejects a baseline that renames the single native service', () => {
+  withTemporaryManifest((manifest) => {
+    manifest.runtimeAndObservability.singleServiceUnit = 'messaging-whatsapp-adapter.service'
+  }, (manifestFile) => {
     assert.throws(
-      () => validateWhatsappAdapterBoundary({ root: fixture }),
-      /messaging service template must define exactly one ExecStart/
+      () => validateWhatsappAdapterBaseline({ root: ROOT, manifestFile }),
+      /singleServiceUnit must remain messaging-whatsapp\.service/
     )
-  } finally {
-    fs.rmSync(fixture, { recursive: true, force: true })
-  }
+  })
+})
+
+test('preserves CRM proxy ownership and CRM-only message metadata', () => {
+  withTemporaryManifest((manifest) => {
+    manifest.crmCompatibility.legacyRouteNamespace = '/api/other/*'
+  }, (manifestFile) => {
+    assert.throws(
+      () => validateWhatsappAdapterBaseline({ root: ROOT, manifestFile }),
+      /legacyRouteNamespace must preserve the CRM proxy namespace/
+    )
+  })
+})
+
+test('rejects a baseline that stops prohibiting a second Evolution runtime', () => {
+  withTemporaryManifest((manifest) => {
+    manifest.runtimeAndObservability.prohibited = []
+  }, (manifestFile) => {
+    assert.throws(
+      () => validateWhatsappAdapterBaseline({ root: ROOT, manifestFile }),
+      /runtimeAndObservability\.prohibited is missing/
+    )
+  })
 })

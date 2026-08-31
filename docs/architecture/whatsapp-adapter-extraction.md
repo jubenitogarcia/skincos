@@ -1,9 +1,20 @@
 # Fronteira pré-corte do adaptador WhatsApp
 
 **Estado:** pré-corte; não cria repositório, não publica runtime e não move
-estado. A fonte executável é
-[`adapter-boundary.json`](../../messaging/channels/whatsapp/adapter-boundary.json),
-validada por `scripts/validate-whatsapp-adapter-boundary.mjs`.
+estado. A fronteira tem dois controles independentes:
+
+1. O baseline do monorepo, em
+   `scripts/validate-whatsapp-adapter-baseline.mjs`, comprova a fonte canônica,
+   o SHA/tree revisado, CRM, serviço único, estado, logs, release e rollback.
+2. O gate portátil, em
+   `scripts/validate-whatsapp-adapter-candidate.mjs`, inspeciona uma closure
+   de candidato isolada ou um archive TAR regular. Ele não lê Platform/Ops,
+   scripts de release ou estado CRM como dependências ocultas.
+
+O layout portátil explícito está em
+[`adapter-boundary.json`](../../messaging/channels/whatsapp/adapter-boundary.json).
+Ele inclui somente package metadata privado pre-cut, README, os dois adapters
+HTTP do CRM, seus testes e o próprio validador do candidato.
 
 ## O que poderá pertencer a `skincos-whatsapp-adapter`
 
@@ -14,10 +25,11 @@ os respectivos testes unitários. Ele preserva a API CRM
 prefixo `crm-channel-` e o destino padrão local `http://127.0.0.1:8080`.
 
 Na migração real, esse conjunto será publicado como pacote privado com versão
-exata e consumido pelo CRM. O CRM continuará dono das rotas, autorização,
-proxies e de `waMessageMetaStore`; a anotação de conversa no arquivo
-`WA_MESSAGE_META_FILE` (`core/wa_message_meta.json` por padrão) não é estado
-do adaptador nem do engine.
+exata e consumido pelo CRM. O template atual permanece explicitamente privado
+na versão pre-cut, sem publishConfig nem script de publicação. O CRM continuará
+dono das rotas, autorização, proxies e de `waMessageMetaStore`; a anotação de
+conversa no arquivo `WA_MESSAGE_META_FILE` (`core/wa_message_meta.json` por
+padrão) não é estado do adaptador nem do engine.
 
 ## Runtime único e dados
 
@@ -46,6 +58,25 @@ predecessor atestado, custódia externa que associa run/artifact/digest antes de
 `--apply`, e rollback que restaura o predecessor, reinicia
 `messaging-whatsapp.service` e consulta `http://127.0.0.1:8080/health`.
 
-Enquanto esses gates não forem satisfeitos, este boundary falha fechado: não
-autoriza criação do repositório, deploy, segredo, alteração de serviço ou
-migração de estado.
+## Gate de candidato e evidência
+
+Antes de qualquer criação de repositório ou publicação, o candidato precisa ser
+validado com um diretório isolado ou um TAR regular e um documento de evidência
+externo. O gate confere:
+
+- SHA e tree de origem pinados;
+- SHA-256 dos dois adapters e dos seus testes, amarrados ao baseline revisado;
+- digest determinístico da closure e, para TAR, digest do archive bruto;
+- ausência de Evolution, estado de mensagem CRM, rota CRM, serviço, runtime,
+  workflow ou script de release;
+- os quatro fatos: pacote privado exato para CRM, artefato upstream pinado,
+  custódia assinada Platform/Ops, e único publicador/serviço com staging e
+  rollback comprovados.
+
+O comando normal falha fechado enquanto o status for pre-cut:
+
+    node scripts/validate-whatsapp-adapter-candidate.mjs --candidate <directory-or-tar> --evidence <external-evidence.json>
+
+Mesmo evidência forjada como "proven" não permite criação ou publicação antes
+de uma alteração revisada de status e dos quatro fatos reais. Nenhum dos dois
+validadores cria repositório, deploy, serviço, segredo ou migração de estado.
