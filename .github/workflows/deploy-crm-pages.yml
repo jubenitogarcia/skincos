@@ -350,7 +350,7 @@ jobs:
             exit 0
           fi
           changed="$(git diff --name-only HEAD^ HEAD 2>/dev/null || true)"
-          if grep -Eq '^crm/console/(App\.tsx|Finance|financeApi|functions/api/finance/|public/_routes\.json|scripts/finance-)' <<< "$changed"; then
+          if grep -Eq '^(finance/ui/|crm/console/(App\.tsx|financeBootstrap\.ts|functions/api/finance/|public/_routes\.json|scripts/finance-|modules/RemoteFinanceModule\.tsx))' <<< "$changed"; then
             echo "Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true; Pages deploy held."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
