@@ -10,6 +10,13 @@ export const CLIENTES_READONLY_ACTOR_ROLES = Object.freeze([
   'GESTOR',
 ])
 
+// This is deliberately small enough for the authenticated actor envelope to
+// remain within the shared signer/verifier header limit on every supported
+// Clientes route. A broader cross-unit grant must use a separately designed
+// authorization contract; it must not turn this read-only envelope into an
+// unbounded transport.
+export const CLIENTES_READONLY_ACTOR_MAX_UNIT_IDS = 24
+
 export const CLIENTES_READONLY_RECORD_FIELDS = Object.freeze([
   'clientId',
   'displayName',
@@ -100,6 +107,9 @@ export function normalizeClientesReadonlyActor(input) {
   if (!unitIds.length) return { ok: false, code: 'CLIENTES_UNIT_SCOPE_REQUIRED' }
   if (unitIds.some((unitId) => !UNIT_ID_PATTERN.test(unitId))) {
     return { ok: false, code: 'CLIENTES_ACTOR_INVALID' }
+  }
+  if (unitIds.length > CLIENTES_READONLY_ACTOR_MAX_UNIT_IDS) {
+    return { ok: false, code: 'CLIENTES_UNIT_SCOPE_LIMIT_EXCEEDED' }
   }
   return {
     ok: true,

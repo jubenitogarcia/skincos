@@ -1,5 +1,6 @@
 export {
   CLIENTES_READONLY_ACTOR_FIELDS,
+  CLIENTES_READONLY_ACTOR_MAX_UNIT_IDS,
   CLIENTES_READONLY_ACTOR_ROLES,
   CLIENTES_READONLY_CONTRACT_VERSION,
   CLIENTES_READONLY_QUERY_FIELDS,
@@ -15,3 +16,30 @@ export {
 } from './contract.js'
 
 export { createClientesReadonlyHandler } from './handler.js'
+export {
+  CLIENTES_READONLY_ACTOR_AUDIENCE,
+  CLIENTES_READONLY_ACTOR_CONTEXT_MAX_CHARS,
+  CLIENTES_READONLY_ACTOR_CONTEXT_HEADER,
+  CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
+  CLIENTES_READONLY_ACTOR_MAX_FUTURE_SKEW_MS,
+  CLIENTES_READONLY_ACTOR_MIN_SECRET_BYTES,
+  CLIENTES_READONLY_ACTOR_SIGNATURE_HEADER,
+  CLIENTES_READONLY_ACTOR_SIGNATURE_VERSION,
+  CLIENTES_READONLY_ACTOR_VERSION_HEADER,
+  createClientesReadonlyActorHeaders,
+  createClientesReadonlyAuthenticatedActorAdapter,
+} from './authenticated-actor-adapter.js'
+export {
+  CLIENTES_READONLY_READ_MODEL_INTERFACE_VERSION,
+  CLIENTES_READONLY_SYNTHETIC_READ_MODEL_MODE,
+  createDedicatedClientesReadonlyReadModel,
+} from './dedicated-read-model.js'
+export {
+  CLIENTES_READONLY_STAGING_RELEASE_CONTRACT_VERSION,
+  CLIENTES_READONLY_STAGING_RELEASE_EVIDENCE_CONTRACT_VERSION,
+  assessClientesReadonlyStagingRelease,
+} from './release-contract.js'
+export {
+  createClientesReadonlyRuntime,
+  validateClientesReadonlyRuntimeConfig,
+} from './runtime.js'
