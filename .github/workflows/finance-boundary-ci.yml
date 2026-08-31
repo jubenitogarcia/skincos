@@ -49,7 +49,7 @@ jobs:
       - name: Install pinned Finance toolchain without lifecycle scripts
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
-        run: npm --prefix finance ci --ignore-scripts
+        run: npx --yes npm@11.17.0 --prefix finance ci --ignore-scripts
       - name: Check Finance worker sources
         run: npm --prefix finance run check
       - name: Test Finance domain contracts
