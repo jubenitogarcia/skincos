@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - "messaging/**"
+      - "crm/api/services/evolutionOrchestrator.js"
+      - "crm/api/services/whatsappOrchestrator.js"
+      - "crm/api/services/waMessageMetaStore.js"
+      - "crm/api/services/__tests__/evolutionOrchestrator.test.js"
+      - "crm/api/services/__tests__/whatsappOrchestrator.basic.test.js"
+      - "docs/architecture/whatsapp-adapter-extraction.md"
       - "ops/runtime/units/messaging-whatsapp.service"
       - "ops/governance/global-concurrency-policy.json"
       - "ops/governance/global-coordination-core.mjs"
@@ -21,12 +27,20 @@ on:
       - "scripts/runtime/test-prepare-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-rollback-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-run-messaging-whatsapp-release.sh"
+      - "scripts/validate-whatsapp-adapter-boundary.mjs"
+      - "scripts/tests/whatsapp-adapter-boundary.test.mjs"
       - ".github/workflows/prepare-release-candidate.yml"
       - ".github/workflows/messaging-whatsapp-release-contract.yml"
   push:
     branches: [main]
     paths:
       - "messaging/**"
+      - "crm/api/services/evolutionOrchestrator.js"
+      - "crm/api/services/whatsappOrchestrator.js"
+      - "crm/api/services/waMessageMetaStore.js"
+      - "crm/api/services/__tests__/evolutionOrchestrator.test.js"
+      - "crm/api/services/__tests__/whatsappOrchestrator.basic.test.js"
+      - "docs/architecture/whatsapp-adapter-extraction.md"
       - "ops/runtime/units/messaging-whatsapp.service"
       - "ops/governance/global-concurrency-policy.json"
       - "ops/governance/global-coordination-core.mjs"
@@ -44,6 +58,8 @@ on:
       - "scripts/runtime/test-prepare-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-rollback-messaging-whatsapp-release.sh"
       - "scripts/runtime/test-run-messaging-whatsapp-release.sh"
+      - "scripts/validate-whatsapp-adapter-boundary.mjs"
+      - "scripts/tests/whatsapp-adapter-boundary.test.mjs"
       - ".github/workflows/prepare-release-candidate.yml"
       - ".github/workflows/messaging-whatsapp-release-contract.yml"
   workflow_dispatch: {}
@@ -71,3 +87,8 @@ jobs:
           bash scripts/runtime/test-prepare-messaging-whatsapp-release.sh
           bash scripts/runtime/test-run-messaging-whatsapp-release.sh
           bash scripts/runtime/test-rollback-messaging-whatsapp-release.sh
+      - name: Test the future adapter ownership boundary
+        run: |
+          node scripts/validate-whatsapp-adapter-boundary.mjs
+          node --test scripts/tests/whatsapp-adapter-boundary.test.mjs
+          node --test crm/api/services/__tests__/whatsappOrchestrator.basic.test.js crm/api/services/__tests__/evolutionOrchestrator.test.js

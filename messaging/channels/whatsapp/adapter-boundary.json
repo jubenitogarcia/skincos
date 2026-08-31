@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "candidateRepository": "skincos-whatsapp-adapter",
+  "status": "pre-cut",
+  "baseline": {
+    "sourceCommit": "8dfd728e31149517e4d4e6202fa4ef36d50ff46f",
+    "sourceTree": "a15c7b088a393452d4c12c82f07a29997df8acc5",
+    "observation": "The immutable native release contract is present, but its current candidate still carries the embedded Evolution source. It cannot be copied to a new repository until the candidate accepts a separately pinned upstream artifact."
+  },
+  "ownership": {
+    "futureRepositoryOwner": "Messaging",
+    "crmRole": "consumer of the versioned adapter contract and proxy owner",
+    "engineRole": "one externally pinned Evolution API runtime; it is not source owned by skincos-whatsapp-adapter",
+    "platformRole": "native-host lifecycle and global coordination remain Platform/Ops owned until a signed cross-repository custody interface exists"
+  },
+  "directTransferClosure": [
+    "crm/api/services/evolutionOrchestrator.js",
+    "crm/api/services/whatsappOrchestrator.js",
+    "crm/api/services/__tests__/evolutionOrchestrator.test.js",
+    "crm/api/services/__tests__/whatsappOrchestrator.basic.test.js",
+    "docs/architecture/whatsapp-adapter-extraction.md",
+    "messaging/channels/whatsapp/adapter-boundary.json",
+    "scripts/tests/whatsapp-adapter-boundary.test.mjs",
+    "scripts/validate-whatsapp-adapter-boundary.mjs"
+  ],
+  "custodyReleaseBaseline": {
+    "transferMode": "rewrite-after-pinned-upstream-input",
+    "sourcePaths": [
+      ".github/workflows/messaging-whatsapp-release-contract.yml",
+      "messaging/channels/whatsapp/README.md",
+      "ops/runtime/units/messaging-whatsapp.service",
+      "scripts/runtime/messaging-whatsapp-release-contract.mjs",
+      "scripts/runtime/messaging-whatsapp-release-contract.test.mjs",
+      "scripts/runtime/prepare-messaging-whatsapp-release.sh",
+      "scripts/runtime/rollback-messaging-whatsapp-release.sh",
+      "scripts/runtime/run-messaging-whatsapp-release.sh",
+      "scripts/runtime/test-prepare-messaging-whatsapp-release.sh",
+      "scripts/runtime/test-rollback-messaging-whatsapp-release.sh",
+      "scripts/runtime/test-run-messaging-whatsapp-release.sh"
+    ],
+    "requiredRewrite": "The future repository must obtain the Evolution implementation as an independently pinned immutable upstream artifact. It must not require messaging/channels/whatsapp/engine in its source archive, working tree or release candidate.",
+    "requiredReleaseFacts": [
+      "only release-source-<SHA> candidates are release inputs",
+      "promotion requires an installed attested predecessor",
+      "external authenticated custody binds workflow run, artifact identity and source-archive digest before apply",
+      "rollback restarts messaging-whatsapp.service and verifies http://127.0.0.1:8080/health"
+    ]
+  },
+  "sharedPlatformInputs": [
+    ".github/workflows/prepare-release-candidate.yml",
+    "scripts/codex-global-coordinator.mjs",
+    "scripts/codex-release-manifest.mjs",
+    "scripts/runtime/global-coordination-mini-pc.sh",
+    "scripts/runtime/install-lifecycle-units.sh",
+    "scripts/runtime/manage-native-runtime.sh",
+    "scripts/runtime/prepare-lifecycle-layout.sh"
+  ],
+  "excludedSourcePaths": [
+    "messaging/channels/whatsapp/engine/**",
+    "crm/api/services/waMessageMetaStore.js",
+    "crm/api/server.js"
+  ],
+  "crmCompatibility": {
+    "consumerSources": [
+      "crm/api/services/evolutionOrchestrator.js",
+      "crm/api/services/whatsappOrchestrator.js"
+    ],
+    "legacyRouteNamespace": "/api/wa-orchestrator/*",
+    "defaultEngineUrl": "http://127.0.0.1:8080",
+    "instancePrefix": "crm-channel-",
+    "channels": {
+      "first": 1,
+      "last": 9,
+      "legacyFirstPort": 3001,
+      "legacyLastPort": 3009
+    },
+    "crmOnlyState": {
+      "source": "crm/api/services/waMessageMetaStore.js",
+      "environmentVariable": "WA_MESSAGE_META_FILE",
+      "defaultSuffix": "core/wa_message_meta.json",
+      "rule": "Conversation annotations, reactions, flags and media metadata remain CRM-owned and are not migrated into the adapter or engine runtime."
+    }
+  },
+  "runtimeAndObservability": {
+    "singleServiceUnit": "messaging-whatsapp.service",
+    "serviceTemplate": "ops/runtime/units/messaging-whatsapp.service",
+    "releaseRoot": "/opt/skincos/current/messaging-whatsapp",
+    "statePaths": [
+      "__STATE_ROOT__/messaging-whatsapp/instances",
+      "__STATE_ROOT__/messaging-whatsapp/store"
+    ],
+    "configurationPath": "__CONFIG_ROOT__/messaging-whatsapp.env",
+    "logPaths": [
+      "__LOG_ROOT__/messaging-whatsapp/runtime.out.log",
+      "__LOG_ROOT__/messaging-whatsapp/runtime.err.log"
+    ],
+    "prohibited": [
+      "a second systemd unit or process manager for Evolution",
+      "a checkout or worktree runtime root",
+      "a copied Evolution source tree",
+      "adapter ownership of CRM conversation metadata"
+    ]
+  },
+  "cutoverGate": {
+    "requiredBeforeRepositoryCreation": [
+      "package the direct adapter closure with an exact private version for CRM",
+      "replace the embedded engine source input with a pinned external upstream artifact and digest",
+      "define the signed Platform/Ops custody interface without copying global coordinator code",
+      "prove a single publisher, single service unit, preview or staging smoke and executable rollback"
+    ],
+    "currentAction": "No repository creation, deploy, service mutation, secret provisioning or state migration is permitted by this boundary."
+  }
+}
