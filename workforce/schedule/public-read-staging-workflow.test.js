@@ -7,6 +7,7 @@ const coreWorkflow = readFileSync(new URL('../../.github/workflows/deploy-escala
 const adapterConfig = readFileSync(new URL('./public-read.wrangler.toml', import.meta.url), 'utf8')
 const coreConfig = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8')
 const smoke = readFileSync(new URL('./scripts/public-read-staging-smoke.mjs', import.meta.url), 'utf8')
+const disabledHealth = readFileSync(new URL('./scripts/public-read-disabled-health.mjs', import.meta.url), 'utf8')
 const coreSmoke = readFileSync(new URL('./scripts/public-read-core-staging-smoke.mjs', import.meta.url), 'utf8')
 const units = JSON.parse(readFileSync(new URL('../../platform/deploy/operational-units.json', import.meta.url), 'utf8'))
 const singleWriter = JSON.parse(readFileSync(new URL('../../.github/governance/cloudflare-single-writer-policy.json', import.meta.url), 'utf8'))
@@ -171,12 +172,16 @@ test('Schedule public-read defaults disabled and only the canonical core publish
 
 test('Schedule public-read staging smoke is synthetic, authenticated, and does not handle the core key', () => {
   assert.match(smoke, /allowedOrigin = 'https:\/\/skincos-schedule-public-read-staging\.skincos\.workers\.dev'/)
+  assert.match(smoke, /waitForDisabledSchedulePublicReadHealth/)
   assert.match(smoke, /SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY/)
   assert.doesNotMatch(smoke, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
   assert.match(smoke, /SCHEDULE_PUBLIC_READ_REPLAYED/)
   assert.match(smoke, /SCHEDULE_PUBLIC_READ_UNAUTHORIZED/)
-  assert.match(smoke, /SCHEDULE_PUBLIC_READ_UNAVAILABLE/)
+  assert.match(disabledHealth, /SCHEDULE_PUBLIC_READ_UNAVAILABLE/)
   assert.doesNotMatch(smoke, /console\.log\([^\n]*(?:EDGE_HMAC|CORE_HMAC|edgeKey)/)
+  assert.match(disabledHealth, /DISABLED_STAGING_SMOKE_MAX_WAIT_MS = 30_000/)
+  assert.match(disabledHealth, /response\?\.status !== 404/)
+  assert.doesNotMatch(disabledHealth, /SCHEDULE_PUBLIC_READ_SMOKE_RETRY/)
 })
 
 test('Schedule public-read core staging smoke uses only the core capability and proves disabled rollback', () => {

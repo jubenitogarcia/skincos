@@ -5,6 +5,7 @@ import {
   createSchedulePublicReadHeaders,
   normalizeSchedulePublicReadSecret,
 } from '../public-read-contract.js'
+import { waitForDisabledSchedulePublicReadHealth } from './public-read-disabled-health.mjs'
 
 const allowedOrigin = 'https://skincos-schedule-public-read-staging.skincos.workers.dev'
 const mode = String(process.env.SCHEDULE_PUBLIC_READ_SMOKE_MODE || 'ready').trim()
@@ -13,10 +14,10 @@ const configuredOrigin = String(process.env.SCHEDULE_PUBLIC_READ_SMOKE_BASE_URL 
 if (!['ready', 'disabled'].includes(mode)) throw new Error('SCHEDULE_PUBLIC_READ_SMOKE_MODE must be ready or disabled')
 if (configuredOrigin !== allowedOrigin) throw new Error('Schedule public-read smoke is pinned to the isolated staging workers.dev origin')
 
-async function request(path, init = {}) {
+async function request(path, init = {}, timeoutMs = 15_000) {
   return fetch(`${configuredOrigin}${path}`, {
     ...init,
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
 }
 
@@ -27,11 +28,9 @@ async function json(response, label) {
 }
 
 if (mode === 'disabled') {
-  const response = await request('/health')
-  assert.equal(response.status, 503)
-  const body = await json(response, 'disabled health')
-  assert.equal(body.ok, false)
-  assert.equal(body.error, 'SCHEDULE_PUBLIC_READ_UNAVAILABLE')
+  const response = await waitForDisabledSchedulePublicReadHealth({
+    request: ({ timeoutMs }) => request('/health', {}, timeoutMs),
+  })
   console.log(JSON.stringify({ ok: true, mode, healthStatus: response.status }))
   process.exit(0)
 }
