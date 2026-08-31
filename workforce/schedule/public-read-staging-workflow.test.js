@@ -11,6 +11,7 @@ const adapterConfig = readFileSync(new URL('./public-read.wrangler.toml', import
 const coreConfig = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8')
 const smoke = readFileSync(new URL('./scripts/public-read-staging-smoke.mjs', import.meta.url), 'utf8')
 const disabledHealth = readFileSync(new URL('./scripts/public-read-disabled-health.mjs', import.meta.url), 'utf8')
+const readyHealth = readFileSync(new URL('./scripts/public-read-ready-health.mjs', import.meta.url), 'utf8')
 const coreSmoke = readFileSync(new URL('./scripts/public-read-core-staging-smoke.mjs', import.meta.url), 'utf8')
 const units = JSON.parse(readFileSync(new URL('../../platform/deploy/operational-units.json', import.meta.url), 'utf8'))
 const singleWriter = JSON.parse(readFileSync(new URL('../../.github/governance/cloudflare-single-writer-policy.json', import.meta.url), 'utf8'))
@@ -308,6 +309,7 @@ test('Escala core deploy guard rejects incomplete active coordination custody wh
 test('Schedule public-read staging smoke is synthetic, authenticated, and does not handle the core key', () => {
   assert.match(smoke, /allowedOrigin = 'https:\/\/skincos-schedule-public-read-staging\.skincos\.workers\.dev'/)
   assert.match(smoke, /waitForDisabledSchedulePublicReadHealth/)
+  assert.match(smoke, /waitForReadySchedulePublicReadHealth/)
   assert.match(smoke, /SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY/)
   assert.doesNotMatch(smoke, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
   assert.match(smoke, /SCHEDULE_PUBLIC_READ_REPLAYED/)
@@ -317,6 +319,9 @@ test('Schedule public-read staging smoke is synthetic, authenticated, and does n
   assert.match(disabledHealth, /DISABLED_STAGING_SMOKE_MAX_WAIT_MS = 30_000/)
   assert.match(disabledHealth, /response\?\.status !== 404/)
   assert.doesNotMatch(disabledHealth, /SCHEDULE_PUBLIC_READ_SMOKE_RETRY/)
+  assert.match(readyHealth, /READY_STAGING_SMOKE_MAX_WAIT_MS = 30_000/)
+  assert.match(readyHealth, /response\?\.status === 503/)
+  assert.match(readyHealth, /assertDisabledSchedulePublicReadHealth\(response\)/)
 })
 
 test('Schedule public-read core staging smoke uses only the core capability and proves disabled rollback', () => {
