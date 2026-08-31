@@ -86,6 +86,11 @@
       "purpose": "Dedicated Finance UI Pages projects; staging and production are isolated projects."
     },
     {
+      "id": "schedule-public-read-adapter-writer",
+      "resource": "deploy:schedule-public-read-adapter:staging",
+      "purpose": "Serializes the isolated Schedule public-read staging adapter only; it is not authority to publish the Schedule core."
+    },
+    {
       "id": "ponto-waf-writer",
       "resource": "cloudflare:ponto-waf:production",
       "purpose": "Ponto WAF ruleset mutation authority."
@@ -153,6 +158,15 @@
       "mutationWorkflows": [
         ".github/workflows/deploy-escala-api.yml",
         ".github/workflows/cloudflare-pages-sync-escala.yml"
+      ]
+    },
+    {
+      "id": "schedule-public-read-adapter",
+      "platform": "cloudflare-worker-durable-object",
+      "canonicalDeployWorkflow": ".github/workflows/deploy-schedule-public-read-adapter.yml",
+      "coordinationGroup": "schedule-public-read-adapter-writer",
+      "mutationWorkflows": [
+        ".github/workflows/deploy-schedule-public-read-adapter.yml"
       ]
     },
     {

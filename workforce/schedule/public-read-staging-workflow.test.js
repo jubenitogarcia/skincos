@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+
+const workflow = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8')
+const coreWorkflow = readFileSync(new URL('../../.github/workflows/deploy-escala-api.yml', import.meta.url), 'utf8')
+const adapterConfig = readFileSync(new URL('./public-read.wrangler.toml', import.meta.url), 'utf8')
+const coreConfig = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8')
+const smoke = readFileSync(new URL('./scripts/public-read-staging-smoke.mjs', import.meta.url), 'utf8')
+const units = JSON.parse(readFileSync(new URL('../../platform/deploy/operational-units.json', import.meta.url), 'utf8'))
+const singleWriter = JSON.parse(readFileSync(new URL('../../.github/governance/cloudflare-single-writer-policy.json', import.meta.url), 'utf8'))
+
+test('Schedule public-read adapter is a manual preview/staging-only publisher', () => {
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.match(workflow, /options: \[preview, staging\]/)
+  assert.doesNotMatch(workflow, /options: \[[^\]]*production/i)
+  assert.match(workflow, /uses: \.\/\.github\/workflows\/promotion-gate\.yml/)
+  assert.match(workflow, /unit: schedule-public-read-adapter/)
+  assert.match(workflow, /release_sha: \$\{\{ inputs\.release_sha \}\}/)
+  assert.match(workflow, /preview_run_id: \$\{\{ inputs\.preview_run_id \}\}/)
+  assert.match(workflow, /environment: preview/)
+  assert.match(workflow, /environment: staging/)
+  assert.match(workflow, /DISPATCH_REF.*refs\/heads\/main/)
+  assert.match(workflow, /RUN_ATTEMPT.*== '1'/)
+})
+
+test('Schedule public-read adapter keeps core publication and Website outside its writer scope', () => {
+  assert.match(workflow, /service = "skincos-escala-api-staging"/)
+  assert.match(workflow, /secret list --format json --config workforce\/schedule\/wrangler\.toml --env staging/)
+  assert.match(workflow, /schedule-public-read-core-opt-in-evidence/)
+  assert.match(workflow, /public-read-core-opt-in-evidence\.mjs verify/)
+  assert.doesNotMatch(workflow, /deploy --config workforce\/schedule\/wrangler\.toml/)
+  assert.doesNotMatch(workflow, /website\//)
+  assert.doesNotMatch(workflow, /--env production/)
+  assert.match(workflow, /adapter must not gain a public route/)
+  assert.match(workflow, /adapter must not gain a direct D1 binding/)
+})
+
+test('Schedule public-read adapter requires separate custody, a fenced lease, unpublished candidate construction, and a fail-closed rollback', () => {
+  assert.match(workflow, /ENABLE_SCHEDULE_PUBLIC_READ_STAGING/)
+  assert.match(workflow, /SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY/)
+  assert.match(workflow, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
+  assert.match(workflow, /edge and core Schedule public-read HMAC keys must differ/)
+  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-acquire/)
+  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-check/)
+  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-release/)
+  assert.match(workflow, /resource: deploy:schedule-public-read-adapter:staging/)
+  assert.match(workflow, /versions upload/)
+  assert.match(workflow, /--secrets-file \/dev\/stdin/)
+  assert.match(workflow, /versions deploy/)
+  assert.match(workflow, /--version-tag "\$\{CANDIDATE_TAG\}@100%"/)
+  assert.doesNotMatch(workflow, /\bsecret put\b/)
+  for (const line of workflow.split('\n').filter((entry) => /\bwrangler@[^\s]+ deploy\b/.test(entry))) {
+    assert.match(line, /--dry-run/)
+  }
+  assert.match(workflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:true"/)
+  assert.match(workflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:false"/)
+  assert.match(workflow, /Check adapter lease before automatic disabled version creation/)
+  assert.match(workflow, /Check adapter lease before automatic disabled deployment/)
+  assert.match(workflow, /Prove automatic disabled fallback/)
+  assert.ok((workflow.match(/global-coordination-check/g) || []).length >= 6)
+})
+
+test('Schedule public-read defaults disabled and only the canonical core publisher can opt in for staging', () => {
+  assert.match(adapterConfig, /\[env\.staging\.vars\][\s\S]*SCHEDULE_PUBLIC_READ_ENABLED = "false"/)
+  assert.match(coreConfig, /\[env\.staging\.vars\][\s\S]*SCHEDULE_PUBLIC_READ_ENABLED = "false"/)
+  assert.match(coreWorkflow, /enable_schedule_public_read:/)
+  assert.match(coreWorkflow, /default: false/)
+  assert.match(coreWorkflow, /type: boolean/)
+  assert.match(coreWorkflow, /Reject Schedule public-read enablement outside staging/)
+  assert.match(coreWorkflow, /DISPATCH_REF.*github\.ref/)
+  assert.match(coreWorkflow, /RUN_ATTEMPT.*github\.run_attempt/)
+  assert.match(coreWorkflow, /must dispatch from protected main/)
+  assert.match(coreWorkflow, /refuses reruns after a potentially mutating attempt/)
+  assert.match(coreWorkflow, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
+  assert.match(coreWorkflow, /must differ from ESCALA_ACTOR_HMAC_KEY/)
+  assert.match(coreWorkflow, /Create unpublished Schedule public-read core candidate with both capabilities/)
+  assert.match(coreWorkflow, /--secrets-file \/dev\/stdin/)
+  assert.match(coreWorkflow, /Deploy explicit Schedule public-read core candidate \(staging\)/)
+  assert.match(coreWorkflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:true"/)
+  assert.match(coreWorkflow, /--var "SCHEDULE_PUBLIC_READ_ENABLED:false"/)
+  assert.match(coreWorkflow, /schedule-public-read-core-opt-in-evidence/)
+  assert.doesNotMatch(coreWorkflow, /secret put SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
+  const productionSection = coreWorkflow.slice(
+    coreWorkflow.indexOf('Deploy Escala worker (production)'),
+    coreWorkflow.indexOf('Sync Escala worker secret (staging)'),
+  )
+  assert.match(productionSection, /SCHEDULE_PUBLIC_READ_ENABLED:false/)
+  assert.doesNotMatch(productionSection, /SCHEDULE_PUBLIC_READ_ENABLED:true/)
+})
+
+test('Schedule public-read staging smoke is synthetic, authenticated, and does not handle the core key', () => {
+  assert.match(smoke, /allowedOrigin = 'https:\/\/skincos-schedule-public-read-staging\.skincos\.workers\.dev'/)
+  assert.match(smoke, /SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY/)
+  assert.doesNotMatch(smoke, /SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY/)
+  assert.match(smoke, /SCHEDULE_PUBLIC_READ_REPLAYED/)
+  assert.match(smoke, /SCHEDULE_PUBLIC_READ_UNAUTHORIZED/)
+  assert.match(smoke, /SCHEDULE_PUBLIC_READ_UNAVAILABLE/)
+  assert.doesNotMatch(smoke, /console\.log\([^\n]*(?:EDGE_HMAC|CORE_HMAC|edgeKey)/)
+})
+
+test('deployment catalog and single-writer policy assign only the isolated adapter Worker', () => {
+  const unit = units.units.find((entry) => entry.id === 'schedule-public-read-adapter')
+  assert.ok(unit)
+  assert.deepEqual(unit.environments, ['preview', 'staging'])
+  assert.deepEqual(unit.publishes, ['Worker:skincos-schedule-public-read-staging'])
+  assert.deepEqual(unit.migrationPaths, [])
+  assert.equal(unit.workflow, '.github/workflows/deploy-schedule-public-read-adapter.yml')
+
+  const group = singleWriter.coordinationGroups.find((entry) => entry.id === 'schedule-public-read-adapter-writer')
+  assert.ok(group)
+  assert.equal(group.resource, 'deploy:schedule-public-read-adapter:staging')
+  const surface = singleWriter.surfaces.find((entry) => entry.id === 'schedule-public-read-adapter')
+  assert.ok(surface)
+  assert.equal(surface.canonicalDeployWorkflow, '.github/workflows/deploy-schedule-public-read-adapter.yml')
+  assert.deepEqual(surface.mutationWorkflows, ['.github/workflows/deploy-schedule-public-read-adapter.yml'])
+})

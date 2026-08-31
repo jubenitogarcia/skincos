@@ -12,6 +12,11 @@ on:
       release_sha: { description: "Immutable commit SHA", required: false, type: string }
       preview_run_id: { description: "Required for staging", required: false, type: string }
       staging_run_id: { description: "Required for production", required: false, type: string }
+      enable_schedule_public_read:
+        description: "Staging-only opt-in for the HMAC-gated Schedule public-read core projection"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: deploy-escala-api-${{ inputs.target }}
@@ -31,8 +36,35 @@ jobs:
       preview_run_id: ${{ inputs.preview_run_id }}
       staging_run_id: ${{ inputs.staging_run_id }}
     secrets: inherit
-  deploy:
+
+  schedule-public-read-policy:
     needs: promotion
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject Schedule public-read enablement outside staging
+        env:
+          TARGET: ${{ inputs.target }}
+          ENABLE_SCHEDULE_PUBLIC_READ: ${{ inputs.enable_schedule_public_read && 'true' || 'false' }}
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' || "$ENABLE_SCHEDULE_PUBLIC_READ" == 'false' ]] || { echo 'Schedule public-read opt-in is invalid'; exit 1; }
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$TARGET" != 'staging' ]]; then
+            echo 'Schedule public-read may be enabled only by the canonical staging Escala workflow.'
+            exit 1
+          fi
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$DISPATCH_REF" != 'refs/heads/main' ]]; then
+            echo 'Schedule public-read core opt-in must dispatch from protected main.'
+            exit 1
+          fi
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$RUN_ATTEMPT" != '1' ]]; then
+            echo 'Schedule public-read core opt-in refuses reruns after a potentially mutating attempt.'
+            exit 1
+          fi
+
+  deploy:
+    needs: [promotion, schedule-public-read-policy]
     if: ${{ inputs.target != 'preview' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
@@ -44,9 +76,11 @@ jobs:
         id: guard
         env:
           ENABLE: ${{ inputs.target == 'staging' && vars.ENABLE_ESCALA_API_DEPLOY_STAGING || vars.ENABLE_ESCALA_API_DEPLOY }}
+          ENABLE_SCHEDULE_PUBLIC_READ: ${{ inputs.enable_schedule_public_read && 'true' || 'false' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+          SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
         run: |
           set -euo pipefail
           if [[ "${ENABLE:-true}" != "true" ]]; then
@@ -62,6 +96,18 @@ jobs:
             echo "::error::Missing GitHub secret ESCALA_ACTOR_HMAC_KEY."
             exit 1
           fi
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && -z "${SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY:-}" ]]; then
+            echo "::error::Missing GitHub secret SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY for staging core opt-in."
+            exit 1
+          fi
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' ]]; then
+            node --input-type=module <<'NODE'
+            const actor = String(process.env.ESCALA_ACTOR_HMAC_KEY || '').trim()
+            const core = String(process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY || '').trim()
+            if (!actor || !core) throw new Error('core capability secrets must be non-empty')
+            if (actor === core) throw new Error('Schedule public-read core capability must differ from ESCALA_ACTOR_HMAC_KEY')
+            NODE
+          fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
@@ -75,6 +121,10 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
+
+      - name: Validate Schedule public-read core opt-in source contract
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js
 
       - name: Acquire Escala API deployment lease
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -155,10 +205,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --keep-vars
+          npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false"
 
       - name: Sync Escala worker secret (staging)
-        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && !inputs.enable_schedule_public_read }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -190,6 +240,43 @@ jobs:
           set -euo pipefail
           npx --yes wrangler@4 d1 migrations apply skincos-escala-staging --remote --config workforce/schedule/wrangler.toml --env staging
 
+      - name: Check Escala API deployment lease before unpublished Schedule public-read core candidate
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Create unpublished Schedule public-read core candidate with both capabilities
+        id: schedule-public-read-core-candidate-version
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+          SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          candidate_tag="escala-api-staging-schedule-public-read-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE' | npx --yes wrangler@4 versions upload --config workforce/schedule/wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:true" --secrets-file /dev/stdin --tag "$candidate_tag" --message "escala-api:staging-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+          const actor = String(process.env.ESCALA_ACTOR_HMAC_KEY || '').trim()
+          const core = String(process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY || '').trim()
+          if (!actor || !core) throw new Error('core capability custody changed after preflight')
+          process.stdout.write(JSON.stringify({
+            ESCALA_ACTOR_HMAC_KEY: actor,
+            SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: core,
+          }))
+          NODE
+          echo 'Created one unpublished core candidate version; capability values were streamed only through stdin.'
+
       - name: Check Escala API deployment lease before staging deployment
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
         uses: ./.github/actions/global-coordination-check
@@ -203,14 +290,24 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
-      - name: Deploy Escala worker (staging)
-        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
+      - name: Deploy Escala worker (staging, default public-read disabled)
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && !inputs.enable_schedule_public_read }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --env staging --keep-vars
+          npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false"
+
+      - name: Deploy explicit Schedule public-read core candidate (staging)
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CANDIDATE_TAG: ${{ steps.schedule-public-read-core-candidate-version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CANDIDATE_TAG" ]] || { echo 'unpublished core candidate tag is missing'; exit 1; }
+          npx --yes wrangler@4 versions deploy --config workforce/schedule/wrangler.toml --env staging --version-tag "${CANDIDATE_TAG}@100%" --yes --message "escala-api:staging-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}"
 
       - name: Smoke check Escala API (production)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -229,6 +326,22 @@ jobs:
         run: |
           set -euo pipefail
           node workforce/schedule/scripts/smoke.mjs
+
+      - name: Write Schedule public-read core opt-in evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
+        env:
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: node workforce/schedule/scripts/public-read-core-opt-in-evidence.mjs write "$RUNNER_TEMP/schedule-public-read-core-opt-in/schedule-public-read-core-opt-in-evidence.json"
+
+      - name: Upload Schedule public-read core opt-in evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' && inputs.enable_schedule_public_read }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: schedule-public-read-core-opt-in-evidence
+          path: ${{ runner.temp }}/schedule-public-read-core-opt-in/schedule-public-read-core-opt-in-evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Write staging promotion evidence
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
         env:

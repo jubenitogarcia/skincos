@@ -1,9 +1,13 @@
 # `schedule-public-read/v1`
 
 This is the private, read-only compatibility boundary for the future
-`skincos-workforce-schedule` repository. It is source-only in this change:
-there is no route, deployment, hostname, D1 migration, secret provisioning or
-Website cutover.
+`skincos-workforce-schedule` repository. It remains pre-cut: there is no
+production route, Website cutover, or deployed consumer in this source change.
+The staging adapter configuration has an isolated Worker name and a
+per-nonce Durable Object guard, but it is disabled by default. It remains
+unusable until the canonical Schedule staging workflow records its explicit
+core opt-in for the same immutable SHA and the adapter workflow passes its own
+separate staging gates.
 
 ## Contract
 
@@ -37,23 +41,26 @@ service name. Signing and verification trim the configured key consistently.
 This boundary is deliberately independent from `ESCALA_ACTOR_HMAC_KEY`, which
 remains the CRM/Ponto writer-and-management credential.
 
-Nonce format and timestamp skew are verified today, but this source-only stage
-does not retain consumed nonces. A valid signed request can therefore still be
-replayed inside the permitted skew window. Replay protection is an explicit
-cutover prerequisite; no replay store or binding is introduced by this change.
+After HMAC validation, the adapter sends the nonce to a dedicated Durable
+Object selected deterministically by that nonce. Durable Object serialization
+accepts it once, retains it only for the five-minute authentication window and
+returns `409 SCHEDULE_PUBLIC_READ_REPLAYED` on another use. Guard failure is
+`503`; it never turns into a read-through bypass.
 
 ## Staged cut prerequisites
 
 The current Website still reads `SKINCOS_ESCALA_DB` directly and its booking
 routes keep their existing behavior. Before a future consumer migration:
 
-1. Create isolated staging resources and provision two different normalized
-   values: the edge key to Website and adapter only, and the core key to
-   adapter and Schedule core only.
-2. Select, provision and test bounded nonce replay protection before enabling
-   either capability, route or consumer cutover.
-3. Compare direct-D1 and adapter responses for synthetic availability and
+1. Provision two different normalized values: the edge key to Website and
+   adapter only, and the core key to adapter and Schedule core only. The core
+   key must be synchronized only by the canonical Schedule staging publisher,
+   which emits same-SHA `schedule-public-read-core-opt-in-evidence`; the
+   adapter never publishes or mutates the core. The staging Worker owns a
+   per-nonce Durable Object guard; do not replace it with eventually consistent
+   storage.
+2. Compare direct-D1 and adapter responses for synthetic availability and
    profiles, then prove readiness and rollback.
-4. Decide the customer-facing behavior when Schedule is unavailable: preserve
+3. Decide the customer-facing behavior when Schedule is unavailable: preserve
    the current fallback or return a booking-unavailable response. This contract
    does not make that product decision.

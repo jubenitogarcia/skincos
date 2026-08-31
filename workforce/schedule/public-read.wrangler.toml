@@ -2,9 +2,9 @@
 # It intentionally has no route, D1 binding, deploy workflow or configured secret.
 # A later staged cut may provision SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY only to
 # this Worker and Website, plus SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY only to this
-# Worker and Schedule core. Both normalized values must differ. Replay
-# protection remains a cutover prerequisite; this source-only stage has no
-# replay store or binding.
+# Worker and Schedule core. Both normalized values must differ. The nonce guard
+# is a dedicated Durable Object: one instance per signed nonce, which
+# serializes consumption and removes its record after the HMAC window.
 name = "skincos-schedule-public-read"
 main = "public-read-worker.js"
 compatibility_date = "2026-03-02"
@@ -14,17 +14,31 @@ preview_urls = false
 [vars]
 SCHEDULE_PUBLIC_READ_ENABLED = "false"
 
+[durable_objects]
+bindings = [
+  { name = "SCHEDULE_PUBLIC_READ_NONCE_GUARD", class_name = "SchedulePublicReadNonceGuard" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SchedulePublicReadNonceGuard"]
+
 [[services]]
 binding = "SCHEDULE_CORE"
 service = "skincos-escala-api"
 
 [env.staging]
 name = "skincos-schedule-public-read-staging"
-workers_dev = false
+workers_dev = true
 preview_urls = false
 
 [env.staging.vars]
 SCHEDULE_PUBLIC_READ_ENABLED = "false"
+
+[env.staging.durable_objects]
+bindings = [
+  { name = "SCHEDULE_PUBLIC_READ_NONCE_GUARD", class_name = "SchedulePublicReadNonceGuard" }
+]
 
 [[env.staging.services]]
 binding = "SCHEDULE_CORE"

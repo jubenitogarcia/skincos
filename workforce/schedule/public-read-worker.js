@@ -2,10 +2,13 @@ import {
   SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
   SCHEDULE_PUBLIC_READ_CORE_SERVICE,
   SCHEDULE_PUBLIC_READ_EDGE_SERVICE,
+  SCHEDULE_PUBLIC_READ_MAX_SKEW_MS,
   createSchedulePublicReadHeaders,
   normalizeSchedulePublicReadSecret,
   verifySchedulePublicReadRequest,
 } from './public-read-contract.js'
+
+export { SchedulePublicReadNonceGuard } from './public-read-nonce-guard.js'
 
 const PUBLIC_PREFIX = '/schedule-public-read/v1'
 const CORE_PREFIX = '/api/escala/internal/schedule-public-read/v1'
@@ -33,6 +36,7 @@ function runtimeConfigured(env) {
     && Boolean(edgeKey)
     && Boolean(coreKey)
     && edgeKey !== coreKey
+    && typeof env?.SCHEDULE_PUBLIC_READ_NONCE_GUARD?.getByName === 'function'
     && typeof env?.SCHEDULE_CORE?.fetch === 'function'
 }
 
@@ -55,6 +59,23 @@ function methodNotAllowed(id) {
 
 function unauthorized(id) {
   return json({ ok: false, error: 'SCHEDULE_PUBLIC_READ_UNAUTHORIZED' }, { status: 401, headers: { 'x-request-id': id } })
+}
+
+function replayed(id) {
+  return json({ ok: false, error: 'SCHEDULE_PUBLIC_READ_REPLAYED' }, { status: 409, headers: { 'x-request-id': id } })
+}
+
+async function consumeEdgeNonce(request, env) {
+  const nonce = String(request.headers.get('x-skincos-schedule-read-nonce') || '')
+  try {
+    const guard = env.SCHEDULE_PUBLIC_READ_NONCE_GUARD.getByName(nonce)
+    const result = await guard.consume({ expiresAt: Date.now() + SCHEDULE_PUBLIC_READ_MAX_SKEW_MS })
+    if (result?.ok === true) return { ok: true }
+    if (result?.code === 'REPLAYED') return { ok: false, code: 'REPLAYED' }
+  } catch {
+    // A replay guard failure is an availability failure, never a bypass.
+  }
+  return { ok: false, code: 'UNAVAILABLE' }
 }
 
 async function requestCore(request, env, corePath, id) {
@@ -105,10 +126,14 @@ export default {
     )
     if (!authorization.ok) return unauthorized(id)
 
+    const nonce = await consumeEdgeNonce(request, env)
+    if (nonce.code === 'REPLAYED') return replayed(id)
+    if (!nonce.ok) return unavailable(id)
+
     const suffix = url.pathname.slice(PUBLIC_PREFIX.length)
     if (!['/readiness', '/availability', '/professionals'].includes(suffix)) return notFound(id)
     return requestCore(request, env, `${CORE_PREFIX}${suffix}${url.search}`, id)
   },
 }
 
-export const __testables = { runtimeConfigured }
+export const __testables = { consumeEdgeNonce, runtimeConfigured }

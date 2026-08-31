@@ -21,10 +21,22 @@ const headers = await createSchedulePublicReadHeaders({
   nonce: 'schedule-public-read-dry-run-0001',
 })
 let forwardedPath = ''
+const consumedNonces = new Set()
 const response = await adapter.fetch(new Request(url, { headers }), {
   SCHEDULE_PUBLIC_READ_ENABLED: 'true',
   SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: edgeKey,
   SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: coreKey,
+  SCHEDULE_PUBLIC_READ_NONCE_GUARD: {
+    getByName(nonce) {
+      return {
+        async consume() {
+          if (consumedNonces.has(nonce)) return { ok: false, code: 'REPLAYED' }
+          consumedNonces.add(nonce)
+          return { ok: true }
+        },
+      }
+    },
+  },
   SCHEDULE_CORE: {
     async fetch(request) {
       const authorization = await verifySchedulePublicReadRequest(request, coreKey, {
@@ -43,11 +55,28 @@ const response = await adapter.fetch(new Request(url, { headers }), {
 assert.equal(response.status, 200)
 assert.equal(forwardedPath, '/api/escala/internal/schedule-public-read/v1/availability?unit=novo-hamburgo&date=2026-09-15')
 assert.equal((await response.json()).contract, 'schedule-public-read/v1')
+const replay = await adapter.fetch(new Request(url, { headers }), {
+  SCHEDULE_PUBLIC_READ_ENABLED: 'true',
+  SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: edgeKey,
+  SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: coreKey,
+  SCHEDULE_PUBLIC_READ_NONCE_GUARD: {
+    getByName(nonce) {
+      return {
+        async consume() {
+          return consumedNonces.has(nonce) ? { ok: false, code: 'REPLAYED' } : { ok: true }
+        },
+      }
+    },
+  },
+  SCHEDULE_CORE: { async fetch() { throw new Error('replayed request must not reach Schedule core') } },
+})
+assert.equal(replay.status, 409)
 
 console.log(JSON.stringify({
   ok: true,
   mode: 'local-only',
   defaultDisabledStatus: disabled.status,
   authenticatedForwardStatus: response.status,
+  replayStatus: replay.status,
   forwardedPath,
 }))
