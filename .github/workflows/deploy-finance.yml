@@ -40,6 +40,7 @@ concurrency:
 permissions:
   actions: read
   contents: read
+  packages: read
 
 jobs:
   promotion:
@@ -106,6 +107,8 @@ jobs:
           fi
       - name: Validate Finance release source
         timeout-minutes: 5
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           npm --prefix finance ci --ignore-scripts

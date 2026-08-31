@@ -25,6 +25,7 @@ concurrency:
 permissions:
   actions: read
   contents: read
+  packages: read
 
 jobs:
   canary:
@@ -223,6 +224,8 @@ jobs:
       - name: Install browser dependencies for isolated shell smoke
         if: steps.canary_open.outcome == 'success'
         timeout-minutes: 20
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           npm --prefix finance ci
           npm --prefix finance exec -- playwright install --with-deps chromium
