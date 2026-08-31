@@ -1,0 +1,567 @@
+name: Deploy Schedule Public Read Adapter (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Promotion stage for the isolated adapter"
+        required: true
+        default: preview
+        type: choice
+        options: [preview, staging]
+      release_sha:
+        description: "Immutable main SHA for this adapter candidate or disabled rollback"
+        required: true
+        type: string
+      preview_run_id:
+        description: "Successful adapter preview run for this exact SHA; required for staging"
+        required: false
+        type: string
+      bootstrap_run_id:
+        description: "Successful disabled adapter bootstrap whose Durable Object lifecycle digest matches this source; required before versions upload"
+        required: false
+        type: string
+      core_staging_run_id:
+        description: "Successful Escala API staging run for the same SHA; required only to enable the adapter"
+        required: false
+        type: string
+      staging_run_id:
+        description: "Reserved and rejected: this pre-cut adapter has no production promotion lane"
+        required: false
+        type: string
+      operation:
+        description: "Bootstrap a disabled Durable Object, deploy an HMAC-gated candidate, or fail closed by disabling it"
+        required: true
+        default: deploy
+        type: choice
+        options: [bootstrap-disabled, deploy, disable]
+
+concurrency:
+  group: deploy-schedule-public-read-adapter-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: schedule-public-read-adapter
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+
+  preview:
+    needs: promotion
+    if: ${{ inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - name: Checkout immutable adapter source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Verify preview remains route-free and source-bound
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full immutable SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checked-out adapter source differs from promotion evidence'; exit 1; }
+          ! grep -Eq '^\s*routes\s*=' workforce/schedule/public-read.wrangler.toml || { echo 'public-read adapter must remain route-free'; exit 1; }
+          grep -q 'workers_dev = true' workforce/schedule/public-read.wrangler.toml || { echo 'isolated staging workers.dev surface is missing'; exit 1; }
+
+      - name: Run isolated adapter contract tests
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js
+
+      - name: Validate staging adapter configuration without a remote mutation
+        run: npx --yes wrangler@4.120.0 deploy --dry-run --config workforce/schedule/public-read.wrangler.toml --env staging --outdir "$RUNNER_TEMP/schedule-public-read-adapter-preview"
+
+  staging:
+    needs: promotion
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout immutable adapter source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Guard staging-only adapter dispatch
+        env:
+          TARGET: ${{ inputs.target }}
+          OPERATION: ${{ inputs.operation }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.bootstrap_run_id }}
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" == 'staging' ]] || { echo 'only the staging adapter can reach this job'; exit 1; }
+          [[ "$OPERATION" == 'bootstrap-disabled' || "$OPERATION" == 'deploy' || "$OPERATION" == 'disable' ]] || { echo 'unsupported adapter operation'; exit 1; }
+          [[ -z "${STAGING_RUN_ID:-}" ]] || { echo 'this pre-cut adapter never accepts production evidence'; exit 1; }
+          if [[ "$OPERATION" == 'bootstrap-disabled' && -n "${BOOTSTRAP_RUN_ID:-}" ]]; then
+            echo 'bootstrap-disabled creates its own proof and must not accept a prior bootstrap run id.'
+            exit 1
+          fi
+          if [[ "$OPERATION" != 'bootstrap-disabled' && ! "$BOOTSTRAP_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo 'deploy and disable require the successful disabled bootstrap run id before any versions upload.'
+            exit 1
+          fi
+          [[ "$DISPATCH_REF" == 'refs/heads/main' ]] || { echo 'adapter dispatch must run from protected main'; exit 1; }
+          [[ "$RUN_ATTEMPT" == '1' ]] || { echo 'reruns are refused after a potentially mutating adapter attempt'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full immutable SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checked-out adapter source differs from promotion evidence'; exit 1; }
+          ! grep -Eq '^\s*routes\s*=' workforce/schedule/public-read.wrangler.toml || { echo 'adapter must not gain a public route'; exit 1; }
+          ! grep -Eq '^\s*\[\[d1_databases\]\]' workforce/schedule/public-read.wrangler.toml || { echo 'adapter must not gain a direct D1 binding'; exit 1; }
+          grep -q 'service = "skincos-escala-api-staging"' workforce/schedule/public-read.wrangler.toml || { echo 'adapter must bind only the isolated staging Schedule core'; exit 1; }
+
+      - name: Run isolated adapter contract tests
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js
+
+      - name: Verify exact Escala staging predecessor for candidate enablement
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CORE_STAGING_RUN_ID: ${{ inputs.core_staging_run_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CORE_STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'a successful Escala staging run id is required before enabling the adapter'; exit 1; }
+          predecessor_root="$RUNNER_TEMP/schedule-public-read-adapter/core-predecessor"
+          mkdir -p "$predecessor_root"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-escala-api.yml" > "$predecessor_root/workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CORE_STAGING_RUN_ID" > "$predecessor_root/run.json"
+          node - "$predecessor_root/workflow.json" "$predecessor_root/run.json" <<'NODE'
+          const fs = require('node:fs')
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+          const run = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'))
+          const expectedPath = '.github/workflows/deploy-escala-api.yml'
+          if (
+            workflow.state !== 'active'
+            || workflow.path !== expectedPath
+            || run.workflow_id !== workflow.id
+            || ![expectedPath, `${expectedPath}@refs/heads/main`].includes(run.path)
+            || run.status !== 'completed'
+            || run.conclusion !== 'success'
+            || run.run_attempt !== 1
+            || run.event !== 'workflow_dispatch'
+            || run.head_branch !== 'main'
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) {
+            throw new Error('core predecessor is not a successful canonical main Escala staging publication for this SHA')
+          }
+          NODE
+          gh run download "$CORE_STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-escala-api --dir "$predecessor_root/evidence"
+          PROMOTION_UNIT=escala-api \
+          PROMOTION_EXPECTED_TARGET=staging \
+          PROMOTION_EXPECTED_SHA="$RELEASE_SHA" \
+          node .github/scripts/promotion-evidence.mjs verify "$predecessor_root/evidence/promotion-evidence.json"
+          gh run download "$CORE_STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name schedule-public-read-core-opt-in-evidence --dir "$predecessor_root/core-opt-in"
+          SCHEDULE_PUBLIC_READ_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          SCHEDULE_PUBLIC_READ_EXPECTED_WORKFLOW_RUN_ID="$CORE_STAGING_RUN_ID" \
+          node workforce/schedule/scripts/public-read-core-opt-in-evidence.mjs verify "$predecessor_root/core-opt-in/schedule-public-read-core-opt-in-evidence.json"
+
+      - name: Validate adapter staging configuration without a remote mutation
+        run: npx --yes wrangler@4.120.0 deploy --dry-run --config workforce/schedule/public-read.wrangler.toml --env staging --outdir "$RUNNER_TEMP/schedule-public-read-adapter-staging-dry-run"
+
+      - name: Guard staging capability custody and edge/core key separation
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          ENABLE_SCHEDULE_PUBLIC_READ_STAGING: ${{ vars.ENABLE_SCHEDULE_PUBLIC_READ_STAGING }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY }}
+          SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_SCHEDULE_PUBLIC_READ_STAGING" == 'true' ]] || { echo 'staging adapter deployment flag is disabled'; exit 1; }
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'Cloudflare staging credentials are unavailable'; exit 1; }
+          node --input-type=module <<'NODE'
+          const edge = String(process.env.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY || '').trim()
+          const core = String(process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY || '').trim()
+          const legacyActor = String(process.env.ESCALA_ACTOR_HMAC_KEY || '').trim()
+          if (!edge || !core || !legacyActor) throw new Error('edge, core, and legacy Escala HMAC keys are required')
+          if (edge === core) throw new Error('edge and core Schedule public-read HMAC keys must differ')
+          if (edge === legacyActor) throw new Error('Schedule public-read edge capability must differ from ESCALA_ACTOR_HMAC_KEY')
+          NODE
+          echo 'Staging edge/core/legacy key separation confirmed without revealing values.'
+
+      - name: Acquire adapter staging coordination lease
+        id: lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+
+      - name: Verify disabled bootstrap proof before versioned adapter mutation
+        if: ${{ inputs.operation != 'bootstrap-disabled' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.bootstrap_run_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$BOOTSTRAP_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'a numeric disabled bootstrap run id is required'; exit 1; }
+          bootstrap_root="$RUNNER_TEMP/schedule-public-read-adapter/bootstrap-predecessor"
+          mkdir -p "$bootstrap_root"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-schedule-public-read-adapter.yml" > "$bootstrap_root/workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOOTSTRAP_RUN_ID" > "$bootstrap_root/run.json"
+          node - "$bootstrap_root/workflow.json" "$bootstrap_root/run.json" <<'NODE'
+          const fs = require('node:fs')
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+          const run = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'))
+          const expectedPath = '.github/workflows/deploy-schedule-public-read-adapter.yml'
+          if (
+            workflow.state !== 'active'
+            || workflow.path !== expectedPath
+            || run.workflow_id !== workflow.id
+            || ![expectedPath, `${expectedPath}@refs/heads/main`].includes(run.path)
+            || run.status !== 'completed'
+            || run.conclusion !== 'success'
+            || run.run_attempt !== 1
+            || run.event !== 'workflow_dispatch'
+            || run.head_branch !== 'main'
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) {
+            throw new Error('bootstrap predecessor is not a successful canonical main disabled adapter bootstrap')
+          }
+          NODE
+          gh run download "$BOOTSTRAP_RUN_ID" --repo "$GITHUB_REPOSITORY" --name schedule-public-read-adapter-bootstrap-evidence --dir "$bootstrap_root/evidence"
+          lifecycle_config_digest="$(node workforce/schedule/scripts/public-read-bootstrap-evidence.mjs digest workforce/schedule/public-read.wrangler.toml)"
+          SCHEDULE_PUBLIC_READ_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          SCHEDULE_PUBLIC_READ_EXPECTED_LIFECYCLE_CONFIG_DIGEST="$lifecycle_config_digest" \
+          SCHEDULE_PUBLIC_READ_EXPECTED_WORKFLOW_RUN_ID="$BOOTSTRAP_RUN_ID" \
+          node workforce/schedule/scripts/public-read-bootstrap-evidence.mjs verify "$bootstrap_root/evidence/schedule-public-read-adapter-bootstrap-evidence.json" workforce/schedule/public-read.wrangler.toml
+          npx --yes wrangler@4.120.0 deployments list --json --config workforce/schedule/public-read.wrangler.toml --env staging > "$bootstrap_root/deployments.json"
+          node - "$bootstrap_root/deployments.json" <<'NODE'
+          const fs = require('node:fs')
+          const deployments = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+          if (!Array.isArray(deployments) || deployments.length === 0) {
+            throw new Error('the disabled bootstrap proof exists but the isolated staging Worker has no current deployment')
+          }
+          NODE
+          echo 'Disabled bootstrap proof, unchanged Durable Object lifecycle digest, and extant staging Worker are confirmed before versions upload.'
+
+      - name: Check adapter lease before disabled bootstrap lifecycle deployment
+        if: ${{ inputs.operation == 'bootstrap-disabled' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Bootstrap disabled staging adapter and Durable Object lifecycle
+        id: bootstrap-disabled
+        if: ${{ inputs.operation == 'bootstrap-disabled' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          bootstrap_tag="schedule-public-read-staging-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$bootstrap_tag" >> "$GITHUB_OUTPUT"
+          echo 'mutated=true' >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4.120.0 deploy --config workforce/schedule/public-read.wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$bootstrap_tag" --message "schedule-public-read-adapter:staging-bootstrap-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+
+      - name: Prove disabled bootstrap
+        id: bootstrap-disabled-smoke
+        if: ${{ steps.bootstrap-disabled.outcome == 'success' }}
+        env:
+          SCHEDULE_PUBLIC_READ_SMOKE_BASE_URL: https://skincos-schedule-public-read-staging.skincos.workers.dev
+          SCHEDULE_PUBLIC_READ_SMOKE_MODE: disabled
+        run: node workforce/schedule/scripts/public-read-staging-smoke.mjs
+
+      - name: Write disabled bootstrap evidence
+        if: ${{ steps.bootstrap-disabled-smoke.outcome == 'success' }}
+        env:
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: node workforce/schedule/scripts/public-read-bootstrap-evidence.mjs write "$RUNNER_TEMP/schedule-public-read-adapter-bootstrap/schedule-public-read-adapter-bootstrap-evidence.json" workforce/schedule/public-read.wrangler.toml
+
+      - name: Upload disabled bootstrap evidence
+        if: ${{ steps.bootstrap-disabled-smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: schedule-public-read-adapter-bootstrap-evidence
+          path: ${{ runner.temp }}/schedule-public-read-adapter-bootstrap/schedule-public-read-adapter-bootstrap-evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Verify core staging secret inventory before adapter mutation
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          inventory="$RUNNER_TEMP/schedule-public-read-adapter/core-secret-names.json"
+          trap 'rm -f "$inventory"' EXIT
+          npx --yes wrangler@4.120.0 secret list --format json --config workforce/schedule/wrangler.toml --env staging > "$inventory"
+          node - "$inventory" <<'NODE'
+          const fs = require('node:fs')
+          const entries = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+          const names = new Set((Array.isArray(entries) ? entries : []).map((entry) => String(entry?.name || entry || '')))
+          if (!names.has('SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY')) throw new Error('staging Schedule core has no public-read core capability secret')
+          NODE
+          echo 'Core staging capability secret is present; its value was not read.'
+
+      - name: Check adapter lease before unpublished candidate version creation
+        if: ${{ inputs.operation == 'deploy' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Create unpublished adapter candidate version with both HMAC keys
+        id: candidate-version
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY }}
+          SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          candidate_tag="schedule-public-read-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE' | npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:true" --secrets-file /dev/stdin --tag "$candidate_tag" --message "schedule-public-read-adapter:staging:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+          const edge = String(process.env.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY || '').trim()
+          const core = String(process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY || '').trim()
+          if (!edge || !core || edge === core) throw new Error('adapter key custody changed after preflight')
+          process.stdout.write(JSON.stringify({
+            SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: edge,
+            SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: core,
+          }))
+          NODE
+          echo 'Created one unpublished adapter candidate version; key values were streamed only through stdin.'
+
+      - name: Check adapter lease before candidate deployment
+        if: ${{ inputs.operation == 'deploy' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Deploy HMAC-gated adapter candidate to staging
+        id: candidate
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CANDIDATE_TAG: ${{ steps.candidate-version.outputs.tag }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CANDIDATE_TAG" ]] || { echo 'unpublished adapter candidate tag is missing'; exit 1; }
+          echo 'mutated=true' >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/public-read.wrangler.toml --env staging --version-tag "${CANDIDATE_TAG}@100%" --yes --message "schedule-public-read-adapter:staging:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+
+      - name: Run synthetic authenticated staging smoke
+        if: ${{ steps.candidate.outcome == 'success' }}
+        env:
+          SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY }}
+          SCHEDULE_PUBLIC_READ_SMOKE_BASE_URL: https://skincos-schedule-public-read-staging.skincos.workers.dev
+        run: node workforce/schedule/scripts/public-read-staging-smoke.mjs
+
+      - name: Check adapter lease before automatic disabled version creation
+        id: automatic-disabled-version-lease
+        if: ${{ failure() && steps.candidate.outputs.mutated == 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Create automatic disabled fallback version
+        id: automatic-disabled-version
+        if: ${{ failure() && steps.candidate.outputs.mutated == 'true' && steps.automatic-disabled-version-lease.outcome == 'success' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          disabled_tag="schedule-public-read-staging-disabled-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$disabled_tag" >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "schedule-public-read-adapter:staging-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+
+      - name: Check adapter lease before automatic disabled deployment
+        id: automatic-disabled-deployment-lease
+        if: ${{ failure() && steps.candidate.outputs.mutated == 'true' && steps.automatic-disabled-version.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Deploy automatic disabled fallback
+        id: automatic-disabled-fallback
+        if: ${{ failure() && steps.candidate.outputs.mutated == 'true' && steps.automatic-disabled-deployment-lease.outcome == 'success' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          DISABLED_TAG: ${{ steps.automatic-disabled-version.outputs.tag }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DISABLED_TAG" ]] || { echo 'automatic disabled adapter version tag is missing'; exit 1; }
+          npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/public-read.wrangler.toml --env staging --version-tag "${DISABLED_TAG}@100%" --yes --message "schedule-public-read-adapter:staging-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+
+      - name: Prove automatic disabled fallback
+        if: ${{ steps.automatic-disabled-fallback.outcome == 'success' }}
+        env:
+          SCHEDULE_PUBLIC_READ_SMOKE_BASE_URL: https://skincos-schedule-public-read-staging.skincos.workers.dev
+          SCHEDULE_PUBLIC_READ_SMOKE_MODE: disabled
+        run: node workforce/schedule/scripts/public-read-staging-smoke.mjs
+
+      - name: Check adapter lease before manual disabled version creation
+        if: ${{ inputs.operation == 'disable' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Create manual disabled rollback version
+        id: manual-disabled-version
+        if: ${{ inputs.operation == 'disable' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          disabled_tag="schedule-public-read-staging-manual-disabled-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$disabled_tag" >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --env staging --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "schedule-public-read-adapter:staging-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+
+      - name: Check adapter lease before manual disabled deployment
+        if: ${{ inputs.operation == 'disable' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
+          resource: deploy:schedule-public-read-adapter:staging
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Deploy staging adapter disabled by explicit rollback dispatch
+        id: disabled-rollback
+        if: ${{ inputs.operation == 'disable' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          DISABLED_TAG: ${{ steps.manual-disabled-version.outputs.tag }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DISABLED_TAG" ]] || { echo 'manual disabled adapter version tag is missing'; exit 1; }
+          echo 'mutated=true' >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/public-read.wrangler.toml --env staging --version-tag "${DISABLED_TAG}@100%" --yes --message "schedule-public-read-adapter:staging-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+
+      - name: Prove explicit disabled rollback
+        if: ${{ steps.disabled-rollback.outcome == 'success' }}
+        env:
+          SCHEDULE_PUBLIC_READ_SMOKE_BASE_URL: https://skincos-schedule-public-read-staging.skincos.workers.dev
+          SCHEDULE_PUBLIC_READ_SMOKE_MODE: disabled
+        run: node workforce/schedule/scripts/public-read-staging-smoke.mjs
+
+      - name: Write staging promotion evidence
+        if: ${{ steps.candidate.outcome == 'success' }}
+        env:
+          PROMOTION_UNIT: schedule-public-read-adapter
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+
+      - name: Upload staging promotion evidence
+        if: ${{ steps.candidate.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-schedule-public-read-adapter
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Release adapter staging coordination lease
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
