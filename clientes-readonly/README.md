@@ -49,17 +49,19 @@ runtime by default.
 committed as not ready and `npm run release:gate` reports the missing facts.
 Before a separate owner may add the sole deploy command, its plan must prove:
 
-1. exact source and predecessor release SHAs;
-2. a named single publisher/workflow and no public route;
+1. exact source and predecessor release SHAs, with a non-initial predecessor
+   distinct from the release being evaluated;
+2. a named single publisher/workflow, reused for rollback, and no public route;
 3. a dedicated read-model service, data owner and migrations owner;
 4. separate actor secret and replay-store custody;
 5. a passing synthetic smoke and a tested rollback selection using the recorded
    predecessor artifact.
 
 Rollback is never a redeploy from CRM. The gate requires a previously recorded
-predecessor SHA, a matching rollback artifact and a recorded rollback test; a
-rollback operation must select that exact predecessor. The future single
-publisher must keep the release disabled until those facts have external
+predecessor SHA distinct from the current source, a matching rollback artifact,
+a recorded rollback test, and the same sole publisher workflow declared for the
+release. A rollback operation must select that exact predecessor. The future
+single publisher must keep the release disabled until those facts have external
 evidence. No data rollback or destructive action is defined here.
 
 ## Local validation

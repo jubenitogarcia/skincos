@@ -88,7 +88,7 @@ test('actor adapter claims an audience nonce once across otherwise distinct vali
   })
 })
 
-test('actor adapter enforces secret length and bounds future skew independently from maximum age', async () => {
+test('actor adapter enforces secret length, bounded future skew and absolute nonce expiry', async () => {
   assert.ok(CLIENTES_READONLY_ACTOR_MIN_SECRET_BYTES >= 32)
   const weakAdapter = createClientesReadonlyAuthenticatedActorAdapter({
     secret: 'short-secret',
@@ -111,11 +111,13 @@ test('actor adapter enforces secret length and bounds future skew independently 
     code: 'CLIENTES_ACTOR_FORBIDDEN',
   })
 
-  const claims = []
+  let observedAt = timestamp
+  const claims = new Map()
   const boundedReplayStore = {
     async isReady() { return true },
-    async claimNonce(claim) {
-      claims.push(claim)
+    async claimNonce({ key, expiresAtMs }) {
+      if (claims.get(key) > observedAt) return { accepted: false, code: 'CLIENTES_ACTOR_REPLAYED' }
+      claims.set(key, expiresAtMs)
       return { accepted: true }
     },
   }
@@ -129,10 +131,21 @@ test('actor adapter enforces secret length and bounds future skew independently 
   const permittedAdapter = createClientesReadonlyAuthenticatedActorAdapter({
     secret,
     replayStore: boundedReplayStore,
-    now: () => timestamp,
+    now: () => observedAt,
   })
   assert.equal((await permittedAdapter(new Request(futureUrl, { headers: permittedHeaders }))).subject, 'synthetic-gestor-1')
-  assert.equal(claims[0].expiresAtMs, timestamp + CLIENTES_READONLY_ACTOR_MAX_AGE_MS)
+  assert.equal(
+    [...claims.values()][0],
+    timestamp + CLIENTES_READONLY_ACTOR_MAX_FUTURE_SKEW_MS + CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
+  )
+
+  // The envelope remains fresh for the issuer's remaining skew window, so the
+  // nonce must still be claimed after the observer's original age window.
+  observedAt = timestamp + CLIENTES_READONLY_ACTOR_MAX_AGE_MS + 1
+  assert.deepEqual(await permittedAdapter(new Request(futureUrl, { headers: permittedHeaders })), {
+    ok: false,
+    code: 'CLIENTES_ACTOR_REPLAYED',
+  })
 })
 
 test('actor adapter fails closed when signature or replay custody is absent', async () => {

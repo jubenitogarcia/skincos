@@ -14,22 +14,28 @@ function fullSha(value) {
   return typeof value === 'string' && SHA_PATTERN.test(value)
 }
 
-function validRestoreRollback(rollback, predecessorReleaseSha) {
+function rollbackUsesDeclaredPublisher(rollback, publisher) {
+  return present(rollback?.workflow)
+    && present(publisher?.workflow)
+    && rollback.workflow === publisher.workflow
+}
+
+function validRestoreRollback(rollback, predecessorReleaseSha, publisher) {
   return rollback?.mode === 'restore-predecessor'
     && fullSha(rollback?.artifactSha)
     && rollback.artifactSha === predecessorReleaseSha
     && fullSha(rollback?.targetReleaseSha)
     && rollback.targetReleaseSha === predecessorReleaseSha
     && rollback.tested === true
-    && present(rollback.workflow)
+    && rollbackUsesDeclaredPublisher(rollback, publisher)
 }
 
-function validInitialDisableRollback(rollback, sourceSha) {
+function validInitialDisableRollback(rollback, sourceSha, publisher) {
   return rollback?.mode === 'disable'
     && fullSha(rollback?.artifactSha)
     && rollback.artifactSha === sourceSha
     && rollback.tested === true
-    && present(rollback.workflow)
+    && rollbackUsesDeclaredPublisher(rollback, publisher)
 }
 
 /**
@@ -53,18 +59,22 @@ export function assessClientesReadonlyStagingRelease(plan = {}, { expectedSource
   const initialDeployment = plan.initialDeployment === true
   if (initialDeployment) {
     if (!absent(plan.predecessorReleaseSha)) reasons.push('CLIENTES_RELEASE_INITIAL_PREDECESSOR_FORBIDDEN')
-    if (!validInitialDisableRollback(plan.rollback, plan.sourceSha)) {
+    if (!validInitialDisableRollback(plan.rollback, plan.sourceSha, plan.publisher)) {
       reasons.push('CLIENTES_RELEASE_INITIAL_ROLLBACK_REQUIRED')
     }
   } else {
     if (!fullSha(plan.predecessorReleaseSha)) reasons.push('CLIENTES_RELEASE_PREDECESSOR_REQUIRED')
-    if (!validRestoreRollback(plan.rollback, plan.predecessorReleaseSha)) {
+    else if (plan.predecessorReleaseSha === plan.sourceSha) reasons.push('CLIENTES_RELEASE_PREDECESSOR_MUST_DIFFER')
+    if (!validRestoreRollback(plan.rollback, plan.predecessorReleaseSha, plan.publisher)) {
       reasons.push('CLIENTES_RELEASE_ROLLBACK_REQUIRED')
     }
   }
 
   if (plan.singlePublisher !== true || !present(plan.publisher?.owner) || !present(plan.publisher?.workflow)) {
     reasons.push('CLIENTES_RELEASE_SINGLE_PUBLISHER_REQUIRED')
+  }
+  if (!rollbackUsesDeclaredPublisher(plan.rollback, plan.publisher)) {
+    reasons.push('CLIENTES_RELEASE_ROLLBACK_PUBLISHER_MISMATCH')
   }
   if (plan.publicRoute !== false) reasons.push('CLIENTES_RELEASE_PUBLIC_ROUTE_FORBIDDEN')
   if (plan.syntheticSmoke?.implemented !== true || plan.syntheticSmoke?.passed !== true) reasons.push('CLIENTES_RELEASE_SYNTHETIC_SMOKE_REQUIRED')

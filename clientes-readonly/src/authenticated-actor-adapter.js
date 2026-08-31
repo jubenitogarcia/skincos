@@ -85,11 +85,11 @@ async function sign(secret, context) {
   return base64UrlEncode(signature)
 }
 
-function replayExpiry(issuedAt, now) {
-  return Math.min(
-    issuedAt + CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
-    now + CLIENTES_READONLY_ACTOR_MAX_AGE_MS,
-  )
+function replayExpiry(issuedAt) {
+  // A permitted future clock skew does not shorten the one-time nonce claim.
+  // The replay ledger must retain the claim through the envelope's own
+  // absolute expiry, not merely through the observer's maximum-age window.
+  return issuedAt + CLIENTES_READONLY_ACTOR_MAX_AGE_MS
 }
 
 async function replayKey({ audience, nonce } = {}) {
@@ -193,7 +193,7 @@ export function createClientesReadonlyAuthenticatedActorAdapter({ secret, replay
     try {
       const claimed = await replayStore.claimNonce({
         key: await replayKey({ audience: parsed.audience, nonce: parsed.nonce }),
-        expiresAtMs: replayExpiry(parsed.issuedAt, observedAt),
+        expiresAtMs: replayExpiry(parsed.issuedAt),
       })
       if (claimed?.accepted !== true) {
         return { ok: false, code: claimed?.code === 'CLIENTES_ACTOR_REPLAYED' ? claimed.code : 'CLIENTES_ACTOR_REPLAYED' }

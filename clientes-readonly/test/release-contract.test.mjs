@@ -77,6 +77,36 @@ test('a staging release requires one publisher, a predecessor and dedicated depe
   }))
   assert.equal(untestedRollback.ok, false)
   assert.ok(untestedRollback.reasons.includes('CLIENTES_RELEASE_ROLLBACK_REQUIRED'))
+
+  const rollbackThroughAnotherWorkflow = assessClientesReadonlyStagingRelease(readyPlan({
+    rollback: {
+      mode: 'restore-predecessor',
+      artifactSha: 'b'.repeat(40),
+      targetReleaseSha: 'b'.repeat(40),
+      tested: true,
+      workflow: 'unrelated-staging-release',
+    },
+  }))
+  assert.equal(rollbackThroughAnotherWorkflow.ok, false)
+  assert.ok(rollbackThroughAnotherWorkflow.reasons.includes('CLIENTES_RELEASE_ROLLBACK_REQUIRED'))
+  assert.ok(rollbackThroughAnotherWorkflow.reasons.includes('CLIENTES_RELEASE_ROLLBACK_PUBLISHER_MISMATCH'))
+})
+
+test('a non-initial release cannot select itself as its rollback predecessor', () => {
+  const sourceSha = 'a'.repeat(40)
+  const selfRollback = assessClientesReadonlyStagingRelease(readyPlan({
+    sourceSha,
+    predecessorReleaseSha: sourceSha,
+    rollback: {
+      mode: 'restore-predecessor',
+      artifactSha: sourceSha,
+      targetReleaseSha: sourceSha,
+      tested: true,
+      workflow: 'isolated-staging-release',
+    },
+  }))
+  assert.equal(selfRollback.ok, false)
+  assert.ok(selfRollback.reasons.includes('CLIENTES_RELEASE_PREDECESSOR_MUST_DIFFER'))
 })
 
 test('a rollback targets the recorded predecessor without replacing the plan source SHA', () => {
@@ -123,6 +153,21 @@ test('initial staging deployment uses a tested disable rollback instead of inven
   assert.equal(inventedPredecessor.ok, false)
   assert.ok(inventedPredecessor.reasons.includes('CLIENTES_RELEASE_INITIAL_PREDECESSOR_FORBIDDEN'))
   assert.ok(inventedPredecessor.reasons.includes('CLIENTES_RELEASE_INITIAL_ROLLBACK_REQUIRED'))
+
+  const differentRollbackWorkflow = assessClientesReadonlyStagingRelease(readyPlan({
+    sourceSha,
+    initialDeployment: true,
+    predecessorReleaseSha: '',
+    rollback: {
+      mode: 'disable',
+      artifactSha: sourceSha,
+      tested: true,
+      workflow: 'unrelated-staging-release',
+    },
+  }))
+  assert.equal(differentRollbackWorkflow.ok, false)
+  assert.ok(differentRollbackWorkflow.reasons.includes('CLIENTES_RELEASE_INITIAL_ROLLBACK_REQUIRED'))
+  assert.ok(differentRollbackWorkflow.reasons.includes('CLIENTES_RELEASE_ROLLBACK_PUBLISHER_MISMATCH'))
 })
 
 test('an eligible plan binds its evidence to the exact checked-out source SHA', () => {
