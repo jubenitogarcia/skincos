@@ -19,6 +19,7 @@ export const PORTABLE_LAYOUT = Object.freeze([
   { source: 'scripts/validate-whatsapp-adapter-candidate.mjs', target: 'scripts/validate-whatsapp-adapter-candidate.mjs' }
 ])
 export const PORTABLE_FILES = Object.freeze(PORTABLE_LAYOUT.map((entry) => entry.target).sort())
+export const PORTABLE_VALIDATOR_PATH = 'scripts/validate-whatsapp-adapter-candidate.mjs'
 const PORTABLE_DIRECTORIES = Object.freeze([...new Set(
   PORTABLE_FILES.flatMap((entry) => {
     const parts = entry.split('/')
@@ -62,6 +63,9 @@ const EXPECTED_PACKAGE_SCRIPTS = Object.freeze({
 
 const MAX_CANDIDATE_FILE_BYTES = 2 * 1024 * 1024
 const MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
+const MAX_CANDIDATE_DIRECTORY_ENTRIES = PORTABLE_FILES.length + PORTABLE_DIRECTORIES.length + 8
+const MAX_CANDIDATE_DIRECTORY_DEPTH = Math.max(...PORTABLE_FILES.map((entry) => entry.split('/').length)) + 1
+const MAX_CANDIDATE_DIRECTORY_BYTES = MAX_ARCHIVE_BYTES
 const PROHIBITED_PATHS = Object.freeze([
   'messaging/channels/whatsapp/engine/',
   'crm/api/services/waMessageMetaStore.js',
@@ -176,27 +180,52 @@ function readDirectoryCandidate(candidate) {
 
   const files = new Map()
   const directories = new Set()
-  const visit = (directory, relative) => {
-    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))
-    for (const entry of entries) {
-      if (!relative && entry.name === '.git') continue
-      const childRelative = relative ? relative + '/' + entry.name : entry.name
-      const child = path.join(directory, entry.name)
-      const stat = fs.lstatSync(child)
-      if (stat.isSymbolicLink()) fail('candidate must not contain symbolic links: ' + childRelative + '.')
-      if (stat.isDirectory()) {
-        directories.add(safeRelativePath(childRelative, 'candidate directory'))
-        visit(child, childRelative)
-        continue
+  let entriesSeen = 0
+  let bytesRead = 0
+  const visit = (directory, relative, depth) => {
+    if (depth > MAX_CANDIDATE_DIRECTORY_DEPTH) {
+      fail('candidate directory exceeds the safe nesting depth.')
+    }
+    const handle = fs.opendirSync(directory)
+    try {
+      while (true) {
+        const entry = handle.readSync()
+        if (!entry) break
+        if (!relative && entry.name === '.git') continue
+        entriesSeen += 1
+        if (entriesSeen > MAX_CANDIDATE_DIRECTORY_ENTRIES) {
+          fail('candidate directory exceeds the safe entry limit.')
+        }
+        const childRelative = relative ? relative + '/' + entry.name : entry.name
+        const normalized = safeRelativePath(childRelative, 'candidate path')
+        const child = path.join(directory, entry.name)
+        const stat = fs.lstatSync(child)
+        if (stat.isSymbolicLink()) fail('candidate must not contain symbolic links: ' + normalized + '.')
+        if (stat.isDirectory()) {
+          if (!PORTABLE_DIRECTORIES.includes(normalized)) {
+            fail('candidate closure must not contain unexpected directory: ' + normalized + '.')
+          }
+          directories.add(normalized)
+          visit(child, normalized, depth + 1)
+          continue
+        }
+        if (!stat.isFile()) fail('candidate must contain only regular files: ' + normalized + '.')
+        if (!PORTABLE_FILES.includes(normalized)) {
+          fail('candidate closure must not contain unexpected file: ' + normalized + '.')
+        }
+        if (stat.size > MAX_CANDIDATE_FILE_BYTES) fail('candidate file exceeds the safe size limit: ' + normalized + '.')
+        bytesRead += stat.size
+        if (bytesRead > MAX_CANDIDATE_DIRECTORY_BYTES) {
+          fail('candidate directory exceeds the safe total size limit.')
+        }
+        if (files.has(normalized)) fail('candidate contains a duplicate file path: ' + normalized + '.')
+        files.set(normalized, fs.readFileSync(child))
       }
-      if (!stat.isFile()) fail('candidate must contain only regular files: ' + childRelative + '.')
-      if (stat.size > MAX_CANDIDATE_FILE_BYTES) fail('candidate file exceeds the safe size limit: ' + childRelative + '.')
-      const normalized = safeRelativePath(childRelative, 'candidate file')
-      if (files.has(normalized)) fail('candidate contains a duplicate file path: ' + normalized + '.')
-      files.set(normalized, fs.readFileSync(child))
+    } finally {
+      handle.closeSync()
     }
   }
-  visit(path.resolve(candidate), '')
+  visit(path.resolve(candidate), '', 0)
   return { candidateType: 'directory', files, directories, archiveSha256: null }
 }
 
@@ -403,6 +432,14 @@ function assertAdapterSources(files) {
   if (!evolution.includes('fetch(')) fail('portable Evolution HTTP adapter must remain an HTTP consumer.')
 }
 
+function assertExpectedValidatorIdentity(files, expectedValidatorSha256) {
+  const expected = digest(expectedValidatorSha256, 'trusted portable validator SHA-256')
+  const observed = sha256(files.get(PORTABLE_VALIDATOR_PATH))
+  if (observed !== expected) {
+    fail('portable validator SHA-256 does not match the trusted reviewed identity.')
+  }
+}
+
 function parseEvidence(value) {
   if (isObject(value)) return value
   if (typeof value !== 'string' || !value.trim()) fail('candidate evidence is required.')
@@ -458,13 +495,16 @@ function evaluateEvidence(evidence, identity) {
   return blockers
 }
 
-export function measureWhatsappAdapterCandidate({ candidate } = {}) {
+export function measureWhatsappAdapterCandidate({ candidate, expectedValidatorSha256 } = {}) {
   const representation = readCandidate(candidate)
   assertExactCandidateFiles(representation.files, representation.directories)
   const manifest = parseJson(representation.files.get('adapter-boundary.json'), 'candidate adapter-boundary.json')
   assertManifest(manifest)
   assertPackage(parseJson(representation.files.get('package.json'), 'candidate package.json'))
   assertAdapterSources(representation.files)
+  if (expectedValidatorSha256 !== undefined) {
+    assertExpectedValidatorIdentity(representation.files, expectedValidatorSha256)
+  }
   return {
     candidateType: representation.candidateType,
     candidateClosureSha256: closureSha256(representation.files),
@@ -472,8 +512,11 @@ export function measureWhatsappAdapterCandidate({ candidate } = {}) {
   }
 }
 
-export function inspectWhatsappAdapterCandidate({ candidate, evidence } = {}) {
-  const identity = measureWhatsappAdapterCandidate({ candidate })
+export function inspectWhatsappAdapterCandidate({ candidate, evidence, expectedValidatorSha256 } = {}) {
+  if (expectedValidatorSha256 === undefined) {
+    fail('a trusted portable validator SHA-256 is required for candidate inspection.')
+  }
+  const identity = measureWhatsappAdapterCandidate({ candidate, expectedValidatorSha256 })
   return {
     ok: true,
     eligible: false,
@@ -492,27 +535,34 @@ function parseArguments(argv) {
   const options = {}
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index]
-    if (option === '--candidate' || option === '--evidence') {
+    if (option === '--candidate' || option === '--evidence' || option === '--trusted-validator-sha256') {
       const value = argv[index + 1]
       if (!value) fail(option + ' requires a value.')
-      options[option.slice(2)] = value
+      const key = option === '--trusted-validator-sha256' ? 'trustedValidatorSha256' : option.slice(2)
+      options[key] = value
       index += 1
       continue
     }
     if (option === '-h' || option === '--help') {
-      process.stdout.write('Usage: node scripts/validate-whatsapp-adapter-candidate.mjs --candidate <directory-or-tar> --evidence <json>\n')
+      process.stdout.write('Usage: node scripts/validate-whatsapp-adapter-candidate.mjs --candidate <directory-or-tar> --evidence <json> --trusted-validator-sha256 <sha256>\n')
       process.exit(0)
     }
     fail('unknown option ' + JSON.stringify(option) + '.')
   }
-  if (!options.candidate || !options.evidence) fail('--candidate and --evidence are required.')
+  if (!options.candidate || !options.evidence || !options.trustedValidatorSha256) {
+    fail('--candidate, --evidence and --trusted-validator-sha256 are required.')
+  }
   return options
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const options = parseArguments(process.argv.slice(2))
-    const result = assertWhatsappAdapterCandidateEligible(options)
+    const result = assertWhatsappAdapterCandidateEligible({
+      candidate: options.candidate,
+      evidence: options.evidence,
+      expectedValidatorSha256: options.trustedValidatorSha256
+    })
     process.stdout.write(JSON.stringify(result) + '\n')
   } catch (error) {
     process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n')

@@ -6,6 +6,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   CUSTODY_RELEASE_BASELINE,
+  REVIEWED_PORTABLE_VALIDATOR_SHA256,
   validateWhatsappAdapterBaseline
 } from '../validate-whatsapp-adapter-baseline.mjs'
 import { BASELINE_SOURCE_COMMIT, PORTABLE_LAYOUT } from '../validate-whatsapp-adapter-candidate.mjs'
@@ -37,6 +38,7 @@ test('validates the reviewed monorepo WhatsApp adapter baseline', () => {
     ok: true,
     status: 'pre-cut',
     baselineSourceCommit: BASELINE_SOURCE_COMMIT,
+    reviewedPortableValidatorSha256: REVIEWED_PORTABLE_VALIDATOR_SHA256,
     portableSourceFiles: PORTABLE_LAYOUT.length,
     custodyBaselineFiles: CUSTODY_RELEASE_BASELINE.length,
     singleServiceUnit: 'messaging-whatsapp.service'

@@ -8,13 +8,16 @@ import {
   BASELINE_SOURCE_COMMIT,
   BASELINE_SOURCE_TREE,
   PORTABLE_LAYOUT,
+  PORTABLE_VALIDATOR_PATH,
   REQUIRED_EVIDENCE_KEYS,
-  REVIEWED_ADAPTER_SOURCE_DIGESTS
+  REVIEWED_ADAPTER_SOURCE_DIGESTS,
+  inspectWhatsappAdapterCandidate
 } from './validate-whatsapp-adapter-candidate.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_ROOT = path.resolve(__dirname, '..')
 export const DEFAULT_MANIFEST = 'messaging/channels/whatsapp/adapter-boundary.json'
+export const REVIEWED_PORTABLE_VALIDATOR_SHA256 = 'd7ae3e26f9f73960d55411077aefdb4f5bdc96a54d4ec414fcad16a8bfcc10bc'
 
 export const CUSTODY_RELEASE_BASELINE = Object.freeze([
   '.github/workflows/messaging-whatsapp-release-contract.yml',
@@ -152,6 +155,18 @@ function gitBytes(root, args, label) {
     })
   } catch {
     fail(label + ' could not be verified from Git.')
+  }
+}
+
+function assertReviewedPortableValidatorSource(root) {
+  const sourceFile = resolveFile(root, PORTABLE_VALIDATOR_PATH, 'portable candidate validator')
+  const workingDigest = sha256(fs.readFileSync(sourceFile))
+  if (workingDigest !== REVIEWED_PORTABLE_VALIDATOR_SHA256) {
+    fail('portable candidate validator does not match the reviewed SHA-256 identity.')
+  }
+  const committedDigest = sha256(gitBytes(root, ['show', 'HEAD:' + PORTABLE_VALIDATOR_PATH], 'portable candidate validator Git blob'))
+  if (committedDigest !== REVIEWED_PORTABLE_VALIDATOR_SHA256) {
+    fail('portable candidate validator Git blob does not match the reviewed SHA-256 identity.')
   }
 }
 
@@ -358,6 +373,7 @@ export function validateWhatsappAdapterBaseline({ root = DEFAULT_ROOT, manifestF
   const manifest = parseManifest(resolvedManifest)
   assertCutoverGate(manifest)
   assertBaselineIdentity(manifest, resolvedRoot)
+  assertReviewedPortableValidatorSource(resolvedRoot)
   assertPortableSourceClosure(manifest, resolvedRoot)
   assertCustodyBaseline(manifest, resolvedRoot)
   assertCrmCompatibility(manifest, resolvedRoot)
@@ -366,35 +382,66 @@ export function validateWhatsappAdapterBaseline({ root = DEFAULT_ROOT, manifestF
     ok: true,
     status: manifest.status,
     baselineSourceCommit: BASELINE_SOURCE_COMMIT,
+    reviewedPortableValidatorSha256: REVIEWED_PORTABLE_VALIDATOR_SHA256,
     portableSourceFiles: PORTABLE_LAYOUT.length,
     custodyBaselineFiles: CUSTODY_RELEASE_BASELINE.length,
     singleServiceUnit: manifest.runtimeAndObservability.singleServiceUnit
   }
 }
 
+export function inspectTrustedWhatsappAdapterCandidate({ root = DEFAULT_ROOT, manifestFile, candidate, evidence } = {}) {
+  validateWhatsappAdapterBaseline({ root, manifestFile })
+  return inspectWhatsappAdapterCandidate({
+    candidate,
+    evidence,
+    expectedValidatorSha256: REVIEWED_PORTABLE_VALIDATOR_SHA256
+  })
+}
+
+export function assertTrustedWhatsappAdapterCandidateEligible(options = {}) {
+  const result = inspectTrustedWhatsappAdapterCandidate(options)
+  if (!result.eligible) {
+    fail('trusted candidate is not eligible for repository creation or publishing: ' + result.blockers.join('; ') + '.')
+  }
+  return result
+}
+
 function parseArguments(argv) {
   const options = {}
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index]
-    if (option === '--root' || option === '--manifest') {
+    if (option === '--root' || option === '--manifest' || option === '--candidate' || option === '--evidence') {
       const value = argv[index + 1]
       if (!value) fail(option + ' requires a value.')
-      options[option.slice(2) === 'root' ? 'root' : 'manifestFile'] = value
+      const key = {
+        '--root': 'root',
+        '--manifest': 'manifestFile',
+        '--candidate': 'candidate',
+        '--evidence': 'evidence'
+      }[option]
+      options[key] = value
       index += 1
       continue
     }
     if (option === '-h' || option === '--help') {
-      process.stdout.write('Usage: node scripts/validate-whatsapp-adapter-baseline.mjs [--root <repo-root>] [--manifest <file>]\n')
+      process.stdout.write('Usage: node scripts/validate-whatsapp-adapter-baseline.mjs [--root <repo-root>] [--manifest <file>] [--candidate <directory-or-tar> --evidence <json>]\n')
       process.exit(0)
     }
     fail('unknown option ' + JSON.stringify(option) + '.')
+  }
+  if (Boolean(options.candidate) !== Boolean(options.evidence)) {
+    fail('--candidate and --evidence must be supplied together.')
   }
   return options
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    process.stdout.write(JSON.stringify(validateWhatsappAdapterBaseline(parseArguments(process.argv.slice(2)))) + '\n')
+    const options = parseArguments(process.argv.slice(2))
+    const result = options.candidate
+      ? assertTrustedWhatsappAdapterCandidateEligible(options)
+      : validateWhatsappAdapterBaseline(options)
+    process.stdout.write(JSON.stringify(result) + '\n')
   } catch (error) {
     process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n')
     process.exitCode = 78

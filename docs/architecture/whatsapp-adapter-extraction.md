@@ -62,7 +62,10 @@ predecessor atestado, custódia externa que associa run/artifact/digest antes de
 
 Antes de qualquer criação de repositório ou publicação, o candidato precisa ser
 validado com um diretório isolado ou um TAR regular e um documento de evidência
-externo. O gate confere:
+externo pelo runner canônico do monorepo. O runner fixa a SHA-256 revisada do
+validador portátil antes de inspecionar o candidato; a cópia do validador que
+viaja na closure não é uma raiz de confiança e não pode aprovar a si mesma. O
+gate confere:
 
 - SHA e tree de origem pinados;
 - SHA-256 dos dois adapters e dos seus testes, amarrados ao baseline revisado;
@@ -73,9 +76,9 @@ externo. O gate confere:
   custódia assinada Platform/Ops, e único publicador/serviço com staging e
   rollback comprovados.
 
-O comando normal falha fechado enquanto o status for pre-cut:
+O comando de autoridade normal falha fechado enquanto o status for pre-cut:
 
-    node scripts/validate-whatsapp-adapter-candidate.mjs --candidate <directory-or-tar> --evidence <external-evidence.json>
+    node scripts/validate-whatsapp-adapter-baseline.mjs --candidate <directory-or-tar> --evidence <external-evidence.json>
 
 Mesmo evidência forjada como "proven" não permite criação ou publicação antes
 de uma alteração revisada de status e dos quatro fatos reais. Nenhum dos dois
