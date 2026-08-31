@@ -6,6 +6,7 @@ import {
   normalizeSchedulePublicReadSecret,
 } from '../public-read-contract.js'
 import { waitForDisabledSchedulePublicReadHealth } from './public-read-disabled-health.mjs'
+import { waitForReadySchedulePublicReadHealth } from './public-read-ready-health.mjs'
 
 const allowedOrigin = 'https://skincos-schedule-public-read-staging.skincos.workers.dev'
 const mode = String(process.env.SCHEDULE_PUBLIC_READ_SMOKE_MODE || 'ready').trim()
@@ -38,8 +39,9 @@ if (mode === 'disabled') {
 const edgeKey = normalizeSchedulePublicReadSecret(process.env.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY)
 if (!edgeKey) throw new Error('SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY is required for the staging smoke')
 
-const health = await request('/health')
-assert.equal(health.status, 200)
+const health = await waitForReadySchedulePublicReadHealth({
+  request: ({ timeoutMs }) => request('/health', {}, timeoutMs),
+})
 const healthBody = await json(health, 'health')
 assert.equal(healthBody.ok, true)
 assert.equal(healthBody.contract, SCHEDULE_PUBLIC_READ_CONTRACT_VERSION)
