@@ -44,6 +44,8 @@ function runEscalaDeployGuard(overrides = {}) {
     CLOUDFLARE_ACCOUNT_ID: 'fake-cloudflare-account',
     ESCALA_ACTOR_HMAC_KEY: 'fake-actor-capability',
     SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: 'fake-core-capability',
+    SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY: 'fake-active-coordination-key',
+    SKINCOS_GLOBAL_COORDINATION_KEY_ID: 'active-v2',
     GITHUB_OUTPUT: githubOutput,
     ...overrides,
   }
@@ -211,6 +213,42 @@ test('Schedule public-read defaults disabled and only the canonical core publish
   assert.doesNotMatch(productionSection, /SCHEDULE_PUBLIC_READ_ENABLED:true/)
 })
 
+test('Escala core coordination custody pins every lease boundary to the active key with exact target URLs', () => {
+  const activeSecret = "shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}"
+  const activeKeyId = "key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}"
+  const targetCoordinator = "coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}"
+  const stagingCoordinator = 'coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}'
+  const productionCoordinator = 'coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}'
+  const expected = [
+    ['Acquire Escala API deployment lease', targetCoordinator],
+    ['Check Escala API deployment lease before secret mutation', targetCoordinator],
+    ['Check Escala API deployment lease before production migration', productionCoordinator],
+    ['Check Escala API deployment lease before production deployment', productionCoordinator],
+    ['Check Escala API deployment lease before staging migration', stagingCoordinator],
+    ['Check Escala API deployment lease before unpublished Schedule public-read core candidate', stagingCoordinator],
+    ['Check Escala API deployment lease before staging deployment', stagingCoordinator],
+    ['Check Escala API deployment lease before automatic disabled Schedule public-read core fallback version', stagingCoordinator],
+    ['Check Escala API deployment lease before automatic disabled Schedule public-read core fallback deployment', stagingCoordinator],
+    ['Release Escala API deployment lease', targetCoordinator],
+  ]
+
+  const leaseSteps = coreWorkflow
+    .split(/(?=^      - name: )/m)
+    .filter((step) => /uses: \.\/\.github\/actions\/global-coordination-(?:acquire|check|release)/.test(step))
+
+  assert.equal(leaseSteps.length, expected.length, 'every Escala core coordination action must be enumerated')
+  assert.deepEqual(
+    leaseSteps.map((step) => step.match(/- name: ([^\r\n]+)/)?.[1]),
+    expected.map(([name]) => name),
+  )
+  for (const [index, [, coordinator]] of expected.entries()) {
+    assert.match(leaseSteps[index], new RegExp(activeSecret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.match(leaseSteps[index], new RegExp(activeKeyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.match(leaseSteps[index], new RegExp(coordinator.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.doesNotMatch(coreWorkflow, /shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET \}\}/)
+})
+
 test('Escala core opt-in guard is executable, accepts distinct capabilities, and never emits them', () => {
   const { script, syntax, result, githubOutput } = runEscalaDeployGuard()
 
@@ -234,6 +272,37 @@ test('Escala core opt-in guard rejects equal capabilities without disclosing the
   assert.match(`${result.stdout}${result.stderr}`, /must differ from ESCALA_ACTOR_HMAC_KEY/)
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, new RegExp(capability))
   assert.equal(githubOutput, '')
+})
+
+test('Escala core deploy guard rejects incomplete active coordination custody while preserving legacy fallback', () => {
+  const legacy = runEscalaDeployGuard({
+    SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY: '',
+    SKINCOS_GLOBAL_COORDINATION_KEY_ID: '',
+  })
+  assert.equal(legacy.syntax.status, 0, legacy.syntax.stderr)
+  assert.equal(legacy.result.status, 0, legacy.result.stderr)
+
+  const missingActive = runEscalaDeployGuard({
+    SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY: '',
+    SKINCOS_GLOBAL_COORDINATION_KEY_ID: 'active-v2',
+  })
+  assert.equal(missingActive.syntax.status, 0, missingActive.syntax.stderr)
+  assert.notEqual(missingActive.result.status, 0)
+  assert.match(`${missingActive.result.stdout}${missingActive.result.stderr}`, /Pinned global coordination custody requires the active coordination key/)
+
+  const missingKeyId = runEscalaDeployGuard({
+    SKINCOS_GLOBAL_COORDINATION_KEY_ID: '',
+  })
+  assert.equal(missingKeyId.syntax.status, 0, missingKeyId.syntax.stderr)
+  assert.notEqual(missingKeyId.result.status, 0)
+  assert.match(`${missingKeyId.result.stdout}${missingKeyId.result.stderr}`, /Active global coordination custody requires a non-legacy key ID/)
+
+  const legacyKeyId = runEscalaDeployGuard({
+    SKINCOS_GLOBAL_COORDINATION_KEY_ID: 'legacy-v1',
+  })
+  assert.equal(legacyKeyId.syntax.status, 0, legacyKeyId.syntax.stderr)
+  assert.notEqual(legacyKeyId.result.status, 0)
+  assert.match(`${legacyKeyId.result.stdout}${legacyKeyId.result.stderr}`, /Active global coordination custody requires a non-legacy key ID/)
 })
 
 test('Schedule public-read staging smoke is synthetic, authenticated, and does not handle the core key', () => {
