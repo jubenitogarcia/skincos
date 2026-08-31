@@ -1,0 +1,14 @@
+{
+  "name": "@jubenitogarcia/skincos-whatsapp-adapter",
+  "version": "0.0.0-precut",
+  "private": true,
+  "type": "module",
+  "description": "Pre-cut portable closure for the SKINCOS WhatsApp CRM adapter.",
+  "exports": {
+    "./evolution-orchestrator": "./crm/api/services/evolutionOrchestrator.js",
+    "./compatibility-orchestrator": "./crm/api/services/whatsappOrchestrator.js"
+  },
+  "scripts": {
+    "test": "node --test crm/api/services/__tests__/whatsappOrchestrator.basic.test.js crm/api/services/__tests__/evolutionOrchestrator.test.js"
+  }
+}

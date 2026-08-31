@@ -54,7 +54,7 @@ corte, concluir estas bases:
 | P1 | `skincos-clientes-readonly` | **Preparar, não cortar ainda** | A operação read-only é isolável, mas o entrypoint importa CRM completo e o perfil `full` expõe mais que Clientes. Definir allowlist de leitura e entrypoint próprio, sem rotas comerciais, antes do corte. |
 | P2 | `skincos-workforce-schedule` | **Depois da Wave 0** | A API de escala já tem Worker/D1/migrations, porém Website lê o D1 de escala diretamente e Ponto depende do contrato HMAC. Publicar API de leitura de agenda e contrato de ator antes de trocar os consumidores. |
 | P2 | `skincos-public-website-booking` | **Depois de Schedule** | `booking/` é só um esqueleto; o booking real (dados pessoais, pedidos, comunicação e tracking) está em `website/`. Extrair Website junto do booking real inicialmente, substituindo a leitura direta da escala por API. |
-| P2 | `skincos-whatsapp-adapter` | **Depois da Wave 0** | O diretório atual inclui um fork/upstream Evolution API e o release nativo copia do checkout mutável. O corte deve possuir o adapter/custódia e uma fonte imutável, sem duplicar o upstream. |
+| P2 | `skincos-whatsapp-adapter` | **Depois da Wave 0; pré-corte protegido** | O release nativo já usa candidato imutável, mas o candidato ainda contém o fork/upstream Evolution. O adapter HTTP do CRM, a custódia e o rollback possuem uma fronteira executável; antes do repositório, substituir a fonte embutida por artefato upstream fixado e manter um único serviço, publicador e rollback. |
 
 ## Domínios deliberadamente adiados
 

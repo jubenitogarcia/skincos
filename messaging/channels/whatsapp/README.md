@@ -18,6 +18,14 @@ to the local engine. The compatibility adapter in
 `crm/api/services/whatsappOrchestrator.js` delegates to the same engine and
 does not spawn a second service.
 
+The future `skincos-whatsapp-adapter` cut is constrained by two executable
+pre-cut controls: the monorepo baseline and an isolated candidate/archive gate.
+The portable closure can move only the CRM HTTP adapter and its tests; it has a
+private pre-cut package template and cannot move Evolution source, CRM
+conversation metadata, a second runtime, or a publisher. The current native
+custody scripts remain a baseline to rewrite against a pinned upstream artifact,
+not code that may be copied unchanged.
+
 Native promotion and rollback use only a Linux-native
 `release-source-<SHA>` artifact with its `messaging-whatsapp` closure. A
 promotion requires an installed attested predecessor; rollback accepts only that
