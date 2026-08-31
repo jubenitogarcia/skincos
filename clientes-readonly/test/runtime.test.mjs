@@ -75,6 +75,15 @@ test('disabled runtime remains observable and rejects writes without resolving a
   assert.equal(write.headers.get('allow'), 'GET, HEAD')
 })
 
+test('a disabled artifact still reports its validated release identity on health', async () => {
+  const runtime = createClientesReadonlyRuntime(readyEnvironment({ CLIENTES_READONLY_DEPLOY_ENABLED: 'false' }))
+  const health = await runtime.fetch(new Request('https://clientes-readonly.test/health'))
+  assert.equal(health.status, 200)
+  const body = await health.json()
+  assert.equal(body.ready, false)
+  assert.equal(body.release.sha, 'a'.repeat(40))
+})
+
 test('configured staging runtime executes a synthetic signed read and redacts adapter-only fields', async () => {
   const env = readyEnvironment({
     CLIENTES_READONLY_READ_MODEL: {

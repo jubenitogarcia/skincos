@@ -18,6 +18,8 @@ function validRestoreRollback(rollback, predecessorReleaseSha) {
   return rollback?.mode === 'restore-predecessor'
     && fullSha(rollback?.artifactSha)
     && rollback.artifactSha === predecessorReleaseSha
+    && fullSha(rollback?.targetReleaseSha)
+    && rollback.targetReleaseSha === predecessorReleaseSha
     && rollback.tested === true
     && present(rollback.workflow)
 }
@@ -66,7 +68,7 @@ export function assessClientesReadonlyStagingRelease(plan = {}, { expectedSource
   }
   if (plan.publicRoute !== false) reasons.push('CLIENTES_RELEASE_PUBLIC_ROUTE_FORBIDDEN')
   if (plan.syntheticSmoke?.implemented !== true || plan.syntheticSmoke?.passed !== true) reasons.push('CLIENTES_RELEASE_SYNTHETIC_SMOKE_REQUIRED')
-  if (plan.operation === 'rollback' && !initialDeployment && plan.sourceSha !== plan.predecessorReleaseSha) {
+  if (plan.operation === 'rollback' && !initialDeployment && plan.rollback?.targetReleaseSha !== plan.predecessorReleaseSha) {
     reasons.push('CLIENTES_RELEASE_ROLLBACK_TARGET_INVALID')
   }
   if (plan.actorAdapter?.secretConfigured !== true || plan.actorAdapter?.replayStoreConfigured !== true || !present(plan.actorAdapter?.owner)) {

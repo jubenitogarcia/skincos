@@ -23,7 +23,7 @@ function response(request, status, payload, headers = {}) {
   })
 }
 
-function runtimeUnavailableHandler() {
+function runtimeUnavailableHandler(releaseSha = '') {
   return async (request) => {
     const routeMatch = clientesReadonlyRouteFor(new URL(request.url).pathname)
     if (!routeMatch) {
@@ -52,6 +52,7 @@ function runtimeUnavailableHandler() {
         readModel: { required: true, state: 'unavailable' },
         actorAdapter: { required: true, state: 'unavailable' },
       },
+      ...(SHA_PATTERN.test(releaseSha) ? { release: { sha: releaseSha } } : {}),
     })
   }
 }
@@ -81,10 +82,10 @@ export function validateClientesReadonlyRuntimeConfig(env) {
 }
 
 export function createClientesReadonlyRuntime(env = {}) {
-  if (!validateClientesReadonlyRuntimeConfig(env).ok) {
-    return Object.freeze({ fetch: runtimeUnavailableHandler() })
-  }
   const releaseSha = value(env, 'CLIENTES_READONLY_RELEASE_SHA')
+  if (!validateClientesReadonlyRuntimeConfig(env).ok) {
+    return Object.freeze({ fetch: runtimeUnavailableHandler(releaseSha) })
+  }
   const resolveActor = createClientesReadonlyAuthenticatedActorAdapter({
     secret: env.CLIENTES_READONLY_ACTOR_HMAC_KEY,
     replayStore: env.CLIENTES_READONLY_ACTOR_REPLAY,

@@ -28,6 +28,7 @@ function readyPlan(overrides = {}) {
     rollback: {
       mode: 'restore-predecessor',
       artifactSha: 'b'.repeat(40),
+      targetReleaseSha: 'b'.repeat(40),
       tested: true,
       workflow: 'isolated-staging-release',
     },
@@ -69,6 +70,7 @@ test('a staging release requires one publisher, a predecessor and dedicated depe
     rollback: {
       mode: 'restore-predecessor',
       artifactSha: 'b'.repeat(40),
+      targetReleaseSha: 'b'.repeat(40),
       tested: false,
       workflow: 'isolated-staging-release',
     },
@@ -77,15 +79,27 @@ test('a staging release requires one publisher, a predecessor and dedicated depe
   assert.ok(untestedRollback.reasons.includes('CLIENTES_RELEASE_ROLLBACK_REQUIRED'))
 })
 
-test('a rollback can only select the recorded predecessor artifact', () => {
+test('a rollback targets the recorded predecessor without replacing the plan source SHA', () => {
   const validRollback = assessClientesReadonlyStagingRelease(readyPlan({
     operation: 'rollback',
-    sourceSha: 'b'.repeat(40),
   }))
   assert.equal(validRollback.ok, true)
-  const wrongRollbackArtifact = assessClientesReadonlyStagingRelease(readyPlan({ operation: 'rollback' }))
-  assert.equal(wrongRollbackArtifact.ok, false)
-  assert.ok(wrongRollbackArtifact.reasons.includes('CLIENTES_RELEASE_ROLLBACK_TARGET_INVALID'))
+  assert.equal(assessClientesReadonlyStagingRelease(readyPlan({
+    operation: 'rollback',
+  }), { expectedSourceSha: 'a'.repeat(40) }).ok, true)
+  const wrongRollbackTarget = assessClientesReadonlyStagingRelease(readyPlan({
+    operation: 'rollback',
+    rollback: {
+      mode: 'restore-predecessor',
+      artifactSha: 'b'.repeat(40),
+      targetReleaseSha: 'c'.repeat(40),
+      tested: true,
+      workflow: 'isolated-staging-release',
+    },
+  }))
+  assert.equal(wrongRollbackTarget.ok, false)
+  assert.ok(wrongRollbackTarget.reasons.includes('CLIENTES_RELEASE_ROLLBACK_REQUIRED'))
+  assert.ok(wrongRollbackTarget.reasons.includes('CLIENTES_RELEASE_ROLLBACK_TARGET_INVALID'))
 })
 
 test('initial staging deployment uses a tested disable rollback instead of inventing a predecessor', () => {
