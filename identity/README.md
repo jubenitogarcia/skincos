@@ -27,3 +27,24 @@ Inventory Worker as an HTTP compatibility host. Invitation policy and mail are
 already supplied by Identity; moving the remaining handlers behind the
 independent Identity binding is a separate cutover and must not change cookies,
 users, or existing sessions.
+
+## CRM delivery preparation
+
+`identity/delivery/crm-envelope-v1.js` is a pure, disabled-by-default helper
+for the future private Identity-to-CRM delivery path. It prepares only the
+minimized, unsigned `identity-crm-delivery/v1` header and claims after an
+explicit caller opt-in. It does not resolve a session, read runtime
+configuration, use a secret, serialize or sign a JWS, register a route, add a
+Worker binding, or publish an artifact.
+
+Until a clean installation of the exact private contracts package is proven,
+this helper is only a disconnected preparation guard; it is not the canonical
+wire-contract parser, serializer or compatibility proof. The future private
+entrypoint must delegate those responsibilities to the published package.
+
+The helper refuses the current username-based actor. A future additive Identity
+migration must first provide a stable opaque `identitySubject` and preserve it
+through creation, rename, restore and session resolution. Only after that
+migration, the exact private contracts package is installed, and the CRM has a
+verifier plus replay ledger may a separately deployed, non-public
+`WorkerEntrypoint` sign this input through a service binding.
