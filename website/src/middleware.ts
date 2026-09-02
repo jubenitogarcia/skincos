@@ -1,8 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isPathAllowedForSite } from "@/lib/site-config";
+import { getOfficialHostFamily, isPathAllowedForSite } from "@/lib/site-config";
 import { buildWhatsappRedirectHrefFromRequest, isSupportedWhatsappUrl } from "@/lib/whatsappTracking";
 import { mergeCampaignParamsIntoUrl } from "@/lib/mergeCampaignParams";
 import { ANIVERSARIO_7_LEGACY_REDIRECTS } from "@/lib/aniversario7Redirects";
+
+const CADASTRO_WHEEL_LEGACY_PATHS = new Set([
+    "/roleta",
+    "/roda-da-beleza",
+    "/rodadabeleza",
+]);
+
+function isCadastroWheelRedirectHost(host: string, hostname: string): boolean {
+    return [host, hostname]
+        .map((value) => value.toLowerCase().replace(/:\\d+$/, ""))
+        .some(
+            (value) =>
+                getOfficialHostFamily(value) === "espacofacial-public" ||
+                value.endsWith(".skincos.workers.dev"),
+        );
+}
 
 function isPublicAsset(pathname: string): boolean {
     return (
@@ -78,6 +94,16 @@ export function middleware(req: NextRequest) {
     if (!isPublicAsset(url.pathname) && !url.pathname.startsWith("/api/") && host.startsWith("www.")) {
         url.host = host.replace(/^www\./, "");
         return NextResponse.redirect(url, 308);
+    }
+
+    // Preserve historic campaign links while keeping tracking parameters and the current host.
+    if (
+        !isPublicAsset(url.pathname) &&
+        isCadastroWheelRedirectHost(host, url.hostname) &&
+        CADASTRO_WHEEL_LEGACY_PATHS.has(normalizeRedirectPath(url.pathname))
+    ) {
+        url.pathname = "/cadastro";
+        return NextResponse.redirect(url, { status: 301 });
     }
 
     if (!isPublicAsset(url.pathname)) {
