@@ -55,11 +55,22 @@ function assertRole(value) {
 }
 
 function strictSortedScope(value, name, pattern) {
-  if (!Array.isArray(value) || value.length > 64) fail(`${name}_INVALID`);
-  const items = value;
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > 64) fail(`${name}_INVALID`);
+  const length = value.length;
+  const expectedKeys = new Set(Array.from({ length }, (_, index) => String(index)));
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== length + 1 || keys.some((key) => key !== 'length' && (typeof key !== 'string' || !expectedKeys.has(key)))) {
+    fail(`${name}_INVALID`);
+  }
+  const items = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) fail(`${name}_INVALID`);
+    items.push(descriptor.value);
+  }
   if (items.some((item) => typeof item !== 'string' || !item || !pattern.test(item))) fail(`${name}_INVALID`);
   if (items.some((item, index) => index > 0 && items[index - 1] >= item)) fail(`${name}_INVALID`);
-  return Object.freeze([...items]);
+  return Object.freeze(items);
 }
 
 function assertScopes(value) {
@@ -77,8 +88,10 @@ function assertCanonicalTarget(value) {
   if (typeof value !== 'string' || value.length < 8 || value.length > 2048) fail('CRM_TARGET_INVALID');
   if (!value.startsWith('/api/crm') || !['/', '?', undefined].includes(value.at(8))) fail('CRM_TARGET_INVALID');
   if (value.includes('#') || value.includes('\\') || /[^\x21-\x7e]/.test(value)) fail('CRM_TARGET_INVALID');
-  if (value.endsWith('?') || /\/{2,}|\/(?:\.{1,2})(?:\/|$)/.test(value)) fail('CRM_TARGET_INVALID');
-  if (/%(?![0-9A-F]{2})/.test(value) || /%(?:2E|2F|5C)/.test(value)) fail('CRM_TARGET_INVALID');
+  const queryIndex = value.indexOf('?');
+  const pathname = queryIndex === -1 ? value : value.slice(0, queryIndex);
+  if (value.endsWith('?') || /\/{2,}|\/(?:\.{1,2})(?:\/|$)/.test(pathname)) fail('CRM_TARGET_INVALID');
+  if (/%(?![0-9A-F]{2})/.test(value) || /%(?:2E|2F|5C)/.test(pathname)) fail('CRM_TARGET_INVALID');
   return value;
 }
 

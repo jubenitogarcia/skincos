@@ -98,6 +98,7 @@ test('the preparation fails closed for invalid opaque identity, scopes, request 
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, extra: 'rejected' } })), /CRM_REQUEST_BINDING_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, target: 'https://crm.example.test/api/crm/leads' } })), /CRM_TARGET_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, target: '/api/crm/admin/%2E%2E/leads' } })), /CRM_TARGET_INVALID/);
+  assert.doesNotThrow(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, target: '/api/crm/clients?q=ACME%2Ffilial' } })));
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, bodyDigest: 'A'.repeat(64) } })), /CRM_BODY_DIGEST_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ ttlSeconds: 61 })), /IDENTITY_TTL_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ issuedAt: Number.MAX_SAFE_INTEGER })), /IDENTITY_EXPIRES_AT_INVALID/);
@@ -118,6 +119,28 @@ test('the preparation rejects hidden, symbolic, inherited and accessor input fie
   const accessor = input();
   Object.defineProperty(accessor, 'jti', { enumerable: true, get: () => baseInput.jti });
   assert.throws(() => prepareCrmIdentityDeliveryV1(accessor), /IDENTITY_CRM_DELIVERY_INPUT_INVALID/);
+});
+
+test('the preparation snapshots scope array data before validation and output', () => {
+  const source = ['module.clients.access'];
+  let indexGets = 0;
+  const proxied = new Proxy(source, {
+    get(target, property, receiver) {
+      if (property === '0') indexGets += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const prepared = prepareCrmIdentityDeliveryV1(input({
+    identity: { ...baseInput.identity, scopes: { ...baseInput.identity.scopes, permissions: proxied } },
+  }));
+  assert.deepEqual(prepared.claims.scopes.permissions, ['module.clients.access']);
+  assert.equal(indexGets, 0);
+
+  const accessorScope = [];
+  Object.defineProperty(accessorScope, '0', { enumerable: true, get: () => 'module.clients.access' });
+  assert.throws(() => prepareCrmIdentityDeliveryV1(input({
+    identity: { ...baseInput.identity, scopes: { ...baseInput.identity.scopes, permissions: accessorScope } },
+  })), /IDENTITY_SCOPE_PERMISSIONS_INVALID/);
 });
 
 test('the source-only helper is not connected to the legacy public runtime or a secret', async () => {
