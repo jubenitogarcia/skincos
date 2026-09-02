@@ -154,4 +154,9 @@ test('the source-only helper is not connected to the legacy public runtime or a 
   assert.doesNotMatch(helper, /from ['"]cloudflare:workers['"]/i);
   assert.doesNotMatch(authRoutes, /crm-envelope-v1/);
   assert.doesNotMatch(inventoryWorker, /crm-envelope-v1/);
+
+  const authMeStart = authRoutes.indexOf('// GET /auth/me');
+  const authRefreshStart = authRoutes.indexOf('// POST /auth/refresh', authMeStart);
+  assert.ok(authMeStart >= 0 && authRefreshStart > authMeStart, 'expected the legacy /auth/me boundary');
+  assert.doesNotMatch(authRoutes.slice(authMeStart, authRefreshStart), /\bidentitySubject\b/);
 });

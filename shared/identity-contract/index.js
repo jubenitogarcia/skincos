@@ -1,4 +1,5 @@
 export const IDENTITY_ACTOR_CONTRACT_VERSION = 'identity-actor/v1';
+export const OPAQUE_IDENTITY_SUBJECT_PATTERN = /^idn:[A-Za-z0-9_-]{16,160}$/;
 
 // Unit scopes are closed: persisted and RBAC-facing values are only these slugs.
 export const CANONICAL_UNIT_SCOPES = Object.freeze(['novo-hamburgo', 'barra-shopping-sul']);
@@ -58,6 +59,22 @@ const asList = (value) => Array.isArray(value)
   ? [...new Set(value.map(String).map((item) => item.trim()).filter(Boolean))]
   : [];
 
+export function isOpaqueIdentitySubject(value) {
+  return typeof value === 'string' && OPAQUE_IDENTITY_SUBJECT_PATTERN.test(value);
+}
+
+/**
+ * Identity subjects are opaque, server-generated aliases. They are deliberately
+ * unrelated to usernames, e-mail addresses, or any other mutable profile data.
+ */
+export function createOpaqueIdentitySubject() {
+  const randomUuid = globalThis.crypto?.randomUUID;
+  if (typeof randomUuid !== 'function') throw new Error('IDENTITY_SUBJECT_RANDOM_UNAVAILABLE');
+  const subject = `idn:${String(randomUuid.call(globalThis.crypto)).toLowerCase()}`;
+  if (!isOpaqueIdentitySubject(subject)) throw new Error('IDENTITY_SUBJECT_GENERATION_FAILED');
+  return subject;
+}
+
 /**
  * The only identity shape a product receives. Legacy aliases remain while
  * callers move to scopes.units/scopes.modules without invalidating sessions.
@@ -69,6 +86,9 @@ export function toAuthenticatedActor(user) {
   const permissions = asList(user.permissions);
   return Object.freeze({
     contractVersion: IDENTITY_ACTOR_CONTRACT_VERSION,
+    // This is additive. `subject` stays the username-based v1 compatibility
+    // alias until consumers explicitly move to a versioned opaque contract.
+    identitySubject: isOpaqueIdentitySubject(user.identitySubject) ? user.identitySubject : null,
     subject: String(user.username),
     username: String(user.username),
     displayName: String(user.displayName || user.name || user.username),

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import {
   hasUnitScopeAccess,
+  isOpaqueIdentitySubject,
   normalizeAllowedUnits as normalizeCanonicalAllowedUnits,
   normalizeUnitScope,
 } from '../../shared/identity-contract/index.js';
@@ -4331,6 +4332,7 @@ export function d1UserRowToUser(row) {
     email: row.email || '',
     role: row.role || 'CONSULTOR',
     photoUrl: row.photo_url || '',
+    identitySubject: isOpaqueIdentitySubject(row.identity_subject) ? row.identity_subject : null,
     allowedUnits: normalizeAllowedUnits(row.allowed_units_json),
     allowedModules: normalizeAllowedModules(row.allowed_modules_json),
     ativo: toInt(row.ativo, 1) ? true : false,
@@ -4347,7 +4349,8 @@ export async function d1GetUserByUsername(env, username) {
   if (!u) return null;
   const { usersTable } = await resolveCrmTables(env);
   const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
-  const extra = hasModules ? ', allowed_modules_json' : '';
+  const hasIdentitySubject = await tableHasColumn(env, usersTable, 'identity_subject');
+  const extra = `${hasModules ? ', allowed_modules_json' : ''}${hasIdentitySubject ? ', identity_subject' : ''}`;
   const row = await env.DB.prepare(
     `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at, session_version${extra}
      FROM ${usersTable}
@@ -4365,7 +4368,8 @@ export async function d1GetUserByIdentifier(env, identifier) {
   if (!id) return null;
   const { usersTable } = await resolveCrmTables(env);
   const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
-  const extra = hasModules ? ', allowed_modules_json' : '';
+  const hasIdentitySubject = await tableHasColumn(env, usersTable, 'identity_subject');
+  const extra = `${hasModules ? ', allowed_modules_json' : ''}${hasIdentitySubject ? ', identity_subject' : ''}`;
   const row = await env.DB.prepare(
     `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at, session_version${extra}
      FROM ${usersTable}
@@ -4382,11 +4386,12 @@ export async function d1UpdateUserProfile(env, username, updates) {
   const u = String(username || '').trim();
   if (!u) return { ok: false, status: 400, error: 'USERNAME_REQUIRED' };
 
-  const { usersTable } = await resolveCrmTables(env);
+  const { usersTable, userPrefsTable } = await resolveCrmTables(env);
   const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
-  const extra = hasModules ? ', allowed_modules_json' : '';
+  const hasIdentitySubject = await tableHasColumn(env, usersTable, 'identity_subject');
+  const extra = `${hasModules ? ', allowed_modules_json' : ''}${hasIdentitySubject ? ', identity_subject' : ''}`;
   const existing = await env.DB.prepare(
-    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at${extra}
+    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at, session_version${extra}
      FROM ${usersTable}
      WHERE LOWER(username) = LOWER(?)
      LIMIT 1`
@@ -4410,47 +4415,51 @@ export async function d1UpdateUserProfile(env, username, updates) {
       .first();
     if (taken) return { ok: false, status: 409, error: 'USERNAME_TAKEN' };
 
-    // Move user PK (best-effort) and keep references consistent.
-    if (hasModules) {
-      await env.DB.prepare(
-        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          nextUsername,
-          nextEmail ?? existing.email ?? '',
-          nextDisplayName ?? existing.display_name ?? '',
-          nextPasswordHash ?? existing.password_hash ?? '',
-          existing.role ?? 'CONSULTOR',
-          nextPhotoUrl ?? existing.photo_url ?? '',
-          existing.allowed_units_json ?? null,
-          existing.allowed_modules_json ?? null,
-          toInt(existing.ativo, 1),
-          existing.created_at || now,
-          now
-        )
-        .run();
-    } else {
-      await env.DB.prepare(
-        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          nextUsername,
-          nextEmail ?? existing.email ?? '',
-          nextDisplayName ?? existing.display_name ?? '',
-          nextPasswordHash ?? existing.password_hash ?? '',
-          existing.role ?? 'CONSULTOR',
-          nextPhotoUrl ?? existing.photo_url ?? '',
-          existing.allowed_units_json ?? null,
-          toInt(existing.ativo, 1),
-          existing.created_at || now,
-          now
-        )
-        .run();
+    // Rename through one D1 batch and preserve live references.
+    if (hasIdentitySubject && !isOpaqueIdentitySubject(existing.identity_subject)) {
+      return { ok: false, status: 503, error: 'IDENTITY_SUBJECT_REQUIRED' };
     }
-
-    await env.DB.prepare(`DELETE FROM ${usersTable} WHERE LOWER(username) = LOWER(?)`).bind(u).run();
+    const [accountLinksType, userPrefsType] = await Promise.all([
+      sqliteObjectType(env, 'crm_employee_account_links'),
+      sqliteObjectType(env, userPrefsTable),
+    ]);
+    if (typeof env.DB.batch !== 'function') {
+      return { ok: false, status: 500, error: 'DB_BATCH_UNSUPPORTED' };
+    }
+    // Update the primary key and its live references together. An
+    // insert-before-delete strategy would temporarily duplicate
+    // identity_subject; separate writes could orphan a confirmed team link.
+    const changes = [
+      env.DB.prepare(
+        `UPDATE ${usersTable}
+         SET username=?, email=?, display_name=?, photo_url=?, password_hash=?, updated_at=?
+         WHERE LOWER(username) = LOWER(?)`,
+      )
+        .bind(
+          nextUsername,
+          nextEmail ?? existing.email ?? '',
+          nextDisplayName ?? existing.display_name ?? '',
+          nextPhotoUrl ?? existing.photo_url ?? '',
+          nextPasswordHash ?? existing.password_hash ?? '',
+          now,
+          u,
+        ),
+    ];
+    if (accountLinksType === 'table') {
+      changes.push(
+        env.DB.prepare(
+          'UPDATE crm_employee_account_links SET crm_username=?, updated_at=? WHERE LOWER(crm_username)=LOWER(?)',
+        ).bind(nextUsername, now, existing.username),
+      );
+    }
+    if (userPrefsType === 'table') {
+      changes.push(
+        env.DB.prepare(
+          `UPDATE ${userPrefsTable} SET username=?, updated_at=? WHERE LOWER(username)=LOWER(?)`,
+        ).bind(nextUsername, now, existing.username),
+      );
+    }
+    await env.DB.batch(changes);
     // Best-effort propagate to other tables where we store username as text.
     // Ledger rows retain the backend actor captured at posting time. User
     // profile changes must never rewrite historical responsibility.

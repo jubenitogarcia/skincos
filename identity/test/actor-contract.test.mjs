@@ -1,19 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { hasUnitScopeAccess, normalizeAllowedUnits, normalizeUnitScope, toAuthenticatedActor } from '../../shared/identity-contract/index.js';
+import { createOpaqueIdentitySubject, hasUnitScopeAccess, isOpaqueIdentitySubject, normalizeAllowedUnits, normalizeUnitScope, toAuthenticatedActor } from '../../shared/identity-contract/index.js';
 import { isCurrentSessionVersion, resolveIdentityActor } from '../session/actor.js';
 
 test('Identity publishes a stable actor with scoped permissions and compatibility aliases', () => {
   const actor = toAuthenticatedActor({
     username: 'pilot', displayName: 'Pilot User', role: 'gestor',
+    identitySubject: 'idn:fixture_identity_actor_0001',
     allowedUnits: ['novo-hamburgo'], allowedModules: ['finance'], permissions: ['finance:read'],
   });
   assert.equal(actor.subject, 'pilot');
+  assert.equal(actor.identitySubject, 'idn:fixture_identity_actor_0001');
   assert.equal(actor.role, 'GESTOR');
   assert.deepEqual(actor.scopes, { units: ['novo-hamburgo'], modules: ['finance'], permissions: ['finance:read'] });
   assert.deepEqual(actor.allowedModules, ['finance']);
   assert.equal(isCurrentSessionVersion({ sv: 4 }, { sessionVersion: 4 }), true);
   assert.equal(isCurrentSessionVersion({ sv: 3 }, { sessionVersion: 4 }), false);
+});
+
+test('Identity subjects are opaque and server-generated without changing the v1 username alias', () => {
+  const generated = createOpaqueIdentitySubject();
+  assert.equal(isOpaqueIdentitySubject(generated), true);
+  assert.equal(generated.startsWith('idn:'), true);
+  const actor = toAuthenticatedActor({ username: 'pilot', identitySubject: generated });
+  assert.equal(actor.subject, 'pilot');
+  assert.equal(actor.identitySubject, generated);
+  assert.equal(toAuthenticatedActor({ username: 'pilot', identitySubject: 'pilot' }).identitySubject, null);
 });
 
 test('Identity canonicalizes known unit aliases and keeps unknown or empty scopes fail-closed', () => {
@@ -49,10 +61,11 @@ test('Identity accepts the existing signed session payload without changing its 
             if (sql.includes('FROM crm_users')) return {
               username: 'pilot', display_name: 'Pilot User', role: 'GESTOR', ativo: 1,
               allowed_units_json: '["novo-hamburgo"]', allowed_modules_json: '["finance"]', session_version: 4,
+              identity_subject: 'idn:fixture_identity_actor_0001',
             };
             return null;
           },
-          async all() { return { results: [{ name: 'allowed_modules_json' }] }; },
+          async all() { return { results: [{ name: 'allowed_modules_json' }, { name: 'identity_subject' }] }; },
         };
       },
     },
@@ -62,5 +75,6 @@ test('Identity accepts the existing signed session payload without changing its 
 
   assert.equal(result.csrf, 'csrf-existing');
   assert.equal(result.actor.subject, 'pilot');
+  assert.equal(result.actor.identitySubject, 'idn:fixture_identity_actor_0001');
   assert.deepEqual(result.actor.scopes.modules, ['finance']);
 });
