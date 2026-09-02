@@ -9,6 +9,7 @@ const DELIVERY_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE
 const OPAQUE_SUBJECT_PATTERN = /^idn:[A-Za-z0-9_-]{16,160}$/;
 const ROLE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const SCOPE_ITEM_PATTERN = /^[a-z][a-z0-9:-]{0,159}$/;
+const PERMISSION_ITEM_PATTERN = /^[a-z][a-z0-9:.-]{0,159}$/;
 const JTI_PATTERN = /^[A-Za-z0-9_-]{16,160}$/;
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
@@ -18,8 +19,18 @@ function fail(code) {
 }
 
 function assertOnlyKeys(value, allowedKeys, code) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(code);
-  if (Object.keys(value).some((key) => !allowedKeys.includes(key))) fail(code);
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) fail(code);
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string' || !allowedKeys.includes(key))) fail(code);
+  if (keys.some((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return !descriptor || !descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value');
+  })) fail(code);
+}
+
+function assertExactKeys(value, allowedKeys, code) {
+  assertOnlyKeys(value, allowedKeys, code);
+  if (Reflect.ownKeys(value).length !== allowedKeys.length) fail(code);
 }
 
 function assertEnabled(value) {
@@ -52,14 +63,13 @@ function strictSortedScope(value, name, pattern) {
 }
 
 function assertScopes(value) {
-  assertOnlyKeys(value, ['units', 'modules', 'permissions'], 'IDENTITY_SCOPES_INVALID');
-  if (Object.keys(value).length !== 3) fail('IDENTITY_SCOPES_INVALID');
+  assertExactKeys(value, ['units', 'modules', 'permissions'], 'IDENTITY_SCOPES_INVALID');
   const units = strictSortedScope(value.units, 'IDENTITY_SCOPE_UNITS', /^[a-z][a-z0-9-]{0,159}$/);
   if (units.some((unit) => !isCanonicalUnitScope(unit))) fail('IDENTITY_SCOPE_UNITS_INVALID');
   return Object.freeze({
     units,
     modules: strictSortedScope(value.modules, 'IDENTITY_SCOPE_MODULES', SCOPE_ITEM_PATTERN),
-    permissions: strictSortedScope(value.permissions, 'IDENTITY_SCOPE_PERMISSIONS', SCOPE_ITEM_PATTERN),
+    permissions: strictSortedScope(value.permissions, 'IDENTITY_SCOPE_PERMISSIONS', PERMISSION_ITEM_PATTERN),
   });
 }
 
@@ -68,13 +78,12 @@ function assertCanonicalTarget(value) {
   if (!value.startsWith('/api/crm') || !['/', '?', undefined].includes(value.at(8))) fail('CRM_TARGET_INVALID');
   if (value.includes('#') || value.includes('\\') || /[^\x21-\x7e]/.test(value)) fail('CRM_TARGET_INVALID');
   if (value.endsWith('?') || /\/{2,}|\/(?:\.{1,2})(?:\/|$)/.test(value)) fail('CRM_TARGET_INVALID');
-  if (/%(?![0-9A-F]{2})/.test(value) || /%(?:2F|5C)/.test(value)) fail('CRM_TARGET_INVALID');
+  if (/%(?![0-9A-F]{2})/.test(value) || /%(?:2E|2F|5C)/.test(value)) fail('CRM_TARGET_INVALID');
   return value;
 }
 
 function assertRequestBinding(value) {
-  assertOnlyKeys(value, ['method', 'target', 'bodyDigest'], 'CRM_REQUEST_BINDING_INVALID');
-  if (Object.keys(value).length !== 3) fail('CRM_REQUEST_BINDING_INVALID');
+  assertExactKeys(value, ['method', 'target', 'bodyDigest'], 'CRM_REQUEST_BINDING_INVALID');
   const method = value.method;
   if (typeof method !== 'string' || !DELIVERY_METHODS.has(method)) fail('CRM_METHOD_INVALID');
   const bodyDigest = value.bodyDigest;
@@ -108,8 +117,7 @@ export function prepareCrmIdentityDeliveryV1(input = {}) {
     keyId,
   } = input;
   assertEnabled(enabled);
-  assertOnlyKeys(identity, ['identitySubject', 'role', 'scopes'], 'IDENTITY_ACTOR_INVALID');
-  if (Object.keys(identity).length !== 3) fail('IDENTITY_ACTOR_INVALID');
+  assertExactKeys(identity, ['identitySubject', 'role', 'scopes'], 'IDENTITY_ACTOR_INVALID');
   const iat = assertEpochSeconds(issuedAt, 'IDENTITY_ISSUED_AT');
   const ttl = assertEpochSeconds(ttlSeconds, 'IDENTITY_TTL');
   if (ttl < 1 || ttl > IDENTITY_CRM_DELIVERY_MAX_TTL_SECONDS) fail('IDENTITY_TTL_INVALID');

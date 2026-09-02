@@ -18,7 +18,7 @@ const baseInput = Object.freeze({
     scopes: Object.freeze({
       units: Object.freeze(['novo-hamburgo']),
       modules: Object.freeze(['clients', 'finance']),
-      permissions: Object.freeze(['clients:read', 'finance:read']),
+      permissions: Object.freeze(['module.clients.access', 'module.finance.access']),
     }),
   }),
   requestBinding: Object.freeze({
@@ -59,7 +59,7 @@ test('the preparation returns only the minimized Identity CRM delivery input', (
     scopes: {
       units: ['novo-hamburgo'],
       modules: ['clients', 'finance'],
-      permissions: ['clients:read', 'finance:read'],
+      permissions: ['module.clients.access', 'module.finance.access'],
     },
     iat: 1788292800,
     exp: 1788292860,
@@ -97,9 +97,27 @@ test('the preparation fails closed for invalid opaque identity, scopes, request 
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, method: 'post' } })), /CRM_METHOD_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, extra: 'rejected' } })), /CRM_REQUEST_BINDING_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, target: 'https://crm.example.test/api/crm/leads' } })), /CRM_TARGET_INVALID/);
+  assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, target: '/api/crm/admin/%2E%2E/leads' } })), /CRM_TARGET_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ requestBinding: { ...baseInput.requestBinding, bodyDigest: 'A'.repeat(64) } })), /CRM_BODY_DIGEST_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ ttlSeconds: 61 })), /IDENTITY_TTL_INVALID/);
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({ issuedAt: Number.MAX_SAFE_INTEGER })), /IDENTITY_EXPIRES_AT_INVALID/);
+});
+
+test('the preparation rejects hidden, symbolic, inherited and accessor input fields', () => {
+  const hidden = input();
+  Object.defineProperty(hidden, 'hidden', { value: true, enumerable: false });
+  assert.throws(() => prepareCrmIdentityDeliveryV1(hidden), /IDENTITY_CRM_DELIVERY_INPUT_INVALID/);
+
+  const symbolic = input();
+  symbolic[Symbol('hidden')] = true;
+  assert.throws(() => prepareCrmIdentityDeliveryV1(symbolic), /IDENTITY_CRM_DELIVERY_INPUT_INVALID/);
+
+  const inherited = Object.create(input());
+  assert.throws(() => prepareCrmIdentityDeliveryV1(inherited), /IDENTITY_CRM_DELIVERY_INPUT_INVALID/);
+
+  const accessor = input();
+  Object.defineProperty(accessor, 'jti', { enumerable: true, get: () => baseInput.jti });
+  assert.throws(() => prepareCrmIdentityDeliveryV1(accessor), /IDENTITY_CRM_DELIVERY_INPUT_INVALID/);
 });
 
 test('the source-only helper is not connected to the legacy public runtime or a secret', async () => {
