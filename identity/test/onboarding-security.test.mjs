@@ -19,7 +19,10 @@ test('team accounts accept both the unique username and corporate email at login
   assert.match(auth, /SELECT \?, \?, \?, \?, role/);
   assert.match(auth, /INVITE_IDENTITY_MIGRATION_REQUIRED/);
   assert.match(auth, /AUTH_INVITE_ACCOUNT_LINKED/);
+  assert.match(auth, /createOpaqueIdentitySubject/);
+  assert.match(auth, /identity_subject/);
   assert.match(store, /LOWER\(username\) = LOWER\(\?\) OR \(email IS NOT NULL AND email != '' AND LOWER\(email\) = LOWER\(\?\)\)/);
+  assert.match(store, /IDENTITY_SUBJECT_REQUIRED/);
 });
 
 test('authentication failures do not disclose inactive or passwordless account state', async () => {

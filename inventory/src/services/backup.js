@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { safeJsonNoTruncate } from '../lib/json.js';
 import { resolveCrmTables } from '../d1Store.js';
+import { isOpaqueIdentitySubject } from '../../../shared/identity-contract/index.js';
 
 async function tableHasColumn(env, tableName, columnName) {
     if (!env?.DB || !tableName || !columnName) return false;
@@ -229,10 +230,12 @@ export async function buildBackupPayload({ env }) {
         try {
             const { usersTable } = await resolveCrmTables(env);
             const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+            const hasIdentitySubject = await tableHasColumn(env, usersTable, 'identity_subject');
+            const hasSessionVersion = await tableHasColumn(env, usersTable, 'session_version');
             const u = await env.DB.prepare(
                 `SELECT username, email, display_name as displayName, password_hash as passwordHash, role, photo_url as photoUrl,
                         allowed_units_json as allowedUnitsJson${hasModules ? ', allowed_modules_json as allowedModulesJson' : ''},
-                        ativo, created_at as createdAt, updated_at as updatedAt
+                        ativo, created_at as createdAt, updated_at as updatedAt${hasSessionVersion ? ', session_version as sessionVersion' : ''}${hasIdentitySubject ? ', identity_subject as identitySubject' : ''}
                  FROM ${usersTable}`
             ).all();
             d1Dump.insumosUsers = u?.results || [];
@@ -453,9 +456,28 @@ export async function restoreBackupPayload({ env, payload, strict = false }) {
         try {
             const { usersTable } = await resolveCrmTables(env);
             const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+            const usersHasIdentitySubject = await tableHasColumn(env, usersTable, 'identity_subject');
+            const usersHasSessionVersion = await tableHasColumn(env, usersTable, 'session_version');
             const usersRows = Array.isArray(p.d1.crmUsers)
                 ? p.d1.crmUsers
                 : (Array.isArray(p.d1.insumosUsers) ? p.d1.insumosUsers : []);
+
+            // Once the durable subject schema exists, a restore must preserve
+            // the original audit identity. A legacy backup is not allowed to
+            // silently remint subjects for already-known accounts.
+            if (usersHasIdentitySubject) {
+                const seenIdentitySubjects = new Set();
+                for (const row of usersRows) {
+                    const subject = row?.identitySubject;
+                    if (!isOpaqueIdentitySubject(subject)) {
+                        throw new Error('IDENTITY_SUBJECT_BACKUP_REQUIRED');
+                    }
+                    if (seenIdentitySubjects.has(subject)) {
+                        throw new Error('IDENTITY_SUBJECT_BACKUP_DUPLICATE');
+                    }
+                    seenIdentitySubjects.add(subject);
+                }
+            }
 
             if (Array.isArray(p.d1.insumosStocks)) await env.DB.prepare('DELETE FROM insumos_stocks').run();
             // The stock ledger is append-only. Restore may add missing evidence,
@@ -467,44 +489,33 @@ export async function restoreBackupPayload({ env, payload, strict = false }) {
             if (Array.isArray(p.d1.shareHistory)) await env.DB.prepare('DELETE FROM share_history').run();
 
             for (const row of (usersRows || []).reverse()) {
+                const userColumns = ['username', 'email', 'display_name', 'password_hash', 'role', 'photo_url', 'allowed_units_json'];
+                const userValues = [
+                    row.username || '',
+                    row.email || '',
+                    row.displayName || '',
+                    row.passwordHash || '',
+                    row.role || 'CONSULTOR',
+                    row.photoUrl || '',
+                    row.allowedUnitsJson || null,
+                ];
                 if (usersHasModules) {
-                    await env.DB.prepare(
-                        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-                    )
-                        .bind(
-                            row.username || '',
-                            row.email || '',
-                            row.displayName || '',
-                            row.passwordHash || '',
-                            row.role || 'CONSULTOR',
-                            row.photoUrl || '',
-                            row.allowedUnitsJson || null,
-                            row.allowedModulesJson || null,
-                            Number(row.ativo || 0) ? 1 : 0,
-                            row.createdAt || new Date().toISOString(),
-                            row.updatedAt || new Date().toISOString()
-                        )
-                        .run();
-                } else {
-                    await env.DB.prepare(
-                        `INSERT INTO ${usersTable} (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-                    )
-                        .bind(
-                            row.username || '',
-                            row.email || '',
-                            row.displayName || '',
-                            row.passwordHash || '',
-                            row.role || 'CONSULTOR',
-                            row.photoUrl || '',
-                            row.allowedUnitsJson || null,
-                            Number(row.ativo || 0) ? 1 : 0,
-                            row.createdAt || new Date().toISOString(),
-                            row.updatedAt || new Date().toISOString()
-                        )
-                        .run();
+                    userColumns.push('allowed_modules_json');
+                    userValues.push(row.allowedModulesJson || null);
                 }
+                userColumns.push('ativo', 'created_at', 'updated_at');
+                userValues.push(Number(row.ativo || 0) ? 1 : 0, row.createdAt || new Date().toISOString(), row.updatedAt || new Date().toISOString());
+                if (usersHasSessionVersion) {
+                    userColumns.push('session_version');
+                    userValues.push(Number(row.sessionVersion || 0));
+                }
+                if (usersHasIdentitySubject) {
+                    userColumns.push('identity_subject');
+                    userValues.push(row.identitySubject);
+                }
+                await env.DB.prepare(`INSERT INTO ${usersTable} (${userColumns.join(',')}) VALUES (${userColumns.map(() => '?').join(',')})`)
+                    .bind(...userValues)
+                    .run();
             }
             for (const row of (p.d1.insumosItems || []).reverse()) {
                 await env.DB.prepare(
@@ -817,7 +828,10 @@ export async function restoreBackupPayload({ env, payload, strict = false }) {
                     .run();
             }
         } catch (error) {
-            if (strict) throw error;
+            // A schema that has durable subjects must never accept a legacy
+            // account snapshot by silently reminting its audit identity. This
+            // remains fail-closed even for the historical best-effort path.
+            if (strict || String(error?.message || '').startsWith('IDENTITY_SUBJECT_BACKUP_')) throw error;
             // Legacy restore is intentionally best-effort for historical backup
             // files. The private preview sets strict and fails closed instead.
         }
