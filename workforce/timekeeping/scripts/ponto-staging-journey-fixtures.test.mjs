@@ -48,6 +48,9 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
     assert.equal(fixture.forbiddenUnitId, 'barra-shopping-sul');
     assert.equal(fixture.role, 'CONSULTOR');
     assert.match(fixture.onboardingId, /^[0-9a-f]{64}$/);
+    assert.match(fixture.identitySubject, /^idn:[A-Za-z0-9_-]{16,160}$/);
+    assert.match(fixture.adminIdentitySubject, /^idn:[A-Za-z0-9_-]{16,160}$/);
+    assert.notEqual(fixture.identitySubject, fixture.adminIdentitySubject);
     assert.deepEqual(validateOnboardingInput({
       fullName: 'Synthetic Ponto Supervisor',
       corporateEmail: fixture.onboardingCorporateEmail,
@@ -77,6 +80,8 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
     }
     assert.match(provisionCore, /Synthetic Ponto CONSULTOR/);
     assert.match(provisionCore, /Synthetic Ponto GESTOR/);
+    assert.match(provisionCore, new RegExp(fixture.identitySubject));
+    assert.match(provisionCore, new RegExp(fixture.adminIdentitySubject));
     assert.match(provisionCore, /'GESTOR'.*'\["insumos"\]'/);
     assert.equal((provisionCore.match(/DELETE FROM crm_identity_sessions/g) || []).length, 2);
     assert.match(provisionTimekeeping, new RegExp(fixture.employeeId));
@@ -131,6 +136,13 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
         fixture.username,
         fixture.adminUsername,
       ).count, 2);
+      assert.deepEqual(database.prepare('SELECT username, identity_subject FROM crm_users WHERE username IN (?, ?) ORDER BY username').all(
+        fixture.username,
+        fixture.adminUsername,
+      ).map(({ username, identity_subject }) => ({ username, identity_subject })), [
+        { username: fixture.adminUsername, identity_subject: fixture.adminIdentitySubject },
+        { username: fixture.username, identity_subject: fixture.identitySubject },
+      ]);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM crm_identity_sessions WHERE username IN (?, ?)').get(
         fixture.username,
         fixture.adminUsername,
