@@ -36,6 +36,7 @@ const sql = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const prefix = `stg-ponto-${runId}${fixtureId ? `-${fixtureId}` : ''}`;
 const now = new Date().toISOString();
 const password = () => `StgPonto-${randomBytes(18).toString('base64url')}`;
+const opaqueIdentitySubject = () => `idn:${randomBytes(16).toString('hex')}`;
 const pin = () => String(randomInt(100000, 1_000_000));
 const passwordHash = (value) => {
   const salt = randomBytes(16);
@@ -65,9 +66,11 @@ function privateFixture() {
     username: userName,
     email: `${userName}@staging.invalid`,
     password: userPassword,
+    identitySubject: opaqueIdentitySubject(),
     adminUsername,
     adminEmail: `${adminUsername}@staging.invalid`,
     adminPassword,
+    adminIdentitySubject: opaqueIdentitySubject(),
     pin: userPin,
     role: 'CONSULTOR',
     allowedModules: ['atendimento', 'ponto'],
@@ -104,6 +107,11 @@ function controlledFixture() {
   }
   if (fixture.unitId !== 'novo-hamburgo' || fixture.forbiddenUnitId !== 'barra-shopping-sul' || JSON.stringify(fixture.allowedUnits) !== JSON.stringify(['novo-hamburgo'])) throw new Error('fixture unit scope drifted');
   if (!/^[0-9a-f]{64}$/.test(String(fixture.onboardingId || ''))) throw new Error('fixture onboardingId is invalid');
+  for (const field of ['identitySubject', 'adminIdentitySubject']) {
+    const subject = String(fixture[field] || '');
+    if (subject && !/^idn:[A-Za-z0-9_-]{16,160}$/.test(subject)) throw new Error(`fixture ${field} is invalid`);
+  }
+  if (fixture.identitySubject && fixture.adminIdentitySubject && fixture.identitySubject === fixture.adminIdentitySubject) throw new Error('fixture identity subjects must be distinct');
   if (fixture.onboardingPhone !== '+5551999999999') throw new Error('fixture onboardingPhone is invalid');
   if (
     !Array.isArray(fixture.teardownRequestIds || [])
@@ -130,8 +138,8 @@ if (action === 'provision') {
     `DELETE FROM crm_users WHERE username = ${sql(fixture.username)};`,
     `DELETE FROM crm_users WHERE username = ${sql(fixture.adminUsername)};`,
     `DELETE FROM crm_employee_onboarding WHERE id = ${sql(fixture.onboardingId)};`,
-    `INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version) VALUES (${sql(fixture.username)}, ${sql(fixture.email)}, ${sql('Synthetic Ponto CONSULTOR')}, ${sql(passwordHash(fixture.password))}, 'CONSULTOR', '', ${sql(JSON.stringify(fixture.allowedUnits))}, ${sql(JSON.stringify(fixture.allowedModules))}, 1, ${sql(now)}, ${sql(now)}, 0);`,
-    `INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version) VALUES (${sql(fixture.adminUsername)}, ${sql(fixture.adminEmail)}, ${sql('Synthetic Ponto GESTOR')}, ${sql(passwordHash(fixture.adminPassword))}, 'GESTOR', '', ${sql(JSON.stringify(fixture.allowedUnits))}, ${sql(JSON.stringify(['insumos']))}, 1, ${sql(now)}, ${sql(now)}, 0);`,
+    `INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version, identity_subject) VALUES (${sql(fixture.username)}, ${sql(fixture.email)}, ${sql('Synthetic Ponto CONSULTOR')}, ${sql(passwordHash(fixture.password))}, 'CONSULTOR', '', ${sql(JSON.stringify(fixture.allowedUnits))}, ${sql(JSON.stringify(fixture.allowedModules))}, 1, ${sql(now)}, ${sql(now)}, 0, ${sql(fixture.identitySubject)});`,
+    `INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version, identity_subject) VALUES (${sql(fixture.adminUsername)}, ${sql(fixture.adminEmail)}, ${sql('Synthetic Ponto GESTOR')}, ${sql(passwordHash(fixture.adminPassword))}, 'GESTOR', '', ${sql(JSON.stringify(fixture.allowedUnits))}, ${sql(JSON.stringify(['insumos']))}, 1, ${sql(now)}, ${sql(now)}, 0, ${sql(fixture.adminIdentitySubject)});`,
     audit('STAGING_SYNTHETIC_PONTO_PROVISIONED', fixture.username, { runId, role: fixture.role, modules: fixture.allowedModules, unitCount: 1 }),
   ];
   const timekeepingStatements = [

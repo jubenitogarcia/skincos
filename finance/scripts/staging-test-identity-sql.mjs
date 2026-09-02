@@ -26,15 +26,16 @@ const passwordHash = () => {
   const derived = pbkdf2Sync(password, salt, 100_000, 32, 'sha256');
   return `pbkdf2_sha256$100000$${base64url(salt)}$${base64url(derived)}`;
 };
+const identitySubject = `idn:${randomBytes(16).toString('hex')}`;
 
 let sql;
 if (action === 'create') {
   sql = [
-    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version) VALUES(${quote(username)},${quote('finance-staging-monitor@staging.invalid')},${quote('Finance staging monitor (synthetic)')},${quote(passwordHash())},'CONSULTOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},0);`,
+    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version,identity_subject) VALUES(${quote(username)},${quote('finance-staging-monitor@staging.invalid')},${quote('Finance staging monitor (synthetic)')},${quote(passwordHash())},'CONSULTOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},0,${quote(identitySubject)});`,
     `INSERT INTO finance_access_grants(id,username,scope_id,permission,created_at,created_by) VALUES(${quote('finance-staging-monitor-viewer-nh')},${quote(username)},${quote(scopeId)},'viewer',${quote(now)},${quote('@skincos/finance')});`,
   ].join('\n');
 } else if (action === 'rotate') {
-  sql = `UPDATE crm_users SET password_hash=${quote(passwordHash())},session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)} AND ativo=1;`;
+  sql = `UPDATE crm_users SET password_hash=${quote(passwordHash())},identity_subject=CASE WHEN identity_subject IS NULL OR trim(identity_subject) = '' THEN ${quote(identitySubject)} ELSE identity_subject END,session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)} AND ativo=1;`;
 } else {
   // Invalidate the session before removing the grant. Either completed statement denies Finance access.
   sql = [
