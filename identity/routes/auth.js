@@ -5,7 +5,7 @@ import { resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
 import { normalizeCorporateEmail, normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
-import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
+import { createOpaqueIdentitySubject, normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
 import { syncIdentityWorkforceStatus } from '../../shared/identity-runtime/workforce-onboarding.js';
 
 function b64UrlBytes(value) {
@@ -275,6 +275,7 @@ export async function handleAuthRoutes({
 
         const { usersTable, invitesTable, passwordResetsTable } = await resolveIdentityTables(env);
 	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
+	        const usersHasIdentitySubject = await tableHasColumn(usersTable, 'identity_subject');
 	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
 	        const invitesHasInviteeEmail = await tableHasColumn(invitesTable, 'invitee_email');
 	        const invitesHasCorporateEmail = await tableHasColumn(invitesTable, 'corporate_email');
@@ -691,10 +692,13 @@ export async function handleAuthRoutes({
                 }
                 const hash = await hashPassword(password);
                 const currentTime = new Date().toISOString();
+                const identitySubject = usersHasIdentitySubject ? createOpaqueIdentitySubject() : null;
+                const identitySubjectColumn = usersHasIdentitySubject ? ', identity_subject' : '';
+                const identitySubjectValue = usersHasIdentitySubject ? ', ?' : '';
                 const registration = env.DB.prepare(
                     `INSERT INTO ${usersTable}
-                     (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-                     SELECT ?, ?, ?, ?, role, '', ?, ?, 0, ?, ?
+                     (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at${identitySubjectColumn})
+                     SELECT ?, ?, ?, ?, role, '', ?, ?, 0, ?, ?${identitySubjectValue}
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                        AND invitee_email = ?
@@ -702,7 +706,7 @@ export async function handleAuthRoutes({
                        AND max_uses = 1
                        AND uses_count = 0
                        AND expires_at > ?`
-                ).bind(candidate, loginEmail, name, hash, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), now, now, inviteHash, email, currentTime);
+                ).bind(candidate, loginEmail, name, hash, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), now, now, ...(usersHasIdentitySubject ? [identitySubject] : []), inviteHash, email, currentTime);
                 const consume = env.DB.prepare(
                     `UPDATE ${invitesTable}
                      SET uses_count = 1
