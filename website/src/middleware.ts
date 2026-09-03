@@ -10,13 +10,18 @@ const CADASTRO_WHEEL_LEGACY_PATHS = new Set([
     "/rodadabeleza",
 ]);
 
+const CADASTRO_WHEEL_WORKER_HOSTS = new Set([
+    "espacofacial-site.skincos.workers.dev",
+    "espacofacial-site-staging.skincos.workers.dev",
+]);
+
 function isCadastroWheelRedirectHost(host: string, hostname: string): boolean {
     return [host, hostname]
-        .map((value) => value.toLowerCase().replace(/:\\d+$/, ""))
+        .map((value) => value.toLowerCase().replace(/:\d+$/, ""))
         .some(
             (value) =>
                 getOfficialHostFamily(value) === "espacofacial-public" ||
-                value.endsWith(".skincos.workers.dev"),
+                CADASTRO_WHEEL_WORKER_HOSTS.has(value),
         );
 }
 

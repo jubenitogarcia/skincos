@@ -59,8 +59,25 @@ test("legacy Roda da Beleza paths recognize a public host header with a local po
     assert.equal(new URL(location, requestUrl).searchParams.get("utm_source"), "local");
 });
 
-test("legacy Roda da Beleza paths do not take over the esfa.co short-link domain", () => {
-    const response = middleware(new NextRequest("https://esfa.co/roleta?utm_source=meta"));
+test("legacy Roda da Beleza paths recognize the staging worker host with a local port", () => {
+    const requestUrl = "http://127.0.0.1:3417/roleta?utm_source=staging-local";
+    const response = middleware(
+        new NextRequest(requestUrl, {
+            headers: { host: "espacofacial-site-staging.skincos.workers.dev:3417" },
+        }),
+    );
+    const location = response.headers.get("location");
 
-    assert.equal(response.headers.get("location"), null);
+    assert.ok(location, "the staging worker host should enable the legacy redirect");
+    assert.equal(response.status, 301);
+    assert.equal(new URL(location, requestUrl).pathname, "/cadastro");
+    assert.equal(new URL(location, requestUrl).searchParams.get("utm_source"), "staging-local");
+});
+
+test("legacy Roda da Beleza paths do not take over other site surfaces", () => {
+    for (const host of ["https://esfa.co", "https://skincos-site.skincos.workers.dev"]) {
+        const response = middleware(new NextRequest(`${host}/roleta?utm_source=meta`));
+
+        assert.equal(response.headers.get("location"), null);
+    }
 });
