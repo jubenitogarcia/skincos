@@ -185,6 +185,21 @@ async function run() {
         assertPublicRedirectLocation(loc, path);
     }
 
+    // Historic wheel campaign links must converge to the live entry point without losing attribution.
+    for (const path of ["/roleta", "/roda-da-beleza", "/rodadabeleza"]) {
+        const tracking = "utm_source=smoke&utm_campaign=roda-da-beleza";
+        const res = await fetchHead(`${path}?${tracking}`, { redirect: "manual" });
+        assert(res.status === 301, `${path} expected a permanent redirect, got ${res.status}`);
+
+        const loc = res.headers.get("location");
+        assert(loc, `${path} expected Location header`);
+        const destination = new URL(loc, `${baseUrl}/`);
+        assert(destination.origin === new URL(baseUrl).origin, `${path} expected a first-party destination`);
+        assert(destination.pathname === "/cadastro", `${path} expected /cadastro, got ${destination.pathname}`);
+        assert(destination.searchParams.get("utm_source") === "smoke", `${path} lost utm_source`);
+        assert(destination.searchParams.get("utm_campaign") === "roda-da-beleza", `${path} lost utm_campaign`);
+    }
+
     // Header markers (ensure we're not serving an older deployment)
     {
         const { res, text } = await fetchText("/");
