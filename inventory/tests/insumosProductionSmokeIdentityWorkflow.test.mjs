@@ -16,8 +16,18 @@ test('the manual production Identity smoke verifies the opaque subject schema be
   assert.match(source, /identity_subject LIKE 'idn:%'/);
   assert.match(source, /opaque_subjects/);
   assert.match(source, /SMOKE_IDENTITY_OPAQUE_SUBJECT_COUNT/);
+  const schemaStepStart = source.indexOf('name: Verify CRM identity subject schema before mutation');
+  const schemaStepEnd = source.indexOf('name: Check synthetic identity collision');
+  assert.ok(schemaStepEnd > schemaStepStart, 'schema preflight step must have a bounded workflow scope');
+  const schemaStep = source.slice(schemaStepStart, schemaStepEnd);
+  assert.match(schemaStep, /schema_command="\$\(<"\$\{RUNNER_TEMP_DIR\}\/schema\.sql"\)"/);
+  assert.doesNotMatch(
+    schemaStep,
+    /\n\s+if:/,
+    'schema preflight must run for cleanup as well as provision',
+  );
   assert.ok(
-    source.indexOf('Verify CRM identity subject schema before mutation') < source.indexOf('Apply exact synthetic identity mutation'),
+    schemaStepStart < source.indexOf('Apply exact synthetic identity mutation'),
     'schema-sensitive preflight must remain before the production mutation',
   );
   assert.ok(
