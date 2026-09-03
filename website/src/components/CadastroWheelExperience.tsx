@@ -581,15 +581,25 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
         setResult(null);
         setCtaVisible(false);
 
-        const claimed = await claimCadastroWheelPrize();
-        if (!claimed) {
+        const claimResult = await claimCadastroWheelPrize();
+        if (!claimResult.ok) {
             setStatus("idle");
-            setButtonPhase("visible");
-            setSpinError("Não foi possível registrar o seu prêmio agora. Verifique a conexão e tente novamente.");
-            trackEvent("cadastro_wheel_spin_claim_failed", { page: "/cadastro" });
+            if (claimResult.error === "lead_unavailable") {
+                setLeadGateOpen(false);
+                setButtonPhase("hidden");
+                setLeadError("Seu cadastro precisa ser validado novamente. Confira seus dados e tente de novo.");
+            } else {
+                setButtonPhase("visible");
+                setSpinError("Não foi possível registrar o seu prêmio agora. Verifique a conexão e tente novamente.");
+            }
+            trackEvent("cadastro_wheel_spin_claim_failed", {
+                page: "/cadastro",
+                reason: claimResult.error,
+            });
             return;
         }
 
+        const claimed = claimResult.claim;
         const selectedPrize = claimed.prize;
         setButtonPhase("fading");
         trackTimeout(() => setButtonPhase("gone"), BUTTON_FADE_OUT_MS);

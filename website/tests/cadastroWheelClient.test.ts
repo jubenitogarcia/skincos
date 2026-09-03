@@ -25,24 +25,29 @@ test("wheel client never awards a local fallback when the server cannot confirm 
     const unavailable = await claimCadastroWheelPrize(async () =>
         jsonResponse({ ok: false, error: "wheel_secret_unavailable" }),
     );
-    assert.equal(unavailable, null);
+    assert.deepEqual(unavailable, { ok: false, error: "claim_unavailable" });
 
     const networkFailure = await claimCadastroWheelPrize(async () => {
         throw new Error("network unavailable");
     });
-    assert.equal(networkFailure, null);
+    assert.deepEqual(networkFailure, { ok: false, error: "claim_unavailable" });
 });
 
 test("wheel client accepts a valid server claim and preserves replay state", async () => {
-    const claim = await claimCadastroWheelPrize(async () =>
+    const result = await claimCadastroWheelPrize(async () =>
         jsonResponse({ ok: true, prizeId: 7, replay: true, expMs: Date.now() + 60_000 }),
     );
 
     assert.deepEqual(
-        claim && {
-            prizeId: claim.prize.id,
-            replay: claim.replay,
+        result.ok && {
+            prizeId: result.claim.prize.id,
+            replay: result.claim.replay,
         },
         { prizeId: 7, replay: true },
     );
+});
+
+test("wheel client requires the lead form again when the server no longer has that lead", async () => {
+    const result = await claimCadastroWheelPrize(async () => jsonResponse({ ok: false, error: "lead_unavailable" }));
+    assert.deepEqual(result, { ok: false, error: "lead_unavailable" });
 });
