@@ -125,6 +125,7 @@ class CodeExecution(Tool):
                             self.agent.config.code_exec_ssh_port,
                             self.agent.config.code_exec_ssh_user,
                             pswd,
+                            self.agent.config.code_exec_ssh_known_hosts,
                         )
                         await shell.connect()
                     except Exception:
@@ -183,6 +184,7 @@ class CodeExecution(Tool):
                             self.agent.config.code_exec_ssh_port,
                             self.agent.config.code_exec_ssh_user,
                             pswd,
+                            self.agent.config.code_exec_ssh_known_hosts,
                         )
                     else:
                         shell = LocalInteractiveSession()

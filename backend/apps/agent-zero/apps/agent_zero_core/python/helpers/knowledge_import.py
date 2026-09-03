@@ -1,6 +1,5 @@
 import glob
 import os
-import hashlib
 from typing import Any, Dict, Literal, TypedDict
 from langchain_community.document_loaders import (
     CSVLoader,
@@ -10,6 +9,7 @@ from langchain_community.document_loaders import (
 )
 from python.helpers.log import LogItem
 from python.helpers.print_style import PrintStyle
+from python.helpers.checksums import calculate_sha256
 
 text_loader_kwargs = {"autodetect_encoding": True}
 
@@ -23,11 +23,7 @@ class KnowledgeImport(TypedDict):
 
 
 def calculate_checksum(file_path: str) -> str:
-    hasher = hashlib.md5()
-    with open(file_path, "rb") as f:
-        buf = f.read()
-        hasher.update(buf)
-    return hasher.hexdigest()
+    return calculate_sha256(file_path)
 
 
 def load_knowledge(
