@@ -4,6 +4,15 @@ from typing import Any
 import uuid
 from agent import Agent, AgentConfig, AgentContext, AgentContextType
 from python.helpers import files, history
+from python.helpers.chat_paths import (
+    list_chat_context_ids,
+    list_legacy_chat_jsons,
+    migrate_legacy_chat_json,
+    read_chat_json,
+    remove_chat_directory,
+    resolve_chat_directory,
+    write_chat_json,
+)
 import json
 from initialize import initialize_agent
 
@@ -24,16 +33,14 @@ def get_chat_folder_path(ctxid: str):
     Returns:
         The absolute path to the context folder
     """
-    return files.get_abs_path(CHATS_FOLDER, ctxid)
+    return resolve_chat_directory(files.get_abs_path(CHATS_FOLDER), ctxid)
 
 
 def save_tmp_chat(context: AgentContext):
     """Save context to the chats folder"""
-    path = _get_chat_file_path(context.id)
-    files.make_dirs(path)
     data = _serialize_context(context)
     js = _safe_json_serialize(data, ensure_ascii=False)
-    files.write_file(path, js)
+    write_chat_json(files.get_abs_path(CHATS_FOLDER), context.id, js)
 
 
 def save_tmp_chats():
@@ -45,34 +52,30 @@ def save_tmp_chats():
 def load_tmp_chats():
     """Load all contexts from the chats folder"""
     _convert_v080_chats()
-    folders = files.list_files(CHATS_FOLDER, "*")
-    json_files = []
-    for folder_name in folders:
-        json_files.append(_get_chat_file_path(folder_name))
-
     ctxids = []
-    for file in json_files:
+    chat_root = files.get_abs_path(CHATS_FOLDER)
+    for ctxid in list_chat_context_ids(chat_root):
         try:
-            js = files.read_file(file)
+            js = read_chat_json(chat_root, ctxid)
             data = json.loads(js)
             ctx = _deserialize_context(data)
             ctxids.append(ctx.id)
         except Exception as e:
-            print(f"Error loading chat {file}: {e}")
+            print(f"Error loading chat {ctxid!r}: {e}")
     return ctxids
 
 
 def _get_chat_file_path(ctxid: str):
-    return files.get_abs_path(CHATS_FOLDER, ctxid, CHAT_FILE_NAME)
+    return f"{get_chat_folder_path(ctxid)}/{CHAT_FILE_NAME}"
 
 
 def _convert_v080_chats():
-    json_files = files.list_files(CHATS_FOLDER, "*.json")
-    for file in json_files:
-        path = files.get_abs_path(CHATS_FOLDER, file)
-        name = file.rstrip(".json")
-        new = _get_chat_file_path(name)
-        files.move_file(path, new)
+    chat_root = files.get_abs_path(CHATS_FOLDER)
+    for filename in list_legacy_chat_jsons(chat_root):
+        try:
+            migrate_legacy_chat_json(chat_root, filename)
+        except (OSError, ValueError) as error:
+            print(f"Skipping unsafe legacy chat {filename!r}: {error}")
 
 
 def load_json_chats(jsons: list[str]):
@@ -96,8 +99,7 @@ def export_json_chat(context: AgentContext):
 
 def remove_chat(ctxid):
     """Remove a chat or task context"""
-    path = get_chat_folder_path(ctxid)
-    files.delete_dir(path)
+    remove_chat_directory(files.get_abs_path(CHATS_FOLDER), ctxid)
 
 
 def _serialize_context(context: AgentContext):

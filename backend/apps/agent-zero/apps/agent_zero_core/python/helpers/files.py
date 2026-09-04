@@ -13,6 +13,7 @@ import importlib
 import importlib.util
 import inspect
 import glob
+import stat
 
 
 class VariablesPlugin(ABC):
@@ -303,10 +304,12 @@ def delete_dir(relative_path: str):
                 for root, dirs, files in os.walk(abs_path, topdown=False):
                     for name in files:
                         file_path = os.path.join(root, name)
-                        os.chmod(file_path, 0o777)
+                        if not os.path.islink(file_path):
+                            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
                     for name in dirs:
                         dir_path = os.path.join(root, name)
-                        os.chmod(dir_path, 0o777)
+                        if not os.path.islink(dir_path):
+                            os.chmod(dir_path, stat.S_IRWXU)
 
                 # try again after changing permissions
                 shutil.rmtree(abs_path, ignore_errors=True)

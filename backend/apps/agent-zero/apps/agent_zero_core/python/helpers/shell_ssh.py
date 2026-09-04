@@ -1,4 +1,5 @@
 import asyncio
+import os
 import paramiko
 import time
 import re
@@ -14,15 +15,24 @@ class SSHInteractiveSession:
     # ps1_label = "SSHInteractiveSession CLI>"
 
     def __init__(
-        self, logger: Log, hostname: str, port: int, username: str, password: str
+        self,
+        logger: Log,
+        hostname: str,
+        port: int,
+        username: str,
+        password: str,
+        known_hosts_path: str,
     ):
+        if not known_hosts_path or not os.path.isfile(known_hosts_path):
+            raise ValueError("SSH code execution requires an explicit known_hosts file")
         self.logger = logger
         self.hostname = hostname
         self.port = port
         self.username = username
         self.password = password
         self.client = paramiko.SSHClient()
-        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self.client.load_host_keys(known_hosts_path)
+        self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
         self.shell = None
         self.full_output = b""
         self.last_command = b""

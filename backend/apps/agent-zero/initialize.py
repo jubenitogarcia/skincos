@@ -103,9 +103,17 @@ def initialize_agent():
     env_flag = _os.getenv("AGZ_CODE_EXEC_SSH", "0").strip().lower()
     if env_flag in ("1", "true", "yes", "on"):
         config.code_exec_ssh_enabled = True
+    config.code_exec_ssh_known_hosts = _os.getenv(
+        "AGZ_CODE_EXEC_SSH_KNOWN_HOSTS", ""
+    ).strip()
 
     # update config with runtime args
     _args_override(config)
+    # SSH stays opt-in, but it cannot be enabled without pinned host keys.
+    if config.code_exec_ssh_enabled and not _os.path.isfile(
+        config.code_exec_ssh_known_hosts
+    ):
+        config.code_exec_ssh_enabled = False
 
     # initialize MCP in deferred task to prevent blocking the main thread
     # async def initialize_mcp_async(mcp_servers_config: str):
