@@ -42,18 +42,6 @@ Last review: 2026-04-14
   - `node scripts/check-js-security-exceptions.mjs`
   - `.github/workflows/lint-format-static.yml`
 
-### pip-audit dependency resolution (agent-zero)
-
-- **Status**: Temporarily active with expiry control.
-- **Scope**:
-  - `backend/apps/agent-zero/requirements.txt`
-  - `backend/apps/agent-zero/requirements.unified.txt`
-- **Reason**: dependency resolution/build metadata issue in `openai-whisper` currently causes pip-audit collection failure (`ModuleNotFoundError: pkg_resources` in isolated build step).
-- **Policy source of truth**:
-  - `.github/security/pip-audit-path-exceptions.csv`
-  - `.github/security/pip-audit-vuln-exceptions.csv`
-- **Enforcement**: expired exceptions fail CI in `.github/workflows/security-secrets-audit.yml`.
-
 ### pip-audit dependency resolution (crawl4ai vendor requirements)
 
 - **Status**: Temporarily active with expiry control.

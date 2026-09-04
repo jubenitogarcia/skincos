@@ -1,6 +1,4 @@
 # requirements_path,expires_on,reason
-backend/apps/agent-zero/requirements.txt,2026-08-31,openai-whisper dependency resolution currently fails pip-audit build metadata
-backend/apps/agent-zero/requirements.unified.txt,2026-08-31,openai-whisper dependency resolution currently fails pip-audit build metadata
 backend/apps/automations/sprinta/v2/vendor/crawl4ai/requirements.txt,2026-08-31,crawl4ai vendor stack triggers lxml source build in pip-audit and GitHub runner lacks libxml2/libxslt development packages
 integration/ef/requirements.txt,2026-08-31,python dependency remediation for scraper stack will be handled in a dedicated security update batch
 backend/apps/automations/sprinta/legacy/requirements.txt,2026-08-31,legacy sprinta stack requires coordinated dependency remediation outside this public-site release
