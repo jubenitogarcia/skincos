@@ -3,7 +3,7 @@ import { getBookingDb, normalizeEmail, normalizePhone, nowMs, sanitizeOneLine } 
 type D1PreparedStatement = {
     bind: (...values: unknown[]) => D1PreparedStatement;
     first: <T = unknown>() => Promise<T | null>;
-    run: () => Promise<{ success: boolean; error?: string } | unknown>;
+    run: () => Promise<unknown>;
 };
 
 type D1DatabaseLike = {
@@ -22,7 +22,27 @@ export type CadastroLeadRow = {
     awarded_at_ms: number | null;
 };
 
+export type CadastroLeadPrizeClaim = {
+    prizeId: number;
+    replay: boolean;
+};
+
+type D1RunResult = {
+    success: boolean;
+    error?: string;
+    meta?: {
+        changes?: number;
+    };
+};
+
 let ensured = false;
+
+function readD1RunResult(value: unknown): D1RunResult {
+    if (!value || typeof value !== "object" || typeof (value as { success?: unknown }).success !== "boolean") {
+        throw new Error("cadastro_wheel_prize_claim_invalid_d1_result");
+    }
+    return value as D1RunResult;
+}
 
 async function ensureCadastroLeadSchema(db: D1DatabaseLike) {
     await db
@@ -152,15 +172,57 @@ export async function touchCadastroLead(params: {
         .run();
 }
 
-export async function assignCadastroLeadPrize(params: { id: string; prizeId: number }): Promise<void> {
+export async function assignCadastroLeadPrize(params: { id: string; prizeId: number }): Promise<CadastroLeadPrizeClaim | null> {
+    const safeId = sanitizeOneLine(params.id);
+    if (!safeId || !Number.isInteger(params.prizeId) || params.prizeId < 1) {
+        return null;
+    }
+
     const db = await getCadastroLeadDb();
     const ts = nowMs();
-    await db
+    const update = readD1RunResult(
+        await db
+            .prepare(
+                `UPDATE cadastro_wheel_leads
+                 SET prize_id = ?, awarded_at_ms = COALESCE(awarded_at_ms, ?), updated_at_ms = ?
+                 WHERE id = ? AND prize_id IS NULL`,
+            )
+            .bind(params.prizeId, ts, ts, safeId)
+            .run(),
+    );
+
+    if (!update.success) {
+        throw new Error("cadastro_wheel_prize_claim_failed");
+    }
+
+    if (update.meta?.changes === 1) {
+        return {
+            prizeId: params.prizeId,
+            replay: false,
+        };
+    }
+
+    if (update.meta?.changes !== 0) {
+        throw new Error("cadastro_wheel_prize_claim_invalid_change_count");
+    }
+
+    const existing = await db
         .prepare(
-            `UPDATE cadastro_wheel_leads
-             SET prize_id = ?, awarded_at_ms = COALESCE(awarded_at_ms, ?), updated_at_ms = ?
-             WHERE id = ?`,
+            `SELECT prize_id
+             FROM cadastro_wheel_leads
+             WHERE id = ?
+             LIMIT 1`,
         )
-        .bind(params.prizeId, ts, ts, params.id)
-        .run();
+        .bind(safeId)
+        .first<Pick<CadastroLeadRow, "prize_id">>();
+
+    const existingPrizeId = existing?.prize_id;
+    if (typeof existingPrizeId !== "number" || !Number.isInteger(existingPrizeId) || existingPrizeId < 1) {
+        return null;
+    }
+
+    return {
+        prizeId: existingPrizeId,
+        replay: true,
+    };
 }

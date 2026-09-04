@@ -27,6 +27,15 @@ function clearWheelCookie(response: NextResponse) {
     });
 }
 
+function clearLeadCookie(response: NextResponse) {
+    response.cookies.set({
+        name: LEAD_COOKIE_NAME,
+        value: "",
+        maxAge: 0,
+        path: "/",
+    });
+}
+
 function resolveSecret(): string | null {
     const secret = (
         process.env.CADASTRO_WHEEL_SECRET ??
@@ -137,12 +146,18 @@ export async function POST(req: NextRequest) {
     const expMs = Date.now() + lockWindowMs;
     const leadId = req.cookies.get(LEAD_COOKIE_NAME)?.value ?? "";
     if (leadId) {
-        await assignCadastroLeadPrize({ id: leadId, prizeId });
+        const claimed = await assignCadastroLeadPrize({ id: leadId, prizeId });
+        if (!claimed) {
+            const response = withNoStore({ ok: false, error: "lead_unavailable" });
+            clearLeadCookie(response);
+            return response;
+        }
+
         return withNoStore({
             ok: true,
-            prizeId,
+            prizeId: claimed.prizeId,
             expMs,
-            replay: false,
+            replay: claimed.replay,
         });
     }
 
