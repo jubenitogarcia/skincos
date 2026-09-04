@@ -105,6 +105,34 @@
   background: rgba(255, 255, 255, 0.44);
 }
 
+.contextualUnitChooser {
+  width: min(100%, 320px);
+}
+
+.contextualUnitChooser :global(.unitChooser),
+.contextualUnitChooser :global(.unitChooserBtn) {
+  width: 100%;
+}
+
+.contextualUnitChooser :global(.unitChooserBtn) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 50px;
+  padding: 14px 16px;
+  border-radius: 18px;
+}
+
+.contextualUnitChooser :global(.unitChooserMenu) {
+  left: 0;
+  right: auto;
+  width: 100%;
+}
+
+.contextualUnitChooser :global(.unitChooserItemTitle) {
+  text-align: left;
+}
+
 .leadGateIntro {
   max-width: 520px;
 }
@@ -578,6 +606,24 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leadGate,
+  .wheelReveal,
+  .resultTitleVisible,
+  .centerBadge,
+  .preloaderGlow {
+    animation: none;
+  }
+
+  .leadGate,
+  .centerButton,
+  .centerButtonFading,
+  .ctaRow,
+  .wheelDisc {
+    transition: none !important;
   }
 }
 
