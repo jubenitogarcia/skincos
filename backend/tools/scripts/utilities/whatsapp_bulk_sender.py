@@ -13,7 +13,7 @@ import csv
 import pandas as pd
 from typing import List, Optional, Dict, Tuple
 from urllib.parse import urlparse
-import PyPDF2
+from pypdf import PdfReader
 import openpyxl
 from pathlib import Path
 from datetime import datetime
@@ -268,7 +268,7 @@ class WhatsAppBulkSender:
         phones = []
         try:
             with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
+                pdf_reader = PdfReader(file)
                 text = ""
 
                 # Extrair texto de todas as páginas
