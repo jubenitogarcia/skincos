@@ -8,6 +8,7 @@ import { claimCadastroWheelPrize, fetchLockedCadastroWheelPrize } from "@/lib/ca
 import { CADASTRO_WHEEL_PRIZES, type CadastroPrize } from "@/lib/cadastroWheelPrizes";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
+import UnitChooser from "@/components/UnitChooser";
 import styles from "./CadastroWheelExperience.module.css";
 
 type SpinStatus = "idle" | "spinning" | "done";
@@ -177,6 +178,10 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
     const spinSoundRef = useRef<SpinSoundNodes | null>(null);
     const audioCtxRef = useRef<AudioContext | null>(null);
     const noiseBufferRef = useRef<AudioBuffer | null>(null);
+    const fullNameInputRef = useRef<HTMLInputElement | null>(null);
+    const phoneInputRef = useRef<HTMLInputElement | null>(null);
+    const emailInputRef = useRef<HTMLInputElement | null>(null);
+    const leadErrorNoticeRef = useRef<HTMLParagraphElement | null>(null);
     const cadastroUnitSelected = Boolean(currentUnit?.slug && CADASTRO_WHATSAPP_BY_UNIT[currentUnit.slug]);
 
     useEffect(() => {
@@ -194,6 +199,14 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
     }, []);
 
     useEffect(() => {
+        if (!leadError) return;
+        const frame = window.requestAnimationFrame(() => {
+            leadErrorNoticeRef.current?.focus();
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [leadError]);
+
+    useEffect(() => {
         if (!cadastroUnitSelected || !leadGateOpen || duplicatePrize !== null) return;
         let active = true;
 
@@ -201,12 +214,12 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
             setLoaderVisible(true);
             setButtonPhase("hidden");
             const restoredPrizePromise = fetchLockedCadastroWheelPrize();
-            await wait(READY_DEADLINE_MS);
+            await wait(prefersReducedMotion ? 0 : READY_DEADLINE_MS);
             await nextFrame();
             if (!active) return;
 
             setLoaderVisible(false);
-            const restoredPrize = await Promise.race([restoredPrizePromise, wait(450).then(() => null)]);
+            const restoredPrize = await Promise.race([restoredPrizePromise, wait(prefersReducedMotion ? 0 : 450).then(() => null)]);
             if (!active) return;
 
             if (restoredPrize) {
@@ -230,7 +243,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
         return () => {
             active = false;
         };
-    }, [cadastroUnitSelected, duplicatePrize, leadGateOpen]);
+    }, [cadastroUnitSelected, duplicatePrize, leadGateOpen, prefersReducedMotion]);
 
     useEffect(() => {
         const timeoutStore = timeoutsRef;
@@ -569,13 +582,9 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
     async function handleSpin() {
         if (status !== "idle" || buttonPhase !== "visible") return;
 
-        const accelMs = prefersReducedMotion ? 400 : 1000;
-        const cruiseMs = prefersReducedMotion ? 800 : 3200;
-        const decelMs = prefersReducedMotion ? 600 : 1800;
-        const accelRot = prefersReducedMotion ? 1 : 2;
-        const cruiseRot = prefersReducedMotion ? 1 : 4;
-
-        void playClickSound();
+        if (!prefersReducedMotion) {
+            void playClickSound();
+        }
         setStatus("spinning");
         setSpinError(null);
         setResult(null);
@@ -601,8 +610,6 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
 
         const claimed = claimResult.claim;
         const selectedPrize = claimed.prize;
-        setButtonPhase("fading");
-        trackTimeout(() => setButtonPhase("gone"), BUTTON_FADE_OUT_MS);
 
         if (claimed.replay) {
             setStatus("done");
@@ -617,6 +624,34 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
             });
             return;
         }
+
+        if (prefersReducedMotion) {
+            const finalRotation = currentRotationRef.current + targetOffsetForPrize(selectedPrize);
+            setTransition("none");
+            setRotation(finalRotation);
+            currentRotationRef.current = finalRotation;
+            setButtonPhase("gone");
+            setResult(selectedPrize);
+            setStatus("done");
+            setCtaVisible(true);
+            trackEvent("cadastro_wheel_spin_complete", {
+                page: "/cadastro",
+                claimSource: "server",
+                prizeId: selectedPrize.id,
+                prizeName: selectedPrize.label,
+                finalAngle: finalRotation,
+                reducedMotion: true,
+            });
+            return;
+        }
+
+        const accelMs = 1000;
+        const cruiseMs = 3200;
+        const decelMs = 1800;
+        const accelRot = 2;
+        const cruiseRot = 4;
+        setButtonPhase("fading");
+        trackTimeout(() => setButtonPhase("gone"), BUTTON_FADE_OUT_MS);
 
         await startSpinSound();
         fadeSpinSound(0.08, 400);
@@ -677,7 +712,15 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
         event.preventDefault();
         if (leadSubmitting) return;
         setLeadAttempted(true);
-        if (!canSubmitLead) return;
+        if (!canSubmitLead) {
+            const firstInvalidInput = !isValidFullName(leadForm.fullName)
+                ? fullNameInputRef.current
+                : normalizePhoneDigits(leadForm.phone).length < 10
+                  ? phoneInputRef.current
+                  : emailInputRef.current;
+            window.requestAnimationFrame(() => firstInvalidInput?.focus());
+            return;
+        }
         setLeadError(null);
         setDuplicatePrize(null);
 
@@ -732,6 +775,12 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                 setLoaderVisible(false);
                 setCtaVisible(false);
                 setResult(null);
+                return;
+            }
+
+            if (prefersReducedMotion) {
+                setLeadSubmitting(false);
+                setLeadGateOpen(true);
                 return;
             }
 
@@ -792,7 +841,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                             <span>teste a sua sorte</span>!
                         </h1>
                         <p className={styles.subtitle}>
-                            Preencha seus dados, gire a <strong>RODA DA BELEZA</strong> e revele o seu procedimento GRÁTIS!
+                            Preencha seus dados, gire a <strong>RODA DA BELEZA</strong> e revele sua condição especial.
                         </p>
                     </div>
 
@@ -804,9 +853,12 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                         <span className={styles.resultEyebrow}>Selecione a unidade</span>
                                         <h2 className={styles.resultTitle}>Escolha uma unidade no topo para desbloquear o cadastro</h2>
                                         <p className={styles.resultText}>
-                                            A dinâmica da campanha só é liberada depois que uma unidade é selecionada no cabeçalho.
-                                            Quando isso acontecer, o cadastro básico aparece primeiro e só depois a roleta é carregada.
+                                            A dinâmica da campanha só é liberada depois que você escolher uma unidade. O cadastro básico aparece
+                                            primeiro e só depois a roleta é carregada.
                                         </p>
+                                    </div>
+                                    <div className={styles.contextualUnitChooser}>
+                                        <UnitChooser placement="cadastro_gate" />
                                     </div>
                                 </div>
                             ) : duplicateDetected || !leadGateOpen ? (
@@ -822,6 +874,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                         <label className={styles.formField}>
                                             <span className={styles.formLabel}>Nome completo</span>
                                             <input
+                                                ref={fullNameInputRef}
                                                 type="text"
                                                 value={leadForm.fullName}
                                                 onChange={(event) => updateLeadField("fullName", event.target.value)}
@@ -829,16 +882,20 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                                 autoComplete="name"
                                                 className={`${styles.formInput} ${fullNameInvalid ? styles.formInputInvalid : ""}`}
                                                 aria-invalid={fullNameInvalid}
+                                                aria-describedby={fullNameInvalid ? "cadastro-full-name-error" : undefined}
                                                 disabled={leadSubmitting}
                                             />
                                             {fullNameInvalid ? (
-                                                <span className={styles.formError}>Informe nome e sobrenome.</span>
+                                                <span id="cadastro-full-name-error" className={styles.formError}>
+                                                    Informe nome e sobrenome.
+                                                </span>
                                             ) : null}
                                         </label>
 
                                         <label className={styles.formField}>
                                             <span className={styles.formLabel}>Telefone</span>
                                             <input
+                                                ref={phoneInputRef}
                                                 type="tel"
                                                 value={leadForm.phone}
                                                 onChange={(event) => updateLeadField("phone", event.target.value)}
@@ -847,16 +904,20 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                                 inputMode="tel"
                                                 className={`${styles.formInput} ${phoneInvalid ? styles.formInputInvalid : ""}`}
                                                 aria-invalid={phoneInvalid}
+                                                aria-describedby={phoneInvalid ? "cadastro-phone-error" : undefined}
                                                 disabled={leadSubmitting}
                                             />
                                             {phoneInvalid ? (
-                                                <span className={styles.formError}>Informe um telefone válido com DDD.</span>
+                                                <span id="cadastro-phone-error" className={styles.formError}>
+                                                    Informe um telefone válido com DDD.
+                                                </span>
                                             ) : null}
                                         </label>
 
                                         <label className={styles.formField}>
                                             <span className={styles.formLabel}>E-mail</span>
                                             <input
+                                                ref={emailInputRef}
                                                 type="email"
                                                 value={leadForm.email}
                                                 onChange={(event) => updateLeadField("email", event.target.value)}
@@ -865,10 +926,13 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                                 inputMode="email"
                                                 className={`${styles.formInput} ${emailInvalid ? styles.formInputInvalid : ""}`}
                                                 aria-invalid={emailInvalid}
+                                                aria-describedby={emailInvalid ? "cadastro-email-error" : undefined}
                                                 disabled={leadSubmitting}
                                             />
                                             {emailInvalid ? (
-                                                <span className={styles.formError}>Informe um e-mail válido.</span>
+                                                <span id="cadastro-email-error" className={styles.formError}>
+                                                    Informe um e-mail válido.
+                                                </span>
                                             ) : null}
                                         </label>
 
@@ -890,7 +954,17 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                         </button>
                                     </form>
 
-                                    {leadError ? <p className={styles.formNoticeError}>{leadError}</p> : null}
+                                    {leadError ? (
+                                        <p
+                                            ref={leadErrorNoticeRef}
+                                            tabIndex={-1}
+                                            role="alert"
+                                            aria-atomic="true"
+                                            className={styles.formNoticeError}
+                                        >
+                                            {leadError}
+                                        </p>
+                                    ) : null}
 
                                     {duplicatePrize ? (
                                         <div className={styles.resultPanel} aria-live="polite">
@@ -975,21 +1049,27 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                     </div>
 
                                     <div className={styles.statusRow}>
-                                        <span className={styles.statusPill}>
+                                        <span className={styles.statusPill} aria-live="polite" aria-atomic="true">
                                             Status:&nbsp;<strong>{statusLabel}</strong>
                                         </span>
-                                        <span className={styles.statusHint}>1 giro por acesso</span>
+                                        <span className={styles.statusHint}>1 prêmio por cadastro validado</span>
                                     </div>
 
-                                    <div className={styles.resultPanel} aria-live="polite">
+                                    <div
+                                        className={styles.resultPanel}
+                                        aria-live={spinError ? "assertive" : "polite"}
+                                        role={spinError ? "alert" : undefined}
+                                        aria-atomic={spinError ? "true" : undefined}
+                                    >
                                         {result ? (
                                             <>
                                                 <span className={styles.resultEyebrow}>Prêmio revelado</span>
                                                 <h2 className={`${styles.resultTitle} ${styles.resultTitleVisible}`}>{result.label}</h2>
                                                 <p className={`${styles.resultText} ${styles.resultDescription}`}>{result.description}</p>
                                                 <p className={styles.resultText}>
-                                                    O prêmio já foi travado. Depois da vinheta, o botão de atendimento abre o WhatsApp com a
-                                                    mensagem exata do prêmio sorteado.
+                                                    {prefersReducedMotion
+                                                        ? "O prêmio já foi travado. O botão de atendimento abre o WhatsApp com a mensagem exata do prêmio sorteado."
+                                                        : "O prêmio já foi travado. Depois da vinheta, o botão de atendimento abre o WhatsApp com a mensagem exata do prêmio sorteado."}
                                                 </p>
 
                                                 {ctaVisible && whatsappUrl ? (
