@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import TrackedWhatsappLink from "@/components/TrackedWhatsappLink";
 import { trackEvent } from "@/lib/analytics";
 import { trackLeadConversion } from "@/lib/conversions";
+import { claimCadastroWheelPrize, fetchLockedCadastroWheelPrize } from "@/lib/cadastroWheelClient";
 import { CADASTRO_WHEEL_PRIZES, type CadastroPrize } from "@/lib/cadastroWheelPrizes";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
@@ -16,15 +17,6 @@ type CadastroLeadForm = {
     phone: string;
     email: string;
 };
-
-type WheelStatusResponse =
-    | { ok: true; locked: true; prizeId: number; expMs?: number }
-    | { ok: true; locked: false; prizeId: null }
-    | { ok: false; error: string };
-
-type WheelSpinResponse =
-    | { ok: true; prizeId: number; replay: boolean; expMs?: number }
-    | { ok: false; error: string };
 
 type SpinSoundNodes = {
     ctx: AudioContext;
@@ -41,8 +33,6 @@ const BUTTON_FADE_OUT_MS = 1200;
 const BOOKING_EXTRA_DELAY_MS = 700;
 const RESULT_STING_MS = 2000;
 const SPIN_AUDIO_FADE_OUT_MS = 250;
-const LOCAL_LOCK_KEY = "ef_cadastro_wheel_lock";
-const LOCAL_LOCK_MS = 24 * 60 * 60 * 1000;
 const CADASTRO_LEAD_STORAGE_KEY = "ef_cadastro_lead_form";
 const CADASTRO_WHATSAPP_BY_UNIT: Record<string, string> = {
     barrashoppingsul: "5551980882293",
@@ -136,51 +126,6 @@ function findPrizeById(prizeId: number): CadastroPrize | null {
     return PRIZES.find((prize) => prize.id === prizeId) ?? null;
 }
 
-function clearLocalLock() {
-    try {
-        window.localStorage.removeItem(LOCAL_LOCK_KEY);
-    } catch {
-        // noop
-    }
-}
-
-function readLocalLockedPrize(): CadastroPrize | null {
-    try {
-        const raw = window.localStorage.getItem(LOCAL_LOCK_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as { prizeId?: unknown; expMs?: unknown };
-        const prizeId = Number(parsed.prizeId);
-        const expMs = Number(parsed.expMs);
-        if (!Number.isInteger(prizeId) || !Number.isFinite(expMs) || expMs <= Date.now()) {
-            clearLocalLock();
-            return null;
-        }
-        const prize = findPrizeById(prizeId);
-        if (!prize) {
-            clearLocalLock();
-            return null;
-        }
-        return prize;
-    } catch {
-        clearLocalLock();
-        return null;
-    }
-}
-
-function persistLocalLockedPrize(prize: CadastroPrize, expMs = Date.now() + LOCAL_LOCK_MS) {
-    try {
-        window.localStorage.setItem(
-            LOCAL_LOCK_KEY,
-            JSON.stringify({
-                prizeId: prize.id,
-                expMs,
-            }),
-        );
-    } catch {
-        // noop
-    }
-}
-
 function createNoiseBuffer(ctx: AudioContext, durationMs = 1400) {
     const frameCount = Math.max(1, Math.floor((ctx.sampleRate * durationMs) / 1000));
     const buffer = ctx.createBuffer(1, frameCount, ctx.sampleRate);
@@ -217,6 +162,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
     const [leadGateOpen, setLeadGateOpen] = useState(false);
     const [leadSubmitting, setLeadSubmitting] = useState(false);
     const [leadError, setLeadError] = useState<string | null>(null);
+    const [spinError, setSpinError] = useState<string | null>(null);
     const [duplicatePrize, setDuplicatePrize] = useState<CadastroPrize | null>(null);
     const [status, setStatus] = useState<SpinStatus>("idle");
     const [buttonPhase, setButtonPhase] = useState<ButtonPhase>("hidden");
@@ -254,7 +200,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
         async function gateReady() {
             setLoaderVisible(true);
             setButtonPhase("hidden");
-            const restoredPrizePromise = fetchLockedPrize();
+            const restoredPrizePromise = fetchLockedCadastroWheelPrize();
             await wait(READY_DEADLINE_MS);
             await nextFrame();
             if (!active) return;
@@ -344,75 +290,6 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
         const id = window.setTimeout(callback, ms);
         timeoutsRef.current.push(id);
         return id;
-    }
-
-    function resolveFallbackLocalPrize(): { prize: CadastroPrize; replay: boolean } {
-        const lockedPrize = readLocalLockedPrize();
-        if (lockedPrize) {
-            return { prize: lockedPrize, replay: true };
-        }
-        const drawnPrize = PRIZES[Math.floor(Math.random() * PRIZES.length)];
-        persistLocalLockedPrize(drawnPrize);
-        return { prize: drawnPrize, replay: false };
-    }
-
-    async function fetchLockedPrize(): Promise<CadastroPrize | null> {
-        try {
-            const response = await fetch("/api/cadastro/wheel", {
-                method: "GET",
-                cache: "no-store",
-            });
-            if (!response.ok) {
-                return readLocalLockedPrize();
-            }
-
-            const payload = (await response.json()) as WheelStatusResponse;
-            if (payload.ok && payload.locked && typeof payload.prizeId === "number") {
-                return findPrizeById(payload.prizeId);
-            }
-
-            if (payload.ok && !payload.locked) {
-                clearLocalLock();
-                return null;
-            }
-
-            if (!payload.ok && payload.error === "wheel_secret_unavailable") {
-                return readLocalLockedPrize();
-            }
-
-            return null;
-        } catch {
-            return readLocalLockedPrize();
-        }
-    }
-
-    async function claimPrize(): Promise<{ prize: CadastroPrize; replay: boolean; source: "server" | "local-lock" }> {
-        try {
-            const response = await fetch("/api/cadastro/wheel", {
-                method: "POST",
-                cache: "no-store",
-            });
-            if (response.ok) {
-                const payload = (await response.json()) as WheelSpinResponse;
-                if (payload.ok && typeof payload.prizeId === "number") {
-                    const prize = findPrizeById(payload.prizeId);
-                    if (prize) {
-                        clearLocalLock();
-                        return { prize, replay: payload.replay, source: "server" };
-                    }
-                }
-
-                if (!payload.ok && payload.error === "wheel_secret_unavailable") {
-                    const fallback = resolveFallbackLocalPrize();
-                    return { ...fallback, source: "local-lock" };
-                }
-            }
-        } catch {
-            // noop
-        }
-
-        const fallback = resolveFallbackLocalPrize();
-        return { ...fallback, source: "local-lock" };
     }
 
     async function ensureAudioContext(): Promise<AudioContext | null> {
@@ -700,13 +577,32 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
 
         void playClickSound();
         setStatus("spinning");
+        setSpinError(null);
         setResult(null);
         setCtaVisible(false);
+
+        const claimResult = await claimCadastroWheelPrize();
+        if (!claimResult.ok) {
+            setStatus("idle");
+            if (claimResult.error === "lead_unavailable") {
+                setLeadGateOpen(false);
+                setButtonPhase("hidden");
+                setLeadError("Seu cadastro precisa ser validado novamente. Confira seus dados e tente de novo.");
+            } else {
+                setButtonPhase("visible");
+                setSpinError("Não foi possível registrar o seu prêmio agora. Verifique a conexão e tente novamente.");
+            }
+            trackEvent("cadastro_wheel_spin_claim_failed", {
+                page: "/cadastro",
+                reason: claimResult.error,
+            });
+            return;
+        }
+
+        const claimed = claimResult.claim;
+        const selectedPrize = claimed.prize;
         setButtonPhase("fading");
         trackTimeout(() => setButtonPhase("gone"), BUTTON_FADE_OUT_MS);
-
-        const claimed = await claimPrize();
-        const selectedPrize = claimed.prize;
 
         if (claimed.replay) {
             setStatus("done");
@@ -715,15 +611,11 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
             setCtaVisible(true);
             trackEvent("cadastro_wheel_spin_replay", {
                 page: "/cadastro",
-                claimSource: claimed.source,
+                claimSource: "server",
                 prizeId: selectedPrize.id,
                 prizeName: selectedPrize.label,
             });
             return;
-        }
-
-        if (claimed.source === "local-lock") {
-            trackEvent("cadastro_wheel_spin_local_lock", { page: "/cadastro" });
         }
 
         await startSpinSound();
@@ -763,7 +655,7 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
 
         trackEvent("cadastro_wheel_spin_complete", {
             page: "/cadastro",
-            claimSource: claimed.source,
+            claimSource: "server",
             prizeId: selectedPrize.id,
             prizeName: selectedPrize.label,
             finalAngle: current,
@@ -1119,11 +1011,16 @@ export default function CadastroWheelExperience({ whatsappPhone }: { whatsappPho
                                             </>
                                         ) : (
                                             <>
-                                                <span className={styles.resultEyebrow}>Como funciona</span>
-                                                <h2 className={styles.resultTitle}>Gire a roleta para liberar o seu atendimento</h2>
+                                                <span className={styles.resultEyebrow}>
+                                                    {spinError ? "Giro não concluído" : "Como funciona"}
+                                                </span>
+                                                <h2 className={styles.resultTitle}>
+                                                    {spinError ? "Nenhum prêmio foi atribuído" : "Gire a roleta para liberar o seu atendimento"}
+                                                </h2>
                                                 <p className={styles.resultText}>
-                                                    Assim que o carregamento inicial terminar, o botão central é liberado. O prêmio aparece
-                                                    após o giro completo e o CTA é exibido com atraso para manter a cadência da dinâmica.
+                                                    {spinError
+                                                        ? spinError
+                                                        : "Assim que o carregamento inicial terminar, o botão central é liberado. O prêmio aparece após o giro completo e o CTA é exibido com atraso para manter a cadência da dinâmica."}
                                                 </p>
                                             </>
                                         )}
