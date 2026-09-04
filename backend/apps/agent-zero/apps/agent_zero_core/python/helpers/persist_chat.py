@@ -24,7 +24,7 @@ def get_chat_folder_path(ctxid: str):
     Returns:
         The absolute path to the context folder
     """
-    return files.get_abs_path(CHATS_FOLDER, ctxid)
+    return files.get_safe_child_path(CHATS_FOLDER, ctxid)
 
 
 def save_tmp_chat(context: AgentContext):
