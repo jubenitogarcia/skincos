@@ -290,29 +290,16 @@ def write_file_base64(relative_path: str, content: str):
 
 
 def delete_dir(relative_path: str):
-    # ensure deletion of directory without propagating errors
+    # Keep recursive deletion within the Agent Zero base directory.
     abs_path = get_abs_path(relative_path)
+    base_dir = os.path.normcase(os.path.realpath(get_base_dir()))
+    resolved_path = os.path.normcase(os.path.realpath(abs_path))
+    if not is_in_base_dir(abs_path) or resolved_path == base_dir:
+        raise ValueError("Refusing to delete a path outside the Agent Zero base directory")
     if os.path.exists(abs_path):
-        # first try with ignore_errors=True which is the safest option
+        # Best-effort deletion must not broaden permissions on data it cannot
+        # remove; callers receive no destructive fallback outside this scope.
         shutil.rmtree(abs_path, ignore_errors=True)
-
-        # if directory still exists, try more aggressive methods
-        if os.path.exists(abs_path):
-            try:
-                # try to change permissions and delete again
-                for root, dirs, files in os.walk(abs_path, topdown=False):
-                    for name in files:
-                        file_path = os.path.join(root, name)
-                        os.chmod(file_path, 0o777)
-                    for name in dirs:
-                        dir_path = os.path.join(root, name)
-                        os.chmod(dir_path, 0o777)
-
-                # try again after changing permissions
-                shutil.rmtree(abs_path, ignore_errors=True)
-            except:
-                # suppress all errors - we're ensuring no errors propagate
-                pass
 
 
 def list_files(relative_path: str, filter: str = "*"):
@@ -330,6 +317,34 @@ def make_dirs(relative_path: str):
 def get_abs_path(*relative_paths):
     "Convert relative paths to absolute paths based on the base directory."
     return os.path.join(get_base_dir(), *relative_paths)
+
+
+def get_safe_child_path(parent_path: str, component: str):
+    "Resolve one untrusted child component without permitting path traversal."
+    if (
+        not isinstance(component, str)
+        or component in ("", ".", "..")
+        or "\x00" in component
+        or "/" in component
+        or "\\" in component
+    ):
+        raise ValueError("Path component must be a non-empty single identifier")
+
+    parent = os.path.normcase(os.path.realpath(get_abs_path(parent_path)))
+    if not is_in_base_dir(parent):
+        raise ValueError("Parent path escaped the Agent Zero base directory")
+    candidate = os.path.join(parent, component)
+    resolved_candidate = os.path.normcase(os.path.realpath(candidate))
+    try:
+        is_direct_child = (
+            os.path.commonpath([resolved_candidate, parent]) == parent
+            and os.path.dirname(resolved_candidate) == parent
+        )
+    except ValueError:
+        is_direct_child = False
+    if not is_direct_child:
+        raise ValueError("Path component escaped its parent directory")
+    return candidate
 
 def deabsolute_path(path:str):
     "Convert absolute paths to relative paths based on the base directory."
@@ -365,12 +380,13 @@ def dirname(path: str):
 
 
 def is_in_base_dir(path: str):
-    # check if the given path is within the base directory
-    base_dir = get_base_dir()
-    # normalize paths to handle relative paths and symlinks
-    abs_path = os.path.abspath(path)
-    # check if the absolute path starts with the base directory
-    return os.path.commonpath([abs_path, base_dir]) == base_dir
+    "Check containment after resolving traversal and symlink aliases."
+    base_dir = os.path.normcase(os.path.realpath(get_base_dir()))
+    abs_path = os.path.normcase(os.path.realpath(path))
+    try:
+        return os.path.commonpath([abs_path, base_dir]) == base_dir
+    except ValueError:
+        return False
 
 
 def get_subdirectories(

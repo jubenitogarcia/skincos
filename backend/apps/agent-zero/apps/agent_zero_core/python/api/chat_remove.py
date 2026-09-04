@@ -7,6 +7,9 @@ from python.helpers.task_scheduler import TaskScheduler
 class RemoveChat(ApiHandler):
     async def process(self, input: Input, request: Request) -> Output:
         ctxid = input.get("context", "")
+        # Validate before changing in-memory or scheduler state. The same
+        # resolver protects persistence callers outside this HTTP route.
+        persist_chat.get_chat_folder_path(ctxid)
 
         context = AgentContext.get(ctxid)
         if context:
