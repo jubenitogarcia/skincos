@@ -89,3 +89,17 @@ def test_pinned_resolver_rejects_host_or_port_changes():
             assert "target changed" in str(exc)
         else:
             raise AssertionError("resolver accepted a changed destination")
+
+
+def test_remote_document_policy_normalizes_idn_for_transport_host():
+    with patch(
+        "python.helpers.network_policy.socket.getaddrinfo",
+        return_value=_dns_result("93.184.216.34"),
+    ):
+        target = resolve_remote_document_target("https://münich.example/document")
+
+    assert target.hostname == "xn--mnich-kva.example"
+    resolved = asyncio.run(
+        PinnedResolver(target).resolve("xn--mnich-kva.example", 443)
+    )
+    assert resolved[0]["host"] == "93.184.216.34"

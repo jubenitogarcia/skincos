@@ -25,7 +25,6 @@ from python.helpers.network_policy import (
     PinnedResolver,
     RemoteDocumentTarget,
     resolve_remote_document_target,
-    validate_remote_document_url,
 )
 from agent import Agent
 
@@ -91,9 +90,15 @@ async def _request_remote_document(
         await connector.close()
 
 
-async def fetch_remote_document(document_uri: str) -> tuple[bytes, int, dict[str, str]]:
+async def fetch_remote_document(
+    document_uri: str,
+    target: RemoteDocumentTarget | None = None,
+) -> tuple[bytes, int, dict[str, str]]:
     """Fetch content through a DNS-pinned, non-redirecting transport."""
-    target = resolve_remote_document_target(document_uri)
+    if target is None:
+        target = resolve_remote_document_target(document_uri)
+    elif target.uri != document_uri:
+        raise ValueError("Remote document target does not match the requested URI")
     status, headers, body = await _request_remote_document(target, "GET")
     if 300 <= status < 400:
         raise ValueError("Remote document redirects must be resolved before download")
@@ -102,18 +107,21 @@ async def fetch_remote_document(document_uri: str) -> tuple[bytes, int, dict[str
 
 async def resolve_remote_document_url(
     document_uri: str,
-) -> tuple[str, int, dict[str, str]]:
+) -> tuple[str, int, dict[str, str], RemoteDocumentTarget]:
     """Resolve a short redirect chain while validating every destination."""
-    current = validate_remote_document_url(document_uri)
+    current = document_uri
     for _ in range(5):
         target = resolve_remote_document_target(current)
         status, headers, _body = await _request_remote_document(target, "HEAD")
         if status not in {301, 302, 303, 307, 308}:
-            return current, status, headers
+            # Return the exact target whose addresses passed the preflight. The
+            # subsequent GET must reuse it instead of resolving the hostname
+            # again, otherwise DNS rebinding can bypass this boundary.
+            return current, status, headers, target
         location = headers.get("location")
         if not location:
             raise ValueError("Remote document redirect has no location")
-        current = validate_remote_document_url(urljoin(current, location))
+        current = urljoin(current, location)
     raise ValueError("Remote document redirect chain is too long")
 
 
@@ -528,13 +536,19 @@ class DocumentQueryHelper:
         mimetype = mimetype or "application/octet-stream"
         fetch_document_uri = original_document_uri
         index_document_uri = original_document_uri
+        fetch_target: RemoteDocumentTarget | None = None
 
         if scheme in {"http", "https"}:
             # Validate before handing the URL to any loader. The resolved
             # public URL is used only for fetching; the caller's URI remains
             # the stable index key after a legitimate cross-host redirect.
             try:
-                fetch_document_uri, response_status, response_headers = (
+                (
+                    fetch_document_uri,
+                    response_status,
+                    response_headers,
+                    fetch_target,
+                ) = (
                     await resolve_remote_document_url(original_document_uri)
                 )
             except Exception as exc:
@@ -586,23 +600,23 @@ class DocumentQueryHelper:
         if not exists:
             if mimetype.startswith("image/"):
                 document_content = await self.handle_image_document(
-                    fetch_document_uri, scheme
+                    fetch_document_uri, scheme, fetch_target
                 )
             elif mimetype == "text/html":
                 document_content = await self.handle_html_document(
-                    fetch_document_uri, scheme
+                    fetch_document_uri, scheme, fetch_target
                 )
             elif mimetype.startswith("text/") or mimetype == "application/json":
                 document_content = await self.handle_text_document(
-                    fetch_document_uri, scheme
+                    fetch_document_uri, scheme, fetch_target
                 )
             elif mimetype == "application/pdf":
                 document_content = await self.handle_pdf_document(
-                    fetch_document_uri, scheme
+                    fetch_document_uri, scheme, fetch_target
                 )
             else:
                 document_content = await self.handle_unstructured_document(
-                    fetch_document_uri, scheme
+                    fetch_document_uri, scheme, fetch_target
                 )
             if add_to_db:
                 self.progress_callback(f"Indexing document")
@@ -625,12 +639,22 @@ class DocumentQueryHelper:
                 )
         return document_content
 
-    async def handle_image_document(self, document: str, scheme: str) -> str:
-        return await self.handle_unstructured_document(document, scheme)
+    async def handle_image_document(
+        self,
+        document: str,
+        scheme: str,
+        target: RemoteDocumentTarget | None = None,
+    ) -> str:
+        return await self.handle_unstructured_document(document, scheme, target)
 
-    async def handle_html_document(self, document: str, scheme: str) -> str:
+    async def handle_html_document(
+        self,
+        document: str,
+        scheme: str,
+        target: RemoteDocumentTarget | None = None,
+    ) -> str:
         if scheme in ["http", "https"]:
-            body, status, headers = await fetch_remote_document(document)
+            body, status, headers = await fetch_remote_document(document, target)
             if status != 200:
                 raise ValueError(
                     f"DocumentQueryHelper::handle_html_document: Failed to download document from {document}: {status}"
@@ -665,9 +689,14 @@ class DocumentQueryHelper:
             ]
         )
 
-    async def handle_text_document(self, document: str, scheme: str) -> str:
+    async def handle_text_document(
+        self,
+        document: str,
+        scheme: str,
+        target: RemoteDocumentTarget | None = None,
+    ) -> str:
         if scheme in ["http", "https"]:
-            body, status, headers = await fetch_remote_document(document)
+            body, status, headers = await fetch_remote_document(document, target)
             if status != 200:
                 raise ValueError(
                     f"DocumentQueryHelper::handle_text_document: Failed to download document from {document}: {status}"
@@ -699,7 +728,12 @@ class DocumentQueryHelper:
 
         return "\n".join([element.page_content for element in elements])
 
-    async def handle_pdf_document(self, document: str, scheme: str) -> str:
+    async def handle_pdf_document(
+        self,
+        document: str,
+        scheme: str,
+        target: RemoteDocumentTarget | None = None,
+    ) -> str:
         temp_file_path = ""
         if scheme == "file":
             # Use RFC file operations to read the PDF file as binary
@@ -711,7 +745,7 @@ class DocumentQueryHelper:
                 temp_file.write(file_content_bytes)
                 temp_file_path = temp_file.name
         elif scheme in ["http", "https"]:
-            body, status, _headers = await fetch_remote_document(document)
+            body, status, _headers = await fetch_remote_document(document, target)
             if status != 200:
                 raise ValueError(
                     f"DocumentQueryHelper::handle_pdf_document: Failed to download PDF from {document}: {status}"
@@ -765,10 +799,15 @@ class DocumentQueryHelper:
         finally:
             os.unlink(temp_file_path)
 
-    async def handle_unstructured_document(self, document: str, scheme: str) -> str:
+    async def handle_unstructured_document(
+        self,
+        document: str,
+        scheme: str,
+        target: RemoteDocumentTarget | None = None,
+    ) -> str:
         elements: list[Document] = []
         if scheme in ["http", "https"]:
-            body, status, headers = await fetch_remote_document(document)
+            body, status, headers = await fetch_remote_document(document, target)
             if status != 200:
                 raise ValueError(
                     f"DocumentQueryHelper::handle_unstructured_document: Failed to download document from {document}: {status}"

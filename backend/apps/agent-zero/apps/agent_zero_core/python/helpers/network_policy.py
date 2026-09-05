@@ -18,7 +18,11 @@ class RemoteDocumentTarget:
 
 
 def _normalized_hostname(hostname: str) -> str:
-    return hostname.rstrip(".").lower()
+    """Return the canonical DNS form used by URL parsers and aiohttp."""
+    try:
+        return hostname.rstrip(".").encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise ValueError("Remote document host is not a valid hostname") from exc
 
 
 def _resolve_public_addresses(hostname: str, port: int) -> tuple[str, ...]:
@@ -72,7 +76,7 @@ def resolve_remote_document_target(document_uri: str) -> RemoteDocumentTarget:
         raise ValueError("Remote document host is not publicly routable")
 
     allowlist = {
-        item.strip().lower().rstrip(".")
+        _normalized_hostname(item.strip())
         for item in os.getenv("AGZ_DOCUMENT_ALLOWED_HOSTS", "").split(",")
         if item.strip()
     }
