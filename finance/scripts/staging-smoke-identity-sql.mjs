@@ -34,6 +34,7 @@ const passwordHash = () => {
   const derived = pbkdf2Sync(password, salt, 100_000, 32, 'sha256');
   return `pbkdf2_sha256$100000$${base64url(salt)}$${base64url(derived)}`;
 };
+const identitySubject = `idn:${randomBytes(16).toString('hex')}`;
 const audit = (actionName, before, after) => `INSERT INTO audit_log(ts,actor,role,action,entity,entity_id,unidade,idempotency_key,before_json,after_json) VALUES(${quote(now)},${quote(technicalActor)},'SYSTEM',${quote(actionName)},'crm_users',${quote(username)},'novo-hamburgo',${quote(`finance-smoke:${action}:${now}`)},${json(before)},${json(after)});`;
 const financeAudit = (actionName, before, after) => `INSERT INTO finance_audit_events(id,scope_id,actor,action,entity_type,entity_id,request_id,before_json,after_json,created_at) VALUES(${quote(`finance-smoke-${action}-${randomBytes(8).toString('hex')}`)},${quote(scopeId)},${quote(technicalActor)},${quote(actionName)},'finance_access_grant',${quote(username)},${quote(`finance-smoke:${action}:${now}`)},${json(before)},${json(after)},${quote(now)});`;
 
@@ -50,8 +51,9 @@ if (action === 'provision') {
     // workflow, so leave transaction ownership to the D1 service. Provision is
     // safe for the one known synthetic username even when a previous revoke
     // left its inactive row behind: reactivate that row, otherwise insert it.
-    `UPDATE crm_users SET email=${quote('finance-staging-smoke@staging.invalid')},display_name=${quote('Finance staging smoke (synthetic)')},password_hash=${quote(passwordHash())},role='INJETOR',photo_url='',allowed_units_json=${quote(JSON.stringify(['novo-hamburgo']))},allowed_modules_json=${quote(JSON.stringify(['finance']))},ativo=1,updated_at=${quote(now)},session_version=COALESCE(session_version,0)+1 WHERE username=${quote(username)} AND ativo=0;`,
-    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version) SELECT ${quote(username)},${quote('finance-staging-smoke@staging.invalid')},${quote('Finance staging smoke (synthetic)')},${quote(passwordHash())},'INJETOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},1 WHERE NOT EXISTS (SELECT 1 FROM crm_users WHERE username=${quote(username)});`,
+    `UPDATE crm_users SET email=${quote('finance-staging-smoke@staging.invalid')},display_name=${quote('Finance staging smoke (synthetic)')},password_hash=${quote(passwordHash())},role='INJETOR',photo_url='',allowed_units_json=${quote(JSON.stringify(['novo-hamburgo']))},allowed_modules_json=${quote(JSON.stringify(['finance']))},identity_subject=CASE WHEN identity_subject IS NULL OR trim(identity_subject) = '' THEN ${quote(identitySubject)} ELSE identity_subject END,ativo=1,updated_at=${quote(now)},session_version=COALESCE(session_version,0)+1 WHERE username=${quote(username)} AND ativo=0;`,
+    `UPDATE crm_users SET identity_subject=${quote(identitySubject)} WHERE username=${quote(username)} AND (identity_subject IS NULL OR trim(identity_subject) = '');`,
+    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version,identity_subject) SELECT ${quote(username)},${quote('finance-staging-smoke@staging.invalid')},${quote('Finance staging smoke (synthetic)')},${quote(passwordHash())},'INJETOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},1,${quote(identitySubject)} WHERE NOT EXISTS (SELECT 1 FROM crm_users WHERE username=${quote(username)});`,
     audit('FINANCE_SMOKE_IDENTITY_PROVISIONED_OR_REACTIVATED', null, { ...baseline, active: true }),
   ].join('\n');
   financeSql = [
@@ -60,7 +62,7 @@ if (action === 'provision') {
   ].join('\n');
 } else if (action === 'rotate') {
   coreSql = [
-    `UPDATE crm_users SET password_hash=${quote(passwordHash())},role='INJETOR',allowed_units_json=${quote(JSON.stringify(['novo-hamburgo']))},allowed_modules_json=${quote(JSON.stringify(['finance']))},session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)} AND ativo=1;`,
+    `UPDATE crm_users SET password_hash=${quote(passwordHash())},role='INJETOR',allowed_units_json=${quote(JSON.stringify(['novo-hamburgo']))},allowed_modules_json=${quote(JSON.stringify(['finance']))},identity_subject=CASE WHEN identity_subject IS NULL OR trim(identity_subject) = '' THEN ${quote(identitySubject)} ELSE identity_subject END,session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)} AND ativo=1;`,
     audit('FINANCE_SMOKE_IDENTITY_ROTATED', { active: true }, { ...baseline, active: true }),
   ].join('\n');
   financeSql = [

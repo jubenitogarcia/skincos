@@ -59,6 +59,13 @@ test('local Finance fixture supports an isolated, bounded smoke actor', async ()
   assert.equal(both.personalScopeGranted, false);
 });
 
+test('local Finance fixture preserves the durable session epoch on repeated setup', async () => {
+  const source = await readFile(script, 'utf8');
+  assert.doesNotMatch(source, /INSERT OR REPLACE INTO crm_users/);
+  assert.match(source, /ON CONFLICT\(username\) DO UPDATE SET/);
+  assert.match(source, /session_version=COALESCE\(crm_users\.session_version,0\)\+1/);
+});
+
 test('local Finance launcher preserves the module grant when exercising only the disabled flag', async () => {
   const source = await readFile(launcher, 'utf8');
   assert.match(source, /no-module\) LOCAL_MODULES='' ;;/);

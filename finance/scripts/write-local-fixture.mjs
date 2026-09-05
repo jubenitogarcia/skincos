@@ -37,7 +37,7 @@ const grantRows = fixture.scopes.map((scope, index) =>
 
 const sql = [
   'PRAGMA foreign_keys=ON;',
-  `INSERT OR REPLACE INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at) VALUES(${quote(username)},${quote(`${username}@localhost`)},'Finance Local','local-runtime-no-password','GESTOR','',${quote(units)},${quote(modules)},1,${quote(now)},${quote(now)});`,
+  `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at) VALUES(${quote(username)},${quote(`${username}@localhost`)},'Finance Local','local-runtime-no-password','GESTOR','',${quote(units)},${quote(modules)},1,${quote(now)},${quote(now)}) ON CONFLICT(username) DO UPDATE SET email=excluded.email,display_name=excluded.display_name,password_hash=excluded.password_hash,role=excluded.role,photo_url=excluded.photo_url,allowed_units_json=excluded.allowed_units_json,allowed_modules_json=excluded.allowed_modules_json,ativo=excluded.ativo,updated_at=excluded.updated_at,session_version=COALESCE(crm_users.session_version,0)+1;`,
   `DELETE FROM finance_access_grants WHERE username=${quote(username)};`,
   ...grantRows,
   `UPDATE finance_settings SET value=${quote(fixture.enabled ? 'true' : 'false')},updated_at=${quote(now)} WHERE key='module_enabled';`,

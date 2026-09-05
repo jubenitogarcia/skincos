@@ -129,21 +129,38 @@ jobs:
 
           const identityWhere = `(lower(username) = lower(${sql(username)}) OR lower(email) = lower(${sql(email)}))`
           const exactWhere = `(username = ${sql(username)} AND lower(email) = lower(${sql(email)}) AND display_name = 'Codex production smoke' AND role = 'ADMIN')`
+          const identitySubject = `idn:${crypto.randomBytes(16).toString('hex')}`
           let statements
           if (action === 'provision') {
             const passwordHash = hashPassword()
-            statements = `INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)\nSELECT ${sql(username)}, ${sql(email)}, 'Codex production smoke', ${sql(passwordHash)}, 'ADMIN', NULL, '[]', '[]', 1, ${sql(now)}, ${sql(now)}\nWHERE NOT EXISTS (SELECT 1 FROM crm_users WHERE ${identityWhere});\n`
+            statements = `INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, identity_subject)\nSELECT ${sql(username)}, ${sql(email)}, 'Codex production smoke', ${sql(passwordHash)}, 'ADMIN', NULL, '[]', '[]', 1, ${sql(now)}, ${sql(now)}, ${sql(identitySubject)}\nWHERE NOT EXISTS (SELECT 1 FROM crm_users WHERE ${identityWhere});\n`
           } else if (action === 'cleanup') {
             statements = `DELETE FROM crm_identity_sessions WHERE username = ${sql(username)};\nDELETE FROM auth_attempts WHERE username = ${sql(username)} OR username = ${sql(email)};\nDELETE FROM crm_user_prefs WHERE username = ${sql(username)};\nDELETE FROM crm_users WHERE ${exactWhere};\n`
           } else {
             throw new Error('ACTION_CONTRACT')
           }
 
-          const verify = `SELECT COUNT(*) AS c FROM crm_users WHERE ${identityWhere};\n`
+          // This no-row query resolves identity_subject without reading a user.
+          // It makes a pre-migration run fail before any production mutation.
+          const schema = `SELECT identity_subject FROM crm_users WHERE 1 = 0;\n`
+          // Referencing identity_subject makes a pre-migration run fail during
+          // the read-only collision check, before any production mutation.
+          const verify = `SELECT COUNT(*) AS c, COALESCE(SUM(CASE WHEN identity_subject LIKE 'idn:%' AND length(identity_subject) BETWEEN 20 AND 164 THEN 1 ELSE 0 END), 0) AS opaque_subjects FROM crm_users WHERE ${identityWhere};\n`
           fs.writeFileSync(path.join(dir, 'mutation.sql'), statements, { encoding: 'utf8', mode: 0o600 })
+          fs.writeFileSync(path.join(dir, 'schema.sql'), schema, { encoding: 'utf8', mode: 0o600 })
           fs.writeFileSync(path.join(dir, 'verify.sql'), verify, { encoding: 'utf8', mode: 0o600 })
           fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ action, synthetic: true, piiFree: true, database: 'skincos-db' }) + '\n', { encoding: 'utf8', mode: 0o600 })
           NODE
+
+      - name: Verify CRM identity subject schema before mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
+        run: |
+          set -euo pipefail
+          schema_command="$(<"${RUNNER_TEMP_DIR}/schema.sql")"
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --command "$schema_command" --json > "${RUNNER_TEMP_DIR}/schema.json"
 
       - name: Check synthetic identity collision
         if: ${{ inputs.action == 'provision' }}
@@ -286,9 +303,11 @@ jobs:
           const count = Number(row.c)
           const expected = action === 'provision' ? 1 : 0
           if (!Number.isInteger(count) || count !== expected) throw new Error(`SMOKE_IDENTITY_FINAL_STATE:${Number.isInteger(count) ? count : 'unknown'}:expected:${expected}`)
+          const opaqueSubjects = Number(row.opaque_subjects)
+          if (!Number.isInteger(opaqueSubjects) || opaqueSubjects !== expected) throw new Error(`SMOKE_IDENTITY_OPAQUE_SUBJECT_COUNT:${Number.isInteger(opaqueSubjects) ? opaqueSubjects : 'unknown'}:expected:${expected}`)
           const beforePath = path.join(dir, 'before-count.json')
           const before = fs.existsSync(beforePath) ? JSON.parse(fs.readFileSync(beforePath, 'utf8')) : {}
-          fs.writeFileSync(path.join(dir, 'evidence.json'), JSON.stringify({ action, database: 'skincos-db', synthetic: true, piiFree: true, collisionCountBefore: before.collisionCountBefore ?? null, finalCount: count, auditHistoryDeleted: false }) + '\n')
+          fs.writeFileSync(path.join(dir, 'evidence.json'), JSON.stringify({ action, database: 'skincos-db', synthetic: true, piiFree: true, collisionCountBefore: before.collisionCountBefore ?? null, finalCount: count, opaqueSubjectCount: opaqueSubjects, auditHistoryDeleted: false }) + '\n')
           NODE
 
       - name: Release production Identity/D1 coordination lease

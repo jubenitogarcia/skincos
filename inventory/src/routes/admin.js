@@ -10,7 +10,7 @@ import { isAuthorizedDevSeedRequest } from '../lib/devSeed.js';
 import { resolveCrmTables } from '../d1Store.js';
 import { hasAuthMailerConfig, sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
-import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
+import { createOpaqueIdentitySubject, normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
 import { buildEmployeeOnboardingFingerprintPayload, canCreateEmployee, displayJobTitle, publicOnboarding, resolveEmployeeProfile, suggestEmployeeUsername, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 import { syncIdentityWorkforceOnboarding, syncIdentityWorkforceStatus } from '../../../shared/identity-runtime/workforce-onboarding.js';
 import { isValidAccountTransition, normalizeAccountState, shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
@@ -708,6 +708,7 @@ export async function handleAdminRoutes({
 
   const { usersTable, invitesTable } = await resolveCrmTables(env);
   const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
+  const usersHasIdentitySubject = await tableHasColumn(env, usersTable, 'identity_subject');
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
   const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
   const invitesHasCorporateEmail = await tableHasColumn(env, invitesTable, 'corporate_email');
@@ -2599,46 +2600,21 @@ export async function handleAdminRoutes({
 
       const now = new Date().toISOString();
       const hash = await hashPasswordPBKDF2(env, password);
+      const insertColumns = ['username', 'email', 'display_name', 'password_hash', 'role', 'photo_url', 'allowed_units_json'];
+      const insertValues = [username, email, displayName, hash, role, String(body.photoUrl || ''), JSON.stringify(allowedUnits)];
       if (usersHasModules) {
-        await env.DB.prepare(
-          `INSERT INTO ${usersTable}
-           (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            username,
-            email,
-            displayName,
-            hash,
-            role,
-            String(body.photoUrl || ''),
-            JSON.stringify(allowedUnits),
-            JSON.stringify(allowedModules),
-            ativo,
-            now,
-            now
-          )
-          .run();
-      } else {
-        await env.DB.prepare(
-          `INSERT INTO ${usersTable}
-           (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            username,
-            email,
-            displayName,
-            hash,
-            role,
-            String(body.photoUrl || ''),
-            JSON.stringify(allowedUnits),
-            ativo,
-            now,
-            now
-          )
-          .run();
+        insertColumns.push('allowed_modules_json');
+        insertValues.push(JSON.stringify(allowedModules));
       }
+      insertColumns.push('ativo', 'created_at', 'updated_at');
+      insertValues.push(ativo, now, now);
+      if (usersHasIdentitySubject) {
+        insertColumns.push('identity_subject');
+        insertValues.push(createOpaqueIdentitySubject());
+      }
+      await env.DB.prepare(`INSERT INTO ${usersTable} (${insertColumns.join(',')}) VALUES (${insertColumns.map(() => '?').join(',')})`)
+        .bind(...insertValues)
+        .run();
 
       const user = publicUser({ username, displayName, email, role, allowedUnits, allowedModules, ativo: !!ativo, createdAt: now, updatedAt: now, photoUrl: String(body.photoUrl || '') });
       try {

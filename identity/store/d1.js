@@ -1,4 +1,4 @@
-import { normalizeAllowedUnits, toAuthenticatedActor } from '../../shared/identity-contract/index.js';
+import { isOpaqueIdentitySubject, normalizeAllowedUnits, toAuthenticatedActor } from '../../shared/identity-contract/index.js';
 
 const toInt = (value, fallback = 0) => {
   const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
@@ -58,6 +58,7 @@ function toIdentityUser(row) {
     email: row.email || '',
     role: row.role || 'CONSULTOR',
     photoUrl: row.photo_url || '',
+    identitySubject: isOpaqueIdentitySubject(row.identity_subject) ? row.identity_subject : null,
     allowedUnits: normalizeAllowedUnits(row.allowed_units_json),
     allowedModules: parseScopes(row.allowed_modules_json),
     ativo: toInt(row.ativo, 1) === 1,
@@ -72,8 +73,9 @@ async function readUser(env, where, values) {
   if (!env?.DB) return null;
   const { usersTable } = await resolveIdentityTables(env);
   const modulesColumn = await hasColumn(env, usersTable, 'allowed_modules_json') ? ', allowed_modules_json' : '';
+  const identitySubjectColumn = await hasColumn(env, usersTable, 'identity_subject') ? ', identity_subject' : '';
   const row = await env.DB.prepare(
-    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at, session_version${modulesColumn}
+    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at, session_version${modulesColumn}${identitySubjectColumn}
      FROM ${usersTable} WHERE ${where} LIMIT 1`,
   ).bind(...values).first();
   return toIdentityUser(row);
@@ -97,7 +99,7 @@ export async function updateIdentityProfile(env, username, updates) {
   if (!env?.DB) return { ok: false, status: 500, error: 'DB_NOT_CONFIGURED' };
   const current = await getIdentityUserByUsername(env, username);
   if (!current) return { ok: false, status: 404, error: 'USER_NOT_FOUND' };
-  const { usersTable } = await resolveIdentityTables(env);
+  const { usersTable, userPrefsTable } = await resolveIdentityTables(env);
   const nextUsername = updates?.newUsername ? String(updates.newUsername).trim() : current.username;
   const now = new Date().toISOString();
   if (nextUsername.toLowerCase() !== current.username.toLowerCase()) {
@@ -112,16 +114,42 @@ export async function updateIdentityProfile(env, username, updates) {
     passwordHash: updates?.passwordHash ? String(updates.passwordHash) : current.passwordHash,
   };
   if (nextUsername !== current.username) {
-    const modulesColumn = await hasColumn(env, usersTable, 'allowed_modules_json');
-    const columns = modulesColumn
-      ? 'username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version'
-      : 'username,email,display_name,password_hash,role,photo_url,allowed_units_json,ativo,created_at,updated_at,session_version';
-    const placeholders = modulesColumn ? '?,?,?,?,?,?,?,?,?,?,?,?' : '?,?,?,?,?,?,?,?,?,?,?';
-    const values = modulesColumn
-      ? [next.username, next.email, next.displayName, next.passwordHash, current.role, next.photoUrl, JSON.stringify(current.allowedUnits), JSON.stringify(current.allowedModules), current.ativo ? 1 : 0, current.createdAt || now, now, current.sessionVersion]
-      : [next.username, next.email, next.displayName, next.passwordHash, current.role, next.photoUrl, JSON.stringify(current.allowedUnits), current.ativo ? 1 : 0, current.createdAt || now, now, current.sessionVersion];
-    await env.DB.prepare(`INSERT INTO ${usersTable} (${columns}) VALUES (${placeholders})`).bind(...values).run();
-    await env.DB.prepare(`DELETE FROM ${usersTable} WHERE LOWER(username)=LOWER(?)`).bind(current.username).run();
+    const identitySubjectColumn = await hasColumn(env, usersTable, 'identity_subject');
+    if (identitySubjectColumn && !current.identitySubject) {
+      return { ok: false, status: 503, error: 'IDENTITY_SUBJECT_REQUIRED' };
+    }
+    const [accountLinksType, userPrefsType] = await Promise.all([
+      objectType(env, 'crm_employee_account_links'),
+      objectType(env, userPrefsTable),
+    ]);
+    if (typeof env.DB.batch !== 'function') {
+      return { ok: false, status: 500, error: 'DB_BATCH_UNSUPPORTED' };
+    }
+    // Change the primary-key value and its live references together. Re-inserting
+    // first would briefly duplicate the durable subject and violate its unique
+    // index; sequential updates could leave the confirmed team link stale.
+    const changes = [
+      env.DB.prepare(
+        `UPDATE ${usersTable}
+         SET username=?, email=?, display_name=?, photo_url=?, password_hash=?, updated_at=?
+         WHERE LOWER(username)=LOWER(?)`,
+      ).bind(next.username, next.email, next.displayName, next.photoUrl, next.passwordHash, now, current.username),
+    ];
+    if (accountLinksType === 'table') {
+      changes.push(
+        env.DB.prepare(
+          'UPDATE crm_employee_account_links SET crm_username=?, updated_at=? WHERE LOWER(crm_username)=LOWER(?)',
+        ).bind(next.username, now, current.username),
+      );
+    }
+    if (userPrefsType === 'table') {
+      changes.push(
+        env.DB.prepare(
+          `UPDATE ${userPrefsTable} SET username=?, updated_at=? WHERE LOWER(username)=LOWER(?)`,
+        ).bind(next.username, now, current.username),
+      );
+    }
+    await env.DB.batch(changes);
     // Compatibility bridge: preserve references owned by older domains until their migrations consume subject aliases.
     for (const tableColumn of ['insumos_movements:usuario', 'share_history:user', 'audit_log:actor']) {
       const [table, column] = tableColumn.split(':');
