@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import os
 import sys
 import tempfile
 import types
@@ -97,6 +98,24 @@ def _shell_ssh_module(events: list[object]):
     ), RejectPolicy
 
 
+def _files_module():
+    helpers = types.ModuleType("python.helpers")
+    strings = types.ModuleType("python.helpers.strings")
+    strings.sanitize_string = lambda value: value
+    python = types.ModuleType("python")
+    python.helpers = helpers
+    helpers.strings = strings
+    return _module_from_path(
+        "security_baseline_files",
+        CORE_ROOT / "python" / "helpers" / "files.py",
+        {
+            "python": python,
+            "python.helpers": helpers,
+            "python.helpers.strings": strings,
+        },
+    )
+
+
 def test_knowledge_checksum_uses_sha256():
     knowledge_import = _knowledge_import_module()
     content = b"security baseline"
@@ -115,3 +134,39 @@ def test_ssh_session_requires_a_known_host_key():
 
     assert events[0:2] == ["created", "system-host-keys"]
     assert isinstance(events[2], reject_policy)
+
+
+def test_delete_dir_fallback_keeps_permissions_owner_only_and_confines_path():
+    files = _files_module()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        target = os.path.join(temp_dir, "chat")
+        nested = os.path.join(target, "nested")
+        os.makedirs(nested)
+        with open(os.path.join(nested, "message.json"), "w", encoding="utf-8") as handle:
+            handle.write("{}")
+
+        original_rmtree = files.shutil.rmtree
+        calls = 0
+
+        def fail_then_delete(path, ignore_errors=False):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return None
+            return original_rmtree(path, ignore_errors=ignore_errors)
+
+        with patch.object(files, "get_base_dir", return_value=temp_dir), patch.object(
+            files.shutil, "rmtree", side_effect=fail_then_delete
+        ), patch.object(files.os, "chmod", wraps=os.chmod) as chmod:
+            files.delete_dir("chat")
+
+        assert not os.path.exists(target)
+        assert {call.args[1] for call in chmod.call_args_list} == {0o600, 0o700}
+
+        outside = os.path.join(os.path.dirname(temp_dir), "outside")
+        try:
+            files.delete_dir(outside)
+        except ValueError as exc:
+            assert "outside" in str(exc)
+        else:
+            raise AssertionError("delete_dir accepted a path outside its root")
