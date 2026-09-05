@@ -77,6 +77,7 @@ before(async () => {
       .bind('legacy-subject-b', 'legacy-subject-b@staging.invalid', 'Legacy Subject B', 'hash', 'CONSULTOR', '["barra-shopping-sul"]', '["insumos"]', now, now, 8),
   ]);
   await applyMigration(db, '0029_crm_users_identity_subject.sql');
+  await applyMigration(db, '0030_crm_identity_session_epochs.sql');
 });
 
 after(async () => {
@@ -95,4 +96,17 @@ test('the additive migration backfills unique opaque subjects without changing l
   const subjects = rows.results.map((row) => String(row.identity_subject || ''));
   assert.ok(subjects.every((subject) => /^idn:[A-Za-z0-9_-]{16,160}$/.test(subject)));
   assert.equal(new Set(subjects).size, 2);
+});
+
+test('the session epoch migration backfills every existing username without resetting its version', async () => {
+  const rows = await db.prepare(
+    `SELECT username, session_version
+     FROM crm_identity_session_epochs
+     WHERE username IN ('legacy-subject-a', 'legacy-subject-b')
+     ORDER BY username`,
+  ).all();
+  assert.deepEqual(rows.results, [
+    { username: 'legacy-subject-a', session_version: 5 },
+    { username: 'legacy-subject-b', session_version: 8 },
+  ]);
 });
