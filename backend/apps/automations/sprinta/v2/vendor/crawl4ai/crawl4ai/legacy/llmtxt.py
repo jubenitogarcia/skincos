@@ -8,9 +8,6 @@ import time
 import psutil
 import numpy as np
 from rank_bm25 import BM25Okapi
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
 from litellm import batch_completion
 from .async_logger import AsyncLogger
 import litellm
@@ -22,12 +19,19 @@ litellm.set_verbose = False
 
 
 def _compute_file_hash(file_path: Path) -> str:
-    """Compute MD5 hash for the file's entire content."""
-    hash_md5 = hashlib.md5()
+    """Compute a collision-resistant hash for the file's entire content."""
+    hash_sha256 = hashlib.sha256()
     with file_path.open("rb") as f:
         for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
+            hash_sha256.update(chunk)
+    return hash_sha256.hexdigest()
+
+
+_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "in", "is", "it", "of", "on", "or", "that", "the", "this", "to",
+    "was", "were", "with",
+}
 
 
 class AsyncLLMTextManager:
@@ -180,8 +184,7 @@ Wrap your response in <index>...</index> tags.
         # Remove : after the first word of parts[0]
         parts[0] = re.sub(r"^(.*?):", r"\1", parts[0])
 
-        lemmatizer = WordNetLemmatizer()
-        stop_words = set(stopwords.words("english")) - {
+        stop_words = _STOP_WORDS - {
             "how",
             "what",
             "when",
@@ -198,10 +201,10 @@ Wrap your response in <index>...</index> tags.
                 )
                 tokens.extend(code_tokens)
 
-            words = word_tokenize(part.lower())
+            words = re.findall(r"[\w']+", part.lower())
             tokens.extend(
                 [
-                    lemmatizer.lemmatize(token)
+                    token
                     for token in words
                     if token not in stop_words
                 ]

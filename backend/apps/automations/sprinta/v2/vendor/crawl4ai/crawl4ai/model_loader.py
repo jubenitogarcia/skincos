@@ -175,13 +175,8 @@ def load_text_multilabel_classifier():
 
 @lru_cache()
 def load_nltk_punkt():
-    import nltk
-
-    try:
-        nltk.data.find("tokenizers/punkt")
-    except LookupError:
-        nltk.download("punkt")
-    return nltk.data.find("tokenizers/punkt")
+    """Retained for callers of the legacy API; no model download is needed."""
+    return None
 
 
 @lru_cache()
@@ -273,8 +268,6 @@ def download_all_models(remove_existing=False):
     print("[LOG] Downloading text classifier...")
     _, device = load_text_multilabel_classifier()
     print(f"[LOG] Text classifier loaded on {device}")
-    print("[LOG] Downloading custom NLTK Punkt model...")
-    load_nltk_punkt()
     print("[LOG] ✅ All models downloaded successfully.")
 
 
