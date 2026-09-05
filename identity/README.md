@@ -18,9 +18,11 @@ stable `shared/crm-auth` facade, which now delegates to the same Identity actor
 resolver. The independent Worker cutover requires a disabled-by-default
 binding/flag, staging session and recovery smoke, and a rollback to this mount.
 
-This PR intentionally does not include or execute an Identity D1 migration. An
-adoption migration may only be introduced with a separately approved staging
-data-migration plan.
+This preparation includes an additive, unapplied Identity subject migration for
+the shared `crm_users` table. It does not execute the migration, alter a live
+D1 database, or activate delivery. Applying it still requires a separately
+approved staging data-migration plan, a synthetic smoke and a tested rollback
+decision before any production consideration.
 
 The legacy `/admin/users` and `/admin/invites` handlers also remain on the
 Inventory Worker as an HTTP compatibility host. Invitation policy and mail are

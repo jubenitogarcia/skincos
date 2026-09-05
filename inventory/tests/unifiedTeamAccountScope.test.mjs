@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import test, { after, before, beforeEach } from 'node:test';
 import wrangler from 'wrangler';
 
+import { d1UpdateUserProfile } from '../src/d1Store.js';
 import { handleAdminRoutes } from '../src/routes/admin.js';
+import { buildBackupPayload, restoreBackupPayload } from '../src/services/backup.js';
 
 const { getPlatformProxy } = wrangler;
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -60,6 +62,8 @@ const schemaMigrations = [
   '0018_onboarding_consistency.sql', '0024_unified_team_identity.sql',
   '0025_onboarding_idempotency_fingerprint.sql', '0026_unified_invite_identity.sql',
   '0027_crm_employee_account_links.sql', '0028_unified_team_query_indexes.sql',
+  '0029_crm_users_identity_subject.sql',
+  '0030_crm_identity_session_epochs.sql',
 ];
 
 let proxy;
@@ -94,9 +98,10 @@ async function encryptPii(value) {
   return `v1.${bytesToBase64Url(iv)}.${bytesToBase64Url(new Uint8Array(encrypted))}`;
 }
 
-function routeEnv({ workforce = workforceBinding(true), unifiedTeamEnabled = 'true', DB = env.DB } = {}) {
+function routeEnv({ workforce = workforceBinding(true), unifiedTeamEnabled = 'true', DB = env.DB, ...overrides } = {}) {
   return {
     ...env,
+    ...overrides,
     DB,
     WORKFORCE: workforce,
     UNIFIED_TEAM_ENABLED: unifiedTeamEnabled,
@@ -162,13 +167,13 @@ async function seedFixture() {
   const now = '2026-08-11T20:00:00.000Z';
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO crm_users
-      (username, email, display_name, password_hash, role, allowed_units_json, ativo, created_at, updated_at, session_version)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0)`)
-      .bind('hellenmelo', 'hellenmelo@espacofacial.com', 'Hellen Gabriele Lisboa Melo', 'hash', 'INJETOR', JSON.stringify(['barra-shopping-sul']), now, now),
+      (username, email, display_name, password_hash, role, allowed_units_json, ativo, created_at, updated_at, session_version, identity_subject)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?)`)
+      .bind('hellenmelo', 'hellenmelo@espacofacial.com', 'Hellen Gabriele Lisboa Melo', 'hash', 'INJETOR', JSON.stringify(['barra-shopping-sul']), now, now, 'idn:fixture_hellenmelo_0001'),
     env.DB.prepare(`INSERT INTO crm_users
-      (username, email, display_name, password_hash, role, allowed_units_json, ativo, created_at, updated_at, session_version)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0)`)
-      .bind('unlinkeduser', 'unlinkeduser@espacofacial.com', 'Usuário sem vínculo', 'hash', 'CONSULTOR', JSON.stringify(['barra-shopping-sul']), now, now),
+      (username, email, display_name, password_hash, role, allowed_units_json, ativo, created_at, updated_at, session_version, identity_subject)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?)`)
+      .bind('unlinkeduser', 'unlinkeduser@espacofacial.com', 'Usuário sem vínculo', 'hash', 'CONSULTOR', JSON.stringify(['barra-shopping-sul']), now, now, 'idn:fixture_unlinked_user_0001'),
     env.DB.prepare(`INSERT INTO crm_employee_onboarding
       (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash,
        profile, job_title, department_name, units_json, account_status, workforce_employee_id, created_by, created_at, updated_at,
@@ -199,12 +204,13 @@ async function seedFixture() {
 async function readMemberState(id = 'hellenmelo-employee', username = 'hellenmelo') {
   const onboarding = await env.DB.prepare('SELECT units_json, compensation_state, last_error_code FROM crm_employee_onboarding WHERE id=?').bind(id).first();
   const team = await env.DB.prepare('SELECT units_json FROM crm_employee_team WHERE onboarding_id=?').bind(id).first();
-  const user = await env.DB.prepare('SELECT allowed_units_json, session_version FROM crm_users WHERE username=?').bind(username).first();
+  const user = await env.DB.prepare('SELECT allowed_units_json, session_version, identity_subject FROM crm_users WHERE username=?').bind(username).first();
   return {
     onboardingUnits: JSON.parse(onboarding.units_json),
     teamUnits: JSON.parse(team.units_json),
     accountUnits: JSON.parse(user.allowed_units_json),
     sessionVersion: Number(user.session_version),
+    identitySubject: user.identity_subject,
     compensationState: onboarding.compensation_state || null,
     lastErrorCode: onboarding.last_error_code || null,
   };
@@ -235,7 +241,9 @@ beforeEach(async () => {
     env.DB.prepare('DELETE FROM crm_employee_account_links'),
     env.DB.prepare('DELETE FROM crm_employee_team'),
     env.DB.prepare('DELETE FROM crm_employee_onboarding'),
+    env.DB.prepare('DELETE FROM crm_user_prefs'),
     env.DB.prepare('DELETE FROM crm_users'),
+    env.DB.prepare('DELETE FROM crm_identity_session_epochs'),
   ]);
   await seedFixture();
 });
@@ -265,6 +273,100 @@ test('team edit atomically tracks confirmed CRM account scope for one and multip
   assert.deepEqual(finalState.teamUnits, ['barra-shopping-sul']);
   assert.deepEqual(finalState.accountUnits, ['barra-shopping-sul']);
   assert.equal(finalState.sessionVersion, 3);
+});
+
+test('team status changes preserve the durable opaque identity subject', async () => {
+  const before = await readMemberState();
+  const suspended = await callRoute('/admin/team/hellenmelo-employee/status', {
+    method: 'POST',
+    body: { accountStatus: 'SUSPENDED' },
+  });
+  assert.equal(suspended.response.status, 200);
+  assert.equal((await readMemberState()).identitySubject, before.identitySubject);
+
+  const reactivated = await callRoute('/admin/team/hellenmelo-employee/status', {
+    method: 'POST',
+    body: { accountStatus: 'ACTIVE' },
+  });
+  assert.equal(reactivated.response.status, 200);
+  const after = await readMemberState();
+  assert.equal(after.identitySubject, before.identitySubject);
+  assert.equal(after.identitySubject, 'idn:fixture_hellenmelo_0001');
+});
+
+test('a username rename updates the CRM primary key in place and preserves the durable opaque subject', async () => {
+  await env.DB.prepare('UPDATE crm_users SET session_version=7 WHERE username=?').bind('hellenmelo').run();
+  await env.DB.prepare('INSERT INTO crm_user_prefs (username, prefs_json, updated_at) VALUES (?, ?, ?)')
+    .bind('hellenmelo', '{"layout":"compact"}', '2026-08-11T20:00:00.000Z')
+    .run();
+  const renamed = await d1UpdateUserProfile(env, 'hellenmelo', {
+    newUsername: 'hellenmelo-renamed',
+    displayName: 'Hellen Renamed',
+  });
+  assert.equal(renamed.ok, true);
+  assert.equal(await env.DB.prepare('SELECT username FROM crm_users WHERE username=?').bind('hellenmelo').first(), null);
+  const row = await env.DB.prepare(
+    'SELECT username, display_name, identity_subject, session_version FROM crm_users WHERE username=?',
+  ).bind('hellenmelo-renamed').first();
+  assert.deepEqual(row, {
+    username: 'hellenmelo-renamed',
+    display_name: 'Hellen Renamed',
+    identity_subject: 'idn:fixture_hellenmelo_0001',
+    session_version: 7,
+  });
+  const link = await env.DB.prepare('SELECT crm_username FROM crm_employee_account_links WHERE id=?')
+    .bind('account-link-hellenmelo')
+    .first();
+  assert.deepEqual(link, { crm_username: 'hellenmelo-renamed' });
+  const prefs = await env.DB.prepare('SELECT username, prefs_json FROM crm_user_prefs WHERE username=?')
+    .bind('hellenmelo-renamed')
+    .first();
+  assert.deepEqual(prefs, { username: 'hellenmelo-renamed', prefs_json: '{"layout":"compact"}' });
+});
+
+test('the legacy administrative user writer creates an opaque subject after the additive migration', async () => {
+  const result = await callRoute('/admin/users', {
+    method: 'POST',
+    envOverride: { unifiedTeamEnabled: 'false', ALLOW_ADMIN_USER_PROVISIONING: 'true' },
+    body: {
+      username: 'legacy-subject-user',
+      email: 'legacy-subject-user@staging.invalid',
+      displayName: 'Legacy Subject User',
+      password: 'subject-safe-password-123',
+      role: 'CONSULTOR',
+      allowedUnits: ['novo-hamburgo'],
+      allowedModules: ['insumos'],
+    },
+  });
+  assert.equal(result.response.status, 201);
+  const user = await env.DB.prepare('SELECT identity_subject FROM crm_users WHERE username=?').bind('legacy-subject-user').first();
+  assert.match(String(user?.identity_subject || ''), /^idn:[A-Za-z0-9_-]{16,160}$/);
+  assert.notEqual(user.identity_subject, 'legacy-subject-user');
+});
+
+test('backup and restore preserve a durable subject and reject legacy user snapshots', async () => {
+  await env.DB.prepare('UPDATE crm_users SET session_version=7 WHERE username=?').bind('hellenmelo').run();
+  const payload = await buildBackupPayload({ env });
+  const source = payload.d1.crmUsers.find((row) => row.username === 'hellenmelo');
+  assert.equal(source.identitySubject, 'idn:fixture_hellenmelo_0001');
+  assert.equal(Number(source.sessionVersion), 7);
+
+  await restoreBackupPayload({ env, payload });
+  const restored = await env.DB.prepare('SELECT identity_subject, session_version FROM crm_users WHERE username=?').bind('hellenmelo').first();
+  assert.deepEqual(restored, { identity_subject: 'idn:fixture_hellenmelo_0001', session_version: 8 });
+
+  const legacyPayload = JSON.parse(JSON.stringify(payload));
+  delete legacyPayload.d1.crmUsers.find((row) => row.username === 'hellenmelo').identitySubject;
+  await assert.rejects(() => restoreBackupPayload({ env, payload: legacyPayload }), /IDENTITY_SUBJECT_BACKUP_REQUIRED/);
+  const unchanged = await env.DB.prepare('SELECT identity_subject FROM crm_users WHERE username=?').bind('hellenmelo').first();
+  assert.equal(unchanged.identity_subject, 'idn:fixture_hellenmelo_0001');
+
+  const duplicatePayload = JSON.parse(JSON.stringify(payload));
+  const duplicateRows = duplicatePayload.d1.crmUsers;
+  duplicateRows.find((row) => row.username === 'unlinkeduser').identitySubject = source.identitySubject;
+  await assert.rejects(() => restoreBackupPayload({ env, payload: duplicatePayload }), /IDENTITY_SUBJECT_BACKUP_DUPLICATE/);
+  const unchangedAfterDuplicate = await env.DB.prepare('SELECT identity_subject FROM crm_users WHERE username=?').bind('hellenmelo').first();
+  assert.equal(unchangedAfterDuplicate.identity_subject, 'idn:fixture_hellenmelo_0001');
 });
 
 test('team edit does not infer or create access when no explicit CRM account link exists', async () => {
