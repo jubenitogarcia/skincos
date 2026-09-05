@@ -13,6 +13,7 @@ import importlib
 import importlib.util
 import inspect
 import glob
+import stat
 
 
 class VariablesPlugin(ABC):
@@ -292,10 +293,34 @@ def write_file_base64(relative_path: str, content: str):
 def delete_dir(relative_path: str):
     # ensure deletion of directory without propagating errors
     abs_path = get_abs_path(relative_path)
+    base_dir = os.path.realpath(get_base_dir())
+    target_dir = os.path.realpath(abs_path)
+    if os.path.commonpath([base_dir, target_dir]) != base_dir:
+        raise ValueError("Refusing to delete a path outside the Agent Zero root")
+    if os.path.islink(abs_path):
+        raise ValueError("Refusing to delete a symlinked directory")
+    if not os.path.exists(abs_path):
+        return
+
+    # First try with the current filesystem policy. If a read-only chat
+    # remains, retry with owner-only modes; never widen access to 0777.
+    shutil.rmtree(abs_path, ignore_errors=True)
     if os.path.exists(abs_path):
-        # Do not widen permissions just to remove files that cannot be deleted
-        # through the normal filesystem policy.
-        shutil.rmtree(abs_path, ignore_errors=True)
+        try:
+            for root, dirs, files in os.walk(abs_path, topdown=False, followlinks=False):
+                for name in files:
+                    file_path = os.path.join(root, name)
+                    if not os.path.islink(file_path):
+                        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+                for name in dirs:
+                    dir_path = os.path.join(root, name)
+                    if not os.path.islink(dir_path):
+                        os.chmod(dir_path, stat.S_IRWXU)
+            shutil.rmtree(abs_path, ignore_errors=True)
+        except OSError:
+            # Deletion is intentionally best-effort, but permissions are never
+            # relaxed beyond the owner.
+            pass
 
 
 def list_files(relative_path: str, filter: str = "*"):
