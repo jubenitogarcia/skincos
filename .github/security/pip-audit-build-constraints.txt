@@ -1,0 +1,4 @@
+# openai-whisper 20250625 imports pkg_resources from setup.py while building
+# from source. setuptools 81 removed that compatibility module. Keep the
+# audit's isolated build reproducible without changing runtime dependencies.
+setuptools<81

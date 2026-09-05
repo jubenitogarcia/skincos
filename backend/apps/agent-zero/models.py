@@ -348,17 +348,48 @@ class LiteLLMEmbeddingWrapper(Embeddings):
 
 
 class LocalSentenceTransformerWrapper(Embeddings):
-    """Local wrapper for sentence-transformers models to avoid HuggingFace API calls"""
+    """Local wrapper for explicitly approved, non-executable model artifacts."""
 
-    def __init__(self, provider: str, model: str, **kwargs: Any):
-        # Clean common user-input mistakes
+    _DEFAULT_MODEL = "all-MiniLM-L6-v2"
+
+    @classmethod
+    def _normalize_model_name(cls, model: str) -> str:
         model = model.strip().strip('"').strip("'")
-
-        # Remove the "sentence-transformers/" prefix if present
         if model.startswith("sentence-transformers/"):
             model = model[len("sentence-transformers/") :]
+        return model
 
-        self.model = SentenceTransformer(model, **kwargs)
+    @classmethod
+    def _allowed_models(cls) -> set[str]:
+        configured = os.getenv("AGZ_ALLOWED_EMBED_MODELS", "")
+        if not configured.strip():
+            return {cls._DEFAULT_MODEL}
+        return {
+            cls._normalize_model_name(item)
+            for item in configured.split(",")
+            if item.strip()
+        }
+
+    def __init__(self, provider: str, model: str, **kwargs: Any):
+        model = self._normalize_model_name(model)
+        if model not in self._allowed_models():
+            raise ValueError(
+                "Embedding model is not approved; set AGZ_ALLOWED_EMBED_MODELS "
+                "to an explicit comma-separated allowlist"
+            )
+
+        # Never execute repository-provided model code. Prefer safetensors so
+        # a model update cannot silently fall back to pickle deserialization.
+        kwargs.pop("trust_remote_code", None)
+        model_kwargs = dict(kwargs.pop("model_kwargs", {}) or {})
+        model_kwargs["trust_remote_code"] = False
+        model_kwargs.setdefault("use_safetensors", True)
+        self.model = SentenceTransformer(
+            model,
+            model_kwargs=model_kwargs,
+            trust_remote_code=False,
+            **kwargs,
+        )
         self.model_name = model
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
