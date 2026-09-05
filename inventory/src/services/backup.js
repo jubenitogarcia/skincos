@@ -3,6 +3,8 @@ import { safeJsonNoTruncate } from '../lib/json.js';
 import { resolveCrmTables } from '../d1Store.js';
 import { isOpaqueIdentitySubject } from '../../../shared/identity-contract/index.js';
 
+const IDENTITY_SESSION_EPOCH_TABLE = 'crm_identity_session_epochs';
+
 async function tableHasColumn(env, tableName, columnName) {
     if (!env?.DB || !tableName || !columnName) return false;
     const t = String(tableName);
@@ -11,6 +13,18 @@ async function tableHasColumn(env, tableName, columnName) {
         const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
         const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
         return cols.includes(String(columnName).toLowerCase());
+    } catch {
+        return false;
+    }
+}
+
+async function tableExists(env, tableName) {
+    if (!env?.DB || tableName !== IDENTITY_SESSION_EPOCH_TABLE) return false;
+    try {
+        const row = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1")
+            .bind(tableName)
+            .first();
+        return row?.name === tableName;
     } catch {
         return false;
     }
@@ -479,12 +493,26 @@ export async function restoreBackupPayload({ env, payload, strict = false }) {
                 }
             }
 
+            // Session-version schemas also require the monotonic tombstone.
+            // Refuse a destructive restore if migrations were not applied in
+            // order; otherwise a sid-less legacy V2 cookie could become valid
+            // again after the same username is restored.
+            if (usersRows.length && usersHasSessionVersion && !await tableExists(env, IDENTITY_SESSION_EPOCH_TABLE)) {
+                throw new Error('IDENTITY_SESSION_EPOCH_REQUIRED');
+            }
+
             if (Array.isArray(p.d1.insumosStocks)) await env.DB.prepare('DELETE FROM insumos_stocks').run();
             // The stock ledger is append-only. Restore may add missing evidence,
             // but it must never erase or rewrite movements already posted.
             // Items are restored by upsert. Deleting them would cascade into
             // insumos_movements through the legacy foreign key and violate the
             // append-only ledger contract.
+            const restoreAt = new Date().toISOString();
+            if (usersRows.length && usersHasSessionVersion) {
+                await env.DB.prepare(
+                    'UPDATE crm_identity_sessions SET revoked_at=?, revoke_reason=? WHERE revoked_at IS NULL'
+                ).bind(restoreAt, 'BACKUP_RESTORE').run();
+            }
             if (usersRows.length) await env.DB.prepare(`DELETE FROM ${usersTable}`).run();
             if (Array.isArray(p.d1.shareHistory)) await env.DB.prepare('DELETE FROM share_history').run();
 
@@ -507,7 +535,13 @@ export async function restoreBackupPayload({ env, payload, strict = false }) {
                 userValues.push(Number(row.ativo || 0) ? 1 : 0, row.createdAt || new Date().toISOString(), row.updatedAt || new Date().toISOString());
                 if (usersHasSessionVersion) {
                     userColumns.push('session_version');
-                    userValues.push(Number(row.sessionVersion || 0));
+                    // Restoring an account must invalidate every cookie that
+                    // existed when this snapshot was taken, including a
+                    // sid-less legacy V2 cookie restored into a clean D1
+                    // target whose epoch ledger has no local history yet.
+                    // The trigger may advance this further when the target
+                    // already has a newer tombstone for the username.
+                    userValues.push(Math.max(0, Number(row.sessionVersion) || 0) + 1);
                 }
                 if (usersHasIdentitySubject) {
                     userColumns.push('identity_subject');
@@ -516,6 +550,13 @@ export async function restoreBackupPayload({ env, payload, strict = false }) {
                 await env.DB.prepare(`INSERT INTO ${usersTable} (${userColumns.join(',')}) VALUES (${userColumns.map(() => '?').join(',')})`)
                     .bind(...userValues)
                     .run();
+            }
+            if (usersRows.length && usersHasSessionVersion) {
+                await env.DB.prepare(
+                    `UPDATE ${IDENTITY_SESSION_EPOCH_TABLE}
+                     SET updated_at=?, reason='BACKUP_RESTORE'
+                     WHERE username IN (SELECT username FROM ${usersTable})`
+                ).bind(restoreAt).run();
             }
             for (const row of (p.d1.insumosItems || []).reverse()) {
                 await env.DB.prepare(
@@ -828,10 +869,11 @@ export async function restoreBackupPayload({ env, payload, strict = false }) {
                     .run();
             }
         } catch (error) {
-            // A schema that has durable subjects must never accept a legacy
-            // account snapshot by silently reminting its audit identity. This
-            // remains fail-closed even for the historical best-effort path.
-            if (strict || String(error?.message || '').startsWith('IDENTITY_SUBJECT_BACKUP_')) throw error;
+            // Durable identity subjects and session epochs must never be
+            // bypassed by the historical best-effort restore path.
+            if (strict
+                || String(error?.message || '').startsWith('IDENTITY_SUBJECT_BACKUP_')
+                || String(error?.message || '') === 'IDENTITY_SESSION_EPOCH_REQUIRED') throw error;
             // Legacy restore is intentionally best-effort for historical backup
             // files. The private preview sets strict and fails closed instead.
         }

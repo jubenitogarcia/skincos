@@ -63,6 +63,7 @@ const schemaMigrations = [
   '0025_onboarding_idempotency_fingerprint.sql', '0026_unified_invite_identity.sql',
   '0027_crm_employee_account_links.sql', '0028_unified_team_query_indexes.sql',
   '0029_crm_users_identity_subject.sql',
+  '0030_crm_identity_session_epochs.sql',
 ];
 
 let proxy;
@@ -242,6 +243,7 @@ beforeEach(async () => {
     env.DB.prepare('DELETE FROM crm_employee_onboarding'),
     env.DB.prepare('DELETE FROM crm_user_prefs'),
     env.DB.prepare('DELETE FROM crm_users'),
+    env.DB.prepare('DELETE FROM crm_identity_session_epochs'),
   ]);
   await seedFixture();
 });
@@ -351,7 +353,7 @@ test('backup and restore preserve a durable subject and reject legacy user snaps
 
   await restoreBackupPayload({ env, payload });
   const restored = await env.DB.prepare('SELECT identity_subject, session_version FROM crm_users WHERE username=?').bind('hellenmelo').first();
-  assert.deepEqual(restored, { identity_subject: 'idn:fixture_hellenmelo_0001', session_version: 7 });
+  assert.deepEqual(restored, { identity_subject: 'idn:fixture_hellenmelo_0001', session_version: 8 });
 
   const legacyPayload = JSON.parse(JSON.stringify(payload));
   delete legacyPayload.d1.crmUsers.find((row) => row.username === 'hellenmelo').identitySubject;
