@@ -196,6 +196,12 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
       assert.match(timekeepingAttestation, /timekeeping_audit_events WHERE request_id IN \('request-incumbent-1','request-incumbent-2'\)/);
       assert.match(teardownTimekeeping, /updated_by = 'stg-ponto-123456789:presence-policy'/);
       assert.doesNotMatch(teardownTimekeeping, /DELETE FROM workforce_units/);
+
+      // The next run uses the same controlled usernames. The D1 epoch trigger
+      // must advance them instead of recreating session_version zero.
+      database.exec(provisionCore);
+      assert.ok(database.prepare('SELECT session_version FROM crm_users WHERE username=?').get(fixture.username).session_version >= 1);
+      assert.ok(database.prepare('SELECT session_version FROM crm_users WHERE username=?').get(fixture.adminUsername).session_version >= 1);
     } finally {
       database.close();
       timekeepingDatabase.close();
