@@ -109,7 +109,7 @@ jobs:
           PROMOTION_SOURCE_TREE="$(git -C source rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" \
             node control/.github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/atendimento-availability-evidence/promotion-evidence.json"
       - name: Upload immutable availability preview evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-atendimento-availability
           path: ${{ runner.temp }}/atendimento-availability-evidence/promotion-evidence.json
@@ -147,7 +147,7 @@ jobs:
             --output "$RUNNER_TEMP/atendimento-availability-contract/preflight.json"
       - name: Upload sanitized Atendimento availability preflight
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: atendimento-availability-preflight-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}
           path: ${{ runner.temp }}/atendimento-availability-contract/preflight.json
@@ -167,7 +167,7 @@ jobs:
           node control/.github/scripts/verify-atendimento-health.mjs
       - name: Upload sanitized Atendimento runtime health
         if: ${{ inputs.target == 'production' && always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: atendimento-runtime-health-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}
           path: ${{ runner.temp }}/atendimento-availability-contract/health.json

@@ -215,7 +215,7 @@ jobs:
           node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - name: Upload preview evidence
         if: ${{ inputs.target == 'preview' && inputs.emit_preview_evidence }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-${{ inputs.unit }}
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json

@@ -44,7 +44,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ponto-watchdog"
           node .github/scripts/ponto-watchdog-context.mjs
       - name: Upload sanitized watchdog context
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-watchdog-context-${{ inputs.coordinator_run_id || github.event.workflow_run.id }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-watchdog/context.json
@@ -122,7 +122,7 @@ jobs:
           NODE
           rm -f "$directory/overlay-expectation.json"
       - name: Upload immutable latch evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-watchdog-latch-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-watchdog-latch
@@ -154,7 +154,7 @@ jobs:
         run: node .github/scripts/ponto-emergency-stop.mjs
       - name: Upload immutable reconciliation evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-watchdog-reconciliation-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-watchdog-reconciliation
@@ -304,7 +304,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-watchdog-close.json
       - name: Upload immutable fail-close evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-watchdog-close-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-watchdog-close
@@ -541,7 +541,7 @@ jobs:
           exit "$status"
       - name: Upload immutable watchdog rollback evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-watchdog-rollback-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-watchdog-rollback

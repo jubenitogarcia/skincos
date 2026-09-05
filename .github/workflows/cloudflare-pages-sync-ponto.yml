@@ -612,7 +612,7 @@ jobs:
           echo "Derived Ponto Pages bindings provisioned for $TARGET/$PROJECT; no deployment was changed."
       - name: Upload sanitised Pages secret attestation
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-pages-secret-attestation-${{ inputs.target }}-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/pages-release-probe-evidence.json

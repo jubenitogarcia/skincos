@@ -305,7 +305,7 @@ jobs:
           PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM="$(printf '%s' "$PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM_BASE64" | base64 --decode)"
           node .github/scripts/ponto-production-slo-preflight.mjs
       - id: upload-preflight
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-slo-preflight-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-slo-preflight
@@ -551,7 +551,7 @@ jobs:
           PONTO_SLO_CONTROL_PLANE_ATTESTATION: ${{ runner.temp }}/ponto-slo-preflight/control-plane-attestation.json
           PONTO_RELEASE_PROBE_CAPABILITY: ${{ runner.temp }}/ponto-slo-preflight/release-probe-capability.json
         run: node .github/scripts/ponto-production-journey.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-slo-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/ponto-production-slo.json
@@ -700,7 +700,7 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           PONTO_ROLLBACK_CONTROL_PLANE_ATTESTATION: ${{ runner.temp }}/rollback-control-plane.json
         run: node .github/scripts/ponto-production-journey.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-slo-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/ponto-production-slo.json
