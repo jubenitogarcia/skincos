@@ -1,20 +1,17 @@
+import json
 import mimetypes
 import os
-import asyncio
+from datetime import datetime
+from typing import Callable, List, Optional, Sequence, Tuple
+from urllib.parse import urljoin, urlparse
+
 import aiohttp
-import json
 
 from python.helpers.vector_db import VectorDB
 
 os.environ["USER_AGENT"] = "@mixedbread-ai/unstructured"  # noqa E402
 from langchain_unstructured import UnstructuredLoader  # noqa E402
 
-from urllib.parse import urljoin, urlparse
-from typing import Callable, Sequence, List, Optional, Tuple
-from datetime import datetime
-
-from langchain_community.document_loaders import AsyncHtmlLoader
-from langchain_community.document_loaders.text import TextLoader
 from langchain_community.document_loaders.pdf import PyMuPDFLoader
 from langchain_community.document_transformers import MarkdownifyTransformer
 from langchain_community.document_loaders.parsers.images import TesseractBlobParser
@@ -24,13 +21,83 @@ from langchain.schema import SystemMessage, HumanMessage
 
 from python.helpers.print_style import PrintStyle
 from python.helpers import files, errors
-from python.helpers.network_policy import validate_remote_document_url
+from python.helpers.network_policy import (
+    PinnedResolver,
+    RemoteDocumentTarget,
+    resolve_remote_document_target,
+    validate_remote_document_url,
+)
 from agent import Agent
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
 DEFAULT_SEARCH_THRESHOLD = 0.5
+MAX_REMOTE_DOCUMENT_BYTES = 50 * 1024 * 1024
+
+
+def _response_headers(response: aiohttp.ClientResponse) -> dict[str, str]:
+    return {str(key).lower(): str(value) for key, value in response.headers.items()}
+
+
+async def _read_remote_body(
+    response: aiohttp.ClientResponse,
+    max_bytes: int = MAX_REMOTE_DOCUMENT_BYTES,
+) -> bytes:
+    content_length = response.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise ValueError("Remote document content exceeds 50MB")
+        except ValueError as exc:
+            if "exceeds 50MB" in str(exc):
+                raise
+            raise ValueError("Remote document content-length is invalid") from exc
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.content.iter_chunked(64 * 1024):
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError("Remote document content exceeds 50MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _request_remote_document(
+    target: RemoteDocumentTarget,
+    method: str,
+) -> tuple[int, dict[str, str], bytes]:
+    """Perform one request through the addresses approved for ``target``."""
+    connector = aiohttp.TCPConnector(
+        resolver=PinnedResolver(target),
+        use_dns_cache=False,
+    )
+    try:
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=10.0),
+            raise_for_status=False,
+        ) as session:
+            async with session.request(
+                method,
+                target.uri,
+                allow_redirects=False,
+            ) as response:
+                headers = _response_headers(response)
+                body = b"" if method == "HEAD" else await _read_remote_body(response)
+                return response.status, headers, body
+    finally:
+        await connector.close()
+
+
+async def fetch_remote_document(document_uri: str) -> tuple[bytes, int, dict[str, str]]:
+    """Fetch content through a DNS-pinned, non-redirecting transport."""
+    target = resolve_remote_document_target(document_uri)
+    status, headers, body = await _request_remote_document(target, "GET")
+    if 300 <= status < 400:
+        raise ValueError("Remote document redirects must be resolved before download")
+    return body, status, headers
 
 
 async def resolve_remote_document_url(
@@ -38,21 +105,16 @@ async def resolve_remote_document_url(
 ) -> tuple[str, int, dict[str, str]]:
     """Resolve a short redirect chain while validating every destination."""
     current = validate_remote_document_url(document_uri)
-    timeout = aiohttp.ClientTimeout(total=2.0)
-    async with aiohttp.ClientSession() as session:
-        for _ in range(5):
-            response = await session.head(
-                current,
-                timeout=timeout,
-                allow_redirects=False,
-            )
-            if response.status not in {301, 302, 303, 307, 308}:
-                return current, response.status, dict(response.headers)
-            location = response.headers.get("location")
-            if not location:
-                raise ValueError("Remote document redirect has no location")
-            current = validate_remote_document_url(urljoin(current, location))
-        raise ValueError("Remote document redirect chain is too long")
+    for _ in range(5):
+        target = resolve_remote_document_target(current)
+        status, headers, _body = await _request_remote_document(target, "HEAD")
+        if status not in {301, 302, 303, 307, 308}:
+            return current, status, headers
+        location = headers.get("location")
+        if not location:
+            raise ValueError("Remote document redirect has no location")
+        current = validate_remote_document_url(urljoin(current, location))
+    raise ValueError("Remote document redirect chain is too long")
 
 
 class DocumentQueryStore:
@@ -459,27 +521,30 @@ class DocumentQueryHelper:
         self, document_uri: str, add_to_db: bool = False
     ) -> str:
         self.progress_callback(f"Fetching document content")
-        url = urlparse(document_uri)
+        original_document_uri = document_uri
+        url = urlparse(original_document_uri)
         scheme = url.scheme or "file"
-        mimetype, encoding = mimetypes.guess_type(document_uri)
+        mimetype, encoding = mimetypes.guess_type(original_document_uri)
         mimetype = mimetype or "application/octet-stream"
+        fetch_document_uri = original_document_uri
+        index_document_uri = original_document_uri
 
         if scheme in {"http", "https"}:
             # Validate before handing the URL to any loader. The resolved
-            # public URL is reused so an HTTP->HTTPS redirect cannot bypass
-            # the network boundary checked here.
+            # public URL is used only for fetching; the caller's URI remains
+            # the stable index key after a legitimate cross-host redirect.
             try:
-                document_uri, response_status, response_headers = (
-                    await resolve_remote_document_url(document_uri)
+                fetch_document_uri, response_status, response_headers = (
+                    await resolve_remote_document_url(original_document_uri)
                 )
             except Exception as exc:
                 raise ValueError(
-                    f"DocumentQueryHelper::document_get_content: Document fetch error: {document_uri} ({exc})"
+                    f"DocumentQueryHelper::document_get_content: Document fetch error: {original_document_uri} ({exc})"
                 ) from exc
 
             if response_status > 399:
                 raise ValueError(
-                    f"DocumentQueryHelper::document_get_content: Document fetch error: {document_uri} ({response_status})"
+                    f"DocumentQueryHelper::document_get_content: Document fetch error: {fetch_document_uri} ({response_status})"
                 )
 
             if mimetype == "application/octet-stream":
@@ -490,7 +555,7 @@ class DocumentQueryHelper:
                 )  # MB
                 if content_length > 50.0:
                     raise ValueError(
-                        f"Document content length exceeds max. 50MB: {content_length} MB ({document_uri})"
+                        f"Document content length exceeds max. 50MB: {content_length} MB ({fetch_document_uri})"
                     )
             if mimetype and "; charset=" in mimetype:
                 mimetype = mimetype.split("; charset=")[0]
@@ -498,6 +563,8 @@ class DocumentQueryHelper:
         if scheme == "file":
             try:
                 document_uri = files.fix_dev_path(url.path)
+                fetch_document_uri = document_uri
+                index_document_uri = document_uri
             except Exception as e:
                 raise ValueError(f"Invalid document path '{url.path}'") from e
 
@@ -512,22 +579,30 @@ class DocumentQueryHelper:
             )
 
         # Use the store's normalization method
-        document_uri_norm = self.store.normalize_uri(document_uri)
+        document_uri_norm = self.store.normalize_uri(index_document_uri)
 
         exists = await self.store.document_exists(document_uri_norm)
         document_content = ""
         if not exists:
             if mimetype.startswith("image/"):
-                document_content = self.handle_image_document(document_uri, scheme)
+                document_content = await self.handle_image_document(
+                    fetch_document_uri, scheme
+                )
             elif mimetype == "text/html":
-                document_content = self.handle_html_document(document_uri, scheme)
+                document_content = await self.handle_html_document(
+                    fetch_document_uri, scheme
+                )
             elif mimetype.startswith("text/") or mimetype == "application/json":
-                document_content = self.handle_text_document(document_uri, scheme)
+                document_content = await self.handle_text_document(
+                    fetch_document_uri, scheme
+                )
             elif mimetype == "application/pdf":
-                document_content = self.handle_pdf_document(document_uri, scheme)
+                document_content = await self.handle_pdf_document(
+                    fetch_document_uri, scheme
+                )
             else:
-                document_content = self.handle_unstructured_document(
-                    document_uri, scheme
+                document_content = await self.handle_unstructured_document(
+                    fetch_document_uri, scheme
                 )
             if add_to_db:
                 self.progress_callback(f"Indexing document")
@@ -550,14 +625,30 @@ class DocumentQueryHelper:
                 )
         return document_content
 
-    def handle_image_document(self, document: str, scheme: str) -> str:
-        return self.handle_unstructured_document(document, scheme)
+    async def handle_image_document(self, document: str, scheme: str) -> str:
+        return await self.handle_unstructured_document(document, scheme)
 
-    def handle_html_document(self, document: str, scheme: str) -> str:
+    async def handle_html_document(self, document: str, scheme: str) -> str:
         if scheme in ["http", "https"]:
-            validate_remote_document_url(document)
-            loader = AsyncHtmlLoader(web_path=document)
-            parts: list[Document] = loader.load()
+            body, status, headers = await fetch_remote_document(document)
+            if status != 200:
+                raise ValueError(
+                    f"DocumentQueryHelper::handle_html_document: Failed to download document from {document}: {status}"
+                )
+            charset = "utf-8"
+            content_type = headers.get("content-type", "")
+            if "charset=" in content_type:
+                charset = (
+                    content_type.split("charset=", 1)[1]
+                    .split(";", 1)[0]
+                    .strip()
+                    or charset
+                )
+            try:
+                decoded = body.decode(charset, errors="replace")
+            except LookupError:
+                decoded = body.decode("utf-8", errors="replace")
+            parts = [Document(page_content=decoded, metadata={"source": document})]
         elif scheme == "file":
             # Use RFC file operations instead of TextLoader
             file_content_bytes = files.read_file_bin(document)
@@ -574,11 +665,27 @@ class DocumentQueryHelper:
             ]
         )
 
-    def handle_text_document(self, document: str, scheme: str) -> str:
+    async def handle_text_document(self, document: str, scheme: str) -> str:
         if scheme in ["http", "https"]:
-            validate_remote_document_url(document)
-            loader = AsyncHtmlLoader(web_path=document)
-            elements: list[Document] = loader.load()
+            body, status, headers = await fetch_remote_document(document)
+            if status != 200:
+                raise ValueError(
+                    f"DocumentQueryHelper::handle_text_document: Failed to download document from {document}: {status}"
+                )
+            charset = "utf-8"
+            content_type = headers.get("content-type", "")
+            if "charset=" in content_type:
+                charset = (
+                    content_type.split("charset=", 1)[1]
+                    .split(";", 1)[0]
+                    .strip()
+                    or charset
+                )
+            try:
+                decoded = body.decode(charset, errors="replace")
+            except LookupError:
+                decoded = body.decode("utf-8", errors="replace")
+            elements = [Document(page_content=decoded, metadata={"source": document})]
         elif scheme == "file":
             # Use RFC file operations instead of TextLoader
             file_content_bytes = files.read_file_bin(document)
@@ -592,7 +699,7 @@ class DocumentQueryHelper:
 
         return "\n".join([element.page_content for element in elements])
 
-    def handle_pdf_document(self, document: str, scheme: str) -> str:
+    async def handle_pdf_document(self, document: str, scheme: str) -> str:
         temp_file_path = ""
         if scheme == "file":
             # Use RFC file operations to read the PDF file as binary
@@ -604,26 +711,15 @@ class DocumentQueryHelper:
                 temp_file.write(file_content_bytes)
                 temp_file_path = temp_file.name
         elif scheme in ["http", "https"]:
-            validate_remote_document_url(document)
-            # download the file from the web url to a temporary file using python libraries for downloading
-            import requests
+            body, status, _headers = await fetch_remote_document(document)
+            if status != 200:
+                raise ValueError(
+                    f"DocumentQueryHelper::handle_pdf_document: Failed to download PDF from {document}: {status}"
+                )
             import tempfile
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                response = requests.get(
-                    document,
-                    timeout=10.0,
-                    allow_redirects=False,
-                )
-                if 300 <= response.status_code < 400:
-                    raise ValueError(
-                        "Remote PDF redirects must be resolved by document_get_content"
-                    )
-                if response.status_code != 200:
-                    raise ValueError(
-                        f"DocumentQueryHelper::handle_pdf_document: Failed to download PDF from {document}: {response.status_code}"
-                    )
-                temp_file.write(response.content)
+                temp_file.write(body)
                 temp_file_path = temp_file.name
         else:
             raise ValueError(f"Unsupported scheme: {scheme}")
@@ -669,19 +765,34 @@ class DocumentQueryHelper:
         finally:
             os.unlink(temp_file_path)
 
-    def handle_unstructured_document(self, document: str, scheme: str) -> str:
+    async def handle_unstructured_document(self, document: str, scheme: str) -> str:
         elements: list[Document] = []
         if scheme in ["http", "https"]:
-            validate_remote_document_url(document)
-            # loader = UnstructuredURLLoader(urls=[document], mode="single")
-            loader = UnstructuredLoader(
-                web_url=document,
-                mode="single",
-                partition_via_api=False,
-                # chunking_strategy="by_page",
-                strategy="hi_res",
-            )
-            elements = loader.load()
+            body, status, headers = await fetch_remote_document(document)
+            if status != 200:
+                raise ValueError(
+                    f"DocumentQueryHelper::handle_unstructured_document: Failed to download document from {document}: {status}"
+                )
+            import tempfile
+
+            content_type = headers.get("content-type", "").split(";", 1)[0].strip()
+            suffix = os.path.splitext(urlparse(document).path)[1]
+            if not suffix:
+                suffix = mimetypes.guess_extension(content_type) or ".bin"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_file.write(body)
+                temp_file_path = temp_file.name
+            try:
+                loader = UnstructuredLoader(
+                    file_path=temp_file_path,
+                    mode="single",
+                    partition_via_api=False,
+                    # chunking_strategy="by_page",
+                    strategy="hi_res",
+                )
+                elements = loader.load()
+            finally:
+                os.unlink(temp_file_path)
         elif scheme == "file":
             # Use RFC file operations to read the file as binary
             file_content_bytes = files.read_file_bin(document)
