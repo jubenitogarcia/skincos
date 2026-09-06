@@ -9,7 +9,10 @@ const DELIVERY_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE
 const OPAQUE_SUBJECT_PATTERN = /^idn:[A-Za-z0-9_-]{16,160}$/;
 const ROLE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const SCOPE_ITEM_PATTERN = /^[a-z][a-z0-9:-]{0,159}$/;
-const PERMISSION_ITEM_PATTERN = /^[a-z][a-z0-9:.-]{0,159}$/;
+// Keep the issuer-side preparation exactly aligned with the published
+// identity-crm-delivery contract. Dots belong to module grants in the CRM
+// shell; delivery permissions use the portable colon-delimited vocabulary.
+const PERMISSION_ITEM_PATTERN = /^[a-z][a-z0-9:-]{0,159}$/;
 const JTI_PATTERN = /^[A-Za-z0-9_-]{16,160}$/;
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;

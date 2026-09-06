@@ -18,7 +18,7 @@ const baseInput = Object.freeze({
     scopes: Object.freeze({
       units: Object.freeze(['novo-hamburgo']),
       modules: Object.freeze(['clients', 'finance']),
-      permissions: Object.freeze(['module.clients.access', 'module.finance.access']),
+      permissions: Object.freeze(['module:clients:access', 'module:finance:access']),
     }),
   }),
   requestBinding: Object.freeze({
@@ -59,7 +59,7 @@ test('the preparation returns only the minimized Identity CRM delivery input', (
     scopes: {
       units: ['novo-hamburgo'],
       modules: ['clients', 'finance'],
-      permissions: ['module.clients.access', 'module.finance.access'],
+      permissions: ['module:clients:access', 'module:finance:access'],
     },
     iat: 1788292800,
     exp: 1788292860,
@@ -122,7 +122,7 @@ test('the preparation rejects hidden, symbolic, inherited and accessor input fie
 });
 
 test('the preparation snapshots scope array data before validation and output', () => {
-  const source = ['module.clients.access'];
+  const source = ['module:clients:access'];
   let indexGets = 0;
   const proxied = new Proxy(source, {
     get(target, property, receiver) {
@@ -133,11 +133,11 @@ test('the preparation snapshots scope array data before validation and output', 
   const prepared = prepareCrmIdentityDeliveryV1(input({
     identity: { ...baseInput.identity, scopes: { ...baseInput.identity.scopes, permissions: proxied } },
   }));
-  assert.deepEqual(prepared.claims.scopes.permissions, ['module.clients.access']);
+  assert.deepEqual(prepared.claims.scopes.permissions, ['module:clients:access']);
   assert.equal(indexGets, 0);
 
   const accessorScope = [];
-  Object.defineProperty(accessorScope, '0', { enumerable: true, get: () => 'module.clients.access' });
+  Object.defineProperty(accessorScope, '0', { enumerable: true, get: () => 'module:clients:access' });
   assert.throws(() => prepareCrmIdentityDeliveryV1(input({
     identity: { ...baseInput.identity, scopes: { ...baseInput.identity.scopes, permissions: accessorScope } },
   })), /IDENTITY_SCOPE_PERMISSIONS_INVALID/);

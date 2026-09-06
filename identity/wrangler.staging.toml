@@ -1,0 +1,29 @@
+# Source-only staging manifest for the Identity-owned CRM delivery signer.
+# It intentionally has no production route, workers.dev URL, D1/KV/R2 binding,
+# or secret value. A later staging publication must use a service binding from
+# CRM and explicit environment secrets; this file alone cannot activate signing.
+name = "skincos-identity-crm-delivery"
+main = "delivery/crm-issuer-staging-worker.js"
+compatibility_date = "2026-03-02"
+workers_dev = false
+preview_urls = false
+
+[vars]
+IDENTITY_CRM_DELIVERY_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_ENVIRONMENT = "staging"
+
+[env.staging]
+name = "skincos-identity-crm-delivery-staging"
+workers_dev = false
+preview_urls = false
+
+[env.staging.vars]
+IDENTITY_CRM_DELIVERY_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_ENVIRONMENT = "staging"
+
+# Before any staging enablement, provision these values through the protected
+# secret manager, never through this file or Git:
+#   wrangler secret put IDENTITY_CRM_DELIVERY_KID --env staging
+#   wrangler secret put IDENTITY_CRM_DELIVERY_PRIVATE_JWK --env staging
+#   wrangler secret put IDENTITY_CRM_DELIVERY_PUBLIC_JWK --env staging
+#   wrangler secret put IDENTITY_CRM_DELIVERY_REQUEST_HMAC --env staging
