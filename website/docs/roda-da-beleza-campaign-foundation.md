@@ -78,6 +78,39 @@ Registrar em um artefato revisável, antes de criar ofertas ou tela pública:
 Nenhum valor desta tabela pode ser inferido do catálogo legado ou de campanhas
 anteriores.
 
+### 1.1. Decisão de enquadramento antes de desenhar a mecânica
+
+Uma animação de roleta não define, por si só, o enquadramento jurídico da
+campanha. Antes de configurar catálogo, tela, banco ou tráfego, o responsável
+comercial e jurídico deve anexar uma das evidências abaixo ao artefato da
+campanha:
+
+1. **Promoção comercial com elemento aleatório:** certificado de autorização
+   emitido pela SPA/SCPC, regulamento aprovado e versão do plano de operação.
+   Esse é o caminho a tratar quando houver sorteio, vale-brinde, operação
+   assemelhada, prêmio limitado ou outro resultado que não seja garantido
+   objetivamente a todos os elegíveis. O certificado, a janela, a pessoa
+   jurídica mandatária e as unidades aderentes precisam coincidir com a
+   configuração que será publicada.
+2. **Benefício determinístico:** manifestação jurídica escrita de que todo
+   participante elegível receberá a mesma condição previamente definida, sem
+   sorte, aleatoriedade, competição ou limitação de estoque promocional. Nesse
+   caso a experiência não pode simular uma roleta que prometa prêmio, nem usar
+   catálogo ponderado, sorteio ou claim escasso.
+
+As referências públicas da SPA descrevem promoções com distribuição de prêmios
+e elemento aleatório como sujeitas a autorização prévia, e distinguem delas os
+benefícios concedidos objetivamente a todos os elegíveis. Elas também indicam,
+em regra, antecedência de 40 a 120 dias para o protocolo; eventual redução é
+decisão do órgão autorizador, não uma suposição de produto. Consulte
+[Promoção Comercial — SPA](https://www.gov.br/fazenda/pt-br/composicao/orgaos/secretaria-de-premios-e-apostas/promocao-comercial/promocao-comercial)
+e o [serviço de autorização no SCPC](https://www.gov.br/pt-br/servicos/obter-autorizacao-para-atividades-de-distribuicao-gratuita-de-premios-a-titulo-de-propaganda-ou-de-captacao-de-poupanca-popular?id=14880&origem=servico).
+
+Esta fundação não classifica juridicamente a campanha. Uma resposta pública
+legada, um catálogo histórico ou a ausência de um resultado em consulta pública
+não comprovam que não exista certificado sob outro CNPJ, título ou mandatário;
+eles nunca substituem a evidência acima.
+
 ### 2. Serviço de campanha separado
 
 Criar uma D1 dedicada por ambiente, fora de `BOOKING_DB`, com migration
