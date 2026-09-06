@@ -14,6 +14,7 @@ param(
     [string]$Owner = $env:USERNAME,
     [string]$LeaseToken,
     [switch]$Apply,
+    [switch]$RefreshExisting,
     [switch]$SkipGitHub
 )
 
@@ -450,6 +451,23 @@ function Write-RegistryEntry {
     Write-JsonAtomic -Path $registryPath -Value ([pscustomobject]@{ schemaVersion = 1; updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); surfaces = @($surfaces) })
 }
 
+function Assert-RoutingControlPlane {
+    param([string]$Commit)
+
+    $required = @(
+        'ops/codex/worktree-topology.json',
+        'scripts/resolve-codex-thread-worktree.ps1',
+        '.codex/hooks.json',
+        '.codex/environments/environment.toml'
+    )
+    $tree = @(Invoke-Git -RepoPath $ProjectRoot -Arguments @('ls-tree', '-r', '--name-only', $Commit)).output
+    if ($tree.Count -eq 0) { throw "Não foi possível ler a árvore do SHA alvo: $Commit." }
+    $missing = @($required | Where-Object { $tree -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        throw "O SHA alvo não contém o plano de controle de roteamento obrigatório: $($missing -join ', ')."
+    }
+}
+
 function Update-RegistryLease {
     param(
         [string]$RequestedType,
@@ -483,26 +501,40 @@ function Ensure-Canonical {
 
     if (-not $Apply) { throw 'ensure-canonical exige -Apply.' }
     if ($TargetCommit -notmatch '^[0-9a-fA-F]{40}$') { throw 'ensure-canonical exige -TargetCommit com SHA completo de 40 caracteres.' }
+    $commitCheck = Invoke-Git -RepoPath $ProjectRoot -Arguments @('cat-file', '-e', "$TargetCommit^{commit}")
+    if ($commitCheck.exitCode -ne 0) { throw "SHA alvo não existe no repositório: $TargetCommit." }
+    Assert-RoutingControlPlane -Commit $TargetCommit
 
     $matches = @($Worktrees | Where-Object { (Normalize-PathString -Path $_.path) -eq (Normalize-PathString -Path $Definition.expectedPath) })
+    $previousHead = if ($matches.Count -eq 1) { [string]$matches[0].head } else { $null }
     if ($matches.Count -gt 1) { throw "Slot canônico duplicado: $($Definition.surfaceType)/$($Definition.surfaceId)." }
     if ($matches.Count -eq 1) {
         $status = @(Invoke-Git -RepoPath $matches[0].path -Arguments @('status', '--porcelain=v1')).output
         if (@($status | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw 'O slot canônico existente está sujo.' }
-        if ([string]$matches[0].head -ne $TargetCommit) { throw "Slot canônico já existe em $($matches[0].head), esperado $TargetCommit." }
-        $action = 'reused'
+        if ([string]$matches[0].head -ne $TargetCommit) {
+            if (-not $RefreshExisting) { throw "Slot canônico já existe em $($matches[0].head), esperado $TargetCommit. Use -RefreshExisting somente após a requalificação explícita." }
+            if (-not $matches[0].detached) { throw 'Somente slots canônicos detached podem ser requalificados automaticamente.' }
+            $lease = Get-Lease -SurfaceType $Definition.surfaceType -SurfaceId $Definition.surfaceId
+            if ($lease.status -eq 'claimed') { throw "O slot canônico possui lease ativo de $($lease.owner.owner)." }
+            $manifestRows = @(Get-ManifestReferences | Where-Object { Test-PathWithinRoot -Path $_.value -Root $Definition.expectedPath })
+            if ($manifestRows.Count -gt 0) { throw 'O slot canônico é referenciado por manifesto de runtime.' }
+            $sourceUse = Test-SourceInUse -Path $Definition.expectedPath
+            if ($sourceUse.status -ne 'checked' -or $sourceUse.inUse) { throw "O slot canônico está em uso ou não pôde ser verificado: $($sourceUse | ConvertTo-Json -Compress -Depth 6)" }
+            $switch = Invoke-Git -RepoPath $Definition.expectedPath -Arguments @('switch', '--detach', $TargetCommit)
+            if ($switch.exitCode -ne 0) { throw "Não foi possível requalificar o slot canônico: $($switch.output -join ' ')" }
+            $action = 'refreshed'
+        }
+        else { $action = 'reused' }
     }
     else {
         if (Test-Path -LiteralPath $Definition.expectedPath) { throw "O caminho canônico existe mas não está registrado: $($Definition.expectedPath)." }
-        $commitCheck = Invoke-Git -RepoPath $ProjectRoot -Arguments @('cat-file', '-e', "$TargetCommit^{commit}")
-        if ($commitCheck.exitCode -ne 0) { throw "SHA alvo não existe no repositório: $TargetCommit." }
         New-Item -ItemType Directory -Path (Split-Path -Parent $Definition.expectedPath) -Force | Out-Null
         $add = Invoke-Git -RepoPath $ProjectRoot -Arguments @('worktree', 'add', '--detach', $Definition.expectedPath, $TargetCommit)
         if ($add.exitCode -ne 0) { throw "Não foi possível criar o slot canônico: $($add.output -join ' ')" }
         $action = 'created'
     }
 
-    $entry = [pscustomobject]@{
+    $entry = [ordered]@{
         surfaceType = $Definition.surfaceType
         surfaceId = $Definition.surfaceId
         label = $Definition.label
@@ -510,10 +542,24 @@ function Ensure-Canonical {
         path = $Definition.expectedPath
         targetCommit = $TargetCommit.ToLowerInvariant()
         source = $Definition.source
+        controlPlane = 'codex-thread-routing'
         updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
+    if ($action -eq 'refreshed') {
+        $entry.baseCommit = $previousHead.ToLowerInvariant()
+        $entry.requalifiedAtUtc = $entry.updatedAtUtc
+    }
+    $entry = [pscustomobject]$entry
     Write-RegistryEntry -Entry $entry
-    return [pscustomobject]@{ action = $action; surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; path = $Definition.expectedPath; targetCommit = $TargetCommit.ToLowerInvariant() }
+    return [pscustomobject]@{
+        action = $action
+        surfaceType = $Definition.surfaceType
+        surfaceId = $Definition.surfaceId
+        path = $Definition.expectedPath
+        targetCommit = $TargetCommit.ToLowerInvariant()
+        baseCommit = if ($action -eq 'refreshed') { $previousHead.ToLowerInvariant() } else { $null }
+        controlPlane = 'codex-thread-routing'
+    }
 }
 
 function Claim-Canonical {
