@@ -1,7 +1,14 @@
 {
   "name": "@skincos/identity",
   "private": true,
+  "version": "0.0.0-precut",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@jubenitogarcia/skincos-identity-contracts": "0.2.2"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   }

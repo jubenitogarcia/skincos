@@ -39,10 +39,42 @@ explicit caller opt-in. It does not resolve a session, read runtime
 configuration, use a secret, serialize or sign a JWS, register a route, add a
 Worker binding, or publish an artifact.
 
-Until a clean installation of the exact private contracts package is proven,
-this helper is only a disconnected preparation guard; it is not the canonical
-wire-contract parser, serializer or compatibility proof. The future private
-entrypoint must delegate those responsibilities to the published package.
+`identity/delivery/crm-issuer-v1.js` now provides the source-level issuer
+boundary for the future private WorkerEntrypoint. It remains disabled by
+default and has no route, binding, D1 write or secret configuration. When an
+authorized runtime eventually enables it, the exact pinned
+`@jubenitogarcia/skincos-identity-contracts/identity-crm-delivery` package is
+the default canonical owner of signing-input validation. An explicit contract
+adapter is supported only for isolated tests and must expose the same fixed
+version, issuer, audience, algorithm and validators. Identity supplies only a
+signer callback backed by a non-exportable Ed25519 key held in external
+custody; private key bytes, PEM/JWK material and secrets are rejected by the
+key-ring boundary and are never stored in the CRM repository or Git.
+
+The issuer accepts the authenticated actor plus the exact method, canonical
+target and body bytes. It computes `SHA-256(body)` itself before producing the
+claims, so a caller cannot sign a digest for a different request. The actor is
+projected to `identitySubject`, `role` and sorted scopes; username, email,
+display name, cookies, sessions and compatibility aliases never enter the
+signing input.
+
+The included key-ring state machine is for synthetic tests and local contract
+integration only. It exercises active-key selection, overlap during rotation,
+revocation and fail-closed behavior. A deployable Identity runtime still needs
+a durable key registry/custody adapter, a real Ed25519 signing key, public-key
+publication for the CRM verifier and an operational rollback/rotation window.
+An optional issuer replay reservation can reject duplicate `jti` values after a
+successful signature, but it does not replace the CRM-owned atomic replay
+ledger required before business handling.
+
+The Identity package pins the exact private contracts package version and
+integrity in `identity/package-lock.json`; its focused workflow installs that
+lockfile from GitHub Packages before running the issuer tests. A registry Read
+grant for the `jubenitogarcia/skincos` repository is required for that CI job.
+The helper is still not a deployed runtime: the future private entrypoint must
+provide a durable Identity-owned key registry/custody adapter, publish the
+matching public key to CRM, and expose a staging-only service binding before
+the enabled path can be exercised outside synthetic tests.
 
 The helper refuses the current username-based actor. A future additive Identity
 migration must first provide a stable opaque `identitySubject` and preserve it
