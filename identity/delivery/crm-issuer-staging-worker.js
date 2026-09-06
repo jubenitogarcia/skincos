@@ -9,6 +9,7 @@ const PUBLIC_KEYS_PATH = '/.well-known/identity-crm-delivery/v1/keys';
 const MAX_REQUEST_BYTES = 1_048_576;
 const BASE64_URL_PATTERN = /^[A-Za-z0-9_-]*$/;
 const TEXT_ENCODER = new TextEncoder();
+const STAGING_KEY_ID_PREFIX = 'crm-staging-';
 
 function fail(code) {
   throw new TypeError(code);
@@ -98,6 +99,7 @@ function parsePublicJwk(raw) {
 
 function assertKid(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9._-]{1,160}$/.test(value)) fail('IDENTITY_KEY_ID_INVALID');
+  if (!value.startsWith(STAGING_KEY_ID_PREFIX)) fail('IDENTITY_STAGING_KEY_ID_ENVIRONMENT_MISMATCH');
   return value;
 }
 
