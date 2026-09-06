@@ -1,7 +1,7 @@
-# Source-only staging manifest for the Identity-owned CRM delivery signer.
-# It intentionally has no production route, workers.dev URL, D1/KV/R2 binding,
-# or secret value. A later staging publication must use a service binding from
-# CRM and explicit environment secrets; this file alone cannot activate signing.
+# Staging manifest for the Identity-owned CRM delivery signer.
+# It intentionally has no production route, D1/KV/R2 binding or secret value.
+# Only the explicit staging environment exposes an isolated workers.dev URL so
+# the smoke can obtain a signed envelope; production has no route here.
 name = "skincos-identity-crm-delivery"
 main = "delivery/crm-issuer-staging-worker.js"
 compatibility_date = "2026-03-02"
@@ -14,7 +14,11 @@ IDENTITY_CRM_DELIVERY_ENVIRONMENT = "staging"
 
 [env.staging]
 name = "skincos-identity-crm-delivery-staging"
-workers_dev = false
+# Staging-only invocation is exposed on the isolated workers.dev hostname so
+# the smoke can obtain a signed envelope without creating a production route.
+# Production remains absent from this manifest and the flag is never enabled
+# outside this explicit staging environment.
+workers_dev = true
 preview_urls = false
 
 [env.staging.vars]
