@@ -161,13 +161,13 @@ jobs:
             validation: "tests-and-wrangler-versions-upload-dry-run",
           }, null, 2)}\n`);
           NODE
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-core-api
           path: ${{ runner.temp }}/core-api-preview-evidence/promotion-evidence.json
           retention-days: 90
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-surface-core-api-preview-${{ needs.promotion.outputs.source_sha }}
           path: ${{ runner.temp }}/core-api-surface/surface.json
@@ -234,13 +234,13 @@ jobs:
             validation: "inventory-tests-v2-caller-and-wrangler-versions-upload-dry-run",
           }, null, 2)}\n`);
           NODE
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-core-inventory
           path: ${{ runner.temp }}/identity-workforce-preview-evidence/promotion-evidence.json
           retention-days: 90
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-surface-identity-workforce-preview-${{ needs.promotion.outputs.source_sha }}
           path: ${{ runner.temp }}/identity-workforce-surface/surface.json
@@ -362,7 +362,7 @@ jobs:
           echo "path=$checkpoint" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Upload encrypted staging Identity migration checkpoint
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: identity-staging-pre-migration-${{ env.RELEASE_SHA }}
           path: ${{ steps.checkpoint.outputs.path }}
@@ -567,7 +567,7 @@ jobs:
           NODE
       - name: Upload staging Identity mutation journal
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-mutation-identity-workforce-staging-${{ env.RELEASE_SHA }}
           path: ${{ runner.temp }}/identity-staging-mutation/mutation.json
@@ -599,13 +599,13 @@ jobs:
           PROMOTION_UNIT=core-inventory PROMOTION_TARGET=staging PROMOTION_SOURCE_SHA="$RELEASE_SHA" \
           PROMOTION_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
             node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/identity-staging-promotion/promotion-evidence.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-core-inventory
           path: ${{ runner.temp }}/identity-staging-promotion/promotion-evidence.json
           retention-days: 90
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-surface-identity-workforce-staging-${{ env.RELEASE_SHA }}
           path: ${{ runner.temp }}/identity-staging-surface/surface.json
@@ -748,7 +748,7 @@ jobs:
 
       - name: Upload encrypted Inventory migration checkpoint
         if: ${{ steps.inventory_checkpoint.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: inventory-production-pre-migration-${{ needs.promotion.outputs.source_sha }}
           path: ${{ steps.inventory_checkpoint.outputs.artifact }}
@@ -1128,7 +1128,7 @@ jobs:
           NODE
       - name: Upload Ponto Core staging mutation journal
         if: ${{ always() && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-mutation-core-api-staging-${{ needs.promotion.outputs.source_sha }}
           path: ${{ runner.temp }}/core-staging-mutation/mutation.json
@@ -1159,7 +1159,7 @@ jobs:
         run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - name: Upload staging promotion evidence
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-core-${{ inputs.unit }}
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
@@ -1167,7 +1167,7 @@ jobs:
           if-no-files-found: error
       - name: Upload Ponto Core staging surface manifest
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-surface-core-api-staging-${{ needs.promotion.outputs.source_sha }}
           path: ${{ runner.temp }}/core-staging-surface/surface.json
@@ -1543,7 +1543,7 @@ jobs:
           NODE
       - name: Upload Core mutation journal
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-mutation-core-api-${{ inputs.target }}-${{ env.RELEASE_SHA }}
           path: ${{ runner.temp }}/core-mutation/mutation.json
@@ -1582,7 +1582,7 @@ jobs:
             url: "https://crm.skincos.com.br/api/ponto/health",
           }, null, 2)}\n`);
           NODE
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: success()
         with:
           name: ponto-surface-core-api-${{ inputs.target }}-${{ env.RELEASE_SHA }}
@@ -1802,7 +1802,7 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Upload encrypted pre-pilot production Identity checkpoint
         if: inputs.target == 'pilot'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: identity-pilot-pre-migration-${{ env.RELEASE_SHA }}
           path: ${{ steps.checkpoint.outputs.path }}
@@ -2039,7 +2039,7 @@ jobs:
           NODE
       - name: Upload Identity/Workforce mutation journal
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-mutation-identity-workforce-${{ inputs.target }}-${{ env.RELEASE_SHA }}
           path: ${{ runner.temp }}/identity-mutation/mutation.json
@@ -2080,7 +2080,7 @@ jobs:
             migrations,
           }, null, 2)}\n`);
           NODE
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: success()
         with:
           name: ponto-surface-identity-workforce-${{ inputs.target }}-${{ env.RELEASE_SHA }}

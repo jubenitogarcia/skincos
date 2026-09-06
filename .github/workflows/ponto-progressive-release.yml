@@ -65,7 +65,7 @@ jobs:
           PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
           PONTO_EMERGENCY_TARGET: staging
         run: node .github/scripts/ponto-emergency-broker.mjs attest "$RUNNER_TEMP/ponto-emergency-broker-staging.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-emergency-broker-staging-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-emergency-broker-staging.json
@@ -91,7 +91,7 @@ jobs:
           PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
           PONTO_EMERGENCY_TARGET: production
         run: node .github/scripts/ponto-emergency-broker.mjs attest "$RUNNER_TEMP/ponto-emergency-broker-production.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-emergency-broker-production-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-emergency-broker-production.json
@@ -1873,34 +1873,34 @@ jobs:
             node .github/scripts/ponto-release-evidence.mjs write "$PONTO_ARTIFACT_DIR/ponto-release-evidence.json"
       - name: Upload the durable recovery journal for separate recovery jobs
         if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-recovery-journal-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-release
           retention-days: 90
           if-no-files-found: warn
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ success() && inputs.stage == 'preview' }}
         with:
           name: promotion-evidence-timekeeping
           path: ${{ runner.temp }}/ponto-release/promotion/timekeeping/promotion-evidence.json
           retention-days: 90
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ success() && inputs.stage == 'preview' }}
         with:
           name: promotion-evidence-core-inventory
           path: ${{ runner.temp }}/ponto-release/promotion/identity/promotion-evidence.json
           retention-days: 90
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ success() && inputs.stage == 'preview' }}
         with:
           name: promotion-evidence-core-api
           path: ${{ runner.temp }}/ponto-release/promotion/core/promotion-evidence.json
           retention-days: 90
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ success() && inputs.stage == 'preview' }}
         with:
           name: promotion-evidence-crm-pages
@@ -1909,7 +1909,7 @@ jobs:
           if-no-files-found: error
       - name: Upload combined release evidence
         if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-release-evidence-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: |
@@ -1921,7 +1921,7 @@ jobs:
           if-no-files-found: error
       - name: Upload edge guard evidence
         if: ${{ success() && contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-edge-guard-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/ponto-release/edge-guard/ponto-edge-override-guard.json
@@ -1929,7 +1929,7 @@ jobs:
           if-no-files-found: error
       - name: Upload module transition evidence
         if: ${{ always() && inputs.stage != 'preview' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-module-transitions-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/ponto-release/module-transitions
@@ -1937,7 +1937,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload sanitized orchestration run ledger
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-release-runs-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/ponto-release/runs
@@ -2048,7 +2048,7 @@ jobs:
           NODE
           rm -f "$directory/overlay-expectation.json"
       - name: Upload immutable ordinary-recovery latch evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-ordinary-recovery-latch-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-ordinary-recovery
@@ -2180,7 +2180,7 @@ jobs:
           NODE
       - name: Upload immutable ordinary-recovery reconciliation
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-ordinary-recovery-reconciliation-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-ordinary-recovery/reconciliation
@@ -2188,7 +2188,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload reconstructed recovery journal for mutexed rollback
         if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-reconstructed-recovery-journal-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-ordinary-recovery/journal
@@ -2315,7 +2315,7 @@ jobs:
             node .github/scripts/ponto-module-propagation.mjs
           rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
       - name: Upload immutable ordinary-recovery maintenance evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-ordinary-recovery-maintenance-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-ordinary-recovery
@@ -2517,7 +2517,7 @@ jobs:
           exit "$status"
       - name: Upload immutable automatic rollback evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ponto-automatic-rollback-${{ inputs.stage }}-${{ inputs.release_sha }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-ordinary-recovery/journal/automatic-rollback
