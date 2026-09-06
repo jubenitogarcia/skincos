@@ -1,0 +1,47 @@
+name: Identity CRM delivery
+
+on:
+  pull_request:
+    paths:
+      - 'identity/**'
+      - '.github/workflows/identity-crm-delivery.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'identity/**'
+      - '.github/workflows/identity-crm-delivery.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: identity-crm-delivery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Install pinned contract and test issuer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.12.0'
+      - name: Install the exact private Identity contract without persisting credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          npmrc="$RUNNER_TEMP/skincos-identity-npmrc"
+          trap 'rm -f "$npmrc"' EXIT
+          umask 077
+          {
+            printf '%s\n' '@jubenitogarcia:registry=https://npm.pkg.github.com'
+            printf '%s\n' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}'
+            printf '%s\n' 'always-auth=true'
+          } > "$npmrc"
+          NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity ci --ignore-scripts --no-audit --fund=false
+          NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity test
