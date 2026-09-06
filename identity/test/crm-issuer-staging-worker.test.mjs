@@ -41,7 +41,7 @@ async function stagingEnv() {
     env: {
       IDENTITY_CRM_DELIVERY_ENABLED: 'true',
       IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'staging',
-      IDENTITY_CRM_DELIVERY_KID: 'identity-staging-2026-09',
+      IDENTITY_CRM_DELIVERY_KID: 'crm-staging-identity-2026-09',
       IDENTITY_CRM_DELIVERY_PRIVATE_JWK: JSON.stringify(privateKey),
       IDENTITY_CRM_DELIVERY_PUBLIC_JWK: JSON.stringify(publicKey),
       IDENTITY_CRM_DELIVERY_REQUEST_HMAC: secret,
@@ -77,6 +77,16 @@ test('staging issuer is disabled unless the explicit staging flag is enabled', a
   );
   assert.equal(response.status, 503);
   assert.match(await response.text(), /IDENTITY_CRM_DELIVERY_DISABLED/);
+});
+
+test('staging issuer rejects a key id from another environment', async () => {
+  const { env } = await stagingEnv();
+  const response = await handleIdentityCrmIssuerStagingRequest(
+    new Request(keysUrl),
+    { ...env, IDENTITY_CRM_DELIVERY_KID: 'crm-production-identity-2026-09' },
+  );
+  assert.equal(response.status, 503);
+  assert.match(await response.text(), /IDENTITY_STAGING_CUSTODY_UNAVAILABLE/);
 });
 
 test('staging manifest has no production route or data binding and keeps signing disabled', async () => {
