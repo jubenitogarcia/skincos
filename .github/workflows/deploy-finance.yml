@@ -40,6 +40,7 @@ concurrency:
 permissions:
   actions: read
   contents: read
+  packages: read
 
 jobs:
   promotion:
@@ -106,9 +107,11 @@ jobs:
           fi
       - name: Validate Finance release source
         timeout-minutes: 5
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          npm --prefix finance ci --ignore-scripts
+          npx --yes npm@11.17.0 --prefix finance ci --ignore-scripts
           npm --prefix finance run check
           npm --prefix finance test
       - name: Render only target bindings in ephemeral checkout
