@@ -122,7 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: preview
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
           fetch-depth: 1
@@ -202,7 +202,7 @@ jobs:
     steps:
       - name: Checkout trusted Ponto custody guard
         if: ${{ inputs.orchestrator_run_id != '' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -273,7 +273,7 @@ jobs:
             echo "MODULE_CONTROL_KV_ID=$MODULE_CONTROL_KV_ID"
             echo "OPPOSITE_MODULE_CONTROL_KV_ID=$OPPOSITE_MODULE_CONTROL_KV_ID"
           } >> "$GITHUB_ENV"
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 1

@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: preview
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
           fetch-depth: 1
@@ -159,7 +159,7 @@ jobs:
     steps:
       - name: Checkout trusted Ponto custody guard
         if: ${{ inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -184,7 +184,7 @@ jobs:
             "$ORCHESTRATOR_RUN_ID"
       - name: Checkout trusted general coordination actions
         if: ${{ inputs.release_scope == 'general' && inputs.target != 'preview' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           # The local coordination action runs before the candidate checkout.
           # Keep this gate on the immutable workflow dispatch revision so a
@@ -312,7 +312,7 @@ jobs:
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
           fetch-depth: 2
@@ -1079,7 +1079,7 @@ jobs:
       PROJECT: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
     steps:
       - name: Checkout trusted Ponto custody guard
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -1144,7 +1144,7 @@ jobs:
           ) throw new Error("production Pages project identity, branch, or CRM domain differs");
           NODE
           rm -f "$RUNNER_TEMP/pages-project.json"
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 1
