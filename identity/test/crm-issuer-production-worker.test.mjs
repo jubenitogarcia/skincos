@@ -180,6 +180,13 @@ test('production key ring fails closed for active revocation, duplicate overlap 
   const revokedResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), revokedActive.env);
   assert.equal(revokedResponse.status, 503);
 
+  const duplicateRevoked = await productionEnv({ revoked: ['crm-production-revoked-2026'] });
+  const duplicateRevokedRing = JSON.parse(duplicateRevoked.env.IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK);
+  duplicateRevokedRing.revoked.push('crm-production-revoked-2026');
+  duplicateRevoked.env.IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK = JSON.stringify(duplicateRevokedRing);
+  const duplicateRevokedResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), duplicateRevoked.env);
+  assert.equal(duplicateRevokedResponse.status, 503);
+
   const duplicate = await productionEnv();
   const duplicateRing = JSON.parse(duplicate.env.IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK);
   duplicateRing.overlap.push({ ...duplicateRing.overlap[0], kid: activeKid });
