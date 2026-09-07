@@ -24,19 +24,23 @@ FROM crm_atendimento.global_client_identities`
 // This source query deliberately has no join and no selectable field beyond the
 // stable identity UUID and its revision timestamp. The UUID is converted to an
 // HMAC reference in memory before anything leaves this adapter.
-export const ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL = `SELECT id::text AS id, updated_at
+export const ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL = `/* bounded source-input fingerprint */
+SELECT id::text AS id,
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
 FROM crm_atendimento.global_client_identities
 ORDER BY updated_at ASC, id ASC
 LIMIT $1`
 
 // The paginated runner uses keyset pagination, never OFFSET. Both queries keep
 // the source shape deliberately limited to the stable UUID and revision time.
-export const ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL = `SELECT id::text AS id, updated_at
+export const ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL = `SELECT id::text AS id,
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
 FROM crm_atendimento.global_client_identities
 ORDER BY updated_at ASC, id ASC
 LIMIT $1`
 
-export const ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL = `SELECT id::text AS id, updated_at
+export const ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL = `SELECT id::text AS id,
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
 FROM crm_atendimento.global_client_identities
 WHERE (updated_at, id) > ($1::timestamptz, $2::uuid)
 ORDER BY updated_at ASC, id ASC

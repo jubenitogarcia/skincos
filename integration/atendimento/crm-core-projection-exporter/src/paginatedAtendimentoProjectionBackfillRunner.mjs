@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 
 import {
   ATENDIMENTO_CRM_PROJECTION_MAX_ROWS,
   ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL,
+  ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL,
   assertAtendimentoProjectionBackfillBatch,
   assertAtendimentoProjectionExportTarget,
   assertAtendimentoProjectionSourceRow,
@@ -19,8 +20,9 @@ export const ATENDIMENTO_CRM_PROJECTION_BACKFILL_RUNNER_VERSION = 'atendimento/c
 export const ATENDIMENTO_CRM_PROJECTION_BACKFILL_RUN_INTENT = 'atendimento/crm-core/staging-projection-backfill/v1'
 export const ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS_PER_BATCH = 20
 
-const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-backfill-checkpoint/v1'
+const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-backfill-checkpoint/v2'
 const REQUEST_ID_PREFIX = 'crm-atendimento-backfill-'
+const SOURCE_CURSOR_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{1,6})Z$/
 
 function fail(code) {
   throw new Error(code)
@@ -62,6 +64,17 @@ function normalizedTimestamp(value, code) {
   return parsed.toISOString()
 }
 
+// The source query deliberately emits a UTC, fixed-width microsecond string.
+// JavaScript Date is used only for public event timestamps; this private
+// cursor must retain all six digits so PostgreSQL keyset comparisons cannot
+// fetch the final row of a page a second time.
+function sourceCursorTimestamp(value, code) {
+  const raw = String(value || '').trim()
+  const match = SOURCE_CURSOR_TIMESTAMP.exec(raw)
+  if (!match || Number.isNaN(new Date(raw).getTime())) fail(code)
+  return `${match[1]}.${match[2].padEnd(6, '0')}Z`
+}
+
 function sameTarget(left, right) {
   return left.environment === right.environment
     && left.release === right.release
@@ -69,8 +82,13 @@ function sameTarget(left, right) {
 }
 
 function sourceCursor(row) {
-  const normalized = assertAtendimentoProjectionSourceRow({ id: row.id, updated_at: row.updatedAt })
-  return Object.freeze({ updatedAt: normalized.updatedAt, id: normalized.id })
+  const raw = object(row, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CURSOR_INVALID')
+  const updatedAt = Object.hasOwn(raw, 'updated_at') ? raw.updated_at : raw.updatedAt
+  const normalized = assertAtendimentoProjectionSourceRow({ id: raw.id, updated_at: updatedAt })
+  return Object.freeze({
+    updatedAt: sourceCursorTimestamp(updatedAt, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CURSOR_INVALID'),
+    id: normalized.id,
+  })
 }
 
 function compareCursor(left, right) {
@@ -87,14 +105,31 @@ function pageRows(value, { limit, after } = {}) {
   let previous = after || null
   for (const valueRow of value) {
     const row = assertAtendimentoProjectionSourceRow(valueRow)
-    const cursor = sourceCursor(row)
+    const cursor = sourceCursor(valueRow)
     if (previous && compareCursor(cursor, previous) <= 0) {
       fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_CURSOR_INVALID')
     }
-    rows.push(row)
+    rows.push(Object.freeze({ row, cursor }))
     previous = cursor
   }
   return Object.freeze(rows)
+}
+
+function sourceInputDigest(rows, hmacKey) {
+  const digest = createHmac('sha256', hmacKey)
+  digest.update('atendimento/crm-core/projection-backfill-source-input/v1\u0000')
+  for (const { cursor } of rows) {
+    digest.update(cursor.updatedAt).update('\u0000').update(cursor.id).update('\n')
+  }
+  return `sha256:${digest.digest('hex')}`
+}
+
+async function preflightSourceInputDigest(client, { rowCount, hmacKey }) {
+  if (rowCount === 0) return sourceInputDigest([], hmacKey)
+  const result = await client.query(ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL, [rowCount])
+  const rows = pageRows(result?.rows, { limit: rowCount })
+  if (rows.length !== rowCount) fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_SOURCE_INPUT_INVALID')
+  return sourceInputDigest(rows, hmacKey)
 }
 
 function checkpointStore(value) {
@@ -171,7 +206,7 @@ function storedCheckpoint(value) {
   exactKeys(checkpointValue, ['contractVersion', 'state', 'target', 'sourceSnapshot', 'progress', 'cursor', 'pending'], 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
   const sourceSnapshot = object(checkpointValue.sourceSnapshot, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
   const progress = object(checkpointValue.progress, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
-  exactKeys(sourceSnapshot, ['capturedAt', 'rowCount'], 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
+  exactKeys(sourceSnapshot, ['capturedAt', 'rowCount', 'inputDigest'], 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
   exactKeys(progress, ['deliveredCount', 'batchCount', 'acceptedCount', 'idempotentCount', 'reconciliationDigest'], 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
   if (
     checkpointValue.contractVersion !== CHECKPOINT_VERSION
@@ -180,6 +215,9 @@ function storedCheckpoint(value) {
   ) fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
   const target = assertAtendimentoProjectionExportTarget(checkpointValue.target)
   const rowCount = normalizedInteger(sourceSnapshot.rowCount, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(sourceSnapshot.inputDigest || ''))) {
+    fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
+  }
   const deliveredCount = normalizedInteger(progress.deliveredCount, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID', { maximum: rowCount })
   const batchCount = normalizedInteger(progress.batchCount, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
   const acceptedCount = normalizedInteger(progress.acceptedCount, 'ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_INVALID')
@@ -203,6 +241,7 @@ function storedCheckpoint(value) {
     target,
     capturedAt,
     sourceRowCount: rowCount,
+    sourceInputDigest: sourceSnapshot.inputDigest,
     deliveredCount,
     batchCount,
     acceptedCount,
@@ -213,12 +252,12 @@ function storedCheckpoint(value) {
   })
 }
 
-function checkpoint({ target, capturedAt, sourceRowCount, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest, cursor, pending }) {
+function checkpoint({ target, capturedAt, sourceRowCount, sourceInputDigest, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest, cursor, pending }) {
   return Object.freeze({
     contractVersion: CHECKPOINT_VERSION,
     state: 'running',
     target: Object.freeze({ ...target }),
-    sourceSnapshot: Object.freeze({ capturedAt, rowCount: sourceRowCount }),
+    sourceSnapshot: Object.freeze({ capturedAt, rowCount: sourceRowCount, inputDigest: sourceInputDigest }),
     progress: Object.freeze({ deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest }),
     // This cursor contains the source UUID and is deliberately supplied only to
     // the private checkpoint capability. It never appears in HTTP or results.
@@ -301,7 +340,8 @@ function knownError(error) {
  * database construction or network default: all capabilities are injected by
  * an operator-owned caller. A pending opaque packet can be replayed before a
  * new source transaction opens. Further pagination is allowed only when the
- * new transaction attests the exact capturedAt and rowCount in its checkpoint.
+ * new repeatable-read snapshot has the same bounded source-input HMAC digest
+ * and row count; transaction_timestamp itself is not resumable across runs.
  */
 export function createPaginatedAtendimentoProjectionBackfillRunner({
   pool,
@@ -340,6 +380,13 @@ export function createPaginatedAtendimentoProjectionBackfillRunner({
         }
       }
 
+      // Never replay a signed packet through a transport configured for a
+      // different CRM artifact. This comparison deliberately precedes both
+      // the pending delivery and any source connection.
+      if (restored && !sameTarget(restored.target, targetValue)) {
+        fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_TARGET_MISMATCH')
+      }
+
       let client
       let transactionOpen = false
       try {
@@ -361,12 +408,15 @@ export function createPaginatedAtendimentoProjectionBackfillRunner({
         const source = await preflightAtendimentoProjectionSource(client, { maxRows: maximumRows })
         const capturedAt = source.capturedAt
         const sourceRowCount = source.rowCount
+        const currentSourceInputDigest = await preflightSourceInputDigest(client, {
+          rowCount: sourceRowCount,
+          hmacKey,
+        })
         let state
         if (restored) {
           if (
-            !sameTarget(restored.target, targetValue)
-            || restored.capturedAt !== capturedAt
-            || restored.sourceRowCount !== sourceRowCount
+            restored.sourceRowCount !== sourceRowCount
+            || restored.sourceInputDigest !== currentSourceInputDigest
           ) fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_SNAPSHOT_MISMATCH')
           state = restored
         } else {
@@ -374,6 +424,7 @@ export function createPaginatedAtendimentoProjectionBackfillRunner({
             target: targetValue,
             capturedAt,
             sourceRowCount,
+            sourceInputDigest: currentSourceInputDigest,
             deliveredCount: 0,
             batchCount: 0,
             acceptedCount: 0,
@@ -391,7 +442,8 @@ export function createPaginatedAtendimentoProjectionBackfillRunner({
           const result = state.cursor
             ? await client.query(ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL, [state.cursor.updatedAt, state.cursor.id, limit])
             : await client.query(ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL, [limit])
-          const rows = pageRows(result?.rows, { limit, after: state.cursor })
+          const page = pageRows(result?.rows, { limit, after: state.cursor })
+          const rows = page.map(({ row }) => row)
           if (rows.length > remaining) fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_RECONCILIATION_FAILED')
 
           const batch = createAtendimentoProjectionBackfillBatch({
@@ -408,7 +460,7 @@ export function createPaginatedAtendimentoProjectionBackfillRunner({
           if (delivery.batchDigest !== digestAtendimentoProjectionBackfillBatch(batch)) {
             fail('ATENDIMENTO_CRM_BACKFILL_RUNNER_DELIVERY_MISMATCH')
           }
-          const cursorAfter = sourceCursor(rows.at(-1))
+          const cursorAfter = page.at(-1).cursor
           const requestId = `${REQUEST_ID_PREFIX}${String(state.batchCount + 1).padStart(6, '0')}`
           const pending = Object.freeze({
             batch,

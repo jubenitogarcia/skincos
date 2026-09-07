@@ -12,10 +12,13 @@ import {
 
 export const ATENDIMENTO_CRM_BACKFILL_HTTP_PATH = '/_internal/crm/backfill/atendimento'
 export const ATENDIMENTO_CRM_BACKFILL_HTTP_MAX_BODY_BYTES = 64 * 1024
+export const ATENDIMENTO_CRM_BACKFILL_HTTP_TIMEOUT_MS = 15_000
 export const ATENDIMENTO_CRM_BACKFILL_RECEIPT_VERSION = 'crm-core/projection-backfill-receipt/v1'
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,120}$/
 const OUTCOMES = new Set(['accepted', 'idempotent'])
+const MAX_TIMEOUT_MS = 60_000
+const TRANSPORT_TIMEOUT = Symbol('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_TIMEOUT')
 
 function fail(code) {
   throw new Error(code)
@@ -34,6 +37,39 @@ function requestId(value) {
   const normalized = String(value || '').trim()
   if (!REQUEST_ID_PATTERN.test(normalized)) fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_REQUEST_ID_INVALID')
   return normalized
+}
+
+function timeout(value) {
+  const normalized = value === undefined ? ATENDIMENTO_CRM_BACKFILL_HTTP_TIMEOUT_MS : Number(value)
+  if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > MAX_TIMEOUT_MS) {
+    fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_TIMEOUT_INVALID')
+  }
+  return normalized
+}
+
+function withAbortDeadline(value, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(TRANSPORT_TIMEOUT)
+      return
+    }
+    const abort = () => {
+      cleanup()
+      reject(TRANSPORT_TIMEOUT)
+    }
+    const cleanup = () => signal.removeEventListener('abort', abort)
+    signal.addEventListener('abort', abort, { once: true })
+    Promise.resolve(value).then(
+      (result) => {
+        cleanup()
+        resolve(result)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      },
+    )
+  })
 }
 
 function endpoint(value) {
@@ -93,9 +129,11 @@ function responseReceipt(value, { batch, requestId: expectedRequestId }) {
 export function createAtendimentoProjectionBackfillHttpTransport({
   endpoint: suppliedEndpoint,
   fetch: fetchImpl,
+  timeoutMs: suppliedTimeoutMs,
 } = {}) {
   const targetEndpoint = endpoint(suppliedEndpoint)
   if (typeof fetchImpl !== 'function') fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_FETCH_REQUIRED')
+  const timeoutMs = timeout(suppliedTimeoutMs)
 
   return Object.freeze({
     version: 'atendimento/crm-core-projection-backfill-http-transport/v1',
@@ -120,32 +158,40 @@ export function createAtendimentoProjectionBackfillHttpTransport({
         fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_BODY_TOO_LARGE')
       }
 
-      let response
+      const controller = new AbortController()
+      const deadline = setTimeout(() => controller.abort(), timeoutMs)
       try {
-        response = await fetchImpl(targetEndpoint, {
-          method: 'POST',
-          credentials: 'omit',
-          redirect: 'error',
-          cache: 'no-store',
-          headers: Object.freeze({
-            'content-type': 'application/json',
-            'x-request-id': id,
-          }),
-          body,
-        })
-      } catch {
-        fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE')
+        let response
+        try {
+          response = await withAbortDeadline(fetchImpl(targetEndpoint, {
+            method: 'POST',
+            credentials: 'omit',
+            redirect: 'error',
+            cache: 'no-store',
+            headers: Object.freeze({
+              'content-type': 'application/json',
+              'x-request-id': id,
+            }),
+            body,
+            signal: controller.signal,
+          }), controller.signal)
+        } catch {
+          fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE')
+        }
+        if (!response || response.status !== 200 || typeof response.json !== 'function') {
+          fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_REJECTED')
+        }
+        let payload
+        try {
+          payload = await withAbortDeadline(response.json(), controller.signal)
+        } catch (error) {
+          if (error === TRANSPORT_TIMEOUT) fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE')
+          fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_RESPONSE_INVALID')
+        }
+        return responseReceipt(payload, { batch, requestId: id })
+      } finally {
+        clearTimeout(deadline)
       }
-      if (!response || response.status !== 200 || typeof response.json !== 'function') {
-        fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_REJECTED')
-      }
-      let payload
-      try {
-        payload = await response.json()
-      } catch {
-        fail('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_RESPONSE_INVALID')
-      }
-      return responseReceipt(payload, { batch, requestId: id })
     },
   })
 }

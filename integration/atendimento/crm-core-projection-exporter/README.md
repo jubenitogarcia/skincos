@@ -34,18 +34,24 @@ exige capacidades já construídas pelo operador:
 
 O runner abre uma única transação `REPEATABLE READ READ ONLY`, atesta a fonte e
 usa paginação por chave `(updated_at, id)`, nunca `OFFSET`. Cada lote contém no
-máximo 20 eventos. O transporte limita o corpo a 64 KiB, envia apenas
-`content-type` e `x-request-id`, omite credenciais e rejeita redirects,
-cookies, `Origin` e `Authorization`. A resposta precisa vincular exatamente o
-lote, o request ID e o release/digest do artefato CRM Core esperado.
+máximo 20 eventos. A consulta converte `updated_at` para UTC com seis dígitos
+de microssegundo, e o cursor privado preserva essa precisão; a data pública do
+evento continua no formato do contrato CRM. O transporte limita o corpo a 64
+KiB, tem deadline padrão de 15 segundos (máximo configurável de 60 segundos),
+envia apenas `content-type` e `x-request-id`, omite credenciais e rejeita
+redirects, cookies, `Origin` e `Authorization`. A resposta precisa vincular
+exatamente o lote, o request ID e o release/digest do artefato CRM Core esperado.
 
 Antes de qualquer entrega, o checkpoint privado recebe o pacote opaco completo
 e a prova detached Ed25519. Se a entrega falhar sem recibo, a próxima execução
 repete esse mesmo pacote antes de abrir uma nova transação. Ela só pode
-continuar a paginação se o novo preflight confirmar o mesmo `capturedAt` e a
-mesma contagem de linhas; caso contrário, falha fechado depois do replay, sem
-substituir o snapshot. O cursor UUID e o pacote pendente nunca aparecem na
-resposta do runner, em logs ou no Git.
+continuar a paginação se o novo preflight confirmar a mesma contagem e o mesmo
+HMAC do conjunto ordenado de pares `(updated_at, id)`. O HMAC não contém a
+origem em claro e torna a retomada independente do novo `transaction_timestamp`;
+caso a entrada do backfill tenha mudado, o runner falha fechado depois do replay,
+sem substituir o checkpoint. Antes até do replay, ele compara o alvo gravado ao
+alvo configurado e recusa um artefato CRM diferente. O cursor UUID e o pacote
+pendente nunca aparecem na resposta do runner, em logs ou no Git.
 
 O exportador falha fechado quando o principal, banco, transação somente-leitura,
 contagem, formato de linha, lote, prova, endpoint, resposta ou limite não

@@ -41,6 +41,10 @@ function timestamp(value, code) {
   return parsed.toISOString()
 }
 
+function cursorTimestamp(value, code) {
+  return timestamp(value, code).replace(/\.(\d{3})Z$/, (_match, milliseconds) => `.${milliseconds}000Z`)
+}
+
 function explicitSyntheticIntent(value) {
   if (value !== ATENDIMENTO_SYNTHETIC_STAGING_PREPARATION_INTENT) {
     fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_INTENT_REQUIRED')
@@ -143,10 +147,11 @@ export function createSyntheticAtendimentoProjectionFixturePool(value) {
           || typeof updatedAt !== 'string'
           || !UUID_PATTERN.test(String(id || ''))
         ) fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
+        const cursorUpdatedAt = cursorTimestamp(updatedAt, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
         return {
           rows: rows.filter((row) => (
-            row.updated_at.localeCompare(updatedAt) > 0
-            || (row.updated_at === updatedAt && row.id.localeCompare(id) > 0)
+            cursorTimestamp(row.updated_at, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID').localeCompare(cursorUpdatedAt) > 0
+            || (cursorTimestamp(row.updated_at, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID') === cursorUpdatedAt && row.id.localeCompare(id) > 0)
           )).slice(0, limit),
         }
       }

@@ -139,6 +139,50 @@ test('fails closed when the receiver response does not bind the batch and reques
   }), /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_RESPONSE_INVALID/)
 })
 
+test('bounds a stalled HTTP connection and aborts the injected request', async () => {
+  const currentBatch = batch()
+  const { signer } = signerFor()
+  const delivery = await signer.signBatch(currentBatch)
+  let signal
+  const transport = createAtendimentoProjectionBackfillHttpTransport({
+    endpoint: `https://crm-core-staging.example.test${ATENDIMENTO_CRM_BACKFILL_HTTP_PATH}`,
+    timeoutMs: 1,
+    fetch: (_url, init) => {
+      signal = init.signal
+      return new Promise(() => {})
+    },
+  })
+
+  await assert.rejects(() => transport.deliver({
+    batch: currentBatch,
+    delivery,
+    requestId: 'crm-atendimento-backfill-000001',
+  }), /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE/)
+  assert.equal(signal?.aborted, true)
+})
+
+test('bounds a stalled receipt body with the same abort deadline', async () => {
+  const currentBatch = batch()
+  const { signer } = signerFor()
+  const delivery = await signer.signBatch(currentBatch)
+  let signal
+  const transport = createAtendimentoProjectionBackfillHttpTransport({
+    endpoint: `https://crm-core-staging.example.test${ATENDIMENTO_CRM_BACKFILL_HTTP_PATH}`,
+    timeoutMs: 1,
+    fetch: async (_url, init) => {
+      signal = init.signal
+      return { status: 200, json: () => new Promise(() => {}) }
+    },
+  })
+
+  await assert.rejects(() => transport.deliver({
+    batch: currentBatch,
+    delivery,
+    requestId: 'crm-atendimento-backfill-000001',
+  }), /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE/)
+  assert.equal(signal?.aborted, true)
+})
+
 test('refuses an arbitrary route before it can invoke fetch', () => {
   assert.throws(() => createAtendimentoProjectionBackfillHttpTransport({
     endpoint: 'https://crm-core-staging.example.test/crm/backfill',

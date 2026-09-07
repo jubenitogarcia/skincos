@@ -7,6 +7,7 @@ import {
   ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL,
+  ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL,
 } from '../src/atendimentoProjectionExporter.mjs'
 import {
@@ -23,12 +24,20 @@ const TARGET = Object.freeze({
   release: 'a'.repeat(40),
   artifactDigest: `sha256:${'b'.repeat(64)}`,
 })
+const OTHER_TARGET = Object.freeze({
+  ...TARGET,
+  release: 'c'.repeat(40),
+})
 const CAPTURED_AT = '2026-09-07T00:00:00.000Z'
 
-function sourceRow(index) {
+function sourceRowAt(index, timestamp) {
   const suffix = index.toString(16).padStart(12, '0')
-  const timestamp = new Date(Date.parse(CAPTURED_AT) + (Math.floor(index / 2) * 1000)).toISOString()
   return Object.freeze({ id: `123e4567-e89b-42d3-a456-${suffix}`, updated_at: timestamp })
+}
+
+function sourceRow(index) {
+  const milliseconds = new Date(Date.parse(CAPTURED_AT) + (Math.floor(index / 2) * 1000)).toISOString()
+  return sourceRowAt(index, milliseconds.replace(/\.(\d{3})Z$/, (_match, value) => `.${value}000Z`))
 }
 
 function compareRows(left, right) {
@@ -57,6 +66,10 @@ function fakePool({
       }] }
       if (sql === ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL) return { rows: [{ captured_at: capturedAt }] }
       if (sql === ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL) return { rows: [{ row_count: rowCount }] }
+      if (sql === ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL) {
+        if (params.length !== 1 || params[0] !== rowCount) throw new Error('unexpected source-input query parameters')
+        return { rows: sourceRows.slice(0, params[0]) }
+      }
       if (sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL) {
         return { rows: sourceRows.slice(0, params[0]) }
       }
@@ -137,7 +150,7 @@ function runner({ pool, checkpointStore, transport, target = TARGET, batchSize =
     hmacKey: HMAC_KEY,
     keyId: 'atendimento-projection-key-v1',
     target,
-    signer: signingFixture(),
+    signer: signingFixture(target),
     transport,
     checkpointStore,
     batchSize,
@@ -175,6 +188,7 @@ test('delivers deterministic keyset pages, stores private checkpoints, and recon
   assert.equal(JSON.stringify(summary).includes(sourceRow(0).id), false)
   assert.equal(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL).length, 1)
   assert.equal(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL).length, 2)
+  assert.equal(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL).length, 1)
   assert.equal(source.calls.some((call) => /\bOFFSET\b/i.test(call.sql)), false)
   assert.deepEqual(source.calls.find((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL).params, [20])
   assert.deepEqual(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL).map((call) => call.params.at(-1)), [20, 5])
@@ -223,7 +237,7 @@ test('retains a pending checkpoint and rolls back the read-only transaction when
   assert.equal(checkpoints.active().progress.deliveredCount, 0)
 })
 
-test('replays the exact private pending packet before paginating a matching synthetic snapshot', async () => {
+test('replays the exact private pending packet and resumes when a new transaction has the same bounded source input', async () => {
   const firstSource = fakePool({ rows: Array.from({ length: 2 }, (_, index) => sourceRow(index)) })
   const checkpoints = checkpointFixture()
   const failedDelivery = transportFixture({ failure: new Error('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE') })
@@ -239,7 +253,10 @@ test('replays the exact private pending packet before paginating a matching synt
   )
   const pending = structuredClone(checkpoints.active().pending)
 
-  const resumedSource = fakePool({ rows: Array.from({ length: 2 }, (_, index) => sourceRow(index)) })
+  const resumedSource = fakePool({
+    rows: Array.from({ length: 2 }, (_, index) => sourceRow(index)),
+    capturedAt: '2026-09-07T00:00:01.000Z',
+  })
   const replayDelivery = transportFixture({ statuses: ['idempotent'] })
   const resumedRunner = runner({
     pool: resumedSource.pool,
@@ -259,7 +276,7 @@ test('replays the exact private pending packet before paginating a matching synt
   assert.equal(checkpoints.active(), null)
 })
 
-test('replays a pending packet before failing a new source transaction with a mismatched snapshot', async () => {
+test('replays a pending packet before failing a new transaction whose bounded source input changed', async () => {
   const firstSource = fakePool({ rows: Array.from({ length: 2 }, (_, index) => sourceRow(index)) })
   const checkpoints = checkpointFixture()
   const failedDelivery = transportFixture({ failure: new Error('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE') })
@@ -273,8 +290,12 @@ test('replays a pending packet before failing a new source transaction with a mi
     /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE/,
   )
 
+  const changedSourceInput = [
+    sourceRow(0),
+    sourceRowAt(1, '2026-09-07T00:00:00.999999Z'),
+  ]
   const changedSnapshotSource = fakePool({
-    rows: Array.from({ length: 2 }, (_, index) => sourceRow(index)),
+    rows: changedSourceInput,
     capturedAt: '2026-09-07T00:00:01.000Z',
   })
   const replayDelivery = transportFixture({ statuses: ['idempotent'] })
@@ -292,6 +313,65 @@ test('replays a pending packet before failing a new source transaction with a mi
   assert.equal(changedSnapshotSource.calls.at(-1).sql, 'ROLLBACK')
   assert.equal(checkpoints.active().pending, null)
   assert.equal(checkpoints.active().progress.deliveredCount, 2)
+})
+
+test('refuses a checkpoint for another CRM target before replaying its pending packet', async () => {
+  const firstSource = fakePool({ rows: Array.from({ length: 2 }, (_, index) => sourceRow(index)) })
+  const checkpoints = checkpointFixture()
+  const failedDelivery = transportFixture({ failure: new Error('ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE') })
+  const firstRunner = runner({
+    pool: firstSource.pool,
+    checkpointStore: checkpoints.store,
+    transport: failedDelivery.transport,
+  })
+  await assert.rejects(
+    () => firstRunner.run({ intent: ATENDIMENTO_CRM_PROJECTION_BACKFILL_RUN_INTENT }),
+    /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_UNAVAILABLE/,
+  )
+
+  const resumedSource = fakePool({ rows: Array.from({ length: 2 }, (_, index) => sourceRow(index)) })
+  const otherTransport = transportFixture()
+  const resumedRunner = runner({
+    pool: resumedSource.pool,
+    checkpointStore: checkpoints.store,
+    transport: otherTransport.transport,
+    target: OTHER_TARGET,
+  })
+  await assert.rejects(
+    () => resumedRunner.run({ intent: ATENDIMENTO_CRM_PROJECTION_BACKFILL_RUN_INTENT }),
+    /ATENDIMENTO_CRM_BACKFILL_RUNNER_CHECKPOINT_TARGET_MISMATCH/,
+  )
+  assert.equal(otherTransport.deliveries().length, 0)
+  assert.equal(resumedSource.connectCount(), 0)
+  assert.ok(checkpoints.active()?.pending)
+})
+
+test('keeps the exact PostgreSQL microsecond cursor for keyset pagination', async () => {
+  const rows = [
+    sourceRowAt(1, '2026-09-07T00:00:00.123001Z'),
+    sourceRowAt(2, '2026-09-07T00:00:00.123456Z'),
+    sourceRowAt(3, '2026-09-07T00:00:00.124000Z'),
+  ]
+  const source = fakePool({ rows })
+  const checkpoints = checkpointFixture()
+  const deliveries = transportFixture({ statuses: ['accepted'] })
+  const currentRunner = runner({
+    pool: source.pool,
+    checkpointStore: checkpoints.store,
+    transport: deliveries.transport,
+    batchSize: 1,
+  })
+  const summary = await currentRunner.run({ intent: ATENDIMENTO_CRM_PROJECTION_BACKFILL_RUN_INTENT })
+  const cursorParameters = source.calls
+    .filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL)
+    .map((call) => call.params[0])
+
+  assert.equal(summary.deliveredCount, 3)
+  assert.equal(deliveries.deliveries().length, 3)
+  assert.deepEqual(cursorParameters, [
+    '2026-09-07T00:00:00.123001Z',
+    '2026-09-07T00:00:00.123456Z',
+  ])
 })
 
 test('fails closed on non-monotonic source pages before the page is signed or delivered', async () => {
