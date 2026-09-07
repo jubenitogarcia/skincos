@@ -1,3 +1,5 @@
+import { authorizeCrmCoreProductionRoute, isCrmCoreStagingEnvironment } from './crm-core-production-receipt.js';
+
 const json = (status, payload, requestId) =>
     new Response(JSON.stringify(payload), {
         status,
@@ -64,10 +66,6 @@ function operationalPayload(env, requestId, ready, dependencies) {
 
 function isPontoRouteOnly(env) {
     return String(env?.PONTO_ROUTE_ONLY || '').trim() === 'true';
-}
-
-function isStagingEnvironment(env) {
-    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging';
 }
 
 function isCrmCoreRoute(pathname) {
@@ -261,13 +259,21 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
             return json(404, { ok: false, error: 'ponto_route_only', requestId }, requestId);
         }
 
-        // CRM Core has no production route or production service binding. Its
-        // independent staging Worker owns the public /crm/* spelling and maps
-        // it exactly once to the canonical private /api/crm/* target. Do not
-        // strip this prefix and do not fall through to Inventory.
+        // CRM Core owns the public /crm/* spelling only in staging, or after
+        // a custody-signed production receipt proves the exact pinned artifact.
+        // Do not strip this prefix and do not fall through to Inventory.
         if (isCrmCoreRoute(url.pathname)) {
-            if (!isStagingEnvironment(env)) {
-                return json(404, { ok: false, error: 'crm_core_staging_only', requestId }, requestId);
+            const productionReceipt = isCrmCoreStagingEnvironment(env)
+                ? null
+                : await authorizeCrmCoreProductionRoute(request, env);
+            if (!isCrmCoreStagingEnvironment(env) && !productionReceipt) {
+                return json(404, {
+                    ok: false,
+                    error: String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'production'
+                        ? 'crm_core_production_not_authorized'
+                        : 'crm_core_staging_only',
+                    requestId,
+                }, requestId);
             }
             if (typeof crmCoreHandler !== 'function') {
                 const unavailable = json(503, { ok: false, error: 'crm_core_unavailable', requestId }, requestId);
@@ -276,7 +282,7 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
             }
             const headers = new Headers(request.headers);
             headers.set('x-request-id', requestId);
-            const response = await crmCoreHandler(new Request(request, { headers }), env, ctx);
+            const response = await crmCoreHandler(new Request(request, { headers }), env, ctx, productionReceipt);
             const responseHeaders = new Headers(response.headers);
             // CRM Core has no legacy cookie/session compatibility surface.
             responseHeaders.delete('set-cookie');

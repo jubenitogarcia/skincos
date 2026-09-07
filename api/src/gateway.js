@@ -2,6 +2,12 @@ import { createGatewayHandler } from './router.js';
 import { csrfErrorFor, resolveCrmActor } from '../../shared/crm-auth/worker.js';
 import { fetchBoundService } from '../../shared/service-adapters/cloudflare-service-binding.js';
 import { createSignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
+import {
+    authorizeCrmCoreProductionRoute,
+    crmCoreVersionOverride,
+    isAuthorizedCrmCoreProductionReceipt,
+    isCrmCoreStagingEnvironment,
+} from './crm-core-production-receipt.js';
 
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
@@ -9,7 +15,7 @@ const isPontoReadinessProbe = (request) => request.method === 'GET' && new URL(r
 const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
-const CRM_CORE_STAGING_TIMEOUT_MS = 3_000;
+const CRM_CORE_TIMEOUT_MS = 3_000;
 const CRM_CORE_REQUEST_HEADER_ALLOWLIST = Object.freeze([
     'accept',
     'content-type',
@@ -97,8 +103,8 @@ function inventoryServiceTimeout(request) {
         : INVENTORY_READ_TIMEOUT_MS;
 }
 
-function isStagingEnvironment(env) {
-    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging';
+function isProductionEnvironment(env) {
+    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'production';
 }
 
 /**
@@ -110,19 +116,29 @@ function isStagingEnvironment(env) {
  * CRM Core verifies it against its pinned Identity public key and replay
  * ledger.
  */
-export function prepareCrmCoreRequest(request) {
+export function prepareCrmCoreRequest(request, productionReceipt = null, env = null) {
     const headers = new Headers();
     for (const name of CRM_CORE_REQUEST_HEADER_ALLOWLIST) {
         const value = request.headers.get(name);
         if (value !== null) headers.set(name, value);
     }
+    if (productionReceipt) {
+        headers.set('cloudflare-workers-version-overrides', crmCoreVersionOverride(productionReceipt, env));
+    }
     return new Request(request, { headers });
 }
 
-export async function forwardCrmCoreToService(request, env) {
-    if (!isStagingEnvironment(env)) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
-    return fetchBoundService(prepareCrmCoreRequest(request), env, 'CRM_CORE', {
-        timeoutMs: CRM_CORE_STAGING_TIMEOUT_MS,
+export async function forwardCrmCoreToService(request, env, ctx, authorizedProductionReceipt = null) {
+    const staging = isCrmCoreStagingEnvironment(env);
+    let productionReceipt = staging ? null : authorizedProductionReceipt;
+    if (!staging && !isAuthorizedCrmCoreProductionReceipt(productionReceipt, env)) {
+        productionReceipt = await authorizeCrmCoreProductionRoute(request, env);
+    }
+    if (!staging && !productionReceipt) {
+        return gatewayError(404, isProductionEnvironment(env) ? 'CRM_CORE_PRODUCTION_NOT_AUTHORIZED' : 'CRM_CORE_STAGING_ONLY');
+    }
+    return fetchBoundService(prepareCrmCoreRequest(request, productionReceipt, env), env, 'CRM_CORE', {
+        timeoutMs: CRM_CORE_TIMEOUT_MS,
     });
 }
 
