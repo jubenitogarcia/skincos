@@ -21,10 +21,15 @@ binding. O Worker Core é o único componente que traduz esse caminho público
 para o alvo canônico privado `/api/crm/*`; não há redirecionamento ou fallback
 para `/inventory/*`.
 
-Antes de encaminhar, o gateway remove `Cookie`, `Authorization`, CSRF, ator e
-envelopes de sessão/rede legados. O único envelope de identidade que pode
+Antes de encaminhar, o gateway cria uma nova lista explícita de somente cinco
+cabeçalhos: `Accept`, `Content-Type`, `Origin`, `x-request-id` e
+`x-identity-delivery`. `Origin` permite a política CORS que pertence ao Core,
+`Content-Type`/`Accept` preservam a semântica HTTP do navegador e
+`x-request-id` preserva a correlação. O único envelope de identidade que pode
 prosseguir é `x-identity-delivery`; o Core continua responsável por verificar
-assinatura, alvo canônico, expiração e replay. Respostas também não encaminham
+assinatura, alvo canônico, expiração e replay. Todo outro cabeçalho — inclusive
+`Cookie`, `Authorization`, CSRF, tokens de serviço, proxy/Cloudflare e futuros
+cabeçalhos de credencial — é descartado. Respostas também não encaminham
 `Set-Cookie`.
 
 Assim, depois de uma publicação de staging explicitamente autorizada, os

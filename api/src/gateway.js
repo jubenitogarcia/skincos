@@ -10,6 +10,13 @@ const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
 const CRM_CORE_STAGING_TIMEOUT_MS = 3_000;
+const CRM_CORE_REQUEST_HEADER_ALLOWLIST = Object.freeze([
+    'accept',
+    'content-type',
+    'origin',
+    'x-request-id',
+    'x-identity-delivery',
+]);
 // Inventory's authenticated routes traverse the service's rate-limiter
 // Durable Object before reaching D1. Keep the normal budget bounded, but give
 // the unified team route a separate budget because its readiness/config read
@@ -95,26 +102,20 @@ function isStagingEnvironment(env) {
 }
 
 /**
- * The independent CRM Core accepts only its own signed delivery envelope.
- * Legacy browser credentials must never cross this service boundary. The
- * `x-identity-delivery` header intentionally survives: CRM Core verifies it
- * against its pinned Identity public key and replay ledger.
+ * This is a fresh allowlist, never a mutation of public request headers.
+ * CRM Core needs only browser representation/CORS metadata, correlation and
+ * its signed Identity delivery envelope. In particular, no legacy session,
+ * service token, proxy, Cloudflare or future credential-shaped header can
+ * cross this boundary. `x-identity-delivery` intentionally survives because
+ * CRM Core verifies it against its pinned Identity public key and replay
+ * ledger.
  */
 export function prepareCrmCoreRequest(request) {
-    const headers = new Headers(request.headers);
-    for (const name of [
-        'authorization',
-        'cookie',
-        'x-csrf-token',
-        'x-skincos-actor',
-        'x-skincos-actor-sig',
-        'x-skincos-local-crm-actor',
-        'x-skincos-local-crm-csrf',
-        'x-skincos-network-context',
-        'x-skincos-network-sig',
-        'x-skincos-network-signature-version',
-        'x-skincos-network-ts',
-    ]) headers.delete(name);
+    const headers = new Headers();
+    for (const name of CRM_CORE_REQUEST_HEADER_ALLOWLIST) {
+        const value = request.headers.get(name);
+        if (value !== null) headers.set(name, value);
+    }
     return new Request(request, { headers });
 }
 
