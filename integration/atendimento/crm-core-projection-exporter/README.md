@@ -1,6 +1,6 @@
 # Exportador de projeções opacas de Atendimento para CRM Core
 
-Este adaptador prepara o primeiro lote de backfill para o CRM independente.
+Este adaptador prepara lotes de backfill para o CRM independente.
 Ele lê exclusivamente `id` e `updated_at` de
 `crm_atendimento.global_client_identities`, em uma transação PostgreSQL
 `REPEATABLE READ READ ONLY`.
@@ -16,18 +16,47 @@ credenciais, dados de venda ou qualquer outra coluna da origem. A chave HMAC
 fica somente na custódia operacional privada; ela nunca é escrita neste
 repositório, em logs ou em recibos Git.
 
-## O que este adaptador ainda não faz
+## Entrega paginada para o Worker isolado
 
-Ele não abre uma conexão por conta própria, não cria usuário PostgreSQL, não
-aplica grant, não grava no CRM Core, não cria rota, e não faz deploy. Um runner
-operacional futuro deve injetar um pool já autenticado com o principal dedicado
-`crm_core_projection_exporter`, limitado a `CONNECT`, `USAGE` no schema
-`crm_atendimento` e `SELECT (id, updated_at)` na tabela indicada.
+`createPaginatedAtendimentoProjectionBackfillRunner(...)` é o runner de
+staging explícito. Ele só aceita o intent
+`ATENDIMENTO_CRM_PROJECTION_BACKFILL_RUN_INTENT`, rejeita alvo `production` e
+exige capacidades já construídas pelo operador:
+
+- pool PostgreSQL autenticado como `crm_core_projection_exporter`, limitado a
+  `CONNECT`, `USAGE` no schema `crm_atendimento` e `SELECT (id, updated_at)`;
+- chave HMAC sob custódia externa para transformar UUIDs em referências opacas;
+- signer Ed25519 injetado, com key ID iniciado por
+  `crm-staging-atendimento-backfill-`;
+- transporte HTTPS injetado para a rota exata
+  `/_internal/crm/backfill/atendimento`;
+- checkpoint privado com operações `read`, `write` e `complete`.
+
+O runner abre uma única transação `REPEATABLE READ READ ONLY`, atesta a fonte e
+usa paginação por chave `(updated_at, id)`, nunca `OFFSET`. Cada lote contém no
+máximo 20 eventos. A consulta converte `updated_at` para UTC com seis dígitos
+de microssegundo, e o cursor privado preserva essa precisão; a data pública do
+evento continua no formato do contrato CRM. O transporte limita o corpo a 64
+KiB, tem deadline padrão de 15 segundos (máximo configurável de 60 segundos),
+envia apenas `content-type` e `x-request-id`, omite credenciais e rejeita
+redirects, cookies, `Origin` e `Authorization`. A resposta precisa vincular
+exatamente o lote, o request ID e o release/digest do artefato CRM Core esperado.
+
+Antes de qualquer entrega, o checkpoint privado recebe o pacote opaco completo
+e a prova detached Ed25519. Se a entrega falhar sem recibo, a próxima execução
+repete esse mesmo pacote antes de abrir uma nova transação. Ela só pode
+continuar a paginação se o novo preflight confirmar a mesma contagem e o mesmo
+HMAC do conjunto ordenado de pares `(updated_at, id)`. O HMAC não contém a
+origem em claro e torna a retomada independente do novo `transaction_timestamp`;
+caso a entrada do backfill tenha mudado, o runner falha fechado depois do replay,
+sem substituir o checkpoint. Antes até do replay, ele compara o alvo gravado ao
+alvo configurado e recusa um artefato CRM diferente. O cursor UUID e o pacote
+pendente nunca aparecem na resposta do runner, em logs ou no Git.
 
 O exportador falha fechado quando o principal, banco, transação somente-leitura,
-contagem, formato de linha ou limite não correspondem ao contrato. A primeira
-carga é propositalmente um snapshot completo e limitado; se o volume superar o
-limite, ele não pagina nem cria um backfill parcial.
+contagem, formato de linha, lote, prova, endpoint, resposta ou limite não
+correspondem ao contrato. O teto da fonte continua sendo 10.000 linhas; se a
+carga exceder isso, ele não cria um backfill parcial.
 
 ## Preflight reutilizável e preparação sintética
 
@@ -35,7 +64,7 @@ limite, ele não pagina nem cria um backfill parcial.
 reutilizável da leitura: dentro de uma transação já aberta como `REPEATABLE
 READ READ ONLY`, ela atesta o principal, captura o instante do snapshot e
 confirma a contagem antes de qualquer seleção de identidade. O teto é sempre
-10.000; não há paginação ou forma de ampliá-lo pelo runner.
+10.000; o runner paginado mantém esse teto e não oferece forma de ampliá-lo.
 
 `prepareSyntheticAtendimentoProjectionStaging(...)` é apenas um ensaio local
 desabilitado por padrão. Ele só continua quando recebe a constante de intenção
@@ -47,12 +76,39 @@ PostgreSQL, pool, array, proxy ou receptor arbitrário é recusado antes de
 `connect()` ou da entrega do recibo. Um alvo de produção é recusado antes de
 ler o pool, a chave HMAC ou o receptor injetados.
 
-O runner não tem CLI, URL, transporte, cliente PostgreSQL, leitura de ambiente,
-arquivo de saída ou integração de rede. Ele aceita unicamente dependências
-injetadas pelo teste e entrega ao receptor em memória um recibo congelado com
-somente `batchId`, `count`, `release` e `digest`; os eventos, UUIDs e a chave
-HMAC nunca saem dele. Portanto, ele não é um backfill, não envia nada ao CRM
-Core e não é um caminho para produção.
+O ensaio sintético anterior continua isolado: ele não compartilha cliente,
+transporte, checkpoint ou configuração com o runner paginado. O novo runner
+também não tem CLI, leitura de ambiente, arquivo de saída, banco, URL ou chave
+embutidos. Uma entrega real de staging requer que o operador injete essas
+capacidades e que o Worker CRM Core tenha o opt-in e a allowlist de digests
+aprovados. Nada neste diretório autoriza produção.
+
+## Ensaio remoto sintético fechado
+
+`createSyntheticAtendimentoProjectionRemoteRehearsal({ target, endpoint })`
+prepara, mas não ativa, um único ensaio remoto de `staging`. A factory gera em
+memória uma chave HMAC de origem e uma chave Ed25519 efêmera, monta um lote
+determinístico de um evento sintético e devolve somente o material público que
+o operador externo precisa revisar:
+
+- um `keyId` iniciado por `crm-staging-atendimento-backfill-` e sua JWK pública;
+- uma allowlist com exatamente um `batchDigest`;
+- identidade do alvo, `batchId`, contagem e `configurationDigest`.
+
+Ela nunca devolve a chave privada, a chave HMAC, o UUID sintético ou os eventos.
+O `batchId` é diferente de `backfill:atendimento:fixture-batch-0001`; portanto
+o ensaio não reaproveita a allowlist de outro exercício. Preparar esse objeto
+não abre conexão nem faz requisição HTTP.
+
+Depois que um operador configurar externamente o opt-in de staging, a chave
+pública e essa allowlist finita, `rehearse(...)` exige a intenção explícita
+`ATENDIMENTO_SYNTHETIC_REMOTE_REHEARSAL_INTENT`, um `fetch` injetado e uma
+função de reconciliação D1. Ele passa pela mesma fonte paginada, assinatura e
+transporte HTTPS do produtor real, exige a primeira resposta `accepted`, repete
+o pacote exato e exige `idempotent`, e só emite o recibo sanitizado após a
+reconciliação confirmar o digest, alvo, cursor e evento persistidos. O adaptador
+não lê ambiente, não possui URL de Worker embutida, não faz deploy e não é um
+mecanismo de ativação de produção.
 
 ## Validação local
 
