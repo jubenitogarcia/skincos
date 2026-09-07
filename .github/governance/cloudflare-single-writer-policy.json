@@ -53,7 +53,7 @@
     {
       "id": "crm-cloudflare-writer",
       "resource": "global:crm-cloudflare-writer",
-      "purpose": "Serializes CRM Pages and the coupled CRM Worker secret/deploy workflows that can mutate the same project or credentials."
+      "purpose": "Serializes the legacy composite Pages surface, including governed Ponto and coupled external secret/deploy workflows that can mutate the same project or credentials. The general CRM Pages publisher is frozen; this group is not authority for CRM Core."
     },
     {
       "id": "ponto-workers-writer",
