@@ -108,6 +108,13 @@ service = "skincos-timekeeping-staging"
 binding = "FINANCE"
 service = "skincos-finance-staging"
 
+# CRM Core is an isolated staging-only service. There is deliberately no
+# production counterpart: the main CRM publisher remains the legacy monorepo
+# surface until its independent production cutover has its own evidence.
+[[env.staging.services]]
+binding = "CRM_CORE"
+service = "skincos-crm-core-staging"
+
 [[env.staging.r2_buckets]]
 binding = "BACKUP_BUCKET"
 bucket_name = "skincos-backups-staging"

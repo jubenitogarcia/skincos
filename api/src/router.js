@@ -66,6 +66,14 @@ function isPontoRouteOnly(env) {
     return String(env?.PONTO_ROUTE_ONLY || '').trim() === 'true';
 }
 
+function isStagingEnvironment(env) {
+    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging';
+}
+
+function isCrmCoreRoute(pathname) {
+    return pathname === '/crm' || pathname.startsWith('/crm/');
+}
+
 function hasTimekeepingBinding(env) {
     return typeof env?.TIMEKEEPING?.fetch === 'function';
 }
@@ -185,7 +193,7 @@ async function pontoReadiness(request, env, ctx, timekeepingHandler, requestId) 
  * selection, request tracing and the human/service access boundary; it must
  * not grow domain persistence or business rules.
  */
-export function createGatewayHandler({ inventoryHandler, timekeepingHandler, financeHandler }) {
+export function createGatewayHandler({ inventoryHandler, timekeepingHandler, financeHandler, crmCoreHandler }) {
     if (typeof inventoryHandler !== 'function') throw new TypeError('inventoryHandler is required');
 
     return async function handleGatewayRequest(request, env, ctx) {
@@ -251,6 +259,30 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
         // this runtime guard is the fail-closed inner boundary.
         if (isPontoRouteOnly(env)) {
             return json(404, { ok: false, error: 'ponto_route_only', requestId }, requestId);
+        }
+
+        // CRM Core has no production route or production service binding. Its
+        // independent staging Worker owns the public /crm/* spelling and maps
+        // it exactly once to the canonical private /api/crm/* target. Do not
+        // strip this prefix and do not fall through to Inventory.
+        if (isCrmCoreRoute(url.pathname)) {
+            if (!isStagingEnvironment(env)) {
+                return json(404, { ok: false, error: 'crm_core_staging_only', requestId }, requestId);
+            }
+            if (typeof crmCoreHandler !== 'function') {
+                const unavailable = json(503, { ok: false, error: 'crm_core_unavailable', requestId }, requestId);
+                setGatewayReleaseHeaders(unavailable.headers, env);
+                return unavailable;
+            }
+            const headers = new Headers(request.headers);
+            headers.set('x-request-id', requestId);
+            const response = await crmCoreHandler(new Request(request, { headers }), env, ctx);
+            const responseHeaders = new Headers(response.headers);
+            // CRM Core has no legacy cookie/session compatibility surface.
+            responseHeaders.delete('set-cookie');
+            responseHeaders.set('x-request-id', requestId);
+            setGatewayReleaseHeaders(responseHeaders, env);
+            return new Response(response.body, { status: response.status, statusText: response.statusText, headers: responseHeaders });
         }
 
         if (url.pathname === '/inventory' || url.pathname.startsWith('/inventory/')) {
