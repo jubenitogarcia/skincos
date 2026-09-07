@@ -11,12 +11,14 @@ publication, release artifact and rollback. CRM is only the consumer: it must
 verify the delivery envelope and atomically reserve the `jti` before business
 handling. Identity must not be copied into the CRM repository.
 
-The source tree currently contains a staging-only Worker preparation at
-`identity/delivery/crm-issuer-staging-worker.js` and
-`identity/wrangler.staging.toml`. The production Worker, durable key-custody
-adapter, persistent CRM caller and production replay readback are not proven by
-the repository alone. The existing Inventory authentication Worker and its
-`IDENTITY_PII_KEY` are a different runtime and do not satisfy this gate.
+The source tree contains a staging Worker and a production-capable candidate at
+`identity/delivery/crm-issuer-production-worker.js` with
+`identity/wrangler.production.toml`. The candidate is disabled, has no route or
+data binding, and is not deployed by CI. A production Worker deployment,
+durable key-custody adapter, persistent CRM caller and production replay
+readback are not proven by the repository alone. The existing Inventory
+authentication Worker and its `IDENTITY_PII_KEY` are a different runtime and do
+not satisfy this gate.
 
 The canonical future Worker name is
 `skincos-identity-crm-delivery-production`; staging remains
