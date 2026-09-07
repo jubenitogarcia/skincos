@@ -29,6 +29,31 @@ contagem, formato de linha ou limite não correspondem ao contrato. A primeira
 carga é propositalmente um snapshot completo e limitado; se o volume superar o
 limite, ele não pagina nem cria um backfill parcial.
 
+## Preflight reutilizável e preparação sintética
+
+`preflightAtendimentoProjectionSource(client, { maxRows })` é a parte
+reutilizável da leitura: dentro de uma transação já aberta como `REPEATABLE
+READ READ ONLY`, ela atesta o principal, captura o instante do snapshot e
+confirma a contagem antes de qualquer seleção de identidade. O teto é sempre
+10.000; não há paginação ou forma de ampliá-lo pelo runner.
+
+`prepareSyntheticAtendimentoProjectionStaging(...)` é apenas um ensaio local
+desabilitado por padrão. Ele só continua quando recebe a constante de intenção
+explícita `ATENDIMENTO_SYNTHETIC_STAGING_PREPARATION_INTENT`, um alvo `staging`,
+um pool criado por `createSyntheticAtendimentoProjectionFixturePool(...)` e um
+receptor criado por `createSyntheticAtendimentoProjectionReceiptReceiver()`.
+As duas factories registram exclusivamente estado em memória; um cliente
+PostgreSQL, pool, array, proxy ou receptor arbitrário é recusado antes de
+`connect()` ou da entrega do recibo. Um alvo de produção é recusado antes de
+ler o pool, a chave HMAC ou o receptor injetados.
+
+O runner não tem CLI, URL, transporte, cliente PostgreSQL, leitura de ambiente,
+arquivo de saída ou integração de rede. Ele aceita unicamente dependências
+injetadas pelo teste e entrega ao receptor em memória um recibo congelado com
+somente `batchId`, `count`, `release` e `digest`; os eventos, UUIDs e a chave
+HMAC nunca saem dele. Portanto, ele não é um backfill, não envia nada ao CRM
+Core e não é um caminho para produção.
+
 ## Validação local
 
 No ambiente Linux do projeto:

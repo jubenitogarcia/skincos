@@ -3,6 +3,7 @@ import { createHash, createHmac } from 'node:crypto'
 export const ATENDIMENTO_CRM_PROJECTION_EXPORTER_VERSION = 'atendimento/crm-core-projection-exporter/v1'
 export const CRM_PROJECTION_BACKFILL_BATCH_VERSION = 'skincos-crm/projection-backfill-batch/v1'
 export const ATENDIMENTO_PROJECTION_SCOPE = 'global-client-identities/v1'
+export const ATENDIMENTO_CRM_PROJECTION_MAX_ROWS = 10_000
 
 export const ATENDIMENTO_PROJECTION_EXPORTER_DATABASE = Object.freeze({
   database: 'skincos_clientes_production',
@@ -33,8 +34,6 @@ const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/
 const RELEASE_PATTERN = /^[0-9a-f]{40}$/
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{3,96}$/
 const OPAQUE_PART_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
-const MAX_ROWS = 10_000
-
 function fail(code) {
   throw new Error(code)
 }
@@ -96,14 +95,14 @@ function keyId(value) {
 }
 
 function maximumRows(value) {
-  const normalized = value === undefined ? MAX_ROWS : Number(value)
-  if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > MAX_ROWS) {
+  const normalized = value === undefined ? ATENDIMENTO_CRM_PROJECTION_MAX_ROWS : Number(value)
+  if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > ATENDIMENTO_CRM_PROJECTION_MAX_ROWS) {
     fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_MAX_ROWS_INVALID')
   }
   return normalized
 }
 
-function targetDescriptor(value) {
+export function assertAtendimentoProjectionExportTarget(value) {
   const target = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
   exactKeys(target, ['environment', 'release', 'artifactDigest'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
   const environment = text(target.environment, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
@@ -152,6 +151,30 @@ function sourceRows(value, expectedCount) {
     identifiers.add(row.id)
   }
   return Object.freeze(rows)
+}
+
+/**
+ * Attests the already-open source transaction before any source identity row
+ * is selected. Callers must start a repeatable-read, read-only transaction
+ * first; the identity query then proves the dedicated source principal and
+ * returns only snapshot metadata needed to bound a later read.
+ */
+export async function preflightAtendimentoProjectionSource(client, { maxRows } = {}) {
+  if (!client || typeof client.query !== 'function') fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_CLIENT_INVALID')
+  const limit = maximumRows(maxRows)
+
+  const identityResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL)
+  const identity = sourceIdentity(identityResult?.rows?.[0])
+
+  const snapshotResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL)
+  const capturedAt = timestamp(snapshotResult?.rows?.[0]?.captured_at, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SNAPSHOT_INVALID')
+
+  const countResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL)
+  const rowCount = Number(countResult?.rows?.[0]?.row_count)
+  if (!Number.isSafeInteger(rowCount) || rowCount < 0) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_COUNT_INVALID')
+  if (rowCount > limit) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_LIMIT_EXCEEDED')
+
+  return Object.freeze({ identity, capturedAt, rowCount })
 }
 
 function eventFromSourceRow(row, { key, capturedAt }) {
@@ -243,7 +266,7 @@ export function assertAtendimentoProjectionBackfillBatch(value) {
     fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   }
   const capturedAt = timestamp(sourceSnapshot.capturedAt, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
-  const target = targetDescriptor(batch.target)
+  const target = assertAtendimentoProjectionExportTarget(batch.target)
   if (!Array.isArray(batch.events) || batch.events.length !== sourceSnapshot.rowCount || batch.events.length !== integrity.eventCount) {
     fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   }
@@ -286,7 +309,7 @@ export async function exportAtendimentoClientProjectionBatch({
   if (!pool || typeof pool.connect !== 'function') fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_POOL_REQUIRED')
   const key = hmacKey(suppliedHmacKey)
   const keyIdentifier = keyId(suppliedKeyId)
-  const targetValue = targetDescriptor(target)
+  const targetValue = assertAtendimentoProjectionExportTarget(target)
   const limit = maximumRows(maxRows)
   let client
   let transactionOpen = false
@@ -297,16 +320,7 @@ export async function exportAtendimentoClientProjectionBatch({
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
     transactionOpen = true
 
-    const identityResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL)
-    sourceIdentity(identityResult?.rows?.[0])
-
-    const snapshotResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL)
-    const capturedAt = timestamp(snapshotResult?.rows?.[0]?.captured_at, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SNAPSHOT_INVALID')
-
-    const countResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL)
-    const rowCount = Number(countResult?.rows?.[0]?.row_count)
-    if (!Number.isSafeInteger(rowCount) || rowCount < 0) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_COUNT_INVALID')
-    if (rowCount > limit) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_LIMIT_EXCEEDED')
+    const { capturedAt, rowCount } = await preflightAtendimentoProjectionSource(client, { maxRows: limit })
 
     const rowsResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL, [rowCount])
     const rows = sourceRows(rowsResult?.rows, rowCount)
