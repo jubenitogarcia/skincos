@@ -14,7 +14,7 @@ on:
       preview_run_id: { description: "Required for staging", required: false, type: string }
       staging_run_id: { description: "Required for production", required: false, type: string }
       release_scope:
-        description: General CRM release or the governed Ponto composite release
+        description: Legacy general CRM release (frozen) or the governed Ponto composite release
         required: true
         default: general
         type: choice
@@ -43,7 +43,22 @@ permissions:
   contents: read
 
 jobs:
+  legacy-general-publisher-freeze:
+    name: Freeze legacy general CRM Pages publisher
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject the retired general CRM release scope before coordination
+        env:
+          RELEASE_SCOPE: ${{ inputs.release_scope }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_SCOPE" != "ponto" ]]; then
+            echo "::error title=Legacy CRM publisher frozen::The general CRM Pages publisher is retired and cannot acquire a lease, read deployment credentials, or mutate Cloudflare. The governed Ponto scope remains available."
+            exit 1
+          fi
+          echo "Governed Ponto scope accepted; the legacy general CRM publisher remains frozen."
   coordination:
+    needs: legacy-general-publisher-freeze
     permissions:
       actions: read
       checks: write
