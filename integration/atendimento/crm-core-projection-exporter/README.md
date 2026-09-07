@@ -77,6 +77,33 @@ embutidos. Uma entrega real de staging requer que o operador injete essas
 capacidades e que o Worker CRM Core tenha o opt-in e a allowlist de digests
 aprovados. Nada neste diretório autoriza produção.
 
+## Ensaio remoto sintético fechado
+
+`createSyntheticAtendimentoProjectionRemoteRehearsal({ target, endpoint })`
+prepara, mas não ativa, um único ensaio remoto de `staging`. A factory gera em
+memória uma chave HMAC de origem e uma chave Ed25519 efêmera, monta um lote
+determinístico de um evento sintético e devolve somente o material público que
+o operador externo precisa revisar:
+
+- um `keyId` iniciado por `crm-staging-atendimento-backfill-` e sua JWK pública;
+- uma allowlist com exatamente um `batchDigest`;
+- identidade do alvo, `batchId`, contagem e `configurationDigest`.
+
+Ela nunca devolve a chave privada, a chave HMAC, o UUID sintético ou os eventos.
+O `batchId` é diferente de `backfill:atendimento:fixture-batch-0001`; portanto
+o ensaio não reaproveita a allowlist de outro exercício. Preparar esse objeto
+não abre conexão nem faz requisição HTTP.
+
+Depois que um operador configurar externamente o opt-in de staging, a chave
+pública e essa allowlist finita, `rehearse(...)` exige a intenção explícita
+`ATENDIMENTO_SYNTHETIC_REMOTE_REHEARSAL_INTENT`, um `fetch` injetado e uma
+função de reconciliação D1. Ele passa pela mesma fonte paginada, assinatura e
+transporte HTTPS do produtor real, exige a primeira resposta `accepted`, repete
+o pacote exato e exige `idempotent`, e só emite o recibo sanitizado após a
+reconciliação confirmar o digest, alvo, cursor e evento persistidos. O adaptador
+não lê ambiente, não possui URL de Worker embutida, não faz deploy e não é um
+mecanismo de ativação de produção.
+
 ## Validação local
 
 No ambiente Linux do projeto:

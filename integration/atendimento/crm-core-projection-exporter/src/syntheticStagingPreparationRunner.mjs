@@ -1,7 +1,9 @@
 import {
   ATENDIMENTO_CRM_PROJECTION_MAX_ROWS,
   ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL,
+  ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL,
+  ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL,
   assertAtendimentoProjectionExportTarget,
@@ -125,6 +127,28 @@ export function createSyntheticAtendimentoProjectionFixturePool(value) {
           fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
         }
         return { rows }
+      }
+      if (sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL) {
+        const [limit] = params
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > rows.length) {
+          fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
+        }
+        return { rows: rows.slice(0, limit) }
+      }
+      if (sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL) {
+        const [updatedAt, id, limit] = params
+        if (
+          !Number.isSafeInteger(limit)
+          || limit < 1
+          || typeof updatedAt !== 'string'
+          || !UUID_PATTERN.test(String(id || ''))
+        ) fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
+        return {
+          rows: rows.filter((row) => (
+            row.updated_at.localeCompare(updatedAt) > 0
+            || (row.updated_at === updatedAt && row.id.localeCompare(id) > 0)
+          )).slice(0, limit),
+        }
       }
       fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
     },
