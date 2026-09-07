@@ -838,7 +838,56 @@ test('CRM Core never becomes a production route even if a binding is present', a
     CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
   }, {});
   assert.equal(response.status, 404);
-  assert.equal((await response.json()).error, 'crm_core_staging_only');
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(calls, 0);
+});
+
+test('CRM Core production routing requires an exact receipt-bound opt-in', async () => {
+  let received = null;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health?cutover=probe', {
+    headers: {
+      accept: 'application/json',
+      authorization: 'must-not-cross',
+      cookie: 'must-not-cross',
+      'x-request-id': 'crm-production-gate-1',
+      'x-identity-delivery': 'identity-crm-delivery/v1.synthetic-envelope',
+    },
+  }), {
+    ENVIRONMENT: 'production',
+    CRM_CORE_PRODUCTION_ENABLED: 'true',
+    CRM_CORE_PRODUCTION_RELEASE_SHA: 'a'.repeat(40),
+    CRM_CORE_PRODUCTION_ARTIFACT_DIGEST: `sha256:${'b'.repeat(64)}`,
+    CRM_CORE_PRODUCTION_GATE_ID: 'crm-production-cutover-20260907',
+    CRM_CORE: {
+      fetch: async (request) => {
+        received = request;
+        return new Response(JSON.stringify({ ok: true, unit: 'crm-core' }), {
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+      },
+    },
+  }, {});
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).unit, 'crm-core');
+  assert.equal(new URL(received.url).pathname, '/crm/health');
+  assert.equal(new URL(received.url).search, '?cutover=probe');
+  assert.equal(received.headers.get('accept'), 'application/json');
+  assert.equal(received.headers.get('x-request-id'), 'crm-production-gate-1');
+  assert.equal(received.headers.get('x-identity-delivery'), 'identity-crm-delivery/v1.synthetic-envelope');
+  assert.equal(received.headers.get('authorization'), null);
+  assert.equal(received.headers.get('cookie'), null);
+});
+
+test('CRM Core rejects a production flag without receipt identity', async () => {
+  let calls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), {
+    ENVIRONMENT: 'production',
+    CRM_CORE_PRODUCTION_ENABLED: 'true',
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }, {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
   assert.equal(calls, 0);
 });
 
@@ -864,6 +913,6 @@ test('CRM Core fails closed without its staging binding and never aliases legacy
 test('general API Worker binds CRM Core only in the staging environment', async () => {
   const config = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
   const productionConfig = config.slice(0, config.indexOf('[env.staging]'));
-  assert.doesNotMatch(productionConfig, /CRM_CORE/);
+  assert.doesNotMatch(productionConfig, /binding\s*=\s*"CRM_CORE"/);
   assert.match(config, /\[\[env\.staging\.services\]\]\r?\nbinding = "CRM_CORE"\r?\nservice = "skincos-crm-core-staging"/);
 });

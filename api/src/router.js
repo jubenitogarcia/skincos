@@ -70,6 +70,17 @@ function isStagingEnvironment(env) {
     return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging';
 }
 
+function isCrmCoreProductionEnabled(env) {
+    if (String(env?.ENVIRONMENT || '').trim().toLowerCase() !== 'production') return false;
+    if (String(env?.CRM_CORE_PRODUCTION_ENABLED || '').trim() !== 'true') return false;
+    const release = String(env?.CRM_CORE_PRODUCTION_RELEASE_SHA || '').trim().toLowerCase();
+    const digest = String(env?.CRM_CORE_PRODUCTION_ARTIFACT_DIGEST || '').trim().toLowerCase();
+    const gate = String(env?.CRM_CORE_PRODUCTION_GATE_ID || '').trim();
+    return /^[0-9a-f]{40}$/.test(release)
+        && /^sha256:[0-9a-f]{64}$/.test(digest)
+        && /^[A-Za-z0-9._:-]{8,200}$/.test(gate);
+}
+
 function isCrmCoreRoute(pathname) {
     return pathname === '/crm' || pathname.startsWith('/crm/');
 }
@@ -261,13 +272,18 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
             return json(404, { ok: false, error: 'ponto_route_only', requestId }, requestId);
         }
 
-        // CRM Core has no production route or production service binding. Its
-        // independent staging Worker owns the public /crm/* spelling and maps
-        // it exactly once to the canonical private /api/crm/* target. Do not
-        // strip this prefix and do not fall through to Inventory.
+        // CRM Core owns the public /crm/* spelling only in staging, or after
+        // an explicit production gate binds the exact receipt-bound artifact.
+        // Do not strip this prefix and do not fall through to Inventory.
         if (isCrmCoreRoute(url.pathname)) {
-            if (!isStagingEnvironment(env)) {
-                return json(404, { ok: false, error: 'crm_core_staging_only', requestId }, requestId);
+            if (!isStagingEnvironment(env) && !isCrmCoreProductionEnabled(env)) {
+                return json(404, {
+                    ok: false,
+                    error: String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'production'
+                        ? 'crm_core_production_not_authorized'
+                        : 'crm_core_staging_only',
+                    requestId,
+                }, requestId);
             }
             if (typeof crmCoreHandler !== 'function') {
                 const unavailable = json(503, { ok: false, error: 'crm_core_unavailable', requestId }, requestId);
