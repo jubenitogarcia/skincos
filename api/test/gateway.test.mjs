@@ -716,13 +716,19 @@ test('Finance is reached through an explicit service binding with a short-lived 
   assert.equal((await verifySignedDomainContext(received, 'finance-secret', 'finance')).actor.username, 'pilot');
 });
 
-test('CRM Core keeps its public staging mount and removes every legacy session credential', async () => {
+test('CRM Core keeps its public staging mount with a narrow request-header allowlist', async () => {
   resetBoundServiceResilienceForTest();
   let received = null;
   const response = await handleGatewayRequest(new Request('https://api-staging.skincos.com.br/crm/ready?smoke=1', {
     headers: {
+      accept: 'application/json',
       authorization: 'Bearer legacy-session',
       cookie: 'crm_session=legacy',
+      'content-type': 'application/json',
+      'cf-connecting-ip': '203.0.113.20',
+      forwarded: 'for=203.0.113.10;proto=https',
+      origin: 'https://crm-staging.skincos.com.br',
+      'proxy-authorization': 'Basic synthetic-proxy-credential',
       'x-csrf-token': 'legacy-csrf',
       'x-identity-delivery': 'identity-crm-delivery/v1.synthetic-envelope',
       'x-request-id': 'crm-core-gateway-1',
@@ -733,6 +739,10 @@ test('CRM Core keeps its public staging mount and removes every legacy session c
       'x-skincos-network-sig': 'legacy-signature',
       'x-skincos-network-signature-version': '2',
       'x-skincos-network-ts': '1788288000000',
+      'x-skincos-service-token': 'synthetic-service-token',
+      'x-unlisted-credential': 'must-not-cross',
+      'x-forwarded-for': '203.0.113.10',
+      'x-forwarded-host': 'legacy-proxy.invalid',
     },
   }), {
     APP_VERSION: 'a'.repeat(40),
@@ -755,6 +765,9 @@ test('CRM Core keeps its public staging mount and removes every legacy session c
   assert.equal((await response.json()).reason, 'CRM_STAGING_READY');
   assert.equal(new URL(received.url).pathname, '/crm/ready');
   assert.equal(new URL(received.url).search, '?smoke=1');
+  assert.equal(received.headers.get('accept'), 'application/json');
+  assert.equal(received.headers.get('content-type'), 'application/json');
+  assert.equal(received.headers.get('origin'), 'https://crm-staging.skincos.com.br');
   assert.equal(received.headers.get('x-request-id'), 'crm-core-gateway-1');
   assert.equal(received.headers.get('x-identity-delivery'), 'identity-crm-delivery/v1.synthetic-envelope');
   for (const name of [
@@ -768,11 +781,53 @@ test('CRM Core keeps its public staging mount and removes every legacy session c
     'x-skincos-network-sig',
     'x-skincos-network-signature-version',
     'x-skincos-network-ts',
+    'x-skincos-service-token',
+    'x-unlisted-credential',
+    'proxy-authorization',
+    'forwarded',
+    'x-forwarded-for',
+    'x-forwarded-host',
+    'cf-connecting-ip',
   ]) assert.equal(received.headers.get(name), null, name);
   assert.equal(response.headers.get('set-cookie'), null);
   assert.equal(response.headers.get('x-skincos-gateway-release-sha'), 'a'.repeat(40));
   assert.equal(response.headers.get('x-skincos-gateway-environment'), 'staging');
   assert.equal(response.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
+  resetBoundServiceResilienceForTest();
+});
+
+test('CRM Core keeps its Core-owned CORS origin while omitting unneeded preflight negotiation headers', async () => {
+  resetBoundServiceResilienceForTest();
+  let received = null;
+  const response = await handleGatewayRequest(new Request('https://api-staging.skincos.com.br/crm', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://crm-staging.skincos.com.br',
+      'access-control-request-headers': 'content-type,x-identity-delivery',
+      'access-control-request-method': 'POST',
+      'x-skincos-service-token': 'synthetic-service-token',
+      'x-forwarded-for': '203.0.113.10',
+    },
+  }), {
+    ENVIRONMENT: 'staging',
+    CRM_CORE: {
+      fetch: async (request) => {
+        received = request;
+        return new Response(null, { status: 204 });
+      },
+    },
+  }, {});
+
+  assert.equal(response.status, 204);
+  assert.equal(received.method, 'OPTIONS');
+  // Core's preflight contract derives its static method/header response from
+  // Origin alone; these browser negotiation headers are not part of its
+  // service-binding contract and must not broaden the forwarding boundary.
+  assert.equal(received.headers.get('origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(received.headers.get('access-control-request-headers'), null);
+  assert.equal(received.headers.get('access-control-request-method'), null);
+  assert.equal(received.headers.get('x-skincos-service-token'), null);
+  assert.equal(received.headers.get('x-forwarded-for'), null);
   resetBoundServiceResilienceForTest();
 });
 
