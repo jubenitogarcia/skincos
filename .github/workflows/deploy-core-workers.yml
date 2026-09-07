@@ -916,7 +916,7 @@ jobs:
               if (!passed) {
                 throw new Error(`Inventory health did not attest the required InventoryLegacyJobsEntrypoint release in two consecutive samples within the propagation window; attempts=${attempt}; last=${lastObservation}`);
               }
-              NODE
+          NODE
             fi
             [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Core API deploy requires an explicit Timekeeping version UUID'; exit 1; }
             if [[ "$BOOTSTRAP_FINANCE_CONTEXT" == "true" ]]; then
