@@ -19,6 +19,8 @@ const FINANCE_WRITE_TIMEOUT_MS = 5_000;
 const CRM_CORE_TIMEOUT_MS = 3_000;
 const CRM_IDENTITY_DELIVERY_HEADER_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const CRM_IDENTITY_DELIVERY_HEADER_MAX_LENGTH = 16_384;
+const CRM_SESSION_STAGING_ORIGIN = 'https://crm-staging.skincos.com.br';
+const CRM_SESSION_CORS_REQUEST_HEADERS = new Set(['accept', 'cache-control']);
 const CRM_CORE_REQUEST_HEADER_ALLOWLIST = Object.freeze([
     'accept',
     'content-type',
@@ -35,6 +37,67 @@ const INVENTORY_TEAM_TIMEOUT_MS = 8_000;
 const CLOUDFLARE_VERSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NETWORK_CONTEXT_RE = /^v1:[A-Za-z0-9_-]{43}$/;
 const B64URL_SHA256_RE = /^[A-Za-z0-9_-]{43}$/;
+
+function crmSessionCorsHeaders(request, env) {
+    if (!isCrmCoreStagingEnvironment(env)) return null;
+    if (String(request.headers.get('origin') || '').trim() !== CRM_SESSION_STAGING_ORIGIN) return null;
+    return {
+        'access-control-allow-origin': CRM_SESSION_STAGING_ORIGIN,
+        'access-control-allow-credentials': 'true',
+        vary: 'Origin',
+    };
+}
+
+function crmSessionOriginAllowed(request) {
+    const origin = String(request.headers.get('origin') || '').trim();
+    return !origin || origin === CRM_SESSION_STAGING_ORIGIN;
+}
+
+function withCrmSessionCors(response, request, env) {
+    const cors = crmSessionCorsHeaders(request, env);
+    if (!cors) return response;
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(cors)) {
+        if (name !== 'vary') headers.set(name, value);
+    }
+    const vary = headers.get('vary');
+    if (!vary) headers.set('vary', 'Origin');
+    else if (!vary.split(',').some((value) => value.trim().toLowerCase() === 'origin')) {
+        headers.set('vary', `${vary}, Origin`);
+    }
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function crmSessionError(request, env, status, error) {
+    return withCrmSessionCors(gatewayError(status, error), request, env);
+}
+
+function crmSessionCorsPreflightAllowed(request) {
+    const url = new URL(request.url);
+    if (request.method !== 'OPTIONS' || url.pathname !== '/crm/session' || url.search) return false;
+    if (String(request.headers.get('access-control-request-method') || '').trim().toUpperCase() !== 'GET') return false;
+    const requestedHeaders = String(request.headers.get('access-control-request-headers') || '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+    return requestedHeaders.every((name) => CRM_SESSION_CORS_REQUEST_HEADERS.has(name));
+}
+
+function crmSessionPreflight(request, env) {
+    const cors = crmSessionCorsHeaders(request, env);
+    if (!cors) return gatewayError(403, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
+    if (!crmSessionCorsPreflightAllowed(request)) return crmSessionError(request, env, 400, 'CRM_SESSION_CORS_PREFLIGHT_INVALID');
+    return new Response(null, {
+        status: 204,
+        headers: {
+            ...cors,
+            'access-control-allow-methods': 'GET',
+            'access-control-allow-headers': 'accept, cache-control',
+            'access-control-max-age': '300',
+            'cache-control': 'no-store',
+        },
+    });
+}
 
 function timekeepingServiceName(env) {
     return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging'
@@ -224,27 +287,29 @@ export function createApiGateway({
             ? async (request, env, ctx, productionReceipt = null) => {
                 if (!isCrmSessionPath(request)) return crmCoreHandler(request, env, ctx, productionReceipt);
                 if (!isCrmCoreStagingEnvironment(env)) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
+                if (!crmSessionOriginAllowed(request)) return gatewayError(403, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
+                if (request.method === 'OPTIONS') return crmSessionPreflight(request, env);
                 if (!isCrmSessionRequest(request)) {
                     return request.method === 'GET'
-                        ? gatewayError(400, 'CRM_SESSION_QUERY_NOT_ALLOWED')
-                        : gatewayError(405, 'CRM_SESSION_METHOD_NOT_ALLOWED');
+                        ? crmSessionError(request, env, 400, 'CRM_SESSION_QUERY_NOT_ALLOWED')
+                        : crmSessionError(request, env, 405, 'CRM_SESSION_METHOD_NOT_ALLOWED');
                 }
                 let auth;
                 try {
                     auth = await resolveActor(request, env);
                 } catch {
-                    return gatewayError(503, 'IDENTITY_UNAVAILABLE');
+                    return crmSessionError(request, env, 503, 'IDENTITY_UNAVAILABLE');
                 }
-                if (auth?.unavailable) return gatewayError(503, 'IDENTITY_UNAVAILABLE');
-                if (!auth?.actor) return gatewayError(401, 'CRM_IDENTITY_REQUIRED');
+                if (auth?.unavailable) return crmSessionError(request, env, 503, 'IDENTITY_UNAVAILABLE');
+                if (!auth?.actor) return crmSessionError(request, env, 401, 'CRM_IDENTITY_REQUIRED');
                 try {
                     const identityDelivery = await issueCrmSessionIdentityDelivery(request, env, auth.actor);
-                    return crmCoreHandler(request, env, ctx, { identityDelivery });
+                    return withCrmSessionCors(await crmCoreHandler(request, env, ctx, { identityDelivery }), request, env);
                 } catch (error) {
                     if (error instanceof TypeError && error.message === 'CRM_IDENTITY_SUBJECT_REQUIRED') {
-                        return gatewayError(403, 'CRM_IDENTITY_SUBJECT_REQUIRED');
+                        return crmSessionError(request, env, 403, 'CRM_IDENTITY_SUBJECT_REQUIRED');
                     }
-                    return gatewayError(503, 'CRM_IDENTITY_DELIVERY_UNAVAILABLE');
+                    return crmSessionError(request, env, 503, 'CRM_IDENTITY_DELIVERY_UNAVAILABLE');
                 }
             }
             : undefined,

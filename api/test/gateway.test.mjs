@@ -1011,6 +1011,67 @@ test('CRM session rejects query strings and non-GET requests before Identity or 
   assert.equal(resolverCalls, 0);
 });
 
+test('CRM session has an exact staging CORS preflight and never resolves Identity for it', async () => {
+  let resolverCalls = 0;
+  let coreCalls = 0;
+  const sessionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => { resolverCalls += 1; return { actor: null, csrf: null }; },
+    crmCoreHandler: async () => { coreCalls += 1; return new Response('must-not-run'); },
+  });
+  const preflight = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://crm-staging.skincos.com.br',
+      'access-control-request-method': 'GET',
+      'access-control-request-headers': 'cache-control',
+    },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET');
+  assert.equal(preflight.headers.get('access-control-allow-headers'), 'accept, cache-control');
+  assert.equal(resolverCalls, 0);
+  assert.equal(coreCalls, 0);
+
+  const deniedHeader = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://crm-staging.skincos.com.br',
+      'access-control-request-method': 'GET',
+      'access-control-request-headers': 'authorization',
+    },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(deniedHeader.status, 400);
+  assert.equal((await deniedHeader.json()).error, 'CRM_SESSION_CORS_PREFLIGHT_INVALID');
+  assert.equal(deniedHeader.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(resolverCalls, 0);
+  assert.equal(coreCalls, 0);
+});
+
+test('CRM session supplies credentialed CORS only to its exact staging origin', async () => {
+  let resolverCalls = 0;
+  const sessionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => { resolverCalls += 1; return { actor: null, csrf: null }; },
+  });
+  const allowed = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    headers: { origin: 'https://crm-staging.skincos.com.br' },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(allowed.status, 401);
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(allowed.headers.get('access-control-allow-credentials'), 'true');
+
+  const denied = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    headers: { origin: 'https://untrusted.example' },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
+  assert.equal(denied.headers.get('access-control-allow-origin'), null);
+  assert.equal(resolverCalls, 1);
+});
+
 test('CRM session remains staging-only even when a production Core route is receipt-authorized', async () => {
   let resolverCalls = 0;
   let issuerCalls = 0;

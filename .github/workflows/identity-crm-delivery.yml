@@ -8,7 +8,10 @@ on:
       - 'api/src/crm-identity-issuer-client.js'
       - 'api/test/gateway.test.mjs'
       - 'api/wrangler.toml'
+      - 'scripts/crm-identity-staging-session-smoke.mjs'
+      - 'scripts/tests/crm-identity-staging-session-smoke.test.mjs'
       - 'shared/identity-contract/**'
+      - '.github/governance/cloudflare-single-writer-policy.json'
       - '.github/workflows/identity-crm-delivery.yml'
   push:
     branches: [main]
@@ -18,20 +21,52 @@ on:
       - 'api/src/crm-identity-issuer-client.js'
       - 'api/test/gateway.test.mjs'
       - 'api/wrangler.toml'
+      - 'scripts/crm-identity-staging-session-smoke.mjs'
+      - 'scripts/tests/crm-identity-staging-session-smoke.test.mjs'
       - 'shared/identity-contract/**'
+      - '.github/governance/cloudflare-single-writer-policy.json'
       - '.github/workflows/identity-crm-delivery.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Read-only test, disabled HMAC bootstrap, staging activation, synthetic session smoke, or staging disable"
+        required: true
+        default: test
+        type: choice
+        options: [test, bootstrap, activate, session-smoke, disable]
+      release_sha:
+        description: "Exact current main SHA for every non-test operation"
+        required: false
+        type: string
+      confirmation:
+        description: "Exact operation confirmation; never a secret"
+        required: false
+        type: string
+      bootstrap_run_id:
+        description: "Successful bootstrap run for the same SHA; required only for activate"
+        required: false
+        type: string
+      crm_core_release_sha:
+        description: "Exact already-live CRM Core staging release; required for activate and session-smoke"
+        required: false
+        type: string
+      crm_core_artifact_digest:
+        description: "Exact already-live CRM Core staging sha256 digest; required for activate and session-smoke"
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
 concurrency:
-  group: identity-crm-delivery-${{ github.ref }}
-  cancel-in-progress: true
+  group: identity-crm-delivery-${{ github.event_name == 'workflow_dispatch' && inputs.operation || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.operation == 'test' }}
     name: Test the pinned Identity issuer and staging caller
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -55,4 +90,637 @@ jobs:
           } > "$npmrc"
           NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity ci --ignore-scripts --no-audit --fund=false
           NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity test
+          npm --prefix api ci --ignore-scripts --no-audit --fund=false
           npm --prefix api test
+          node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
+
+  staging:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation != 'test' }}
+    name: Controlled CRM Identity staging ${{ inputs.operation }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: staging
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      OPERATION: ${{ inputs.operation }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      BOOTSTRAP_RUN_ID: ${{ inputs.bootstrap_run_id }}
+      CRM_CORE_RELEASE_SHA: ${{ inputs.crm_core_release_sha }}
+      CRM_CORE_ARTIFACT_DIGEST: ${{ inputs.crm_core_artifact_digest }}
+      WORKER_LEASE_PROOF: ${{ runner.temp }}/crm-identity-workers-lease.json
+      D1_LEASE_PROOF: ${{ runner.temp }}/crm-identity-smoke-d1-lease.json
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.12.0'
+
+      - name: Pin the restricted staging operation to current protected main
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in
+            bootstrap) expected_confirmation='bootstrap-crm-identity-staging' ;;
+            activate) expected_confirmation='activate-crm-identity-staging' ;;
+            session-smoke) expected_confirmation='smoke-crm-identity-staging' ;;
+            disable) expected_confirmation='disable-crm-identity-staging' ;;
+            *) echo 'Unsupported controlled operation'; exit 1 ;;
+          esac
+          [[ "$CONFIRMATION" == "$expected_confirmation" ]] || { echo 'Explicit non-secret operation confirmation is invalid'; exit 1; }
+          [[ "$GITHUB_REF" == 'refs/heads/main' ]] || { echo 'Controlled CRM Identity staging operations run only from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == '1' ]] || { echo 'Reruns are refused after a potentially mutating operation'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$GITHUB_SHA" == "$RELEASE_SHA" && "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Dispatch source differs from release_sha'; exit 1; }
+          git fetch --no-tags --force origin main:refs/remotes/origin/main
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$RELEASE_SHA" ]] || { echo 'main advanced; dispatch the current source again'; exit 1; }
+          for file in identity/wrangler.staging.toml identity/delivery/crm-issuer-staging-worker.js api/wrangler.toml api/src/crm-identity-issuer-client.js scripts/crm-identity-staging-session-smoke.mjs; do
+            git cat-file -e "$RELEASE_SHA:$file" || { echo "Missing required source: $file"; exit 1; }
+          done
+
+      - name: Test the exact staging source before any external operation
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          npmrc="$RUNNER_TEMP/skincos-identity-npmrc"
+          trap 'rm -f "$npmrc"' EXIT
+          umask 077
+          {
+            printf '%s\n' '@jubenitogarcia:registry=https://npm.pkg.github.com'
+            printf '%s\n' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}'
+            printf '%s\n' 'always-auth=true'
+          } > "$npmrc"
+          NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity ci --ignore-scripts --no-audit --fund=false
+          NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity test
+          npm --prefix api ci --ignore-scripts --no-audit --fund=false
+          npm --prefix api test
+          node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
+          npx --yes wrangler@4.112.0 deploy --dry-run --config identity/wrangler.staging.toml --env staging --outdir "$RUNNER_TEMP/identity-crm-delivery-dry-run" >/dev/null
+          npx --yes wrangler@4.112.0 deploy --dry-run --config api/wrangler.toml --env staging --outdir "$RUNNER_TEMP/api-crm-session-dry-run" >/dev/null
+
+      - name: Attest the externally published CRM Core before activation or synthetic session smoke
+        if: ${{ inputs.operation == 'activate' || inputs.operation == 'session-smoke' }}
+        run: |
+          set -euo pipefail
+          [[ "$CRM_CORE_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'crm_core_release_sha must be a full SHA'; exit 1; }
+          [[ "$CRM_CORE_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'crm_core_artifact_digest must be a SHA-256 digest'; exit 1; }
+          CRM_CORE_RELEASE_SHA="$CRM_CORE_RELEASE_SHA" CRM_CORE_ARTIFACT_DIGEST="$CRM_CORE_ARTIFACT_DIGEST" node --input-type=module <<'NODE'
+          const response = await fetch('https://api-staging.skincos.com.br/crm/ready', {
+            headers: { accept: 'application/json', 'cache-control': 'no-store' },
+            redirect: 'manual', signal: AbortSignal.timeout(15_000),
+          });
+          if (response.headers.has('set-cookie')) throw new Error('CRM Core ready readback unexpectedly returned a cookie');
+          const payload = await response.json().catch(() => null);
+          const release = String(payload?.release || payload?.version || '');
+          const digest = String(payload?.artifactDigest || payload?.artifact_digest || '');
+          if (
+            response.status !== 200 || payload?.ok !== true || payload?.environment !== 'staging'
+            || payload?.reason !== 'CRM_STAGING_READY' || release !== process.env.CRM_CORE_RELEASE_SHA
+            || digest !== process.env.CRM_CORE_ARTIFACT_DIGEST
+          ) throw new Error('CRM Core staging source/digest/readiness attestation is not current');
+          process.stdout.write('CRM Core staging source and artifact are current.\n');
+          NODE
+
+      - name: Acquire canonical Core and Identity Worker custody lease
+        id: worker_lease
+        if: ${{ inputs.operation == 'bootstrap' || inputs.operation == 'activate' || inputs.operation == 'disable' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          inputs_json: '{"target":"staging","surface":"identity-crm-delivery"}'
+
+      - name: Check custody before reading bootstrap secret names
+        if: ${{ inputs.operation == 'bootstrap' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+
+      - name: Refuse partial caller HMAC custody and attest existing signer custody
+        id: bootstrap_preflight
+        if: ${{ inputs.operation == 'bootstrap' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do [[ -n "${!name:-}" ]] || { echo "Missing staging custody: $name"; exit 1; }; done
+          api_names="$RUNNER_TEMP/crm-identity-api-secret-names.json"
+          issuer_names="$RUNNER_TEMP/crm-identity-issuer-secret-names.json"
+          trap 'rm -f "$api_names" "$issuer_names"' EXIT
+          npx --yes wrangler@4.112.0 secret list --config api/wrangler.toml --env staging > "$api_names"
+          npx --yes wrangler@4.112.0 secret list --config identity/wrangler.staging.toml --env staging > "$issuer_names"
+          node - "$api_names" "$issuer_names" <<'NODE'
+          const fs = require('node:fs');
+          const names = (file) => new Set(JSON.parse(fs.readFileSync(file, 'utf8')).map((entry) => String(entry?.name || entry || '')));
+          const api = names(process.argv[2]);
+          const issuer = names(process.argv[3]);
+          for (const required of ['IDENTITY_CRM_DELIVERY_KID', 'IDENTITY_CRM_DELIVERY_PRIVATE_JWK', 'IDENTITY_CRM_DELIVERY_PUBLIC_JWK', 'IDENTITY_CRM_DELIVERY_REQUEST_HMAC']) {
+            if (!issuer.has(required)) throw new Error(`existing staging issuer custody is incomplete: ${required}`);
+          }
+          const apiPresent = api.has('CRM_IDENTITY_ISSUER_CALLER_HMAC');
+          const issuerPresent = issuer.has('IDENTITY_CRM_DELIVERY_CALLER_HMAC');
+          if (apiPresent !== issuerPresent) throw new Error('caller HMAC custody is partial; refusing to generate, rotate, or overwrite either side');
+          process.stdout.write(`state=${apiPresent ? 'already-provisioned' : 'missing'}\n`);
+          NODE
+          node - "$api_names" "$issuer_names" <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs');
+          const names = (file) => new Set(JSON.parse(fs.readFileSync(file, 'utf8')).map((entry) => String(entry?.name || entry || '')));
+          const api = names(process.argv[2]); const issuer = names(process.argv[3]);
+          process.stdout.write(`state=${api.has('CRM_IDENTITY_ISSUER_CALLER_HMAC') ? 'already-provisioned' : 'missing'}\n`);
+          NODE
+
+      - name: Provision one generated HMAC into both disabled staging runtimes
+        id: bootstrap_provision
+        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_preflight.outputs.state == 'missing' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SKINCOS_GLOBAL_COORDINATOR_URL SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET; do [[ -n "${!name:-}" ]] || { echo "Missing protected staging custody: $name"; exit 1; }; done
+          revalidate_lease() {
+            git fetch --no-tags --force origin main:refs/remotes/origin/main >/dev/null
+            observed="$(git rev-parse refs/remotes/origin/main)"
+            [[ "$observed" == "$RELEASE_SHA" ]] || { echo 'main advanced before a caller HMAC mutation'; return 1; }
+            node scripts/codex-global-coordination-workflow.mjs check \
+              --proof-file "$WORKER_LEASE_PROOF" \
+              --resource global:ponto-workers-writer \
+              --module core \
+              --source "$observed" \
+              --candidate-source "$RELEASE_SHA" \
+              --result-file "$RUNNER_TEMP/crm-identity-worker-custody-check.json" >/dev/null
+            rm -f "$RUNNER_TEMP/crm-identity-worker-custody-check.json"
+          }
+          caller_hmac="$(node --input-type=module -e \"import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(48).toString('base64url'));\")"
+          [[ "$caller_hmac" =~ ^[A-Za-z0-9_-]{64,}$ ]] || { echo 'Internal caller HMAC generation failed'; exit 1; }
+          issuer_written=false
+          api_written=false
+          cleanup_partial() {
+            status=$?
+            trap - EXIT
+            unset caller_hmac
+            if [[ "$status" != 0 && "$issuer_written" == true && "$api_written" != true ]]; then
+              set +e
+              if revalidate_lease; then
+                npx --yes wrangler@4.112.0 secret delete IDENTITY_CRM_DELIVERY_CALLER_HMAC --config identity/wrangler.staging.toml --env staging >/dev/null
+              fi
+              set -e
+            fi
+            exit "$status"
+          }
+          trap cleanup_partial EXIT
+          revalidate_lease
+          printf '%s' "$caller_hmac" | npx --yes wrangler@4.112.0 secret put IDENTITY_CRM_DELIVERY_CALLER_HMAC --config identity/wrangler.staging.toml --env staging >/dev/null
+          issuer_written=true
+          revalidate_lease
+          printf '%s' "$caller_hmac" | npx --yes wrangler@4.112.0 secret put CRM_IDENTITY_ISSUER_CALLER_HMAC --config api/wrangler.toml --env staging >/dev/null
+          api_written=true
+          unset caller_hmac
+          trap - EXIT
+          echo 'state=provisioned' >> "$GITHUB_OUTPUT"
+
+      - name: Read back caller HMAC names without reading values
+        id: bootstrap_readback
+        if: ${{ inputs.operation == 'bootstrap' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api_names="$RUNNER_TEMP/crm-identity-api-secret-readback.json"
+          issuer_names="$RUNNER_TEMP/crm-identity-issuer-secret-readback.json"
+          trap 'rm -f "$api_names" "$issuer_names"' EXIT
+          npx --yes wrangler@4.112.0 secret list --config api/wrangler.toml --env staging > "$api_names"
+          npx --yes wrangler@4.112.0 secret list --config identity/wrangler.staging.toml --env staging > "$issuer_names"
+          node - "$api_names" "$issuer_names" <<'NODE'
+          const fs = require('node:fs');
+          const names = (file) => new Set(JSON.parse(fs.readFileSync(file, 'utf8')).map((entry) => String(entry?.name || entry || '')));
+          const api = names(process.argv[2]); const issuer = names(process.argv[3]);
+          if (!api.has('CRM_IDENTITY_ISSUER_CALLER_HMAC') || !issuer.has('IDENTITY_CRM_DELIVERY_CALLER_HMAC')) {
+            throw new Error('caller HMAC name readback is incomplete');
+          }
+          NODE
+          echo 'state=both-present' >> "$GITHUB_OUTPUT"
+
+      - name: Write sanitised disabled bootstrap evidence
+        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_readback.outputs.state == 'both-present' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/crm-identity-bootstrap"
+          RELEASE_SHA="$RELEASE_SHA" BOOTSTRAP_STATE="${{ steps.bootstrap_provision.outputs.state || steps.bootstrap_preflight.outputs.state }}" node - "$RUNNER_TEMP/crm-identity-bootstrap/evidence.json" <<'NODE'
+          const fs = require('node:fs');
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            operation: 'bootstrap',
+            environment: 'staging',
+            sourceSha: process.env.RELEASE_SHA,
+            state: process.env.BOOTSTRAP_STATE || 'already-provisioned',
+            callerId: 'crm-api-staging-v1',
+            apiSecretName: 'CRM_IDENTITY_ISSUER_CALLER_HMAC',
+            issuerSecretName: 'IDENTITY_CRM_DELIVERY_CALLER_HMAC',
+            callerEnabled: false,
+            secretValuesIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload sanitised disabled bootstrap evidence
+        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_readback.outputs.state == 'both-present' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-identity-caller-bootstrap-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/crm-identity-bootstrap/evidence.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Verify bootstrap evidence and both caller HMAC names before activation
+        if: ${{ inputs.operation == 'activate' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$BOOTSTRAP_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'activate requires a numeric successful bootstrap_run_id'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOOTSTRAP_RUN_ID" > "$RUNNER_TEMP/crm-identity-bootstrap-run.json"
+          node - "$RUNNER_TEMP/crm-identity-bootstrap-run.json" <<'NODE'
+          const fs = require('node:fs'); const run = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (
+            run.status !== 'completed' || run.conclusion !== 'success' || run.event !== 'workflow_dispatch'
+            || run.head_branch !== 'main' || run.head_sha !== process.env.RELEASE_SHA || run.run_attempt !== 1
+            || run.path !== '.github/workflows/identity-crm-delivery.yml'
+          ) {
+            throw new Error('bootstrap run is not a successful first-attempt main dispatch');
+          }
+          NODE
+          mkdir -p "$RUNNER_TEMP/crm-identity-bootstrap-evidence"
+          gh run download "$BOOTSTRAP_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "crm-identity-caller-bootstrap-$RELEASE_SHA" --dir "$RUNNER_TEMP/crm-identity-bootstrap-evidence"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/crm-identity-bootstrap-evidence/evidence.json" <<'NODE'
+          const fs = require('node:fs'); const evidence = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (evidence?.schemaVersion !== 1 || evidence.operation !== 'bootstrap' || evidence.environment !== 'staging' || evidence.sourceSha !== process.env.RELEASE_SHA || evidence.callerEnabled !== false || evidence.secretValuesIncluded !== false) {
+            throw new Error('bootstrap evidence does not bind the current disabled staging source');
+          }
+          NODE
+          api_names="$RUNNER_TEMP/crm-identity-api-activation-names.json"
+          issuer_names="$RUNNER_TEMP/crm-identity-issuer-activation-names.json"
+          trap 'rm -f "$api_names" "$issuer_names" "$RUNNER_TEMP/crm-identity-bootstrap-run.json"' EXIT
+          npx --yes wrangler@4.112.0 secret list --config api/wrangler.toml --env staging > "$api_names"
+          npx --yes wrangler@4.112.0 secret list --config identity/wrangler.staging.toml --env staging > "$issuer_names"
+          node - "$api_names" "$issuer_names" <<'NODE'
+          const fs = require('node:fs'); const names = (file) => new Set(JSON.parse(fs.readFileSync(file, 'utf8')).map((entry) => String(entry?.name || entry || '')));
+          if (!names(process.argv[2]).has('CRM_IDENTITY_ISSUER_CALLER_HMAC') || !names(process.argv[3]).has('IDENTITY_CRM_DELIVERY_CALLER_HMAC')) throw new Error('caller HMAC custody disappeared after bootstrap');
+          NODE
+
+      - name: Capture exact active staging Worker versions for activation rollback
+        id: activation_checkpoint
+        if: ${{ inputs.operation == 'activate' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deployments status --json --config identity/wrangler.staging.toml --env staging > "$RUNNER_TEMP/crm-identity-issuer-incumbent.json"
+          npx --yes wrangler@4.112.0 deployments status --json --config api/wrangler.toml --env staging > "$RUNNER_TEMP/crm-identity-api-incumbent.json"
+          node - "$RUNNER_TEMP/crm-identity-issuer-incumbent.json" "$RUNNER_TEMP/crm-identity-api-incumbent.json" <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs');
+          const active = (file) => {
+            const payload = JSON.parse(fs.readFileSync(file, 'utf8')); const versions = payload?.versions || [];
+            if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100) throw new Error('staging Worker lacks one exact incumbent');
+            const id = String(versions[0]?.version_id || ''); if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('staging incumbent version is invalid');
+            return id;
+          };
+          process.stdout.write(`issuer_incumbent=${active(process.argv[2])}\napi_incumbent=${active(process.argv[3])}\n`);
+          NODE
+
+      - name: Check custody before enabling the isolated Identity issuer
+        if: ${{ inputs.operation == 'activate' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Enable the isolated staging Identity issuer only
+        id: activate_issuer
+        if: ${{ inputs.operation == 'activate' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deploy --config identity/wrangler.staging.toml --env staging --keep-vars \
+            --var 'IDENTITY_CRM_DELIVERY_ENABLED:true' \
+            --var 'IDENTITY_CRM_DELIVERY_ENVIRONMENT:staging' \
+            --var 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED:true' \
+            --var 'IDENTITY_CRM_DELIVERY_CALLER_ID:crm-api-staging-v1' >/dev/null
+          npx --yes wrangler@4.112.0 deployments status --json --config identity/wrangler.staging.toml --env staging > "$RUNNER_TEMP/crm-identity-issuer-active.json"
+          node - "$RUNNER_TEMP/crm-identity-issuer-active.json" <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs'); const versions = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.versions || [];
+          const id = String(versions?.[0]?.version_id || ''); if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || !/^[0-9a-f-]{36}$/i.test(id)) throw new Error('enabled issuer has no exact active version');
+          process.stdout.write(`active=${id}\n`);
+          NODE
+
+      - name: Check custody before enabling the API caller
+        if: ${{ inputs.operation == 'activate' && steps.activate_issuer.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Enable the staging API caller only after the issuer is active
+        id: activate_api
+        if: ${{ inputs.operation == 'activate' && steps.activate_issuer.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deploy --config api/wrangler.toml --env staging --keep-vars \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var 'ENVIRONMENT:staging' \
+            --var 'CRM_IDENTITY_ISSUER_CALLER_ENABLED:true' \
+            --var 'CRM_IDENTITY_ISSUER_CALLER_ID:crm-api-staging-v1' >/dev/null
+          npx --yes wrangler@4.112.0 deployments status --json --config api/wrangler.toml --env staging > "$RUNNER_TEMP/crm-identity-api-active.json"
+          node - "$RUNNER_TEMP/crm-identity-api-active.json" <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs'); const versions = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.versions || [];
+          const id = String(versions?.[0]?.version_id || ''); if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || !/^[0-9a-f-]{36}$/i.test(id)) throw new Error('enabled API has no exact active version');
+          process.stdout.write(`active=${id}\n`);
+          NODE
+
+      - name: Prove the activated public session route rejects anonymous callers without emitting a cookie
+        if: ${{ inputs.operation == 'activate' && steps.activate_api.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const response = await fetch('https://api-staging.skincos.com.br/crm/session', {
+            headers: { accept: 'application/json', 'cache-control': 'no-store' }, redirect: 'manual', signal: AbortSignal.timeout(15_000),
+          });
+          if (response.status !== 401 || response.headers.has('set-cookie')) throw new Error('activated CRM session anonymous boundary is invalid');
+          const payload = await response.json().catch(() => null);
+          if (payload?.ok !== false || payload?.error !== 'CRM_IDENTITY_REQUIRED') throw new Error('activated CRM session anonymous response is invalid');
+          process.stdout.write('Activated session route rejects anonymous callers without a cookie.\n');
+          NODE
+
+      - name: Check custody before rollback of a failed API activation
+        if: ${{ failure() && inputs.operation == 'activate' && steps.activate_api.outputs.active != '' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Restore the exact API incumbent only if this activation still owns traffic
+        if: ${{ failure() && inputs.operation == 'activate' && steps.activate_api.outputs.active != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ACTIVE: ${{ steps.activate_api.outputs.active }}
+          INCUMBENT: ${{ steps.activation_checkpoint.outputs.api_incumbent }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deployments status --json --config api/wrangler.toml --env staging > "$RUNNER_TEMP/crm-identity-api-rollback-status.json"
+          ACTIVE="$ACTIVE" INCUMBENT="$INCUMBENT" node - "$RUNNER_TEMP/crm-identity-api-rollback-status.json" <<'NODE'
+          const fs = require('node:fs'); const versions = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.versions || [];
+          const current = String(versions?.[0]?.version_id || '').toLowerCase();
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100) throw new Error('API rollback ownership is ambiguous');
+          if (current === process.env.INCUMBENT.toLowerCase()) process.exit(0);
+          if (current !== process.env.ACTIVE.toLowerCase()) throw new Error('API rollback ownership conflict');
+          NODE
+          current="$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p?.versions?.[0]?.version_id||''))" "$RUNNER_TEMP/crm-identity-api-rollback-status.json")"
+          if [[ "$current" != "${INCUMBENT}" ]]; then npx --yes wrangler@4.112.0 rollback "$INCUMBENT" --yes --config api/wrangler.toml --env staging >/dev/null; fi
+
+      - name: Check custody before rollback of a failed issuer activation
+        if: ${{ failure() && inputs.operation == 'activate' && steps.activate_issuer.outputs.active != '' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Restore the exact issuer incumbent only if this activation still owns traffic
+        if: ${{ failure() && inputs.operation == 'activate' && steps.activate_issuer.outputs.active != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ACTIVE: ${{ steps.activate_issuer.outputs.active }}
+          INCUMBENT: ${{ steps.activation_checkpoint.outputs.issuer_incumbent }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deployments status --json --config identity/wrangler.staging.toml --env staging > "$RUNNER_TEMP/crm-identity-issuer-rollback-status.json"
+          ACTIVE="$ACTIVE" INCUMBENT="$INCUMBENT" node - "$RUNNER_TEMP/crm-identity-issuer-rollback-status.json" <<'NODE'
+          const fs = require('node:fs'); const versions = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.versions || [];
+          const current = String(versions?.[0]?.version_id || '').toLowerCase();
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100) throw new Error('issuer rollback ownership is ambiguous');
+          if (current === process.env.INCUMBENT.toLowerCase()) process.exit(0);
+          if (current !== process.env.ACTIVE.toLowerCase()) throw new Error('issuer rollback ownership conflict');
+          NODE
+          current="$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p?.versions?.[0]?.version_id||''))" "$RUNNER_TEMP/crm-identity-issuer-rollback-status.json")"
+          if [[ "$current" != "${INCUMBENT}" ]]; then npx --yes wrangler@4.112.0 rollback "$INCUMBENT" --yes --config identity/wrangler.staging.toml --env staging >/dev/null; fi
+
+      - name: Check custody before explicitly disabling the API caller
+        if: ${{ inputs.operation == 'disable' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Disable only the staging API caller while retaining its HMAC for recovery
+        if: ${{ inputs.operation == 'disable' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deploy --config api/wrangler.toml --env staging --keep-vars \
+            --var "APP_VERSION:$RELEASE_SHA" --var 'ENVIRONMENT:staging' \
+            --var 'CRM_IDENTITY_ISSUER_CALLER_ENABLED:false' --var 'CRM_IDENTITY_ISSUER_CALLER_ID:crm-api-staging-v1' >/dev/null
+      - name: Check custody before explicitly disabling the Identity issuer caller
+        if: ${{ inputs.operation == 'disable' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Disable only the staging Identity issuer caller while retaining its HMAC for recovery
+        if: ${{ inputs.operation == 'disable' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deploy --config identity/wrangler.staging.toml --env staging --keep-vars \
+            --var 'IDENTITY_CRM_DELIVERY_ENABLED:false' \
+            --var 'IDENTITY_CRM_DELIVERY_ENVIRONMENT:staging' \
+            --var 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED:false' \
+            --var 'IDENTITY_CRM_DELIVERY_CALLER_ID:crm-api-staging-v1' >/dev/null
+
+      - name: Acquire staging D1 custody for one synthetic session proof
+        id: d1_lease
+        if: ${{ inputs.operation == 'session-smoke' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/crm-identity-smoke-d1-lease.json
+          inputs_json: '{"target":"staging","surface":"crm-identity-session-smoke"}'
+      - name: Check D1 custody before creating synthetic Identity fixtures
+        if: ${{ inputs.operation == 'session-smoke' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-smoke-d1-lease.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Generate runner-private synthetic Identity fixtures
+        id: synthetic_fixture
+        if: ${{ inputs.operation == 'session-smoke' }}
+        run: |
+          set -euo pipefail
+          node inventory/scripts/insumosStagingRbacFixtures.mjs --action provision --run-id "$GITHUB_RUN_ID" --fixtures "$RUNNER_TEMP/crm-identity-smoke-fixtures.json" --sql "$RUNNER_TEMP/crm-identity-smoke-provision.sql" >/dev/null
+          echo 'created=true' >> "$GITHUB_OUTPUT"
+      - name: Provision only this run's synthetic staging Identity fixture
+        if: ${{ inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'Staging D1 custody is unavailable'; exit 1; }
+          npx --yes wrangler@4.112.0 d1 execute skincos-db-staging --config inventory/wrangler.toml --env staging --remote --file "$RUNNER_TEMP/crm-identity-smoke-provision.sql" >/dev/null
+      - name: Check D1 custody before the synthetic authenticated session proof
+        if: ${{ inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-smoke-d1-lease.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Prove a real synthetic login reaches the CRM session without forwarding its cookie
+        if: ${{ inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' }}
+        env:
+          CRM_IDENTITY_SMOKE_FIXTURES: ${{ runner.temp }}/crm-identity-smoke-fixtures.json
+          CRM_IDENTITY_SMOKE_REPORT: ${{ runner.temp }}/crm-identity-smoke-report.json
+          CRM_IDENTITY_SMOKE_API_ORIGIN: https://api-staging.skincos.com.br
+        run: node scripts/crm-identity-staging-session-smoke.mjs
+      - name: Check D1 custody before synthetic fixture teardown
+        id: synthetic_teardown_lease
+        if: ${{ always() && inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-smoke-d1-lease.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Tear down only this run's synthetic staging Identity fixture
+        id: synthetic_teardown
+        if: ${{ always() && inputs.operation == 'session-smoke' && steps.synthetic_teardown_lease.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          fixtures="$RUNNER_TEMP/crm-identity-smoke-fixtures.json"
+          [[ -f "$fixtures" ]] || exit 0
+          node inventory/scripts/insumosStagingRbacFixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$fixtures" --sql "$RUNNER_TEMP/crm-identity-smoke-teardown.sql" >/dev/null
+          npx --yes wrangler@4.112.0 d1 execute skincos-db-staging --config inventory/wrangler.toml --env staging --remote --file "$RUNNER_TEMP/crm-identity-smoke-teardown.sql" >/dev/null
+          rm -f "$fixtures" "$RUNNER_TEMP/crm-identity-smoke-provision.sql" "$RUNNER_TEMP/crm-identity-smoke-teardown.sql"
+      - name: Upload only the sanitised synthetic session proof
+        if: ${{ always() && inputs.operation == 'session-smoke' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-identity-session-smoke-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/crm-identity-smoke-report.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Release canonical Core and Identity Worker custody lease
+        if: ${{ always() && steps.worker_lease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+      - name: Release staging D1 custody lease
+        if: ${{ always() && steps.d1_lease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-smoke-d1-lease.json

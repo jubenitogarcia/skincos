@@ -42,6 +42,17 @@ responsável pela assinatura, alvo canônico, expiração e proteção contra re
 Não há cookie, perfil, nome de usuário, e-mail ou envelope fornecido pelo
 navegador nesse tráfego.
 
+O único navegador autorizado para essa capacidade de staging é
+`https://crm-staging.skincos.com.br`. O gateway responde CORS com credenciais
+somente para essa origem e inclui as falhas de sessão nessa mesma política, para
+que o Console possa distinguir uma sessão ausente de uma falha de rede. O
+preflight é limitado a `GET` e aos cabeçalhos `Accept` e `Cache-Control`; ele
+não resolve Identity, não emite envelope e não chama o Core. Qualquer outra
+origem, método ou cabeçalho é recusado sem ampliar a superfície CORS. Quando
+um pedido de navegador traz uma origem diferente, ele também é recusado antes
+de consultar Identity ou o Core; pedidos internos sem `Origin` preservam a
+capacidade de smoke sintético autenticado por serviço.
+
 Assim, depois de uma publicação de staging explicitamente autorizada, os
 smokes sem identidade são:
 
@@ -112,3 +123,27 @@ owner correto: o monorepo Identity/gateway. Ele permanece propositalmente
 desligado até a publicação coordenada dos três artefatos e a provisão de seus
 segredos internos. Mesmo depois do smoke de sessão, isto não ativa UI de
 negócio, backfill, leitura de domínio, escrita ou cutover de produção.
+
+O workflow canônico `.github/workflows/identity-crm-delivery.yml` torna essa
+prova repetível sem adicionar autoridade de produção. Ele aceita apenas um SHA
+que já seja `main` e separa as operações em quatro etapas deliberadas:
+
+- `bootstrap` gera uma única chave HMAC interna somente quando os dois nomes de
+  segredo ainda não existem, grava-a nos dois Workers de staging sob a custódia
+  global existente e deixa ambos os callers desativados;
+- `activate` exige o SHA e o digest do Core que já estejam visíveis no readback
+  externo, captura as versões incumbentes, habilita primeiro o emissor e depois
+  o gateway, e restaura apenas uma versão que ainda esteja sob sua posse caso a
+  ativação falhe;
+- `session-smoke` cria uma identidade estritamente sintética no D1 de staging,
+  comprova login e `GET /crm/session` sem cookie ou PII no relatório, e remove
+  a fixture no mesmo run mesmo se o smoke falhar;
+- `disable` desativa primeiro o caller do gateway e depois o emissor, sem
+  apagar a chave necessária para uma recuperação controlada.
+
+Cada mutação revalida o lease `global:ponto-workers-writer` ou
+`global:staging-d1` imediatamente antes de ocorrer. A automação está pronta
+como código, mas não é uma autorização para executá-la: enquanto o Core de
+staging estiver em reconciliação concorrente, nenhum bootstrap, ativação ou
+smoke autenticado deve ser despachado. Não há operação, segredo ou alvo de
+produção nesse fluxo.
