@@ -78,7 +78,7 @@ test('exports a repeatable-read, opaque batch without serializing a source UUID 
 
   const sourceRead = fixture.calls.find((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL)
   assert.deepEqual(sourceRead.params, [1])
-  assert.match(sourceRead.sql, /SELECT id::text AS id, updated_at/)
+  assert.match(sourceRead.sql, /SELECT id::text AS id,\s+to_char\(updated_at AT TIME ZONE 'UTC'/)
   assert.doesNotMatch(sourceRead.sql, /canonical_name|email|phone|member|contact/i)
 })
 
