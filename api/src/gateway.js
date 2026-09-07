@@ -9,6 +9,7 @@ const isPontoReadinessProbe = (request) => request.method === 'GET' && new URL(r
 const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
+const CRM_CORE_STAGING_TIMEOUT_MS = 3_000;
 // Inventory's authenticated routes traverse the service's rate-limiter
 // Durable Object before reaching D1. Keep the normal budget bounded, but give
 // the unified team route a separate budget because its readiness/config read
@@ -89,6 +90,41 @@ function inventoryServiceTimeout(request) {
         : INVENTORY_READ_TIMEOUT_MS;
 }
 
+function isStagingEnvironment(env) {
+    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging';
+}
+
+/**
+ * The independent CRM Core accepts only its own signed delivery envelope.
+ * Legacy browser credentials must never cross this service boundary. The
+ * `x-identity-delivery` header intentionally survives: CRM Core verifies it
+ * against its pinned Identity public key and replay ledger.
+ */
+export function prepareCrmCoreRequest(request) {
+    const headers = new Headers(request.headers);
+    for (const name of [
+        'authorization',
+        'cookie',
+        'x-csrf-token',
+        'x-skincos-actor',
+        'x-skincos-actor-sig',
+        'x-skincos-local-crm-actor',
+        'x-skincos-local-crm-csrf',
+        'x-skincos-network-context',
+        'x-skincos-network-sig',
+        'x-skincos-network-signature-version',
+        'x-skincos-network-ts',
+    ]) headers.delete(name);
+    return new Request(request, { headers });
+}
+
+export async function forwardCrmCoreToService(request, env) {
+    if (!isStagingEnvironment(env)) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
+    return fetchBoundService(prepareCrmCoreRequest(request), env, 'CRM_CORE', {
+        timeoutMs: CRM_CORE_STAGING_TIMEOUT_MS,
+    });
+}
+
 export async function forwardFinanceProbe(request, env) {
     // This route is read-only and is itself evaluated by the external monitor's
     // latency budget. Keep the service-binding deadline above that budget so a
@@ -116,7 +152,13 @@ export async function forwardFinanceToService(request, env, ctx, auth) {
  * CSRF, correlation and the signed service hand-off. Finance owns every
  * domain decision (including scope, availability, maintenance and throttling).
  */
-export function createApiGateway({ inventoryHandler, timekeepingHandler, financeDomainHandler = forwardFinanceToService, resolveActor = resolveCrmActor } = {}) {
+export function createApiGateway({
+    inventoryHandler,
+    timekeepingHandler,
+    financeDomainHandler = forwardFinanceToService,
+    crmCoreHandler = forwardCrmCoreToService,
+    resolveActor = resolveCrmActor,
+} = {}) {
     if (typeof inventoryHandler !== 'function') throw new TypeError('inventoryHandler is required');
     return createGatewayHandler({
         inventoryHandler,
@@ -142,6 +184,7 @@ export function createApiGateway({ inventoryHandler, timekeepingHandler, finance
             if (csrfError) return csrfError;
             return financeDomainHandler(request, env, ctx, auth);
         },
+        crmCoreHandler: typeof crmCoreHandler === 'function' ? crmCoreHandler : undefined,
     });
 }
 
@@ -157,4 +200,5 @@ export const handleGatewayRequest = createApiGateway({
         passThroughErrorStatuses: isPontoReadinessProbe(request) ? [503] : [],
     }),
     financeDomainHandler: forwardFinanceToService,
+    crmCoreHandler: forwardCrmCoreToService,
 });
