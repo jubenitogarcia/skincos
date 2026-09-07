@@ -22,16 +22,25 @@ binding. O Worker Core é o único componente que traduz esse caminho público
 para o alvo canônico privado `/api/crm/*`; não há redirecionamento ou fallback
 para `/inventory/*`.
 
-Antes de encaminhar, o gateway cria uma nova lista explícita de somente cinco
-cabeçalhos: `Accept`, `Content-Type`, `Origin`, `x-request-id` e
-`x-identity-delivery`. `Origin` permite a política CORS que pertence ao Core,
-`Content-Type`/`Accept` preservam a semântica HTTP do navegador e
-`x-request-id` preserva a correlação. O único envelope de identidade que pode
-prosseguir é `x-identity-delivery`; o Core continua responsável por verificar
-assinatura, alvo canônico, expiração e replay. Todo outro cabeçalho — inclusive
-`Cookie`, `Authorization`, CSRF, tokens de serviço, proxy/Cloudflare e futuros
-cabeçalhos de credencial — é descartado. Respostas também não encaminham
-`Set-Cookie`.
+Antes de encaminhar, o gateway cria uma nova lista explícita de somente quatro
+cabeçalhos públicos: `Accept`, `Content-Type`, `Origin` e `x-request-id`.
+`Origin` permite a política CORS que pertence ao Core, `Content-Type`/`Accept`
+preservam a semântica HTTP do navegador e `x-request-id` preserva a correlação.
+Um `x-identity-delivery` recebido do navegador nunca prossegue. Todo outro
+cabeçalho — inclusive `Cookie`, `Authorization`, CSRF, tokens de serviço,
+proxy/Cloudflare e futuros cabeçalhos de credencial — também é descartado.
+Respostas não encaminham `Set-Cookie`.
+
+`GET /crm/session` é a única capacidade de sessão adicionada a esse mount. O
+gateway central resolve a sessão Identity ainda dentro do seu limite privado,
+extrai somente `identitySubject` opaco, `role` e `scopes`, e pede ao emissor
+Identity de staging um envelope novo, via service binding e HMAC exclusivo do
+caller `crm-api-staging-v1`. O envelope emitido é então o único valor interno
+adicionado como `x-identity-delivery` para o Core. Ele é vinculado ao alvo
+exato `GET /api/crm/session`, sem query e sem corpo; o Core continua
+responsável pela assinatura, alvo canônico, expiração e proteção contra replay.
+Não há cookie, perfil, nome de usuário, e-mail ou envelope fornecido pelo
+navegador nesse tráfego.
 
 Assim, depois de uma publicação de staging explicitamente autorizada, os
 smokes sem identidade são:
@@ -44,6 +53,12 @@ GET https://api-staging.skincos.com.br/crm/ready
 Eles devem refletir o artefato e o D1 dedicados do CRM Core. A rota não ativa
 módulos, leituras de domínio ou escritas: o Core mantém esses caminhos fechados
 até que seus contratos e gates próprios estejam completos.
+
+Quando os três artefatos de staging estiverem no SHA liberado (gateway, emissor
+Identity e Core), a prova adicional é `GET /crm/session`: ela deve responder
+somente a projeção verificada `{ ok, identity, requestId }`, sem PII e sem
+cookie. Um caller ausente, uma sessão sem subject opaco, query, método diferente
+de `GET`, binding indisponível ou assinatura inválida devem falhar fechados.
 
 ## Readback da publicação de staging (2026-09-07)
 
@@ -74,15 +89,26 @@ gates/credenciais Cloudflare já custodidos pelo ambiente. Nenhum segredo novo
 do CRM Core é necessário para o service binding, mas a mudança não deve ser
 publicada fora desse fluxo.
 
+O caller persistente acrescenta dois segredos de staging com o mesmo valor
+interno gerado uma única vez: `CRM_IDENTITY_ISSUER_CALLER_HMAC` no gateway e
+`IDENTITY_CRM_DELIVERY_CALLER_HMAC` no emissor. Eles pertencem ao runtime
+Cloudflare, nunca ao Git, ao navegador ou ao Core. O HMAC de smoke já existente
+(`IDENTITY_CRM_DELIVERY_REQUEST_HMAC`) não é girado nem substituído. Ambos os
+manifestos mantêm o caller desligado por padrão; uma ativação exige deploy de
+staging no SHA exato, custódia confirmada nos dois Workers e readback da sessão
+autenticada e negada. Não existe flag, binding ou rota de produção para essa
+capacidade.
+
 Para próximas publicações, registrar a versão ativa de `skincos-api-staging` e
 o rollback correspondente; depois, conferir os dois smokes acima, a rejeição
 de `/api/crm/*`, a ausência de `Set-Cookie` e a preservação de todas as rotas
 Inventory, Finance e Ponto. A rota do shell `crm-staging.skincos.com.br`
 continua deliberadamente fora deste PR.
 
-## Pendência conhecida
+## Estado do caller persistente
 
-O emissor Identity de staging ainda não tem caller persistente sob custódia do
-CRM para emitir envelopes de navegação/negócio. Portanto este mount permite
-health/readiness sem credencial de identidade, mas não é uma ativação de UI,
-backfill, leitura de domínio, escrita ou cutover de produção.
+O contrato de caller persistente está implementado e coberto por testes no
+owner correto: o monorepo Identity/gateway. Ele permanece propositalmente
+desligado até a publicação coordenada dos três artefatos e a provisão de seus
+segredos internos. Mesmo depois do smoke de sessão, isto não ativa UI de
+negócio, backfill, leitura de domínio, escrita ou cutover de produção.

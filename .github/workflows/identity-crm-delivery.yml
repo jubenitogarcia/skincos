@@ -4,11 +4,21 @@ on:
   pull_request:
     paths:
       - 'identity/**'
+      - 'api/src/gateway.js'
+      - 'api/src/crm-identity-issuer-client.js'
+      - 'api/test/gateway.test.mjs'
+      - 'api/wrangler.toml'
+      - 'shared/identity-contract/**'
       - '.github/workflows/identity-crm-delivery.yml'
   push:
     branches: [main]
     paths:
       - 'identity/**'
+      - 'api/src/gateway.js'
+      - 'api/src/crm-identity-issuer-client.js'
+      - 'api/test/gateway.test.mjs'
+      - 'api/wrangler.toml'
+      - 'shared/identity-contract/**'
       - '.github/workflows/identity-crm-delivery.yml'
   workflow_dispatch: {}
 
@@ -22,7 +32,7 @@ concurrency:
 
 jobs:
   test:
-    name: Install pinned contract and test issuer
+    name: Test the pinned Identity issuer and staging caller
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -45,3 +55,4 @@ jobs:
           } > "$npmrc"
           NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity ci --ignore-scripts --no-audit --fund=false
           NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity test
+          npm --prefix api test

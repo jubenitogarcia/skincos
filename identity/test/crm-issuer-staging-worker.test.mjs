@@ -11,6 +11,7 @@ if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value: web
 const issueUrl = 'https://identity-crm-delivery-staging.example/internal/identity-crm-delivery/v1/issue';
 const keysUrl = 'https://identity-crm-delivery-staging.example/.well-known/identity-crm-delivery/v1/keys';
 const secret = 'synthetic-staging-request-hmac-secret-2026';
+const callerSecret = 'synthetic-crm-api-staging-caller-hmac-secret-2026';
 
 function encodeBase64Url(bytes) {
   let binary = '';
@@ -18,10 +19,10 @@ function encodeBase64Url(bytes) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-async function authHeader(body) {
+async function authHeader(body, signingSecret = secret) {
   const key = await webcrypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(secret),
+    new TextEncoder().encode(signingSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign'],
@@ -92,6 +93,8 @@ test('staging issuer rejects a key id from another environment', async () => {
 test('staging manifest has no production route or data binding and keeps signing disabled', async () => {
   const manifest = await readFile(new URL('../wrangler.staging.toml', import.meta.url), 'utf8');
   assert.match(manifest, /IDENTITY_CRM_DELIVERY_ENABLED\s*=\s*"false"/);
+  assert.match(manifest, /IDENTITY_CRM_DELIVERY_CALLER_ENABLED\s*=\s*"false"/);
+  assert.match(manifest, /IDENTITY_CRM_DELIVERY_CALLER_ID\s*=\s*"crm-api-staging-v1"/);
   assert.doesNotMatch(manifest, /^routes\s*=/m);
   assert.doesNotMatch(manifest, /^\[\[d1_databases\]\]/m);
   assert.doesNotMatch(manifest, /^\[\[kv_namespaces\]\]/m);
@@ -154,4 +157,77 @@ test('staging issue endpoint rejects unauthenticated callers and unknown routes'
 
   const unknown = await handleIdentityCrmIssuerStagingRequest(new Request('https://identity-crm-delivery-staging.example/internal/other', { method: 'POST' }), env);
   assert.equal(unknown.status, 404);
+});
+
+test('staging issuer accepts the dedicated CRM API caller without rotating the existing smoke HMAC', async () => {
+  const { env } = await stagingEnv();
+  const callerEnv = {
+    ...env,
+    IDENTITY_CRM_DELIVERY_CALLER_ENABLED: 'true',
+    IDENTITY_CRM_DELIVERY_CALLER_ID: 'crm-api-staging-v1',
+    IDENTITY_CRM_DELIVERY_CALLER_HMAC: callerSecret,
+  };
+  const payload = JSON.stringify(issuePayload());
+  const callerAuth = await authHeader(payload, callerSecret);
+  const callerResponse = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-skincos-identity-issuer-caller': 'crm-api-staging-v1',
+      'x-skincos-identity-issuer-auth': callerAuth,
+    },
+    body: payload,
+  }), callerEnv);
+  assert.equal(callerResponse.status, 200);
+  const callerResult = await callerResponse.json();
+  assert.equal(callerResult.ok, true);
+  assert.equal(JSON.stringify(callerResult).includes(callerSecret), false);
+
+  const legacyAuth = await authHeader(payload);
+  const legacyResponse = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, {
+    method: 'POST',
+    headers: { 'x-skincos-identity-issuer-auth': legacyAuth },
+    body: payload,
+  }), callerEnv);
+  assert.equal(legacyResponse.status, 200);
+});
+
+test('staging issuer fails closed for a caller id or caller HMAC outside its explicit custody', async () => {
+  const { env } = await stagingEnv();
+  const payload = JSON.stringify(issuePayload());
+  const enabled = {
+    ...env,
+    IDENTITY_CRM_DELIVERY_CALLER_ENABLED: 'true',
+    IDENTITY_CRM_DELIVERY_CALLER_ID: 'crm-api-staging-v1',
+    IDENTITY_CRM_DELIVERY_CALLER_HMAC: callerSecret,
+  };
+  const wrongCaller = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, {
+    method: 'POST',
+    headers: {
+      'x-skincos-identity-issuer-caller': 'other-worker-v1',
+      'x-skincos-identity-issuer-auth': await authHeader(payload, callerSecret),
+    },
+    body: payload,
+  }), enabled);
+  assert.equal(wrongCaller.status, 401);
+
+  const wrongHmac = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, {
+    method: 'POST',
+    headers: {
+      'x-skincos-identity-issuer-caller': 'crm-api-staging-v1',
+      'x-skincos-identity-issuer-auth': await authHeader(payload),
+    },
+    body: payload,
+  }), enabled);
+  assert.equal(wrongHmac.status, 401);
+
+  const callerDisabled = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, {
+    method: 'POST',
+    headers: {
+      'x-skincos-identity-issuer-caller': 'crm-api-staging-v1',
+      'x-skincos-identity-issuer-auth': await authHeader(payload, callerSecret),
+    },
+    body: payload,
+  }), env);
+  assert.equal(callerDisabled.status, 401);
 });

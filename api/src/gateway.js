@@ -8,6 +8,7 @@ import {
     isAuthorizedCrmCoreProductionReceipt,
     isCrmCoreStagingEnvironment,
 } from './crm-core-production-receipt.js';
+import { isCrmSessionPath, isCrmSessionRequest, issueCrmSessionIdentityDelivery } from './crm-identity-issuer-client.js';
 
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
@@ -16,6 +17,8 @@ const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
 const CRM_CORE_TIMEOUT_MS = 3_000;
+const CRM_IDENTITY_DELIVERY_HEADER_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const CRM_IDENTITY_DELIVERY_HEADER_MAX_LENGTH = 16_384;
 const CRM_CORE_REQUEST_HEADER_ALLOWLIST = Object.freeze([
     'accept',
     'content-type',
@@ -110,34 +113,50 @@ function isProductionEnvironment(env) {
 /**
  * This is a fresh allowlist, never a mutation of public request headers.
  * CRM Core needs only browser representation/CORS metadata, correlation and
- * its signed Identity delivery envelope. In particular, no legacy session,
- * service token, proxy, Cloudflare or future credential-shaped header can
- * cross this boundary. `x-identity-delivery` intentionally survives because
- * CRM Core verifies it against its pinned Identity public key and replay
- * ledger.
+ * a delivery envelope that the gateway itself obtained over its private
+ * Identity binding. In particular, no browser-supplied envelope, legacy
+ * session, service token, proxy, Cloudflare or future credential-shaped header
+ * can cross this boundary. For the staging session capability, a fresh
+ * internally issued envelope replaces any browser-supplied value.
  */
-export function prepareCrmCoreRequest(request, productionReceipt = null, env = null) {
+export function prepareCrmCoreRequest(request, productionReceipt = null, env = null, identityDelivery = null) {
     const headers = new Headers();
     for (const name of CRM_CORE_REQUEST_HEADER_ALLOWLIST) {
         const value = request.headers.get(name);
         if (value !== null) headers.set(name, value);
     }
+    if (isCrmCoreStagingEnvironment(env) || identityDelivery !== null) headers.delete('x-identity-delivery');
     if (productionReceipt) {
         headers.set('cloudflare-workers-version-overrides', crmCoreVersionOverride(productionReceipt, env));
+    }
+    if (typeof identityDelivery === 'string'
+        && identityDelivery.length <= CRM_IDENTITY_DELIVERY_HEADER_MAX_LENGTH
+        && CRM_IDENTITY_DELIVERY_HEADER_PATTERN.test(identityDelivery)) {
+        headers.set('x-identity-delivery', identityDelivery);
     }
     return new Request(request, { headers });
 }
 
+function crmCoreForwardContext(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)
+        && Object.prototype.hasOwnProperty.call(value, 'identityDelivery')) {
+        return { productionReceipt: null, identityDelivery: value.identityDelivery };
+    }
+    return { productionReceipt: value, identityDelivery: null };
+}
+
 export async function forwardCrmCoreToService(request, env, ctx, authorizedProductionReceipt = null) {
+    const { productionReceipt: suppliedProductionReceipt, identityDelivery } = crmCoreForwardContext(authorizedProductionReceipt);
     const staging = isCrmCoreStagingEnvironment(env);
-    let productionReceipt = staging ? null : authorizedProductionReceipt;
+    if (!staging && identityDelivery !== null) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
+    let productionReceipt = staging ? null : suppliedProductionReceipt;
     if (!staging && !isAuthorizedCrmCoreProductionReceipt(productionReceipt, env)) {
         productionReceipt = await authorizeCrmCoreProductionRoute(request, env);
     }
     if (!staging && !productionReceipt) {
         return gatewayError(404, isProductionEnvironment(env) ? 'CRM_CORE_PRODUCTION_NOT_AUTHORIZED' : 'CRM_CORE_STAGING_ONLY');
     }
-    return fetchBoundService(prepareCrmCoreRequest(request, productionReceipt, env), env, 'CRM_CORE', {
+    return fetchBoundService(prepareCrmCoreRequest(request, productionReceipt, env, identityDelivery), env, 'CRM_CORE', {
         timeoutMs: CRM_CORE_TIMEOUT_MS,
     });
 }
@@ -201,7 +220,34 @@ export function createApiGateway({
             if (csrfError) return csrfError;
             return financeDomainHandler(request, env, ctx, auth);
         },
-        crmCoreHandler: typeof crmCoreHandler === 'function' ? crmCoreHandler : undefined,
+        crmCoreHandler: typeof crmCoreHandler === 'function'
+            ? async (request, env, ctx, productionReceipt = null) => {
+                if (!isCrmSessionPath(request)) return crmCoreHandler(request, env, ctx, productionReceipt);
+                if (!isCrmCoreStagingEnvironment(env)) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
+                if (!isCrmSessionRequest(request)) {
+                    return request.method === 'GET'
+                        ? gatewayError(400, 'CRM_SESSION_QUERY_NOT_ALLOWED')
+                        : gatewayError(405, 'CRM_SESSION_METHOD_NOT_ALLOWED');
+                }
+                let auth;
+                try {
+                    auth = await resolveActor(request, env);
+                } catch {
+                    return gatewayError(503, 'IDENTITY_UNAVAILABLE');
+                }
+                if (auth?.unavailable) return gatewayError(503, 'IDENTITY_UNAVAILABLE');
+                if (!auth?.actor) return gatewayError(401, 'CRM_IDENTITY_REQUIRED');
+                try {
+                    const identityDelivery = await issueCrmSessionIdentityDelivery(request, env, auth.actor);
+                    return crmCoreHandler(request, env, ctx, { identityDelivery });
+                } catch (error) {
+                    if (error instanceof TypeError && error.message === 'CRM_IDENTITY_SUBJECT_REQUIRED') {
+                        return gatewayError(403, 'CRM_IDENTITY_SUBJECT_REQUIRED');
+                    }
+                    return gatewayError(503, 'CRM_IDENTITY_DELIVERY_UNAVAILABLE');
+                }
+            }
+            : undefined,
     });
 }
 
