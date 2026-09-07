@@ -715,3 +715,100 @@ test('Finance is reached through an explicit service binding with a short-lived 
   assert.equal(received.headers.get('x-csrf-token'), null);
   assert.equal((await verifySignedDomainContext(received, 'finance-secret', 'finance')).actor.username, 'pilot');
 });
+
+test('CRM Core keeps its public staging mount and removes every legacy session credential', async () => {
+  resetBoundServiceResilienceForTest();
+  let received = null;
+  const response = await handleGatewayRequest(new Request('https://api-staging.skincos.com.br/crm/ready?smoke=1', {
+    headers: {
+      authorization: 'Bearer legacy-session',
+      cookie: 'crm_session=legacy',
+      'x-csrf-token': 'legacy-csrf',
+      'x-identity-delivery': 'identity-crm-delivery/v1.synthetic-envelope',
+      'x-request-id': 'crm-core-gateway-1',
+      'x-skincos-actor': 'legacy-actor',
+      'x-skincos-actor-sig': 'legacy-signature',
+      'x-skincos-local-crm-actor': 'local-only',
+      'x-skincos-network-context': 'legacy-network',
+      'x-skincos-network-sig': 'legacy-signature',
+      'x-skincos-network-signature-version': '2',
+      'x-skincos-network-ts': '1788288000000',
+    },
+  }), {
+    APP_VERSION: 'a'.repeat(40),
+    ENVIRONMENT: 'staging',
+    CF_VERSION_METADATA: { id: '22222222-2222-4222-8222-222222222222', tag: 'crm-core-staging' },
+    CRM_CORE: {
+      fetch: async (request) => {
+        received = request;
+        return new Response(JSON.stringify({ ok: true, reason: 'CRM_STAGING_READY' }), {
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'set-cookie': 'must-not-cross-boundary=true',
+          },
+        });
+      },
+    },
+  }, {});
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).reason, 'CRM_STAGING_READY');
+  assert.equal(new URL(received.url).pathname, '/crm/ready');
+  assert.equal(new URL(received.url).search, '?smoke=1');
+  assert.equal(received.headers.get('x-request-id'), 'crm-core-gateway-1');
+  assert.equal(received.headers.get('x-identity-delivery'), 'identity-crm-delivery/v1.synthetic-envelope');
+  for (const name of [
+    'authorization',
+    'cookie',
+    'x-csrf-token',
+    'x-skincos-actor',
+    'x-skincos-actor-sig',
+    'x-skincos-local-crm-actor',
+    'x-skincos-network-context',
+    'x-skincos-network-sig',
+    'x-skincos-network-signature-version',
+    'x-skincos-network-ts',
+  ]) assert.equal(received.headers.get(name), null, name);
+  assert.equal(response.headers.get('set-cookie'), null);
+  assert.equal(response.headers.get('x-skincos-gateway-release-sha'), 'a'.repeat(40));
+  assert.equal(response.headers.get('x-skincos-gateway-environment'), 'staging');
+  assert.equal(response.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
+  resetBoundServiceResilienceForTest();
+});
+
+test('CRM Core never becomes a production route even if a binding is present', async () => {
+  let calls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), {
+    ENVIRONMENT: 'production',
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }, {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_staging_only');
+  assert.equal(calls, 0);
+});
+
+test('CRM Core fails closed without its staging binding and never aliases legacy /api/crm', async () => {
+  resetBoundServiceResilienceForTest();
+  const unavailable = await handleGatewayRequest(new Request('https://api-staging.skincos.com.br/crm/health'), {
+    ENVIRONMENT: 'staging',
+  }, {});
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).dependency, 'CRM_CORE');
+
+  let calls = 0;
+  const legacyAlias = await handleGatewayRequest(new Request('https://api-staging.skincos.com.br/api/crm/health'), {
+    ENVIRONMENT: 'staging',
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }, {});
+  assert.equal(legacyAlias.status, 404);
+  assert.equal((await legacyAlias.json()).error, 'route_not_found');
+  assert.equal(calls, 0);
+  resetBoundServiceResilienceForTest();
+});
+
+test('general API Worker binds CRM Core only in the staging environment', async () => {
+  const config = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
+  const productionConfig = config.slice(0, config.indexOf('[env.staging]'));
+  assert.doesNotMatch(productionConfig, /CRM_CORE/);
+  assert.match(config, /\[\[env\.staging\.services\]\]\r?\nbinding = "CRM_CORE"\r?\nservice = "skincos-crm-core-staging"/);
+});
