@@ -1,13 +1,70 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
-import { createApiGateway, forwardFinanceProbe, forwardFinanceToService, handleGatewayRequest, prepareTimekeepingRequest } from '../src/gateway.js';
+import { createApiGateway, forwardCrmCoreToService, forwardFinanceProbe, forwardFinanceToService, handleGatewayRequest, prepareTimekeepingRequest } from '../src/gateway.js';
+import { createCrmCoreProductionReceiptSigningInput } from '../src/crm-core-production-receipt.js';
 import pontoCoreWorker from '../workers/ponto.js';
 import { verifySignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
 
 const calls = [];
+const crmProductionGatewayVersionId = '11111111-1111-4111-8111-111111111111';
+const crmProductionWorkerVersionId = '22222222-2222-4222-8222-222222222222';
+const crmProductionReceiptKeyId = 'crm-production-route-receipt-test';
+const crmProductionReceiptKeys = generateKeyPairSync('ed25519');
+const crmProductionReceiptPublicKey = crmProductionReceiptKeys.publicKey.export({ format: 'jwk' });
+
+function signedCrmProductionReceipt(overrides = {}) {
+    const receipt = {
+        contract: 'skincos-crm/production-route-receipt/v1',
+        receiptId: 'crm-production-route-receipt-test-20260907',
+        environment: 'production',
+        gatewayVersionId: crmProductionGatewayVersionId,
+        service: 'skincos-crm-core',
+        workerVersionId: crmProductionWorkerVersionId,
+        release: 'a'.repeat(40),
+        artifactDigest: `sha256:${'b'.repeat(64)}`,
+        keyId: crmProductionReceiptKeyId,
+        signature: 'a',
+        ...overrides,
+    };
+    receipt.signature = sign(
+        null,
+        Buffer.from(createCrmCoreProductionReceiptSigningInput(receipt)),
+        crmProductionReceiptKeys.privateKey,
+    ).toString('base64url');
+    return receipt;
+}
+
+function crmProductionEnvironment(receipt = signedCrmProductionReceipt(), overrides = {}) {
+    return {
+        ENVIRONMENT: 'production',
+        APP_VERSION: 'c'.repeat(40),
+        CF_VERSION_METADATA: { id: crmProductionGatewayVersionId },
+        CRM_CORE_PRODUCTION_ENABLED: 'true',
+        CRM_CORE_PRODUCTION_RECEIPT: JSON.stringify(receipt),
+        CRM_CORE_PRODUCTION_RECEIPT_PUBLIC_KEYS_JSON: JSON.stringify({
+            [crmProductionReceiptKeyId]: crmProductionReceiptPublicKey,
+        }),
+        ...overrides,
+    };
+}
+
+function crmCoreReceiptReadyBody(receipt, overrides = {}) {
+    return {
+        ok: true,
+        ready: true,
+        unit: 'crm-core',
+        environment: 'production',
+        release: receipt.release,
+        version: receipt.release,
+        artifact_digest: receipt.artifactDigest,
+        artifactDigest: receipt.artifactDigest,
+        ...overrides,
+    };
+}
 const gateway = createGatewayHandler({
     inventoryHandler: async (request) => {
         calls.push(new URL(request.url));
@@ -838,7 +895,139 @@ test('CRM Core never becomes a production route even if a binding is present', a
     CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
   }, {});
   assert.equal(response.status, 404);
-  assert.equal((await response.json()).error, 'crm_core_staging_only');
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(calls, 0);
+});
+
+test('CRM Core production routing requires a signed receipt, pinned Worker version and matching live proof', async () => {
+  resetBoundServiceResilienceForTest();
+  const receipt = signedCrmProductionReceipt();
+  let received = null;
+  let probes = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health?cutover=probe', {
+    headers: {
+      accept: 'application/json',
+      authorization: 'must-not-cross',
+      cookie: 'must-not-cross',
+      'cloudflare-workers-version-overrides': 'skincos-evil="33333333-3333-4333-8333-333333333333"',
+      'x-request-id': 'crm-production-gate-1',
+      'x-identity-delivery': 'identity-crm-delivery/v1.synthetic-envelope',
+    },
+  }), crmProductionEnvironment(receipt, {
+    CRM_CORE: {
+      fetch: async (request) => {
+        const pathname = new URL(request.url).pathname;
+        assert.equal(
+          request.headers.get('cloudflare-workers-version-overrides'),
+          `skincos-crm-core="${receipt.workerVersionId}"`,
+        );
+        if (pathname === '/ready') {
+          probes += 1;
+          assert.equal(request.headers.get('authorization'), null);
+          assert.equal(request.headers.get('cookie'), null);
+          assert.equal(request.headers.get('x-identity-delivery'), null);
+          return new Response(JSON.stringify(crmCoreReceiptReadyBody(receipt)), {
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+          });
+        }
+        received = request;
+        return new Response(JSON.stringify({ ok: true, unit: 'crm-core' }), {
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+      },
+    },
+  }), {});
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).unit, 'crm-core');
+  assert.equal(probes, 1);
+  assert.equal(new URL(received.url).pathname, '/crm/health');
+  assert.equal(new URL(received.url).search, '?cutover=probe');
+  assert.equal(received.headers.get('accept'), 'application/json');
+  assert.equal(received.headers.get('x-request-id'), 'crm-production-gate-1');
+  assert.equal(received.headers.get('x-identity-delivery'), 'identity-crm-delivery/v1.synthetic-envelope');
+  assert.equal(received.headers.get('authorization'), null);
+  assert.equal(received.headers.get('cookie'), null);
+  assert.equal(
+    received.headers.get('cloudflare-workers-version-overrides'),
+    `skincos-crm-core="${receipt.workerVersionId}"`,
+  );
+  resetBoundServiceResilienceForTest();
+});
+
+test('CRM Core production never probes or forwards for a format-valid but unsigned receipt', async () => {
+  const receipt = signedCrmProductionReceipt();
+  receipt.signature = 'a'.repeat(86);
+  let calls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), crmProductionEnvironment(receipt, {
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(calls, 0);
+});
+
+test('CRM Core production receipt must pin the executing gateway version before probing', async () => {
+  const receipt = signedCrmProductionReceipt();
+  let calls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), crmProductionEnvironment(receipt, {
+    CF_VERSION_METADATA: { id: '33333333-3333-4333-8333-333333333333' },
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(calls, 0);
+});
+
+test('direct CRM forwarding cannot trust a caller-supplied version-shaped receipt', async () => {
+  let calls = 0;
+  const response = await forwardCrmCoreToService(
+    new Request('https://api.skincos.com.br/crm/health'),
+    {
+      ENVIRONMENT: 'production',
+      CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+    },
+    undefined,
+    { service: 'skincos-crm-core', workerVersionId: crmProductionWorkerVersionId },
+  );
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'CRM_CORE_PRODUCTION_NOT_AUTHORIZED');
+  assert.equal(calls, 0);
+});
+
+test('CRM Core production rejects a signed receipt when the pinned Worker proof disagrees', async () => {
+  const receipt = signedCrmProductionReceipt();
+  let probes = 0;
+  let forwards = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), crmProductionEnvironment(receipt, {
+    CRM_CORE: {
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === '/ready') {
+          probes += 1;
+          return new Response(JSON.stringify(crmCoreReceiptReadyBody(receipt, { artifactDigest: `sha256:${'c'.repeat(64)}` })), {
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+          });
+        }
+        forwards += 1;
+        return new Response('must-not-run');
+      },
+    },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(probes, 1);
+  assert.equal(forwards, 0);
+});
+
+test('CRM Core rejects a production flag without receipt identity', async () => {
+  let calls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), {
+    ENVIRONMENT: 'production',
+    CRM_CORE_PRODUCTION_ENABLED: 'true',
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }, {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
   assert.equal(calls, 0);
 });
 
@@ -864,6 +1053,6 @@ test('CRM Core fails closed without its staging binding and never aliases legacy
 test('general API Worker binds CRM Core only in the staging environment', async () => {
   const config = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
   const productionConfig = config.slice(0, config.indexOf('[env.staging]'));
-  assert.doesNotMatch(productionConfig, /CRM_CORE/);
+  assert.doesNotMatch(productionConfig, /binding\s*=\s*"CRM_CORE"/);
   assert.match(config, /\[\[env\.staging\.services\]\]\r?\nbinding = "CRM_CORE"\r?\nservice = "skincos-crm-core-staging"/);
 });
