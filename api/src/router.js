@@ -1,3 +1,5 @@
+import { authorizeCrmCoreProductionRoute, isCrmCoreStagingEnvironment } from './crm-core-production-receipt.js';
+
 const json = (status, payload, requestId) =>
     new Response(JSON.stringify(payload), {
         status,
@@ -64,21 +66,6 @@ function operationalPayload(env, requestId, ready, dependencies) {
 
 function isPontoRouteOnly(env) {
     return String(env?.PONTO_ROUTE_ONLY || '').trim() === 'true';
-}
-
-function isStagingEnvironment(env) {
-    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging';
-}
-
-function isCrmCoreProductionEnabled(env) {
-    if (String(env?.ENVIRONMENT || '').trim().toLowerCase() !== 'production') return false;
-    if (String(env?.CRM_CORE_PRODUCTION_ENABLED || '').trim() !== 'true') return false;
-    const release = String(env?.CRM_CORE_PRODUCTION_RELEASE_SHA || '').trim().toLowerCase();
-    const digest = String(env?.CRM_CORE_PRODUCTION_ARTIFACT_DIGEST || '').trim().toLowerCase();
-    const gate = String(env?.CRM_CORE_PRODUCTION_GATE_ID || '').trim();
-    return /^[0-9a-f]{40}$/.test(release)
-        && /^sha256:[0-9a-f]{64}$/.test(digest)
-        && /^[A-Za-z0-9._:-]{8,200}$/.test(gate);
 }
 
 function isCrmCoreRoute(pathname) {
@@ -273,10 +260,13 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
         }
 
         // CRM Core owns the public /crm/* spelling only in staging, or after
-        // an explicit production gate binds the exact receipt-bound artifact.
+        // a custody-signed production receipt proves the exact pinned artifact.
         // Do not strip this prefix and do not fall through to Inventory.
         if (isCrmCoreRoute(url.pathname)) {
-            if (!isStagingEnvironment(env) && !isCrmCoreProductionEnabled(env)) {
+            const productionReceipt = isCrmCoreStagingEnvironment(env)
+                ? null
+                : await authorizeCrmCoreProductionRoute(request, env);
+            if (!isCrmCoreStagingEnvironment(env) && !productionReceipt) {
                 return json(404, {
                     ok: false,
                     error: String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'production'
@@ -292,7 +282,7 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
             }
             const headers = new Headers(request.headers);
             headers.set('x-request-id', requestId);
-            const response = await crmCoreHandler(new Request(request, { headers }), env, ctx);
+            const response = await crmCoreHandler(new Request(request, { headers }), env, ctx, productionReceipt);
             const responseHeaders = new Headers(response.headers);
             // CRM Core has no legacy cookie/session compatibility surface.
             responseHeaders.delete('set-cookie');

@@ -2,6 +2,12 @@ import { createGatewayHandler } from './router.js';
 import { csrfErrorFor, resolveCrmActor } from '../../shared/crm-auth/worker.js';
 import { fetchBoundService } from '../../shared/service-adapters/cloudflare-service-binding.js';
 import { createSignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
+import {
+    authorizeCrmCoreProductionRoute,
+    crmCoreVersionOverride,
+    isAuthorizedCrmCoreProductionReceipt,
+    isCrmCoreStagingEnvironment,
+} from './crm-core-production-receipt.js';
 
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
@@ -97,28 +103,8 @@ function inventoryServiceTimeout(request) {
         : INVENTORY_READ_TIMEOUT_MS;
 }
 
-function isStagingEnvironment(env) {
-    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging';
-}
-
 function isProductionEnvironment(env) {
     return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'production';
-}
-
-/**
- * Production CRM routing is an explicit, receipt-bound opt-in. Keeping the
- * release identity and artifact digest in the gateway configuration makes a
- * flag-only mistake fail closed before a service binding can receive traffic.
- * The values are identifiers, never credentials or customer data.
- */
-function isCrmCoreProductionEnabled(env) {
-    if (!isProductionEnvironment(env) || String(env?.CRM_CORE_PRODUCTION_ENABLED || '').trim() !== 'true') return false;
-    const release = String(env?.CRM_CORE_PRODUCTION_RELEASE_SHA || '').trim().toLowerCase();
-    const digest = String(env?.CRM_CORE_PRODUCTION_ARTIFACT_DIGEST || '').trim().toLowerCase();
-    const gate = String(env?.CRM_CORE_PRODUCTION_GATE_ID || '').trim();
-    return /^[0-9a-f]{40}$/.test(release)
-        && /^sha256:[0-9a-f]{64}$/.test(digest)
-        && /^[A-Za-z0-9._:-]{8,200}$/.test(gate);
 }
 
 /**
@@ -130,20 +116,28 @@ function isCrmCoreProductionEnabled(env) {
  * CRM Core verifies it against its pinned Identity public key and replay
  * ledger.
  */
-export function prepareCrmCoreRequest(request) {
+export function prepareCrmCoreRequest(request, productionReceipt = null, env = null) {
     const headers = new Headers();
     for (const name of CRM_CORE_REQUEST_HEADER_ALLOWLIST) {
         const value = request.headers.get(name);
         if (value !== null) headers.set(name, value);
     }
+    if (productionReceipt) {
+        headers.set('cloudflare-workers-version-overrides', crmCoreVersionOverride(productionReceipt, env));
+    }
     return new Request(request, { headers });
 }
 
-export async function forwardCrmCoreToService(request, env) {
-    if (!isStagingEnvironment(env) && !isCrmCoreProductionEnabled(env)) {
+export async function forwardCrmCoreToService(request, env, ctx, authorizedProductionReceipt = null) {
+    const staging = isCrmCoreStagingEnvironment(env);
+    let productionReceipt = staging ? null : authorizedProductionReceipt;
+    if (!staging && !isAuthorizedCrmCoreProductionReceipt(productionReceipt, env)) {
+        productionReceipt = await authorizeCrmCoreProductionRoute(request, env);
+    }
+    if (!staging && !productionReceipt) {
         return gatewayError(404, isProductionEnvironment(env) ? 'CRM_CORE_PRODUCTION_NOT_AUTHORIZED' : 'CRM_CORE_STAGING_ONLY');
     }
-    return fetchBoundService(prepareCrmCoreRequest(request), env, 'CRM_CORE', {
+    return fetchBoundService(prepareCrmCoreRequest(request, productionReceipt, env), env, 'CRM_CORE', {
         timeoutMs: CRM_CORE_TIMEOUT_MS,
     });
 }
