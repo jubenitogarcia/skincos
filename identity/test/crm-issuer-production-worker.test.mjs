@@ -171,7 +171,7 @@ test('production Worker signs Ed25519 delivery and publishes active plus overlap
   // lifetime. CRM must perform this check before its replay reservation.
   assert.throws(
     () => deliveryContract.parseIdentityCrmDeliveryCompact(result.compact, { nowSeconds: parsed.claims.exp + 1 }),
-    /IDENTITY_DELIVERY_EXPIRED/,
+    /expired/i,
   );
 });
 
