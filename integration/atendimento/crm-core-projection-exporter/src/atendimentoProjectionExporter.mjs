@@ -29,6 +29,19 @@ FROM crm_atendimento.global_client_identities
 ORDER BY updated_at ASC, id ASC
 LIMIT $1`
 
+// The paginated runner uses keyset pagination, never OFFSET. Both queries keep
+// the source shape deliberately limited to the stable UUID and revision time.
+export const ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL = `SELECT id::text AS id, updated_at
+FROM crm_atendimento.global_client_identities
+ORDER BY updated_at ASC, id ASC
+LIMIT $1`
+
+export const ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL = `SELECT id::text AS id, updated_at
+FROM crm_atendimento.global_client_identities
+WHERE (updated_at, id) > ($1::timestamptz, $2::uuid)
+ORDER BY updated_at ASC, id ASC
+LIMIT $3`
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/
 const RELEASE_PATTERN = /^[0-9a-f]{40}$/
@@ -131,7 +144,7 @@ function sourceIdentity(value) {
   return Object.freeze({ database, currentUser, sessionUser, readOnly })
 }
 
-function sourceRow(value) {
+export function assertAtendimentoProjectionSourceRow(value) {
   const row = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
   exactKeys(row, ['id', 'updated_at'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
   const id = text(row.id, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID').toLowerCase()
@@ -142,10 +155,22 @@ function sourceRow(value) {
   })
 }
 
+function normalizedSourceRow(value) {
+  const row = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
+  if (
+    Object.keys(row).length === 2
+    && Object.hasOwn(row, 'id')
+    && Object.hasOwn(row, 'updatedAt')
+  ) {
+    return assertAtendimentoProjectionSourceRow({ id: row.id, updated_at: row.updatedAt })
+  }
+  return assertAtendimentoProjectionSourceRow(row)
+}
+
 function sourceRows(value, expectedCount) {
   if (!Array.isArray(value) || value.length !== expectedCount) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_READBACK_INVALID')
   const identifiers = new Set()
-  const rows = value.map(sourceRow)
+  const rows = value.map(normalizedSourceRow)
   for (const row of rows) {
     if (identifiers.has(row.id)) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_READBACK_INVALID')
     identifiers.add(row.id)
@@ -242,6 +267,37 @@ function batchCursorDigest(capturedAt, events) {
   })
 }
 
+/**
+ * Builds one opaque CRM batch from an already-bounded source page. This has no
+ * transport or database side effect; callers that paginate must keep the raw
+ * source cursor private and send only the returned opaque batch.
+ */
+export function createAtendimentoProjectionBackfillBatch({
+  rows,
+  capturedAt,
+  hmacKey: suppliedHmacKey,
+  keyId: suppliedKeyId,
+  target,
+} = {}) {
+  const key = hmacKey(suppliedHmacKey)
+  const keyIdentifier = keyId(suppliedKeyId)
+  const targetValue = assertAtendimentoProjectionExportTarget(target)
+  const normalizedCapturedAt = timestamp(capturedAt, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SNAPSHOT_INVALID')
+  const normalizedRows = sourceRows(rows, Array.isArray(rows) ? rows.length : -1)
+  const events = Object.freeze(normalizedRows.map((row) => eventFromSourceRow(row, { key, capturedAt: normalizedCapturedAt })))
+  const eventsDigest = sha256(events)
+  const cursorDigest = batchCursorDigest(normalizedCapturedAt, events)
+  return assertAtendimentoProjectionBackfillBatch({
+    contract: CRM_PROJECTION_BACKFILL_BATCH_VERSION,
+    batchId: batchId(key, keyIdentifier, normalizedCapturedAt, eventsDigest),
+    producer: { owner: 'atendimento', scope: ATENDIMENTO_PROJECTION_SCOPE, keyId: keyIdentifier },
+    sourceSnapshot: { capturedAt: normalizedCapturedAt, cursorDigest, rowCount: normalizedRows.length },
+    target: targetValue,
+    events,
+    integrity: { algorithm: 'sha256', eventCount: events.length, eventsDigest },
+  })
+}
+
 export function assertAtendimentoProjectionBackfillBatch(value) {
   const batch = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   exactKeys(batch, ['contract', 'batchId', 'producer', 'sourceSnapshot', 'target', 'events', 'integrity'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
@@ -290,6 +346,14 @@ export function assertAtendimentoProjectionBackfillBatch(value) {
   })
 }
 
+/**
+ * Matches the CRM Core's canonical batch digest without importing its source
+ * tree. It is intentionally over the validated opaque batch only.
+ */
+export function digestAtendimentoProjectionBackfillBatch(value) {
+  return sha256(assertAtendimentoProjectionBackfillBatch(value))
+}
+
 function knownError(error) {
   return error instanceof Error && /^ATENDIMENTO_CRM_PROJECTION_EXPORT_[A-Z_]+$/.test(error.message)
 }
@@ -324,17 +388,12 @@ export async function exportAtendimentoClientProjectionBatch({
 
     const rowsResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL, [rowCount])
     const rows = sourceRows(rowsResult?.rows, rowCount)
-    const events = Object.freeze(rows.map((row) => eventFromSourceRow(row, { key, capturedAt })))
-    const eventsDigest = sha256(events)
-    const cursorDigest = batchCursorDigest(capturedAt, events)
-    const batch = assertAtendimentoProjectionBackfillBatch({
-      contract: CRM_PROJECTION_BACKFILL_BATCH_VERSION,
-      batchId: batchId(key, keyIdentifier, capturedAt, eventsDigest),
-      producer: { owner: 'atendimento', scope: ATENDIMENTO_PROJECTION_SCOPE, keyId: keyIdentifier },
-      sourceSnapshot: { capturedAt, cursorDigest, rowCount },
+    const batch = createAtendimentoProjectionBackfillBatch({
+      rows,
+      capturedAt,
+      hmacKey: key,
+      keyId: keyIdentifier,
       target: targetValue,
-      events,
-      integrity: { algorithm: 'sha256', eventCount: events.length, eventsDigest },
     })
 
     await client.query('ROLLBACK')
