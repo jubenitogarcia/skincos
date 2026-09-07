@@ -136,6 +136,7 @@ function parsePublicKeyRing(raw, activeKid, keyIdPrefix, nowSeconds) {
   const revoked = value.revoked;
   if (!Array.isArray(revoked) || revoked.some((kid) => typeof kid !== 'string')) fail('IDENTITY_PUBLIC_KEY_RING_INVALID');
   const revokedKids = new Set(revoked.map((kid) => assertKeyId(kid, keyIdPrefix, 'IDENTITY_PUBLIC_KEY_RING_INVALID')));
+  if (revokedKids.size !== revoked.length) fail('IDENTITY_PUBLIC_KEY_RING_INVALID');
   if (revokedKids.has(activeKid)) fail('IDENTITY_ACTIVE_KEY_REVOKED');
 
   if (!Array.isArray(value.overlap)) fail('IDENTITY_PUBLIC_KEY_RING_INVALID');
