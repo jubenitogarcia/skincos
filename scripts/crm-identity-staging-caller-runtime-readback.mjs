@@ -88,7 +88,7 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
         issuer.activeVersion,
         'IDENTITY_CRM_DELIVERY_ENABLED',
     );
-    if (deliveryEnabled !== 'true' && deliveryEnabled !== 'false') {
+    if (deliveryEnabled !== 'true') {
         fail('issuer_IDENTITY_CRM_DELIVERY_ENABLED_MISMATCH');
     }
     const callerEnabled = optionalPlainTextBinding(
@@ -111,7 +111,7 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
     }
     return Object.freeze({
         schemaVersion: 1,
-        state: 'disabled',
+        state: 'caller-disabled',
         observation: 'exact-active-worker-version-bindings',
         api: Object.freeze({
             ...api,
