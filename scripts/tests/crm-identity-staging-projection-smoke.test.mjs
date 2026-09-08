@@ -91,7 +91,7 @@ test('extended canonical fixture smoke keeps session v1 and proves new/old origi
 test('original session profile still generates only two deliveries and needs no projection pins', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'crm-session-compat-'));
   try {
-    const f = fixture(directory); const result = await runCrmIdentityStagingSessionSmoke({ ...f, reportPath: join(directory, 'session.json') });
+    const f = fixture(directory); const result = await runCrmIdentityStagingSessionSmoke({ ...f, profile: 'session', reportPath: join(directory, 'session.json') });
     assert.equal(result.result, 'verified'); assert.equal(f.calls.coreDeliveries, 2); assert.deepEqual(f.calls.login, ['nh']);
     assert.equal(Object.hasOwn(result, 'counts'), false); assert.equal(Object.hasOwn(result, 'sourceSha'), false);
   } finally { rmSync(directory, { recursive: true, force: true }); }
