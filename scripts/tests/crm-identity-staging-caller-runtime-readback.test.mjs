@@ -61,6 +61,20 @@ test('accepts only the exact active disabled public caller bindings', () => {
     });
 });
 
+test('preserves an already-enabled delivery issuer while the isolated caller is absent', () => {
+    const state = disabledState();
+    state.issuerVersionDetail.result.resources.bindings = [
+        plainText('IDENTITY_CRM_DELIVERY_ENABLED', 'true'),
+        plainText('IDENTITY_CRM_DELIVERY_ENVIRONMENT', 'staging'),
+    ];
+
+    const report = verifyActiveRuntimeState(state);
+
+    assert.equal(report.issuer.deliveryEnabled, true);
+    assert.equal(report.issuer.callerEnabled, false);
+    assert.equal(report.issuer.callerId, 'crm-api-staging-v1');
+});
+
 test('rejects an active API version with an enabled caller before any bootstrap receipt can be written', () => {
     const state = disabledState();
     state.apiVersionDetail.result.resources.bindings[1].text = 'true';
@@ -68,15 +82,23 @@ test('rejects an active API version with an enabled caller before any bootstrap 
     assert.throws(() => verifyActiveRuntimeState(state), /api_CRM_IDENTITY_ISSUER_CALLER_ENABLED_MISMATCH/);
 });
 
-test('rejects a caller flag that is missing, secret, or bound to another active version', () => {
+test('accepts a missing disabled caller binding but rejects secret or mismatched bindings', () => {
   const missing = disabledState();
   missing.issuerVersionDetail.result.resources.bindings = missing.issuerVersionDetail.result.resources.bindings
     .filter((binding) => binding.name !== 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED');
-  assert.throws(() => verifyActiveRuntimeState(missing), /issuer_IDENTITY_CRM_DELIVERY_CALLER_ENABLED_MISMATCH/);
+  assert.equal(verifyActiveRuntimeState(missing).issuer.callerEnabled, false);
 
   const secret = disabledState();
   secret.apiVersionDetail.result.resources.bindings[1] = { name: 'CRM_IDENTITY_ISSUER_CALLER_ENABLED', type: 'secret_text' };
   assert.throws(() => verifyActiveRuntimeState(secret), /api_CRM_IDENTITY_ISSUER_CALLER_ENABLED_MISMATCH/);
+
+  const issuerEnabled = disabledState();
+  issuerEnabled.issuerVersionDetail.result.resources.bindings[2].text = 'true';
+  assert.throws(() => verifyActiveRuntimeState(issuerEnabled), /issuer_IDENTITY_CRM_DELIVERY_CALLER_ENABLED_MISMATCH/);
+
+  const issuerId = disabledState();
+  issuerId.issuerVersionDetail.result.resources.bindings[3].text = 'another-caller';
+  assert.throws(() => verifyActiveRuntimeState(issuerId), /issuer_IDENTITY_CRM_DELIVERY_CALLER_ID_MISMATCH/);
 
   const wrongVersion = disabledState();
     wrongVersion.apiVersionDetail.result.id = issuerVersion;

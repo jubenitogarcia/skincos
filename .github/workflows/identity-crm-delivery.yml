@@ -247,7 +247,7 @@ jobs:
           if (
             report?.schemaVersion !== 1 || report.state !== 'disabled' || report.observation !== 'exact-active-worker-version-bindings'
             || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== false || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || typeof report.issuer.deliveryEnabled !== 'boolean' || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags are not proven disabled');
           process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
@@ -385,7 +385,7 @@ jobs:
           if (
             report?.schemaVersion !== 1 || report.state !== 'disabled' || report.observation !== 'exact-active-worker-version-bindings'
             || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== false || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || typeof report.issuer.deliveryEnabled !== 'boolean' || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags changed or are not proven disabled');
           process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
