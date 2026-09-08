@@ -22,12 +22,12 @@ const TARGET = Object.freeze({
 })
 const SOURCE_ID = '123e4567-e89b-42d3-a456-426614174000'
 
-function batch(rows = [{ id: SOURCE_ID, updated_at: '2026-09-07T00:00:00.000Z' }]) {
+function batch(rows = [{ id: SOURCE_ID, updated_at: '2026-09-07T00:00:00.000Z', unit_slug: 'novo-hamburgo' }]) {
   return createAtendimentoProjectionBackfillBatch({
     rows,
     capturedAt: '2026-09-07T00:00:00.000Z',
     hmacKey: HMAC_KEY,
-    keyId: 'atendimento-projection-key-v1',
+    keyId: 'atendimento-projection-key-v2',
     target: TARGET,
   })
 }
@@ -82,7 +82,7 @@ test('uses the CRM-scoped internal HTTPS route with no credential, cookie, origi
         async json() {
           return {
             ok: true,
-            contractVersion: 'crm-core/projection-backfill-receipt/v1',
+            contractVersion: 'crm-core/projection-backfill-receipt/v2',
             status: 'accepted',
             batchId: currentBatch.batchId,
             eventCount: currentBatch.events.length,
@@ -122,9 +122,38 @@ test('fails closed when the receiver response does not bind the batch and reques
       async json() {
         return {
           ok: true,
-          contractVersion: 'crm-core/projection-backfill-receipt/v1',
+          contractVersion: 'crm-core/projection-backfill-receipt/v2',
           status: 'accepted',
           batchId: 'backfill:atendimento:wrong-batch',
+          eventCount: currentBatch.events.length,
+          target: TARGET,
+          requestId: 'crm-atendimento-backfill-000001',
+        }
+      },
+    }),
+  })
+
+  await assert.rejects(() => transport.deliver({
+    batch: currentBatch,
+    delivery,
+    requestId: 'crm-atendimento-backfill-000001',
+  }), /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_RESPONSE_INVALID/)
+})
+
+test('rejects a legacy receipt version even when every other receipt field matches', async () => {
+  const currentBatch = batch()
+  const { signer } = signerFor()
+  const delivery = await signer.signBatch(currentBatch)
+  const transport = createAtendimentoProjectionBackfillHttpTransport({
+    endpoint: `https://crm-core-staging.example.test${ATENDIMENTO_CRM_BACKFILL_HTTP_PATH}`,
+    fetch: async () => ({
+      status: 200,
+      async json() {
+        return {
+          ok: true,
+          contractVersion: 'crm-core/projection-backfill-receipt/v1',
+          status: 'accepted',
+          batchId: currentBatch.batchId,
           eventCount: currentBatch.events.length,
           target: TARGET,
           requestId: 'crm-atendimento-backfill-000001',
