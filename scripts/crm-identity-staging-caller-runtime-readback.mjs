@@ -5,14 +5,13 @@ import { pathToFileURL } from 'node:url';
 const VERSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 const REQUEST_TIMEOUT_MS = 15_000;
+const STAGING_CALLER_ID = 'crm-api-staging-v1';
 
 const API_RUNTIME = Object.freeze({
     label: 'api',
     script: 'skincos-api-staging',
     expectedPlainTextBindings: Object.freeze({
         ENVIRONMENT: 'staging',
-        CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'false',
-        CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-staging-v1',
     }),
 });
 
@@ -82,6 +81,24 @@ function verifyRuntime(deployment, versionDetail, runtime) {
 export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiVersionDetail, issuerVersionDetail }) {
     const api = verifyRuntime(apiDeployment, apiVersionDetail, API_RUNTIME);
     const issuer = verifyRuntime(issuerDeployment, issuerVersionDetail, ISSUER_RUNTIME);
+    const apiCallerEnabled = optionalPlainTextBinding(
+        apiVersionDetail,
+        API_RUNTIME,
+        api.activeVersion,
+        'CRM_IDENTITY_ISSUER_CALLER_ENABLED',
+    );
+    if (apiCallerEnabled !== null && apiCallerEnabled !== 'false') {
+        fail('api_CRM_IDENTITY_ISSUER_CALLER_ENABLED_MISMATCH');
+    }
+    const apiCallerId = optionalPlainTextBinding(
+        apiVersionDetail,
+        API_RUNTIME,
+        api.activeVersion,
+        'CRM_IDENTITY_ISSUER_CALLER_ID',
+    );
+    if (apiCallerId !== null && apiCallerId !== STAGING_CALLER_ID) {
+        fail('api_CRM_IDENTITY_ISSUER_CALLER_ID_MISMATCH');
+    }
     const deliveryEnabled = optionalPlainTextBinding(
         issuerVersionDetail,
         ISSUER_RUNTIME,
@@ -106,7 +123,7 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
         issuer.activeVersion,
         'IDENTITY_CRM_DELIVERY_CALLER_ID',
     );
-    if (callerId !== null && callerId !== 'crm-api-staging-v1') {
+    if (callerId !== null && callerId !== STAGING_CALLER_ID) {
         fail('issuer_IDENTITY_CRM_DELIVERY_CALLER_ID_MISMATCH');
     }
     return Object.freeze({
@@ -116,7 +133,10 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
         api: Object.freeze({
             ...api,
             callerEnabled: false,
-            callerId: 'crm-api-staging-v1',
+            callerEnabledBinding: apiCallerEnabled === null ? null : false,
+            effectiveCallerEnabled: false,
+            callerId: apiCallerId,
+            expectedCallerId: STAGING_CALLER_ID,
         }),
         issuer: Object.freeze({
             ...issuer,
@@ -125,7 +145,7 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
             callerEnabledBinding: callerEnabled === null ? null : false,
             effectiveCallerEnabled: false,
             callerId,
-            expectedCallerId: 'crm-api-staging-v1',
+            expectedCallerId: STAGING_CALLER_ID,
         }),
     });
 }
