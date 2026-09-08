@@ -1,0 +1,4 @@
+-- Non-destructive rollback for 20260908_crm_core_projection_delta_v1.
+-- Do not drop the membership state or outbox: retained tombstones are needed
+-- for audit and safe replay. The guarded migration runner records rollback in
+-- crm_atendimento.schema_migrations and leaves evidence available for recovery.
