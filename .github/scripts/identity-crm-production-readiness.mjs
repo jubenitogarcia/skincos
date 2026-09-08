@@ -205,8 +205,8 @@ function credentialsState(env) {
   return { usable: true, accountIdPresent: true, apiTokenPresent: true };
 }
 
-function cloudflareReader({ accountId, apiToken, fetchImpl = fetch }) {
-  const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}`;
+function cloudflareReader({ apiToken, fetchImpl = fetch }) {
+  const baseUrl = 'https://api.cloudflare.com/client/v4';
   return async (relativePath) => {
     const response = await fetchImpl(`${baseUrl}${relativePath}`, {
       method: READ_METHOD,
@@ -230,13 +230,14 @@ function cloudflareReader({ accountId, apiToken, fetchImpl = fetch }) {
   };
 }
 
-async function readProductionWorker({ reader, workerName }) {
+async function readProductionWorker({ reader, accountId, workerName }) {
   const encodedWorkerName = encodeURIComponent(workerName);
+  const workerPath = `/accounts/${accountId}/workers/scripts/${encodedWorkerName}`;
   const [settings, deployments, secrets, subdomain] = await Promise.all([
-    reader(`/workers/scripts/${encodedWorkerName}/settings`),
-    reader(`/workers/scripts/${encodedWorkerName}/deployments`),
-    reader(`/workers/scripts/${encodedWorkerName}/secrets`),
-    reader(`/workers/scripts/${encodedWorkerName}/subdomain`),
+    reader(`${workerPath}/settings`),
+    reader(`${workerPath}/deployments`),
+    reader(`${workerPath}/secrets`),
+    reader(`${workerPath}/subdomain`),
   ]);
   return workerReadback({ settings, deployments, secrets, subdomain });
 }
@@ -370,11 +371,10 @@ export async function runIdentityCrmProductionReadiness({ env = process.env, fet
 
   if (credentials.usable) {
     const reader = cloudflareReader({
-      accountId: string(env.CLOUDFLARE_ACCOUNT_ID),
       apiToken: string(env.CLOUDFLARE_API_TOKEN),
       fetchImpl,
     });
-    worker = await readProductionWorker({ reader, workerName });
+    worker = await readProductionWorker({ reader, accountId: string(env.CLOUDFLARE_ACCOUNT_ID), workerName });
     const zoneId = string(env.CLOUDFLARE_ZONE_ID);
     if (zoneId && ZONE_ID_PATTERN.test(zoneId)) {
       routes = await reader(`/zones/${zoneId}/workers/routes?per_page=1000`);

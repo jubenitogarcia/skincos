@@ -9,13 +9,27 @@ import {
 } from './identity-crm-production-readiness.mjs';
 
 const accountId = '0123456789abcdef0123456789abcdef';
+const zoneId = 'fedcba9876543210fedcba9876543210';
 const apiToken = 'read-only-token-used-only-by-test';
+const workerUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${PRODUCTION_WORKER_NAME}`;
+const routesUrl = `https://api.cloudflare.com/client/v4/zones/${zoneId}/workers/routes?per_page=1000`;
+const workerUrls = ['settings', 'deployments', 'secrets', 'subdomain'].map((endpoint) => `${workerUrl}/${endpoint}`);
+
+function assertReadCalls(calls, expectedUrls = [...workerUrls, routesUrl]) {
+  assert.deepEqual(calls.map(({ url }) => url), expectedUrls);
+  for (const { url, options } of calls) {
+    assert.equal(options.method, 'GET');
+    assert.equal(options.body, undefined);
+    assert.deepEqual(options.headers, { authorization: `Bearer ${apiToken}`, accept: 'application/json' });
+    assert.ok(!url.includes(apiToken));
+  }
+}
 
 function completeEnvironment(overrides = {}) {
   return {
     CLOUDFLARE_ACCOUNT_ID: accountId,
     CLOUDFLARE_API_TOKEN: apiToken,
-    CLOUDFLARE_ZONE_ID: accountId,
+    CLOUDFLARE_ZONE_ID: zoneId,
     IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_REF: 'vault://identity/crm-delivery/production',
     IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_ATTESTED: 'true',
     IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ATTESTED: 'true',
@@ -69,26 +83,30 @@ test('missing external credentials produces a blocked, non-mutating report', asy
 
 test('complete external readback is eligible only when all attestations are present', async () => {
   const calls = [];
+  const privateMarker = 'synthetic-private-value-not-for-report';
   const report = await runIdentityCrmProductionReadiness({
     env: completeEnvironment(),
     fetchImpl: async (url, options) => {
       calls.push({ url, options });
-      if (url.endsWith('/settings')) {
+      if (url === `${workerUrl}/settings`) {
         return cloudflareResponse({
           compatibility_date: '2026-03-02',
           usage_model: 'standard',
           workers_dev: false,
-          bindings: [{ name: 'CRM_DELIVERY_SIGNER', type: 'service', service: 'identity-signer' }],
+          bindings: [
+            { name: 'CRM_DELIVERY_SIGNER', type: 'service', service: 'identity-signer' },
+            { name: 'SYNTHETIC_SECRET', type: 'secret_text', text: privateMarker },
+          ],
         });
       }
-      if (url.endsWith('/deployments')) {
+      if (url === `${workerUrl}/deployments`) {
         return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
       }
-      if (url.endsWith('/secrets')) {
-        return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name, type: 'secret_text' })));
+      if (url === `${workerUrl}/secrets`) {
+        return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name, type: 'secret_text', value: privateMarker })));
       }
-      if (url.endsWith('/subdomain')) return cloudflareResponse({ enabled: false, previews_enabled: false });
-      if (url.includes('/workers/routes')) return cloudflareResponse([]);
+      if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: false });
+      if (url === routesUrl) return cloudflareResponse([{ script: 'unrelated-worker', pattern: privateMarker }]);
       throw new Error(`unexpected URL ${url}`);
     },
   });
@@ -96,11 +114,53 @@ test('complete external readback is eligible only when all attestations are pres
   assert.deepEqual(report.blockers, []);
   assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
   assert.equal(report.cloudflare.routeReadback.count, 0);
-  assert.equal(calls.length, 5);
-  assert.ok(calls.every(({ options }) => options.method === 'GET'));
-  assert.ok(calls.every(({ url }) => !url.includes(apiToken)));
+  assertReadCalls(calls);
   assert.doesNotMatch(JSON.stringify(report), new RegExp(apiToken));
+  assert.doesNotMatch(JSON.stringify(report), new RegExp(privateMarker));
 });
+
+for (const responseKind of ['json-error', 'non-json-error']) {
+  test(`zone-scoped ${responseKind} remains blocked and sanitized`, async () => {
+    const calls = [];
+    const privateMarker = `synthetic-private-${responseKind}`;
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment(),
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        if (url !== routesUrl) return cloudflareResponse([]);
+        if (responseKind === 'non-json-error') return new Response(`${privateMarker} ${apiToken}`, { status: 502 });
+        return new Response(JSON.stringify({
+          success: false,
+          errors: [{ code: 10000, message: `${privateMarker} ${apiToken}` }],
+          result: { value: privateMarker },
+        }), { status: 403 });
+      },
+    });
+    assertReadCalls(calls);
+    assert.equal(report.result, 'blocked');
+    assert.equal(report.cloudflare.routeInventory, 'unavailable');
+    assert.ok(report.blockers.includes('production Worker route inventory could not be read'));
+    assert.deepEqual(report.cloudflare.routeReadback, { count: 0, patterns: [] });
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(`${privateMarker}|${apiToken}`));
+  });
+}
+
+for (const invalidZone of ['', 'invalid-zone']) {
+  test(`missing or malformed zone (${invalidZone || 'empty'}) makes no route request`, async () => {
+    const calls = [];
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment({ CLOUDFLARE_ZONE_ID: invalidZone }),
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        return cloudflareResponse([]);
+      },
+    });
+    assertReadCalls(calls, workerUrls);
+    assert.equal(report.result, 'blocked');
+    assert.equal(report.cloudflare.routeInventory, 'not-configured');
+    assert.ok(report.blockers.includes('production Worker route inventory could not be read'));
+  });
+}
 
 test('production Worker absence remains blocked and only error codes are retained', async () => {
   const report = await runIdentityCrmProductionReadiness({
