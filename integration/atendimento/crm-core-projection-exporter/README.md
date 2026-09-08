@@ -29,7 +29,7 @@ exige capacidades já construídas pelo operador:
 - signer Ed25519 injetado, com key ID iniciado por
   `crm-staging-atendimento-backfill-`;
 - transporte HTTPS injetado para a rota exata
-  `/_internal/crm/backfill/atendimento`;
+  `/crm/_internal/backfill/atendimento`;
 - checkpoint privado com operações `read`, `write` e `complete`.
 
 O runner abre uma única transação `REPEATABLE READ READ ONLY`, atesta a fonte e

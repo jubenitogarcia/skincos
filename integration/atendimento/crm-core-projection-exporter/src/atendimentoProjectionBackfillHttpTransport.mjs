@@ -10,7 +10,7 @@ import {
   assertAtendimentoProjectionBackfillDelivery,
 } from './atendimentoProjectionBackfillDelivery.mjs'
 
-export const ATENDIMENTO_CRM_BACKFILL_HTTP_PATH = '/_internal/crm/backfill/atendimento'
+export const ATENDIMENTO_CRM_BACKFILL_HTTP_PATH = '/crm/_internal/backfill/atendimento'
 export const ATENDIMENTO_CRM_BACKFILL_HTTP_MAX_BODY_BYTES = 64 * 1024
 export const ATENDIMENTO_CRM_BACKFILL_HTTP_TIMEOUT_MS = 15_000
 export const ATENDIMENTO_CRM_BACKFILL_RECEIPT_VERSION = 'crm-core/projection-backfill-receipt/v1'

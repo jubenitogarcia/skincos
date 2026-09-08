@@ -11,6 +11,8 @@ preview_urls = false
 [vars]
 IDENTITY_CRM_DELIVERY_ENABLED = "false"
 IDENTITY_CRM_DELIVERY_ENVIRONMENT = "staging"
+IDENTITY_CRM_DELIVERY_CALLER_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_CALLER_ID = "crm-api-staging-v1"
 
 [env.staging]
 name = "skincos-identity-crm-delivery-staging"
@@ -24,6 +26,8 @@ preview_urls = false
 [env.staging.vars]
 IDENTITY_CRM_DELIVERY_ENABLED = "false"
 IDENTITY_CRM_DELIVERY_ENVIRONMENT = "staging"
+IDENTITY_CRM_DELIVERY_CALLER_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_CALLER_ID = "crm-api-staging-v1"
 
 # Before any staging enablement, provision these values through the protected
 # secret manager, never through this file or Git:
@@ -31,3 +35,4 @@ IDENTITY_CRM_DELIVERY_ENVIRONMENT = "staging"
 #   wrangler secret put IDENTITY_CRM_DELIVERY_PRIVATE_JWK --env staging
 #   wrangler secret put IDENTITY_CRM_DELIVERY_PUBLIC_JWK --env staging
 #   wrangler secret put IDENTITY_CRM_DELIVERY_REQUEST_HMAC --env staging
+#   wrangler secret put IDENTITY_CRM_DELIVERY_CALLER_HMAC --env staging

@@ -147,7 +147,17 @@
         ".github/workflows/deploy-core-workers.yml",
         ".github/workflows/ponto-staging-core-provenance-recovery.yml",
         ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
-        ".github/workflows/insumos-production-smoke-identity.yml"
+        ".github/workflows/insumos-production-smoke-identity.yml",
+        ".github/workflows/identity-crm-delivery.yml"
+      ]
+    },
+    {
+      "id": "identity-crm-delivery-staging-worker",
+      "platform": "cloudflare-worker",
+      "canonicalDeployWorkflow": ".github/workflows/identity-crm-delivery.yml",
+      "coordinationGroup": "ponto-workers-writer",
+      "mutationWorkflows": [
+        ".github/workflows/identity-crm-delivery.yml"
       ]
     },
     {
@@ -271,7 +281,8 @@
       "mutationWorkflows": [
         ".github/workflows/insumos-staging-rbac-smoke.yml",
         ".github/workflows/timekeeping-staging-journey.yml",
-        ".github/workflows/beauty-movement-staging-smoke.yml"
+        ".github/workflows/beauty-movement-staging-smoke.yml",
+        ".github/workflows/identity-crm-delivery.yml"
       ]
     },
     {

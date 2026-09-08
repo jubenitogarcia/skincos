@@ -76,6 +76,21 @@ provide a durable Identity-owned key registry/custody adapter, publish the
 matching public key to CRM, and expose a staging-only service binding before
 the enabled path can be exercised outside synthetic tests.
 
+`identity/delivery/crm-issuer-production-worker.js` and
+`identity/wrangler.production.toml` now provide the production-capable
+candidate surface. The manifest is disabled by default, has no route or data
+binding, and is not included in a deployment workflow. When a protected
+operator eventually enables it, the Worker accepts only the production
+`crm-production-` key-id prefix, reads the Ed25519 private JWK and caller HMAC
+from runtime secrets, and publishes only the active/overlap public keys. The
+public-key ring rejects duplicate, revoked, expired or cross-environment keys;
+the CRM consumer's atomic replay ledger remains mandatory.
+
+This candidate does not make production ready by itself. A durable custody
+reference, persistent CRM caller, public-key pin, replay readback, staged
+same-artifact smoke and rollback rehearsal are still required before any
+production secret provisioning or deploy.
+
 The helper refuses the current username-based actor. A future additive Identity
 migration must first provide a stable opaque `identitySubject` and preserve it
 through creation, rename, restore and session resolution. Only after that
