@@ -30,7 +30,7 @@ function acceptedThenIdempotentFetch(calls) {
       async json() {
         return {
           ok: true,
-          contractVersion: 'crm-core/projection-backfill-receipt/v1',
+          contractVersion: 'crm-core/projection-backfill-receipt/v2',
           status: calls.length === 1 ? 'accepted' : 'idempotent',
           batchId: input.batch.batchId,
           eventCount: input.batch.events.length,
