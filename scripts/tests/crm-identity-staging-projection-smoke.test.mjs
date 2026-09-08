@@ -97,6 +97,26 @@ test('original session profile still generates only two deliveries and needs no 
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('default projection pins use the explicit equivalent runtime without changing the workflow source or v1 report', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'crm-runtime-source-smoke-'));
+  const values = { OPERATION: 'session-smoke', CRM_IDENTITY_SMOKE_PROFILE: 'session-and-projections',
+    RELEASE_SHA: 'd'.repeat(40), EXPECTED_GATEWAY_SOURCE_SHA: pins.sourceSha,
+    CRM_CORE_RELEASE_SHA: pins.coreReleaseSha, CRM_CORE_ARTIFACT_DIGEST: pins.coreArtifactDigest,
+    EXPECTED_API_VERSION_ID: pins.gatewayVersionId, EXPECTED_ISSUER_VERSION_ID: pins.issuerVersionId };
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, values);
+    const f = fixture(directory);
+    const report = await runCrmIdentityStagingProjectionSmoke({ ...f, reportPath: join(directory, 'projection.json'), getCookie: async (id) => `session=${id}` });
+    validateCrmProjectionSmokeReport(report, pins);
+    assert.equal(report.sourceSha, pins.sourceSha); assert.equal(report.schemaVersion, 1);
+    assert.equal(process.env.RELEASE_SHA, 'd'.repeat(40)); assert.equal(f.calls.coreDeliveries, 4);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('extended smoke rejects permission widening of the canonical zero-permission fixture', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'crm-permission-smoke-'));
   try {
