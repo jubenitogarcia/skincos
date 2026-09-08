@@ -140,13 +140,25 @@ function unitSlug(value, code) {
   return normalized
 }
 
+function startsReadOnlyQuery(sql) {
+  let cursor = 0
+  while (cursor < sql.length) {
+    while (cursor < sql.length && /\s/.test(sql[cursor])) cursor += 1
+    if (!sql.startsWith('/*', cursor)) break
+    const commentEnd = sql.indexOf('*/', cursor + 2)
+    if (commentEnd < 0) return false
+    cursor = commentEnd + 2
+  }
+  return /^(?:select|with)\b/i.test(sql.slice(cursor))
+}
+
 function sourceQuery(value, code, requiredAliases = []) {
   const sql = text(value, code)
   if (
     sql.length > 32_768
     || sql.includes(';')
     || SOURCE_QUERY_FORBIDDEN.test(sql)
-    || !/^\s*(?:(?:\/\*[\s\S]*?\*\/)\s*)*(?:select|with)\b/i.test(sql)
+    || !startsReadOnlyQuery(sql)
   ) fail(code)
   for (const alias of requiredAliases) {
     const expression = new RegExp(`\\bas\\s+(?:"${alias}"|${alias})\\b`, 'i')

@@ -1,9 +1,11 @@
 # Exportador de projeções opacas de Atendimento para CRM Core
 
 Este adaptador prepara lotes de backfill v2 para o CRM independente, em uma
-transação PostgreSQL `REPEATABLE READ READ ONLY`. Ele não escolhe nem inventa
-a relação entre identidade global e unidade: a tabela de identidades globais
-não possui `unit_slug` canônico. Portanto não há SQL padrão para dados reais.
+transação PostgreSQL `REPEATABLE READ ONLY`. A tabela de identidades globais não
+possui `unit_slug` por si só; a fonte padrão para dados reais é a associação
+confirmada de Atendimento em
+`src/atendimentoConfirmedUnitScopedProjectionSource.mjs`, que resolve o slug
+somente pelas evidências e unidades canônicas do owner.
 
 Toda execução exige uma fonte injetada e atestada pelo owner de Atendimento,
 com uma linha estrita por vínculo identidade/unidade:
@@ -45,6 +47,9 @@ exige capacidades já construídas pelo operador:
   `crm-staging-atendimento-backfill-`;
 - transporte HTTPS injetado para a rota exata
   `/crm/_internal/backfill/atendimento`;
+- recibo HTTP estrito `crm-core/projection-backfill-receipt/v2`, vinculado ao
+  lote, request ID e artefato alvo; o envelope assinado de entrega continua em
+  `skincos-crm/projection-backfill-delivery/v1`;
 - checkpoint privado com operações `read`, `write` e `complete`.
 
 O runner abre uma única transação `REPEATABLE READ READ ONLY`, atesta a fonte e
@@ -73,19 +78,39 @@ contagem, formato de linha, lote, prova, endpoint, resposta ou limite não
 correspondem ao contrato. O teto da fonte continua sendo 10.000 linhas; se a
 carga exceder isso, ele não cria um backfill parcial.
 
-## Contrato que o owner de Atendimento ainda precisa fornecer
+## Fonte canônica confirmada pelo owner de Atendimento
 
-Antes de qualquer backfill real, o owner deve fornecer o descritor injetado da
-fonte canônica. O adaptador valida que as consultas sejam somente-leitura, sem
-`OFFSET` ou DDL/DML, que as páginas sejam ordenadas e que o cursor seguinte use
-exatamente quatro parâmetros: `updated_at`, `id`, `unit_slug` e `limit`. A
-consulta de página seguinte deve ter `WHERE`, `ORDER BY` e aliases explícitos.
+`src/atendimentoConfirmedUnitScopedProjectionSource.mjs` fornece o descritor
+canônico `ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE`. Ele reproduz a
+mesma regra já usada pelo runtime comercial de Atendimento: uma identidade tem
+escopo em cada unidade comprovada por um dos quatro canais abaixo, e o slug só
+é aceito após resolver contra `crm_atendimento.units`.
 
-O descritor não decide a semântica da associação. Essa decisão continua com
-Atendimento: deve definir qual membership confirmado projeta uma linha e qual
-fonte vence quando dados heterogêneos divergem. Até essa regra existir em
-código proprietário, o exportador recusa a consulta legada de duas colunas e
-não acessa nenhuma linha de domínio.
+- atendimento ativo: `global_client_identity_members` →
+  `attendance_client_links` → `attendances` não deletado;
+- venda Caixa: `global_client_identity_members` → `crm_caixa.sales`;
+- cadastro de app: `global_client_identity_members` →
+  `app_client_registrations.unit_slugs`;
+- lead suplementar: `global_client_identity_members` →
+  `supplemental_lead_profiles.unit_slugs`.
+
+Evidências repetidas para a mesma identidade/unidade são reduzidas a uma única
+linha; evidências em unidades diferentes constituem uma associação multiunidade
+válida, sem uma regra arbitrária de precedência. Uma identidade sem evidência
+canônica não gera linha alguma: não há fallback global, `all` ou `unknown`.
+
+As consultas continuam somente leitura, sem `OFFSET` ou DDL/DML, e usam a chave
+`(updated_at, id, unit_slug)`. `updated_at` é o carimbo observável usado pelo
+snapshot/cursor; não é uma revisão monotônica do CRM Core. O evento emitido tem
+`revision: 1`, portanto este caminho é exclusivamente para o backfill inicial e
+o replay exato do mesmo pacote. Remoções de vínculo ou sincronização incremental
+exigem um contrato posterior com tombstone e revisão monotônica; não devem ser
+simuladas reenviando esta fonte com revisão 1.
+
+Ainda é necessário que o operador provisione externamente o principal
+`crm_core_projection_exporter` com `SELECT` somente nas relações e colunas que
+essa consulta usa. Este repositório não cria usuário, senha, grant, conexão ou
+qualquer acesso ao banco de produção.
 
 ## Preflight reutilizável e preparação sintética
 
