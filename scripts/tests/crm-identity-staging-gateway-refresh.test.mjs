@@ -362,6 +362,19 @@ test('workflow keeps original session delta and separates refresh, extended smok
   assert.match(workflow, /node scripts\/crm-identity-staging-caller-runtime-readback\.mjs/);
 });
 
+test('ACK adapter retains the extended-smoke source attestation without changing refresh release authority', () => {
+  const source = fs.readFileSync(new URL('../crm-identity-staging-gateway-refresh.mjs', import.meta.url), 'utf8');
+  const attest = source.split("if (process.argv.length === 3 && process.argv[2] === '--attest-active') {")[1]?.split('process.exit(0);')[0];
+  assert.ok(attest);
+  assert.match(attest, /const sourceSha = resolveCrmSmokeGatewaySource\(env\)/);
+  assert.match(attest, /env.OPERATION === 'session-smoke' && env.CRM_IDENTITY_SMOKE_PROFILE === 'session-and-projections'/);
+  assert.ok(attest.indexOf('revalidateCrmGatewaySourceBinding({ env })') < attest.indexOf('attestCrmActiveGateway({ sourceSha,'));
+  assert.match(attest, /io: createCrmStagingGatewayIo\(env\)/);
+  assert.doesNotMatch(source, /\bcreateIo\(/);
+  assert.match(source, /refreshCrmStagingGateway\(\{ sourceSha: env.RELEASE_SHA/);
+  assert.match(source, /env.GITHUB_SHA !== env.RELEASE_SHA/);
+});
+
 test('extended smoke holds and revalidates the canonical Worker lease across the entire journey', () => {
   const workflow = fs.readFileSync(new URL('../../.github/workflows/identity-crm-delivery.yml', import.meta.url), 'utf8');
   const blocks = workflow.split(/(?=^      - name: )/m);
