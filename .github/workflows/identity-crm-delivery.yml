@@ -238,8 +238,8 @@ jobs:
           const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
           if (
             report?.schemaVersion !== 1 || report.state !== 'caller-disabled' || report.observation !== 'exact-active-worker-version-bindings'
-            || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
+            || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.effectiveCallerEnabled !== false || report.api.expectedCallerId !== 'crm-api-staging-v1' || (report.api.callerEnabledBinding !== null && report.api.callerEnabledBinding !== false) || (report.api.callerId !== null && report.api.callerId !== 'crm-api-staging-v1') || !version(report.api.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerEnabledBinding !== null && report.issuer.callerEnabledBinding !== false) || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags are not proven disabled');
           process.stdout.write(`state=caller-disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
@@ -376,8 +376,8 @@ jobs:
           const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
           if (
             report?.schemaVersion !== 1 || report.state !== 'caller-disabled' || report.observation !== 'exact-active-worker-version-bindings'
-            || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
+            || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.effectiveCallerEnabled !== false || report.api.expectedCallerId !== 'crm-api-staging-v1' || (report.api.callerEnabledBinding !== null && report.api.callerEnabledBinding !== false) || (report.api.callerId !== null && report.api.callerId !== 'crm-api-staging-v1') || !version(report.api.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerEnabledBinding !== null && report.issuer.callerEnabledBinding !== false) || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags changed or are not proven disabled');
           process.stdout.write(`state=caller-disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
