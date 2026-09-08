@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { validateCrmProjectionPayload } from '../api/src/crm-projection-response.js';
+import { resolveCrmSmokeGatewaySource } from './crm-identity-staging-gateway-source-binding.mjs';
 
 export const CRM_SMOKE_CONSOLE_ORIGINS = Object.freeze([
   'https://crm-core-staging.skincos.com.br',
@@ -96,7 +97,7 @@ function writeReport(reportPath, report) {
 export async function runCrmIdentityStagingProjectionSmoke({
   fetchImpl = globalThis.fetch, getCookie, reportPath, now = () => new Date().toISOString(),
   pins = {
-    sourceSha: process.env.RELEASE_SHA, coreReleaseSha: process.env.CRM_CORE_RELEASE_SHA,
+    sourceSha: resolveCrmSmokeGatewaySource(), coreReleaseSha: process.env.CRM_CORE_RELEASE_SHA,
     coreArtifactDigest: process.env.CRM_CORE_ARTIFACT_DIGEST,
     gatewayVersionId: process.env.EXPECTED_API_VERSION_ID, issuerVersionId: process.env.EXPECTED_ISSUER_VERSION_ID,
   },
