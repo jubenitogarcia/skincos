@@ -14,6 +14,8 @@ on:
       - 'scripts/crm-identity-staging-session-smoke.mjs'
       - 'scripts/crm-identity-staging-projection-smoke.mjs'
       - 'scripts/crm-identity-staging-gateway-refresh.mjs'
+      - 'scripts/crm-identity-staging-gateway-source-binding.mjs'
+      - 'scripts/tests/crm-identity-staging-gateway-source-binding.test.mjs'
       - 'scripts/tests/crm-identity-staging-projection-smoke.test.mjs'
       - 'scripts/tests/crm-identity-staging-gateway-refresh.test.mjs'
       - 'scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs'
@@ -35,6 +37,8 @@ on:
       - 'scripts/crm-identity-staging-session-smoke.mjs'
       - 'scripts/crm-identity-staging-projection-smoke.mjs'
       - 'scripts/crm-identity-staging-gateway-refresh.mjs'
+      - 'scripts/crm-identity-staging-gateway-source-binding.mjs'
+      - 'scripts/tests/crm-identity-staging-gateway-source-binding.test.mjs'
       - 'scripts/tests/crm-identity-staging-projection-smoke.test.mjs'
       - 'scripts/tests/crm-identity-staging-gateway-refresh.test.mjs'
       - 'scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs'
@@ -84,6 +88,10 @@ on:
         default: session
         type: choice
         options: [session, session-and-projections]
+      expected_gateway_source_sha:
+        description: "Extended smoke only: exact active gateway SHA, a canonical ancestor with identical API/shared trees"
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -101,6 +109,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Reject a gateway runtime source override for the test operation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_gateway_source_sha != '' }}
+        run: echo 'Gateway runtime source overrides require extended session smoke'; exit 1
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -125,6 +136,7 @@ jobs:
           node --test scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs
           node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
           node --test scripts/tests/crm-identity-staging-projection-smoke.test.mjs scripts/tests/crm-identity-staging-gateway-refresh.test.mjs
+          node --test scripts/tests/crm-identity-staging-gateway-source-binding.test.mjs
 
   staging:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation != 'test' }}
@@ -141,6 +153,7 @@ jobs:
       CRM_CORE_ARTIFACT_DIGEST: ${{ inputs.crm_core_artifact_digest }}
       EXPECTED_API_VERSION_ID: ${{ inputs.expected_api_version_id }}
       EXPECTED_ISSUER_VERSION_ID: ${{ inputs.expected_issuer_version_id }}
+      EXPECTED_GATEWAY_SOURCE_SHA: ${{ inputs.expected_gateway_source_sha }}
       CRM_IDENTITY_SMOKE_PROFILE: ${{ inputs.smoke_profile || 'session' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -164,6 +177,7 @@ jobs:
           [[ "$CONFIRMATION" == "$expected_confirmation" ]] || { echo 'Explicit non-secret operation confirmation is invalid'; exit 1; }
           [[ "$CRM_IDENTITY_SMOKE_PROFILE" == session || "$CRM_IDENTITY_SMOKE_PROFILE" == session-and-projections ]] || { echo 'Invalid smoke profile'; exit 1; }
           [[ "$OPERATION" == session-smoke || "$CRM_IDENTITY_SMOKE_PROFILE" == session ]] || { echo 'Extended profile is smoke-only'; exit 1; }
+          node scripts/crm-identity-staging-gateway-source-binding.mjs --validate-input
           [[ "$GITHUB_REF" == 'refs/heads/main' ]] || { echo 'Controlled CRM Identity staging operations run only from main'; exit 1; }
           [[ "$GITHUB_RUN_ATTEMPT" == '1' ]] || { echo 'Reruns are refused after a potentially mutating operation'; exit 1; }
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
@@ -194,8 +208,13 @@ jobs:
           node --test scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs
           node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
           node --test scripts/tests/crm-identity-staging-projection-smoke.test.mjs scripts/tests/crm-identity-staging-gateway-refresh.test.mjs
+          node --test scripts/tests/crm-identity-staging-gateway-source-binding.test.mjs
           npx --yes wrangler@4.112.0 deploy --dry-run --config identity/wrangler.staging.toml --env staging --outdir "$RUNNER_TEMP/identity-crm-delivery-dry-run" >/dev/null
           npx --yes wrangler@4.112.0 deploy --dry-run --config api/wrangler.toml --env staging --outdir "$RUNNER_TEMP/api-crm-session-dry-run" >/dev/null
+
+      - name: Verify canonical gateway runtime source equivalence
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' }}
+        run: node scripts/crm-identity-staging-gateway-source-binding.mjs --prove
 
       - name: Attest the externally published CRM Core before activation or synthetic session smoke
         if: ${{ inputs.operation == 'activate' || inputs.operation == 'session-smoke' || inputs.operation == 'refresh-gateway' }}
@@ -898,6 +917,15 @@ jobs:
         with:
           name: crm-identity-projection-smoke-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/crm-identity-projection-smoke-report.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload only the sanitised gateway source binding proof
+        if: ${{ always() && inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-gateway-source-binding-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/crm-gateway-source-binding-report.json
           retention-days: 30
           if-no-files-found: warn
 

@@ -251,6 +251,42 @@ Seu `schemaVersion` é 1; o contrato transportado é
 Os consumidores ainda devem comprovar o run GitHub terminal, SHA, tentativa,
 teardown e liberação de lease; o arquivo isolado não concede autoridade.
 
+### Smoke após uma mudança que não altera o runtime
+
+Somente o perfil `session-and-projections` aceita o input opcional
+`expected_gateway_source_sha`. Ele identifica a fonte exata da API já ativa;
+não substitui `release_sha`, `GITHUB_SHA` nem a fonte das leases. Quando ausente,
+o runtime esperado continua sendo `release_sha`. Outros perfis e operações
+recusam um override, inclusive `test`. Não há deploy para atualizar apenas testes.
+
+Antes de qualquer operação externa, o step
+`Verify canonical gateway runtime source equivalence` exige o checkout e
+`main` canônico atuais, tentativa 1, a fonte do runtime como ancestral de
+`release_sha` e igualdade das árvores Git completas `api/` e `shared/`.
+Essas árvores abrangem entrypoint, imports transitivos, configuração e lockfile;
+não basta comparar somente o handler CRM. Mudanças locais nessas árvores,
+ancestralidade ausente ou qualquer diferença de conteúdo impedem o smoke.
+Antes dos readbacks API/emissor pré-fixtures e pós-teardown, essa equivalência
+e o `main` são novamente conferidos contra o mesmo comprovante, sem reescrevê-lo.
+
+O novo artefato `crm-gateway-source-binding-<release_sha>` contém somente
+`crm-gateway-source-binding-report.json`, de `schemaVersion: 1` e
+`contractVersion: crm-gateway/source-binding/v1`. Seu parser exportado
+`validateCrmGatewaySourceBindingReport`, em
+`scripts/crm-identity-staging-gateway-source-binding.mjs`, exige
+`workflowSourceSha`, `gatewaySourceSha`, `apiTreeSha`, `sharedTreeSha`,
+`coreReleaseSha`, `coreArtifactDigest`, `gatewayVersionId`, `issuerVersionId`,
+`runId` como string e `runAttempt: "1"`, além de timestamp UTC canônico,
+ancestralidade/equivalência verificadas e ausência de material secreto/PII.
+
+Os relatórios de sessão e projeções permanecem v1. O `sourceSha` da prova de
+projeções corresponde a `gatewaySourceSha` e ao `APP_VERSION`/header vivo;
+o sufixo dos três artefatos corresponde a `workflowSourceSha` e ao SHA do run.
+O consumidor deve validar essa ligação nos artefatos originais do mesmo run
+terminal bem-sucedido, além dos readbacks, teardown e liberação de ambas as
+leases. O companion isolado prova somente o vínculo de fontes, não autoriza
+publicação nem substitui a prova autenticada de seis entregas Identity.
+
 Esses testes HTTP não equivalem a login/renderização no navegador: a inspeção
 do console publicado e o uso do cookie existente no navegador continuam sendo
 uma verificação separada. Não há fallback legado nem autoridade de produção.

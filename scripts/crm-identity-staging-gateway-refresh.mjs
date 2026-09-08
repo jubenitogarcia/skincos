@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assertCrmSmokeCors, CRM_SMOKE_CONSOLE_ORIGINS } from './crm-identity-staging-projection-smoke.mjs';
+import { resolveCrmSmokeGatewaySource, revalidateCrmGatewaySourceBinding } from './crm-identity-staging-gateway-source-binding.mjs';
 
 const API = 'skincos-api-staging';
 const ISSUER = 'skincos-identity-crm-delivery-staging';
@@ -12,7 +13,7 @@ const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const TYPES = new Set(['plain_text', 'secret_text', 'json', 'service', 'd1', 'r2_bucket', 'durable_object_namespace', 'version_metadata', 'kv_namespace']);
 const fail = (code) => { throw new Error(code); };
-const safeCode = (error) => /^CRM_GATEWAY_REFRESH_[A-Z0-9_]+$/.test(error?.message || '') ? error.message : 'CRM_GATEWAY_REFRESH_FAILED';
+const safeCode = (error) => /^CRM_GATEWAY_(?:REFRESH|SOURCE)_[A-Z0-9_]+$/.test(error?.message || '') ? error.message : 'CRM_GATEWAY_REFRESH_FAILED';
 const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);
 const digest = (value) => `sha256:${createHash('sha256').update(stable(value)).digest('hex')}`;
@@ -331,7 +332,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const env = process.env;
   try {
     if (process.argv.length === 3 && process.argv[2] === '--attest-active') {
-      const result = await attestCrmActiveGateway({ sourceSha: env.RELEASE_SHA,
+      const sourceSha = resolveCrmSmokeGatewaySource(env);
+      if (env.OPERATION === 'session-smoke' && env.CRM_IDENTITY_SMOKE_PROFILE === 'session-and-projections') revalidateCrmGatewaySourceBinding({ env });
+      const result = await attestCrmActiveGateway({ sourceSha,
         expectedApiVersionId: env.EXPECTED_API_VERSION_ID, expectedIssuerVersionId: env.EXPECTED_ISSUER_VERSION_ID, io: createIo(env) });
       process.stdout.write(`${JSON.stringify(result)}\n`);
       process.exit(0);

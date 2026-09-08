@@ -51,7 +51,7 @@ test('staging session smoke uses a synthetic cookie only at the gateway and writ
         requestId: 'synthetic-request-id',
       }, 200);
     };
-    const report = await runCrmIdentityStagingSessionSmoke({ fetchImpl, fixturesPath: fixturePath, reportPath, now: () => '2026-09-07T00:00:00.000Z' });
+    const report = await runCrmIdentityStagingSessionSmoke({ profile: 'session', fetchImpl, fixturesPath: fixturePath, reportPath, now: () => '2026-09-07T00:00:00.000Z' });
     assert.equal(report.result, 'verified');
     assert.equal(report.authenticatedStatus, 200);
     assert.deepEqual(calls.map((call) => [new URL(call.url).pathname, call.method, call.hasCookie]), [
@@ -84,7 +84,7 @@ test('staging session smoke refuses a session response that tries to return a co
       return response({ ok: true, identity: {}, requestId: 'unexpected' }, 200, { 'set-cookie': 'unexpected=value' });
     };
     await assert.rejects(
-      runCrmIdentityStagingSessionSmoke({ fetchImpl, fixturesPath: fixturePath, reportPath }),
+      runCrmIdentityStagingSessionSmoke({ profile: 'session', fetchImpl, fixturesPath: fixturePath, reportPath }),
       /CRM_SESSION_SMOKE_SESSION_SET_COOKIE/,
     );
     const persisted = JSON.parse(readFileSync(reportPath, 'utf8'));
@@ -128,7 +128,7 @@ test('staging session smoke records only an allowlisted login failure stage and 
       return response({ ok: false, error: 'CRM_IDENTITY_REQUIRED' }, 401);
     };
     await assert.rejects(
-      runCrmIdentityStagingSessionSmoke({ fetchImpl, fixturesPath: fixturePath, reportPath }),
+      runCrmIdentityStagingSessionSmoke({ profile: 'session', fetchImpl, fixturesPath: fixturePath, reportPath }),
       /CRM_SESSION_SMOKE_LOGIN_STATUS_INVALID/,
     );
     const persisted = JSON.parse(readFileSync(reportPath, 'utf8'));
@@ -139,4 +139,11 @@ test('staging session smoke records only an allowlisted login failure stage and 
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('the extended runtime profile still requires a separate projection report before any request', async () => {
+  await assert.rejects(runCrmIdentityStagingSessionSmoke({
+    profile: 'session-and-projections', projectionReportPath: '',
+    fetchImpl: async () => assert.fail('missing projection report must fail before any request'),
+  }), /CRM_SESSION_SMOKE_PROJECTION_REPORT_REQUIRED/);
 });
