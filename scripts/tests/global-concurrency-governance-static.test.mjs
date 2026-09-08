@@ -599,6 +599,18 @@ test("Identity CRM delivery is a restricted staging-only canonical publisher", (
   assert.match(workflow, /IDENTITY_CRM_DELIVERY_CALLER_ENABLED:false/);
   assert.match(workflow, /CRM_IDENTITY_ISSUER_CALLER_ENABLED:false/);
   assert.doesNotMatch(workflow, /environment:\s*production|--env\s+production/i);
+
+  const disabledPreflight = workflow.indexOf("Read back exact active staging Worker bindings and require the caller disabled before bootstrap");
+  const secretPreflight = workflow.indexOf("Refuse partial caller HMAC custody and attest existing signer custody");
+  const provision = workflow.indexOf("Provision one generated HMAC into both disabled staging runtimes");
+  const disabledReadback = workflow.indexOf("Read back exact active staging Worker bindings after caller HMAC custody");
+  const evidence = workflow.indexOf("Write sanitised disabled bootstrap evidence");
+  assert.ok(disabledPreflight >= 0 && secretPreflight > disabledPreflight && provision > secretPreflight && disabledReadback > provision && evidence > disabledReadback);
+  assert.match(workflow, /scripts\/crm-identity-staging-caller-runtime-readback\.mjs/);
+  assert.match(workflow, /steps\.bootstrap_runtime_preflight\.outputs\.state == 'disabled'/);
+  assert.match(workflow, /steps\.bootstrap_runtime_readback\.outputs\.state == 'disabled'/);
+  assert.match(workflow, /schemaVersion: 2/);
+  assert.match(workflow, /runtimeReadback: 'exact-active-worker-version-bindings'/);
 });
 
 test("general CRM Pages checks out trusted local coordination actions before using them", () => {

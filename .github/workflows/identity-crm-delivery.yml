@@ -8,7 +8,9 @@ on:
       - 'api/src/crm-identity-issuer-client.js'
       - 'api/test/gateway.test.mjs'
       - 'api/wrangler.toml'
+      - 'scripts/crm-identity-staging-caller-runtime-readback.mjs'
       - 'scripts/crm-identity-staging-session-smoke.mjs'
+      - 'scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs'
       - 'scripts/tests/crm-identity-staging-session-smoke.test.mjs'
       - 'shared/identity-contract/**'
       - '.github/governance/cloudflare-single-writer-policy.json'
@@ -21,7 +23,9 @@ on:
       - 'api/src/crm-identity-issuer-client.js'
       - 'api/test/gateway.test.mjs'
       - 'api/wrangler.toml'
+      - 'scripts/crm-identity-staging-caller-runtime-readback.mjs'
       - 'scripts/crm-identity-staging-session-smoke.mjs'
+      - 'scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs'
       - 'scripts/tests/crm-identity-staging-session-smoke.test.mjs'
       - 'shared/identity-contract/**'
       - '.github/governance/cloudflare-single-writer-policy.json'
@@ -92,6 +96,7 @@ jobs:
           NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity test
           npm --prefix api ci --ignore-scripts --no-audit --fund=false
           npm --prefix api test
+          node --test scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs
           node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
 
   staging:
@@ -135,7 +140,7 @@ jobs:
           [[ "$GITHUB_SHA" == "$RELEASE_SHA" && "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Dispatch source differs from release_sha'; exit 1; }
           git fetch --no-tags --force origin main:refs/remotes/origin/main
           [[ "$(git rev-parse refs/remotes/origin/main)" == "$RELEASE_SHA" ]] || { echo 'main advanced; dispatch the current source again'; exit 1; }
-          for file in identity/wrangler.staging.toml identity/delivery/crm-issuer-staging-worker.js api/wrangler.toml api/src/crm-identity-issuer-client.js scripts/crm-identity-staging-session-smoke.mjs; do
+          for file in identity/wrangler.staging.toml identity/delivery/crm-issuer-staging-worker.js api/wrangler.toml api/src/crm-identity-issuer-client.js scripts/crm-identity-staging-caller-runtime-readback.mjs scripts/crm-identity-staging-session-smoke.mjs; do
             git cat-file -e "$RELEASE_SHA:$file" || { echo "Missing required source: $file"; exit 1; }
           done
 
@@ -156,6 +161,7 @@ jobs:
           NPM_CONFIG_USERCONFIG="$npmrc" npm --prefix identity test
           npm --prefix api ci --ignore-scripts --no-audit --fund=false
           npm --prefix api test
+          node --test scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs
           node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
           npx --yes wrangler@4.112.0 deploy --dry-run --config identity/wrangler.staging.toml --env staging --outdir "$RUNNER_TEMP/identity-crm-delivery-dry-run" >/dev/null
           npx --yes wrangler@4.112.0 deploy --dry-run --config api/wrangler.toml --env staging --outdir "$RUNNER_TEMP/api-crm-session-dry-run" >/dev/null
@@ -212,6 +218,34 @@ jobs:
           resource: global:ponto-workers-writer
           module: core
           source_sha: ${{ inputs.release_sha }}
+
+      - name: Read back exact active staging Worker bindings and require the caller disabled before bootstrap
+        id: bootstrap_runtime_preflight
+        if: ${{ inputs.operation == 'bootstrap' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do [[ -n "${!name:-}" ]] || { echo "Missing staging custody: $name"; exit 1; }; done
+          api_deployment="$RUNNER_TEMP/crm-identity-api-disabled-preflight-deployment.json"
+          issuer_deployment="$RUNNER_TEMP/crm-identity-issuer-disabled-preflight-deployment.json"
+          runtime_report="$RUNNER_TEMP/crm-identity-disabled-preflight.json"
+          trap 'rm -f "$api_deployment" "$issuer_deployment" "$runtime_report"' EXIT
+          npx --yes wrangler@4.112.0 deployments status --json --config api/wrangler.toml --env staging > "$api_deployment"
+          npx --yes wrangler@4.112.0 deployments status --json --config identity/wrangler.staging.toml --env staging > "$issuer_deployment"
+          node scripts/crm-identity-staging-caller-runtime-readback.mjs "$api_deployment" "$issuer_deployment" > "$runtime_report"
+          node - "$runtime_report" <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
+          if (
+            report?.schemaVersion !== 1 || report.state !== 'disabled' || report.observation !== 'exact-active-worker-version-bindings'
+            || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== false || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+          ) throw new Error('active staging caller flags are not proven disabled');
+          process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
+          NODE
 
       - name: Refuse partial caller HMAC custody and attest existing signer custody
         id: bootstrap_preflight
@@ -323,19 +357,52 @@ jobs:
           NODE
           echo 'state=both-present' >> "$GITHUB_OUTPUT"
 
+      - name: Read back exact active staging Worker bindings after caller HMAC custody
+        id: bootstrap_runtime_readback
+        if: ${{ inputs.operation == 'bootstrap' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do [[ -n "${!name:-}" ]] || { echo "Missing staging custody: $name"; exit 1; }; done
+          api_deployment="$RUNNER_TEMP/crm-identity-api-disabled-readback-deployment.json"
+          issuer_deployment="$RUNNER_TEMP/crm-identity-issuer-disabled-readback-deployment.json"
+          runtime_report="$RUNNER_TEMP/crm-identity-disabled-readback.json"
+          trap 'rm -f "$api_deployment" "$issuer_deployment" "$runtime_report"' EXIT
+          npx --yes wrangler@4.112.0 deployments status --json --config api/wrangler.toml --env staging > "$api_deployment"
+          npx --yes wrangler@4.112.0 deployments status --json --config identity/wrangler.staging.toml --env staging > "$issuer_deployment"
+          node scripts/crm-identity-staging-caller-runtime-readback.mjs "$api_deployment" "$issuer_deployment" > "$runtime_report"
+          node - "$runtime_report" <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
+          if (
+            report?.schemaVersion !== 1 || report.state !== 'disabled' || report.observation !== 'exact-active-worker-version-bindings'
+            || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== false || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+          ) throw new Error('active staging caller flags changed or are not proven disabled');
+          process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
+          NODE
+
       - name: Write sanitised disabled bootstrap evidence
-        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_readback.outputs.state == 'both-present' }}
+        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_runtime_preflight.outputs.state == 'disabled' && steps.bootstrap_readback.outputs.state == 'both-present' && steps.bootstrap_runtime_readback.outputs.state == 'disabled' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/crm-identity-bootstrap"
-          RELEASE_SHA="$RELEASE_SHA" BOOTSTRAP_STATE="${{ steps.bootstrap_provision.outputs.state || steps.bootstrap_preflight.outputs.state }}" node - "$RUNNER_TEMP/crm-identity-bootstrap/evidence.json" <<'NODE'
+          RELEASE_SHA="$RELEASE_SHA" BOOTSTRAP_STATE="${{ steps.bootstrap_provision.outputs.state || steps.bootstrap_preflight.outputs.state }}" API_VERSION="${{ steps.bootstrap_runtime_readback.outputs.api_version }}" ISSUER_VERSION="${{ steps.bootstrap_runtime_readback.outputs.issuer_version }}" node - "$RUNNER_TEMP/crm-identity-bootstrap/evidence.json" <<'NODE'
           const fs = require('node:fs');
+          const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
+          if (!version(process.env.API_VERSION) || !version(process.env.ISSUER_VERSION)) throw new Error('disabled active version evidence is missing');
           fs.writeFileSync(process.argv[2], `${JSON.stringify({
-            schemaVersion: 1,
+            schemaVersion: 2,
             operation: 'bootstrap',
             environment: 'staging',
             sourceSha: process.env.RELEASE_SHA,
             state: process.env.BOOTSTRAP_STATE || 'already-provisioned',
+            runtimeReadback: 'exact-active-worker-version-bindings',
+            apiActiveVersion: process.env.API_VERSION,
+            issuerActiveVersion: process.env.ISSUER_VERSION,
             callerId: 'crm-api-staging-v1',
             apiSecretName: 'CRM_IDENTITY_ISSUER_CALLER_HMAC',
             issuerSecretName: 'IDENTITY_CRM_DELIVERY_CALLER_HMAC',
@@ -344,7 +411,7 @@ jobs:
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
       - name: Upload sanitised disabled bootstrap evidence
-        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_readback.outputs.state == 'both-present' }}
+        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_runtime_preflight.outputs.state == 'disabled' && steps.bootstrap_readback.outputs.state == 'both-present' && steps.bootstrap_runtime_readback.outputs.state == 'disabled' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crm-identity-caller-bootstrap-${{ inputs.release_sha }}
@@ -376,7 +443,12 @@ jobs:
           gh run download "$BOOTSTRAP_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "crm-identity-caller-bootstrap-$RELEASE_SHA" --dir "$RUNNER_TEMP/crm-identity-bootstrap-evidence"
           RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/crm-identity-bootstrap-evidence/evidence.json" <<'NODE'
           const fs = require('node:fs'); const evidence = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          if (evidence?.schemaVersion !== 1 || evidence.operation !== 'bootstrap' || evidence.environment !== 'staging' || evidence.sourceSha !== process.env.RELEASE_SHA || evidence.callerEnabled !== false || evidence.secretValuesIncluded !== false) {
+          const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
+          if (
+            evidence?.schemaVersion !== 2 || evidence.operation !== 'bootstrap' || evidence.environment !== 'staging' || evidence.sourceSha !== process.env.RELEASE_SHA
+            || evidence.runtimeReadback !== 'exact-active-worker-version-bindings' || !version(evidence.apiActiveVersion) || !version(evidence.issuerActiveVersion)
+            || evidence.callerEnabled !== false || evidence.secretValuesIncluded !== false
+          ) {
             throw new Error('bootstrap evidence does not bind the current disabled staging source');
           }
           NODE
