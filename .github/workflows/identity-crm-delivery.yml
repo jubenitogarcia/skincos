@@ -112,8 +112,6 @@ jobs:
       BOOTSTRAP_RUN_ID: ${{ inputs.bootstrap_run_id }}
       CRM_CORE_RELEASE_SHA: ${{ inputs.crm_core_release_sha }}
       CRM_CORE_ARTIFACT_DIGEST: ${{ inputs.crm_core_artifact_digest }}
-      WORKER_LEASE_PROOF: ${{ runner.temp }}/crm-identity-workers-lease.json
-      D1_LEASE_PROOF: ${{ runner.temp }}/crm-identity-smoke-d1-lease.json
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -122,6 +120,13 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22.12.0'
+      - name: Resolve runner-local evidence paths
+        run: |
+          set -euo pipefail
+          {
+            echo "WORKER_LEASE_PROOF=$RUNNER_TEMP/crm-identity-workers-lease.json"
+            echo "D1_LEASE_PROOF=$RUNNER_TEMP/crm-identity-smoke-d1-lease.json"
+          } >> "$GITHUB_ENV"
 
       - name: Pin the restricted staging operation to current protected main
         run: |
