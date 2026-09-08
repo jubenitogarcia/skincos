@@ -303,7 +303,12 @@ jobs:
               --result-file "$RUNNER_TEMP/crm-identity-worker-custody-check.json" >/dev/null
             rm -f "$RUNNER_TEMP/crm-identity-worker-custody-check.json"
           }
-          caller_hmac="$(node --input-type=module -e \"import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(48).toString('base64url'));\")"
+          caller_hmac="$(
+            node <<'NODE'
+          const { randomBytes } = require('node:crypto');
+          process.stdout.write(randomBytes(48).toString('base64url'));
+          NODE
+          )"
           [[ "$caller_hmac" =~ ^[A-Za-z0-9_-]{64,}$ ]] || { echo 'Internal caller HMAC generation failed'; exit 1; }
           issuer_written=false
           api_written=false
