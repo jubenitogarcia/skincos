@@ -48,7 +48,22 @@ for (const unit of catalog.units ?? []) {
   }
   const source = read(unit.workflow);
   if (!/^\s*workflow_dispatch:/m.test(source)) fail(`${unit.id} must be manually dispatched`);
-  if (/^\s{2}(push|schedule|pull_request_target|workflow_run|repository_dispatch):/m.test(source)) fail(`${unit.id} has an automatic publish trigger`);
+  const restrictedStagingIdentityDelivery = unit.promotion.publisherType === 'restricted-staging-identity-delivery'
+    && unit.promotion.stagingOnly === true;
+  const restrictedStagingJob = restrictedStagingIdentityDelivery ? jobSource(source, 'staging') : '';
+  const restrictedTestJob = restrictedStagingIdentityDelivery ? jobSource(source, 'test') : '';
+  const restrictedStagingStart = source.indexOf('\n  staging:\n');
+  const restrictedStagingHasLaterJob = restrictedStagingStart >= 0
+    && /\n  [a-zA-Z0-9_-]+:\n/.test(source.slice(restrictedStagingStart + '\n  staging:\n'.length));
+  if (
+    /^\s{2}(push|schedule|pull_request_target|workflow_run|repository_dispatch):/m.test(source)
+    && (
+      !restrictedStagingIdentityDelivery
+      || !restrictedStagingJob.includes("github.event_name == 'workflow_dispatch' && inputs.operation != 'test'")
+      || publishPattern.test(restrictedTestJob)
+      || restrictedStagingHasLaterJob
+    )
+  ) fail(`${unit.id} has an automatic publish trigger`);
   if (!/^concurrency:/m.test(source) || !source.includes(unit.concurrencyPrefix)) fail(`${unit.id} must serialize by unit and environment`);
   if (!/^\s+environment:/m.test(source)) fail(`${unit.id} must select a GitHub environment`);
   if (!/^permissions:\r?\n\s+actions:\s+read\r?\n\s+contents:\s+read/m.test(source)) fail(`${unit.id} must grant the promotion gate actions: read and contents: read`);
@@ -90,6 +105,28 @@ for (const unit of catalog.units ?? []) {
     }
     if (/environment:\s*production|--env\s+production|BEAUTY_MOVEMENT_ENABLED:false/i.test(source)) {
       fail(`${unit.id} must not target production or enable a production path`);
+    }
+  } else if (unit.promotion.publisherType === 'restricted-staging-identity-delivery' && unit.promotion.stagingOnly === true) {
+    if (unit.environments.length !== 1 || unit.environments[0] !== 'staging') fail(`${unit.id} must be staging-only`);
+    for (const required of [
+      'environment: staging',
+      'release_sha',
+      'bootstrap',
+      'activate',
+      'session-smoke',
+      'disable',
+      'global-coordination-acquire',
+      'IDENTITY_CRM_DELIVERY_CALLER_ENABLED:true',
+      'CRM_IDENTITY_ISSUER_CALLER_ENABLED:true',
+      'IDENTITY_CRM_DELIVERY_CALLER_ENABLED:false',
+      'CRM_IDENTITY_ISSUER_CALLER_ENABLED:false',
+      'rollback',
+      'CLOUDFLARE_API_TOKEN',
+    ]) {
+      if (!source.includes(required)) fail(`${unit.id} restricted staging publisher is missing: ${required}`);
+    }
+    if (/environment:\s*production|--env\s+production|CRM_IDENTITY_ISSUER_CALLER_ENABLED:true[^\n]*production|IDENTITY_CRM_DELIVERY_CALLER_ENABLED:true[^\n]*production/i.test(source)) {
+      fail(`${unit.id} must not target or enable a production path`);
     }
   } else if (!source.includes("promotion-gate.yml") || !source.includes("release_sha") || !source.includes("staging_run_id")) {
     fail(`${unit.id} must use the immutable promotion gate`);

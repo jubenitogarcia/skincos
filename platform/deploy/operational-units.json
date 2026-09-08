@@ -20,6 +20,23 @@
       }
     },
     {
+      "id": "identity-crm-delivery-staging",
+      "workflow": ".github/workflows/identity-crm-delivery.yml",
+      "concurrencyPrefix": "identity-crm-delivery-",
+      "publishes": ["Worker:skincos-identity-crm-delivery-staging"],
+      "resources": ["Identity CRM delivery staging signer", "restricted CRM session caller configuration on the staging API Worker", "synthetic Identity session smoke fixture"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY", "CRM_IDENTITY_ISSUER_CALLER_HMAC", "IDENTITY_CRM_DELIVERY_CALLER_HMAC"],
+      "migrationPaths": [],
+      "environments": ["staging"],
+      "promotion": {
+        "stagingSupported": true,
+        "publisherType": "restricted-staging-identity-delivery",
+        "stagingOnly": true,
+        "featureFlagDefault": "disabled",
+        "rollback": "Disable the API caller and Identity issuer caller while retaining the internally generated HMAC only for controlled recovery."
+      }
+    },
+    {
       "id": "ponto-core-baseline",
       "workflow": ".github/workflows/ponto-core-baseline-publisher.yml",
       "concurrencyPrefix": "ponto-surface-mutation",

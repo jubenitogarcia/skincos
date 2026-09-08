@@ -578,6 +578,29 @@ test("shared staging D1 custody serializes synthetic mutators before every write
   assert.match(timekeepingJourney, /steps\.check_staging_d1_teardown\.outcome == 'success'/);
 });
 
+test("Identity CRM delivery is a restricted staging-only canonical publisher", () => {
+  const catalog = JSON.parse(read("platform/deploy/operational-units.json"));
+  const unit = catalog.units.find((entry) => entry.id === "identity-crm-delivery-staging");
+  assert.ok(unit);
+  assert.equal(unit.workflow, ".github/workflows/identity-crm-delivery.yml");
+  assert.deepEqual(unit.environments, ["staging"]);
+  assert.equal(unit.promotion.publisherType, "restricted-staging-identity-delivery");
+  assert.equal(unit.promotion.stagingOnly, true);
+  assert.equal(unit.promotion.featureFlagDefault, "disabled");
+  assert.ok(unit.publishes.includes("Worker:skincos-identity-crm-delivery-staging"));
+  assert.equal(unit.publishes.includes("Worker:skincos-api-staging"), false);
+
+  const workflow = read(unit.workflow);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.operation != 'test'/);
+  assert.match(workflow, /environment: staging/);
+  assert.match(workflow, /global-coordination-acquire/);
+  assert.match(workflow, /IDENTITY_CRM_DELIVERY_CALLER_ENABLED:true/);
+  assert.match(workflow, /CRM_IDENTITY_ISSUER_CALLER_ENABLED:true/);
+  assert.match(workflow, /IDENTITY_CRM_DELIVERY_CALLER_ENABLED:false/);
+  assert.match(workflow, /CRM_IDENTITY_ISSUER_CALLER_ENABLED:false/);
+  assert.doesNotMatch(workflow, /environment:\s*production|--env\s+production/i);
+});
+
 test("general CRM Pages checks out trusted local coordination actions before using them", () => {
   const workflow = read(".github/workflows/deploy-crm-pages.yml");
   const checkout = workflow.indexOf("Checkout trusted general coordination actions");
