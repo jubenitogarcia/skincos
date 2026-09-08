@@ -170,3 +170,74 @@ como código, mas não é uma autorização para executá-la: enquanto o Core de
 staging estiver em reconciliação concorrente, nenhum bootstrap, ativação ou
 smoke autenticado deve ser despachado. Não há operação, segredo ou alvo de
 produção nesse fluxo.
+
+## Atualização do gateway ativo e prova de projeções
+
+`identity-crm-delivery.yml` também fornece `refresh-gateway`, restrito ao
+gateway de staging já ativo. Não é bootstrap nem nova ativação do emissor.
+O dispatch exige `release_sha` igual ao `main` atual, tentativa 1,
+`confirmation=refresh-crm-gateway-staging`, `crm_core_release_sha`,
+`crm_core_artifact_digest`, `expected_api_version_id` e
+`expected_issuer_version_id`. Os UUIDs são obtidos do readback imediatamente
+anterior; não reutilizar valores de um relatório antigo.
+
+O fluxo captura deployment e versão incumbentes, exige os dois callers ativos,
+mantém a afinidade Timekeeping observada e sobe uma versão API ainda sem tráfego.
+O upload explicita `CRM_IDENTITY_ISSUER_CALLER_ENABLED:true` e o caller canônico:
+`--keep-vars` sozinho não substitui o `false` declarado no TOML. Antes do switch,
+compara o conjunto completo de bindings tipados, inclusive nomes/tipos de
+segredos, serviços, D1, R2 e namespaces, permitindo somente `APP_VERSION` novo.
+Também exige a mesma compatibilidade. Nenhum valor secreto é lido ou escrito;
+os valores de variáveis não são incluídos no relatório, somente seu digest.
+
+Cada upload, switch e rollback exige o lease remoto existente e a posse
+observada. A troca de tráfego usa somente a API de deployments do Worker
+`skincos-api-staging`, sem a atualização auxiliar de settings do Wrangler.
+O emissor não é publicado, e não há operação de segredo, migração ou dados.
+Depois do switch, o readback comprova versão, bindings, emissor inalterado e
+`401` com CORS nas duas origens exatas para sessão/projeções.
+
+Falhas posteriores ao switch restauram o incumbente API somente quando o
+deployment exato criado pela execução ainda detém o candidato a 100%. Um avanço
+de `main` não impede esse rollback: continuam obrigatórios o checkout original,
+o lease e a posse exata. Se a resposta de criação do deployment for incerta,
+não há retry nem rollback presumido; o relatório registra a incerteza para
+reconciliação. Upload recusado antes do switch deixa uma versão sem tráfego,
+sem alterar o incumbente. O artefato `crm-gateway-refresh-<release_sha>` contém
+apenas `crm-gateway-refresh-report.json`, com checkpoint e resultado sanitizados.
+
+O smoke existente mantém `operation=session-smoke` e
+`confirmation=smoke-crm-identity-staging`. `smoke_profile=session` permanece
+padrão, preserva exatamente o relatório de sessão v1 e consome duas entregas
+Identity. A prova original do Core deve continuar usando esse perfil.
+
+Para comprovar a nova origem e as projeções, usar
+`smoke_profile=session-and-projections`, com SHA/digest Core e os dois UUIDs
+ativos exatos. Há readback tipado API/emissor antes das fixtures e depois do
+teardown. As mesmas fixtures canônicas `nh`, `bss`, `both` e `admin` são
+autenticadas pelo login Inventory; nenhuma permissão ou bypass é acrescentado.
+A sessão NH deve continuar com zero permissões. As duas sessões usam as origens
+nova e incumbente. Quatro leituras de projeção comprovam NH, BSS, união das duas
+unidades e repetição NH na origem incumbente; origem Pages real, produção,
+lookalike e `null` são rejeitadas, assim como ampliação de unidade e ADMIN vazio.
+
+Esse perfil adiciona **quatro** receipts de projeções, além dos **dois** de
+sessão: **seis no total**, sem escrever projeções ou alterar backfill. Uma unidade
+sem eventos é um resultado válido, mas a união deve conter pelo menos um evento
+opaco já disponível. O relatório não persiste eventos, referências, identidade,
+cookie ou credenciais. O relatório de sessão continua v1, sem campos novos.
+
+A prova adicional está em
+`crm-identity-projection-smoke-<release_sha>/crm-identity-projection-smoke-report.json`.
+Seu `schemaVersion` é 1; o contrato transportado é
+`crm-core/projection-read/v2`. O parser exportado
+`validateCrmProjectionSmokeReport` em
+`scripts/crm-identity-staging-projection-smoke.mjs` exige os pins
+`sourceSha`, `coreReleaseSha`, `coreArtifactDigest`, `gatewayVersionId`,
+`issuerVersionId`, timestamp UTC canônico, origens exatas e contagens coerentes.
+Os consumidores ainda devem comprovar o run GitHub terminal, SHA, tentativa,
+teardown e liberação de lease; o arquivo isolado não concede autoridade.
+
+Esses testes HTTP não equivalem a login/renderização no navegador: a inspeção
+do console publicado e o uso do cookie existente no navegador continuam sendo
+uma verificação separada. Não há fallback legado nem autoridade de produção.
