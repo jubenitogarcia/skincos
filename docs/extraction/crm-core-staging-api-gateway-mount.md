@@ -31,27 +31,46 @@ cabeçalho — inclusive `Cookie`, `Authorization`, CSRF, tokens de serviço,
 proxy/Cloudflare e futuros cabeçalhos de credencial — também é descartado.
 Respostas não encaminham `Set-Cookie`.
 
-`GET /crm/session` é a única capacidade de sessão adicionada a esse mount. O
-gateway central resolve a sessão Identity ainda dentro do seu limite privado,
-extrai somente `identitySubject` opaco, `role` e `scopes`, e pede ao emissor
-Identity de staging um envelope novo, via service binding e HMAC exclusivo do
-caller `crm-api-staging-v1`. O envelope emitido é então o único valor interno
-adicionado como `x-identity-delivery` para o Core. Ele é vinculado ao alvo
-exato `GET /api/crm/session`, sem query e sem corpo; o Core continua
-responsável pela assinatura, alvo canônico, expiração e proteção contra replay.
-Não há cookie, perfil, nome de usuário, e-mail ou envelope fornecido pelo
-navegador nesse tráfego.
+`GET /crm/session` e `GET /crm/projections?units=<csv-canônico-ordenado>` são
+as duas capacidades Identity de staging deste mount. O gateway central resolve
+a sessão Identity ainda dentro do seu limite privado, extrai somente
+`identitySubject` opaco, `role` e `scopes`, e pede ao emissor Identity de
+staging um envelope novo, via service binding e HMAC exclusivo do caller
+`crm-api-staging-v1`. O envelope emitido é então o único valor interno
+adicionado como `x-identity-delivery` para o Core. A sessão é vinculada ao alvo
+exato `GET /api/crm/session`, sem query e sem corpo.
 
-O único navegador autorizado para essa capacidade de staging é
-`https://crm-staging.skincos.com.br`. O gateway responde CORS com credenciais
-somente para essa origem e inclui as falhas de sessão nessa mesma política, para
+Para projeções, o gateway aceita somente `GET`, um único parâmetro `units` e
+uma CSV já ordenada de slugs canônicos, sem duplicata, espaço, alias, parâmetro
+extra ou outra codificação. O envelope é vinculado ao alvo interno exato
+`GET /api/crm/projections?units=<a-mesma-csv>`. O Core ainda faz a interseção
+autoritativa com os `scopes.units` verificados e devolve somente a resposta
+opaca `crm-core/projection-read/v2`; o navegador não escolhe outro alvo, não
+fornece JWS e não recebe cookie, perfil, nome de usuário ou e-mail.
+
+As únicas origens de navegador autorizadas para essas capacidades de staging são
+`https://crm-core-staging.skincos.com.br` (Console exclusivo) e
+`https://crm-staging.skincos.com.br` (incumbente preservado durante a transição).
+O gateway responde CORS com credenciais somente para a origem exata recebida
+e inclui as falhas de sessão e projeções nessa mesma política, para
 que o Console possa distinguir uma sessão ausente de uma falha de rede. O
-preflight é limitado a `GET` e aos cabeçalhos `Accept` e `Cache-Control`; ele
-não resolve Identity, não emite envelope e não chama o Core. Qualquer outra
-origem, método ou cabeçalho é recusado sem ampliar a superfície CORS. Quando
-um pedido de navegador traz uma origem diferente, ele também é recusado antes
-de consultar Identity ou o Core; pedidos internos sem `Origin` preservam a
-capacidade de smoke sintético autenticado por serviço.
+preflight é limitado a `GET`, aos cabeçalhos `Accept` e `Cache-Control`, e ao
+alvo de sessão ou de projeção já canônico; ele não resolve Identity, não emite
+envelope e não chama o Core. Qualquer outra origem, método, query ou cabeçalho
+é recusado sem ampliar a superfície CORS. Quando um pedido de navegador traz
+uma origem diferente, ele também é recusado antes de consultar Identity ou o
+Core; pedidos internos sem `Origin` preservam a capacidade de smoke sintético
+autenticado por serviço.
+
+Antes de pedir um envelope para projeções, o gateway rejeita unidades fora do
+escopo explícito do ator, inclusive para `ADMIN`; o Core repete a decisão
+autoritativa. A resposta do Core é limitada a 128 KiB e três segundos de leitura
+do corpo, 100 projeções e ao contrato v2 fechado. Versão, correlação, unidades,
+contagem, identificadores opacos, revisão, operação, data e duplicatas são
+verificados antes de reconstruir a resposta. Campos extras, erros arbitrários,
+cookies e cabeçalhos privados do upstream nunca são refletidos ao navegador.
+Não há CORS com credenciais para `pages.dev`, produção ou wildcard. Esta
+extensão é somente código até publicação governada e smoke do artefato exato.
 
 Assim, depois de uma publicação de staging explicitamente autorizada, os
 smokes sem identidade são:
@@ -62,14 +81,17 @@ GET https://api-staging.skincos.com.br/crm/ready
 ```
 
 Eles devem refletir o artefato e o D1 dedicados do CRM Core. A rota não ativa
-módulos, leituras de domínio ou escritas: o Core mantém esses caminhos fechados
-até que seus contratos e gates próprios estejam completos.
+módulos, escrita ou cutover: a leitura de projeções permanece limitada ao
+contrato opaco v2, à interseção de unidades e aos gates próprios do Core.
 
 Quando os três artefatos de staging estiverem no SHA liberado (gateway, emissor
-Identity e Core), a prova adicional é `GET /crm/session`: ela deve responder
-somente a projeção verificada `{ ok, identity, requestId }`, sem PII e sem
-cookie. Um caller ausente, uma sessão sem subject opaco, query, método diferente
-de `GET`, binding indisponível ou assinatura inválida devem falhar fechados.
+Identity e Core), a primeira prova adicional é `GET /crm/session`: ela deve
+responder somente a projeção verificada `{ ok, identity, requestId }`, sem PII
+e sem cookie. A leitura de projeções exige depois a mesma cadeia Identity e uma
+CSV de unidades canônica, e continua fechada enquanto o Core não estiver pronto
+ou o escopo não for autorizado. Caller ausente, sessão sem subject opaco, query
+ou método inválidos, binding indisponível ou assinatura inválida devem falhar
+fechados.
 
 ## Readback da publicação de staging (2026-09-07)
 

@@ -8,7 +8,17 @@ import {
     isAuthorizedCrmCoreProductionReceipt,
     isCrmCoreStagingEnvironment,
 } from './crm-core-production-receipt.js';
-import { isCrmSessionPath, isCrmSessionRequest, issueCrmSessionIdentityDelivery } from './crm-identity-issuer-client.js';
+import {
+    crmProjectionRequestUnits,
+    isCrmProjectionPath,
+    isCrmProjectionPreflightRequest,
+    isCrmProjectionRequest,
+    isCrmSessionPath,
+    isCrmSessionRequest,
+    issueCrmProjectionIdentityDelivery,
+    issueCrmSessionIdentityDelivery,
+} from './crm-identity-issuer-client.js';
+import { validatedCrmProjectionResponse } from './crm-projection-response.js';
 
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
@@ -19,7 +29,10 @@ const FINANCE_WRITE_TIMEOUT_MS = 5_000;
 const CRM_CORE_TIMEOUT_MS = 3_000;
 const CRM_IDENTITY_DELIVERY_HEADER_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const CRM_IDENTITY_DELIVERY_HEADER_MAX_LENGTH = 16_384;
-const CRM_SESSION_STAGING_ORIGIN = 'https://crm-staging.skincos.com.br';
+const CRM_SESSION_STAGING_ORIGINS = new Set([
+    'https://crm-core-staging.skincos.com.br',
+    'https://crm-staging.skincos.com.br',
+]);
 const CRM_SESSION_CORS_REQUEST_HEADERS = new Set(['accept', 'cache-control']);
 const CRM_CORE_REQUEST_HEADER_ALLOWLIST = Object.freeze([
     'accept',
@@ -40,9 +53,10 @@ const B64URL_SHA256_RE = /^[A-Za-z0-9_-]{43}$/;
 
 function crmSessionCorsHeaders(request, env) {
     if (!isCrmCoreStagingEnvironment(env)) return null;
-    if (String(request.headers.get('origin') || '').trim() !== CRM_SESSION_STAGING_ORIGIN) return null;
+    const origin = String(request.headers.get('origin') || '').trim();
+    if (!CRM_SESSION_STAGING_ORIGINS.has(origin)) return null;
     return {
-        'access-control-allow-origin': CRM_SESSION_STAGING_ORIGIN,
+        'access-control-allow-origin': origin,
         'access-control-allow-credentials': 'true',
         vary: 'Origin',
     };
@@ -50,7 +64,7 @@ function crmSessionCorsHeaders(request, env) {
 
 function crmSessionOriginAllowed(request) {
     const origin = String(request.headers.get('origin') || '').trim();
-    return !origin || origin === CRM_SESSION_STAGING_ORIGIN;
+    return !origin || CRM_SESSION_STAGING_ORIGINS.has(origin);
 }
 
 function withCrmSessionCors(response, request, env) {
@@ -74,7 +88,9 @@ function crmSessionError(request, env, status, error) {
 
 function crmSessionCorsPreflightAllowed(request) {
     const url = new URL(request.url);
-    if (request.method !== 'OPTIONS' || url.pathname !== '/crm/session' || url.search) return false;
+    const supportedPath = (url.pathname === '/crm/session' && !url.search)
+        || isCrmProjectionPreflightRequest(request);
+    if (request.method !== 'OPTIONS' || !supportedPath) return false;
     if (String(request.headers.get('access-control-request-method') || '').trim().toUpperCase() !== 'GET') return false;
     const requestedHeaders = String(request.headers.get('access-control-request-headers') || '')
         .split(',')
@@ -179,8 +195,8 @@ function isProductionEnvironment(env) {
  * a delivery envelope that the gateway itself obtained over its private
  * Identity binding. In particular, no browser-supplied envelope, legacy
  * session, service token, proxy, Cloudflare or future credential-shaped header
- * can cross this boundary. For the staging session capability, a fresh
- * internally issued envelope replaces any browser-supplied value.
+ * can cross this boundary. For an identity-brokered staging capability, a
+ * fresh internally issued envelope replaces any browser-supplied value.
  */
 export function prepareCrmCoreRequest(request, productionReceipt = null, env = null, identityDelivery = null) {
     const headers = new Headers();
@@ -285,14 +301,17 @@ export function createApiGateway({
         },
         crmCoreHandler: typeof crmCoreHandler === 'function'
             ? async (request, env, ctx, productionReceipt = null) => {
-                if (!isCrmSessionPath(request)) return crmCoreHandler(request, env, ctx, productionReceipt);
+                const sessionPath = isCrmSessionPath(request);
+                const projectionPath = isCrmProjectionPath(request);
+                if (!sessionPath && !projectionPath) return crmCoreHandler(request, env, ctx, productionReceipt);
                 if (!isCrmCoreStagingEnvironment(env)) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
                 if (!crmSessionOriginAllowed(request)) return gatewayError(403, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
                 if (request.method === 'OPTIONS') return crmSessionPreflight(request, env);
-                if (!isCrmSessionRequest(request)) {
+                const validRequest = sessionPath ? isCrmSessionRequest(request) : isCrmProjectionRequest(request);
+                if (!validRequest) {
                     return request.method === 'GET'
-                        ? crmSessionError(request, env, 400, 'CRM_SESSION_QUERY_NOT_ALLOWED')
-                        : crmSessionError(request, env, 405, 'CRM_SESSION_METHOD_NOT_ALLOWED');
+                        ? crmSessionError(request, env, 400, sessionPath ? 'CRM_SESSION_QUERY_NOT_ALLOWED' : 'CRM_PROJECTION_QUERY_INVALID')
+                        : crmSessionError(request, env, 405, sessionPath ? 'CRM_SESSION_METHOD_NOT_ALLOWED' : 'CRM_PROJECTION_METHOD_NOT_ALLOWED');
                 }
                 let auth;
                 try {
@@ -303,9 +322,19 @@ export function createApiGateway({
                 if (auth?.unavailable) return crmSessionError(request, env, 503, 'IDENTITY_UNAVAILABLE');
                 if (!auth?.actor) return crmSessionError(request, env, 401, 'CRM_IDENTITY_REQUIRED');
                 try {
-                    const identityDelivery = await issueCrmSessionIdentityDelivery(request, env, auth.actor);
-                    return withCrmSessionCors(await crmCoreHandler(request, env, ctx, { identityDelivery }), request, env);
+                    const identityDelivery = sessionPath
+                        ? await issueCrmSessionIdentityDelivery(request, env, auth.actor)
+                        : await issueCrmProjectionIdentityDelivery(request, env, auth.actor);
+                    const upstream = await crmCoreHandler(request, env, ctx, { identityDelivery });
+                    const response = sessionPath ? upstream : await validatedCrmProjectionResponse(upstream, {
+                        units: crmProjectionRequestUnits(request),
+                        requestId: request.headers.get('x-request-id'),
+                    });
+                    return withCrmSessionCors(response, request, env);
                 } catch (error) {
+                    if (error instanceof TypeError && error.message === 'CRM_PROJECTION_SCOPE_FORBIDDEN') {
+                        return crmSessionError(request, env, 403, 'CRM_PROJECTION_SCOPE_FORBIDDEN');
+                    }
                     if (error instanceof TypeError && error.message === 'CRM_IDENTITY_SUBJECT_REQUIRED') {
                         return crmSessionError(request, env, 403, 'CRM_IDENTITY_SUBJECT_REQUIRED');
                     }
