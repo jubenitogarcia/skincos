@@ -9,7 +9,10 @@ const API = 'skincos-api-staging'; const ISSUER = 'skincos-identity-crm-delivery
 const text = (name, value) => ({ name, type: 'plain_text', text: value });
 function apiVersion(versionId = id(1), sourceSha = oldSha) {
   return { id: versionId, annotations: { 'workers/message': `crm:gateway:${sourceSha}:123` }, resources: {
-    script: { compatibility_date: '2024-11-20', compatibility_flags: [] },
+    // Public metadata shape read from the active Cloudflare API version.
+    script: { etag: 'content-hash', handlers: ['fetch'], last_deployed_from: 'wrangler',
+      named_handlers: [{ name: 'JobQueue', handlers: ['class'] }, { name: 'RateLimiter', handlers: ['class'] }] },
+    script_runtime: { migration_tag: 'v2', compatibility_date: '2024-11-20', usage_model: 'standard' },
     bindings: [text('APP_VERSION', sourceSha), text('ENVIRONMENT', 'staging'),
       text('CRM_IDENTITY_ISSUER_CALLER_ENABLED', 'true'), text('CRM_IDENTITY_ISSUER_CALLER_ID', 'crm-api-staging-v1'),
       text('TIMEKEEPING_VERSION_ID', id(8)), text('SIBLING_MODULE_CONFIG', 'retained-private-config'),
@@ -66,7 +69,16 @@ test('candidate binding or compatibility drift never receives traffic', async (t
     ['missing secret', (v) => v.resources.bindings = v.resources.bindings.filter((b) => b.type !== 'secret_text')],
     ['namespace', (v) => v.resources.bindings.find((b) => b.name === 'RATE_LIMITER').namespace_id = 'different'],
     ['Timekeeping', (v) => v.resources.bindings.find((b) => b.name === 'TIMEKEEPING_VERSION_ID').text = id(9)],
-    ['compatibility', (v) => v.resources.script.compatibility_date = '2026-09-08'],
+    ['compatibility date', (v) => v.resources.script_runtime.compatibility_date = '2026-09-08'],
+    ['compatibility flags', (v) => v.resources.script_runtime.compatibility_flags = ['nodejs_compat']],
+    ['migration tag', (v) => v.resources.script_runtime.migration_tag = 'v3'],
+    ['usage model', (v) => v.resources.script_runtime.usage_model = 'bundled'],
+    ['future runtime field', (v) => v.resources.script_runtime.future_setting = { enabled: true }],
+    ['runtime limits', (v) => v.resources.script_runtime.limits = { cpu_ms: 50 }],
+    ['runtime exports', (v) => v.resources.script_runtime.exports = { Extra: { type: 'worker' } }],
+    ['default handlers', (v) => v.resources.script.handlers.push('scheduled')],
+    ['named handlers', (v) => v.resources.script.named_handlers[0].handlers.push('fetch')],
+    ['missing named export', (v) => v.resources.script.named_handlers.pop()],
     ['version source', (v) => v.resources.bindings.find((b) => b.name === 'APP_VERSION').text = oldSha],
   ]) await t.test(label, async () => {
     const f = fixture(); mutate(f.versions.get(id(3)));
@@ -153,9 +165,41 @@ test('active smoke attestation is read-only and requires exact source and both a
 
 test('binding fingerprint is order-independent and never contains variable or secret values', () => {
   const first = apiVersion(); const second = structuredClone(first); second.resources.bindings.reverse();
+  second.resources.script.named_handlers.reverse();
+  second.resources.script.etag = 'new-content-hash'; second.resources.script.last_deployed_from = 'api';
   assert.deepEqual(gatewayBindingIdentity(first), gatewayBindingIdentity(second));
   second.resources.bindings.push({ name: 'NEW_UNKNOWN', type: 'arbitrary' });
   assert.throws(() => gatewayBindingIdentity(second), /BINDINGS_INVALID/);
+});
+
+test('runtime metadata is required, correctly located, typed and calendar-valid', async (t) => {
+  for (const [label, mutate] of [
+    ['missing runtime', (v) => delete v.resources.script_runtime],
+    ['old incorrect script shape', (v) => { v.resources.script.compatibility_date = '2024-11-20'; delete v.resources.script_runtime; }],
+    ['missing date', (v) => delete v.resources.script_runtime.compatibility_date],
+    ['invalid calendar date', (v) => v.resources.script_runtime.compatibility_date = '2024-02-30'],
+    ['untyped flags', (v) => v.resources.script_runtime.compatibility_flags = 'nodejs_compat'],
+    ['duplicate flags', (v) => v.resources.script_runtime.compatibility_flags = ['x', 'x']],
+    ['untyped migration', (v) => v.resources.script_runtime.migration_tag = 2],
+    ['untyped usage model', (v) => v.resources.script_runtime.usage_model = null],
+    ['untyped limits', (v) => v.resources.script_runtime.limits = []],
+    ['untyped exports', (v) => v.resources.script_runtime.exports = 'worker'],
+    ['untyped handlers', (v) => v.resources.script.handlers = 'fetch'],
+    ['duplicate named exports', (v) => v.resources.script.named_handlers.push(v.resources.script.named_handlers[0])],
+    ['unknown named handler shape', (v) => v.resources.script.named_handlers[0].unexpected = true],
+  ]) await t.test(label, () => {
+    const version = apiVersion(); mutate(version);
+    assert.throws(() => gatewayBindingIdentity(version), /CRM_GATEWAY_REFRESH_RUNTIME_INVALID/);
+  });
+});
+
+test('runtime flags and named handler order are canonical but every runtime field is retained', () => {
+  const first = apiVersion(); const second = structuredClone(first);
+  first.resources.script_runtime.compatibility_flags = ['b', 'a'];
+  second.resources.script_runtime.compatibility_flags = ['a', 'b'];
+  assert.deepEqual(gatewayBindingIdentity(first), gatewayBindingIdentity(second));
+  second.resources.script_runtime.migration_tag = 'v3';
+  assert.notEqual(gatewayBindingIdentity(first).compatibilityDigest, gatewayBindingIdentity(second).compatibilityDigest);
 });
 
 test('workflow keeps original session delta and separates refresh, extended smoke and disabled bootstrap', () => {

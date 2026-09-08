@@ -41,6 +41,45 @@ function textBinding(bindings, name, expected) {
   return binding.text;
 }
 
+function runtimeIdentity(resources) {
+  const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const strings = (value) => Array.isArray(value) && value.length <= 128
+    && value.every((item) => typeof item === 'string' && item.length > 0 && item.length <= 256)
+    && new Set(value).size === value.length;
+  const json = (value, depth = 0) => depth <= 8 && (value === null || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && value.length <= 4096)
+    || (Array.isArray(value) && value.length <= 128 && value.every((item) => json(item, depth + 1)))
+    || (object(value) && Object.keys(value).length <= 128
+      && Object.entries(value).every(([key, item]) => key.length <= 256 && json(item, depth + 1))));
+  // Version Detail separates runtime settings from script content metadata.
+  // Read the real script_runtime object; missing settings must never hash as
+  // fabricated null/[] compatibility. Include every runtime field in the pin.
+  const runtime = resources?.script_runtime;
+  if (!object(runtime) || !json(runtime) || Buffer.byteLength(stable(runtime)) > 65_536
+    || !/^\d{4}-\d{2}-\d{2}$/.test(runtime.compatibility_date || '')
+    || !Number.isFinite(Date.parse(runtime.compatibility_date))
+    || new Date(runtime.compatibility_date).toISOString() !== `${runtime.compatibility_date}T00:00:00.000Z`
+    || ('compatibility_flags' in runtime && !strings(runtime.compatibility_flags))
+    || ['usage_model', 'migration_tag'].some((key) => key in runtime
+      && (typeof runtime[key] !== 'string' || !runtime[key].length || runtime[key].length > 256))
+    || ['exports', 'limits'].some((key) => key in runtime && !object(runtime[key]))) fail('CRM_GATEWAY_REFRESH_RUNTIME_INVALID');
+  const script = resources?.script;
+  if (!object(script) || !strings(script.handlers) || !script.handlers.includes('fetch')
+    || !Array.isArray(script.named_handlers) || script.named_handlers.length > 128) fail('CRM_GATEWAY_REFRESH_RUNTIME_INVALID');
+  const names = new Set();
+  const namedHandlers = script.named_handlers.map((entry) => {
+    if (!object(entry) || Object.keys(entry).length !== 2 || !strings(entry.handlers)
+      || typeof entry.name !== 'string' || !entry.name.length || entry.name.length > 256
+      || names.has(entry.name)) fail('CRM_GATEWAY_REFRESH_RUNTIME_INVALID');
+    names.add(entry.name);
+    return { name: entry.name, handlers: [...entry.handlers].sort() };
+  }).sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    runtime: { ...runtime, ...('compatibility_flags' in runtime ? { compatibility_flags: [...runtime.compatibility_flags].sort() } : {}) },
+    handlers: [...script.handlers].sort(), namedHandlers,
+  };
+}
+
 export function gatewayBindingIdentity(version) {
   const bindings = bindingMap(version);
   textBinding(bindings, 'ENVIRONMENT', 'staging');
@@ -66,10 +105,9 @@ export function gatewayBindingIdentity(version) {
   const comparable = [...bindings.values()].filter((entry) => entry.name !== 'APP_VERSION')
     .map((entry) => entry.type === 'secret_text' ? { name: entry.name, type: entry.type } : entry)
     .sort((left, right) => left.name.localeCompare(right.name));
-  const script = version.resources.script || {};
   return {
     sourceSha, timekeepingVersionId, bindingCount: bindings.size, bindingsDigest: digest(comparable),
-    compatibilityDigest: digest({ date: script.compatibility_date ?? null, flags: script.compatibility_flags ?? [] }),
+    compatibilityDigest: digest(runtimeIdentity(version.resources)),
   };
 }
 

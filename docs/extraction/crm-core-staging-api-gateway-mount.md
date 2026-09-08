@@ -187,7 +187,11 @@ O upload explicita `CRM_IDENTITY_ISSUER_CALLER_ENABLED:true` e o caller canônic
 `--keep-vars` sozinho não substitui o `false` declarado no TOML. Antes do switch,
 compara o conjunto completo de bindings tipados, inclusive nomes/tipos de
 segredos, serviços, D1, R2 e namespaces, permitindo somente `APP_VERSION` novo.
-Também exige a mesma compatibilidade. Nenhum valor secreto é lido ou escrito;
+Também exige `resources.script_runtime` tipado e presente no Version Detail,
+incluindo data de compatibilidade válida, flags, usage model, migration tag e
+todos os demais campos retornados. O digest também compara os handlers padrão
+e exports nomeados de `resources.script`; somente etag e cliente de publicação
+podem mudar junto com o código. Nenhum valor secreto é lido ou escrito;
 os valores de variáveis não são incluídos no relatório, somente seu digest.
 
 Cada upload, switch e rollback exige o lease remoto existente e a posse
