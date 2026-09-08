@@ -1,0 +1,30 @@
+# Identity-owned production candidate for CRM delivery.
+#
+# This manifest is intentionally disabled and has no route, D1, KV, R2 or
+# service binding. A protected deployment must first supply the four secrets
+# through the external secret manager and satisfy the production readiness
+# workflow. The private JWK is never stored in this file or in Git.
+name = "skincos-identity-crm-delivery-production"
+main = "delivery/crm-issuer-production-worker.js"
+compatibility_date = "2026-03-02"
+workers_dev = false
+preview_urls = false
+
+[vars]
+IDENTITY_CRM_DELIVERY_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_ENVIRONMENT = "production"
+
+[env.production]
+name = "skincos-identity-crm-delivery-production"
+workers_dev = false
+preview_urls = false
+
+[env.production.vars]
+IDENTITY_CRM_DELIVERY_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_ENVIRONMENT = "production"
+
+# Required only at a separately approved deployment step, never in source:
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_KID
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC
