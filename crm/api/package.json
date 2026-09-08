@@ -34,6 +34,7 @@
     "migrate-identity-clusters": "node scripts/migrate-atendimento-identity-clusters.mjs",
     "migrate-atendimento-staging": "node scripts/migrate-atendimento-staging.mjs",
     "migrate-atendimento-crm-core-projection-delta": "node scripts/migrate-atendimento-crm-core-projection-delta.mjs",
+    "prepare-atendimento-crm-core-projection-delta-baseline": "node scripts/prepare-atendimento-crm-core-projection-delta-baseline.mjs",
     "refresh-commercial-data-quality": "node scripts/refresh-commercial-data-quality.mjs",
     "refresh-commercial-data-quality-staging": "node scripts/refresh-commercial-data-quality-staging.mjs",
     "migrate-harmonia-schema": "node scripts/migrate-harmonia-schema.mjs"

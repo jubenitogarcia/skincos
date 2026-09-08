@@ -220,6 +220,7 @@ export function crmCoreProjectionDeltaMigrationPlan() {
         eventPolicy: 'append-only upsert/revoke events with monotonic revision and strictly increasing (possibly sparse after rollback) event_order',
         runtimeAccess: 'dedicated exporter receives SELECT on opaque membership and outbox columns only; no customer attributes, DML or DDL',
         reconciliation: 'repeatable-read transaction guarded by pg_advisory_xact_lock; changed/new memberships upsert, removed memberships revoke',
+        baselineHandoff: 'delta delivery is disabled until an explicit backfill receipt/readback handoff seeds revision 1 from the same source snapshot',
         rollback: 'non-destructive; evidence and tombstones remain retained, only schema registry rollback state is recorded',
     }
 }

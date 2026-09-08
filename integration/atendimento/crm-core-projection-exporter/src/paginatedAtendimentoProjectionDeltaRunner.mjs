@@ -12,6 +12,7 @@ import {
   readAtendimentoProjectionDeltaPage,
 } from './atendimentoProjectionDeltaExporter.mjs'
 import { assertAtendimentoProjectionDeltaDelivery } from './atendimentoProjectionDeltaDelivery.mjs'
+import { assertAtendimentoProjectionDeltaBaseline, CRM_CORE_PROJECTION_DELTA_BASELINE_STATES } from '../../../../crm/api/server/atendimento/crmCoreProjectionDeltaBaseline.js'
 
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUNNER_VERSION = 'atendimento/crm-core/projection-delta-runner/v1'
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT = 'atendimento/crm-core/staging-projection-delta/v1'
@@ -49,6 +50,14 @@ function batchSize(value) {
 }
 function sameTarget(left, right) {
   return left.environment === right.environment && left.release === right.release && left.artifactDigest === right.artifactDigest
+}
+function readyBaseline(value, target, deltaKeyId) {
+  if (value === undefined || value === null) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_REQUIRED')
+  const baseline = assertAtendimentoProjectionDeltaBaseline(value)
+  if (baseline.state !== CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_NOT_READY')
+  if (!sameTarget(baseline.target, target)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_TARGET_MISMATCH')
+  if (baseline.source.deltaKeyId !== String(deltaKeyId || '').trim()) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_KEY_MISMATCH')
+  return baseline
 }
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize)
@@ -174,15 +183,17 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
   return Object.freeze({
     version: ATENDIMENTO_CRM_PROJECTION_DELTA_RUNNER_VERSION,
     target: targetValue,
-    async run({ intent } = {}) {
+    async run({ intent, baseline } = {}) {
       if (intent !== ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_INTENT_REQUIRED')
+      const baselineValue = readyBaseline(baseline, targetValue, keyId)
       const existing = await readCheckpoint(privateCheckpointStore)
       let restored = null
       if (existing !== null && existing !== undefined) {
         try { restored = storedCheckpoint(existing) } catch { fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_RECOVERY_REQUIRED') }
       }
       if (restored && !sameTarget(restored.target, targetValue)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_TARGET_MISMATCH')
-      let state = restored || Object.freeze({ target: targetValue, capturedAt: null, watermark: 0, fromExclusive: 0, deliveredCount: 0, batchCount: 0, acceptedCount: 0, idempotentCount: 0, reconciliationDigest: digest([]), revisionWatermarks: Object.freeze([]), pending: null })
+      if (restored && restored.fromExclusive < baselineValue.snapshot.watermark) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_CURSOR_REGRESSION')
+      let state = restored || Object.freeze({ target: targetValue, capturedAt: null, watermark: baselineValue.snapshot.watermark, fromExclusive: baselineValue.snapshot.watermark, deliveredCount: 0, batchCount: 0, acceptedCount: 0, idempotentCount: 0, reconciliationDigest: digest([]), revisionWatermarks: Object.freeze([]), pending: null })
       try {
         if (state.pending) {
           const receipt = await deliveryTransport.deliver({ batch: state.pending.batch, delivery: state.pending.delivery, requestId: state.pending.requestId })
@@ -209,7 +220,9 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
               const revisionKey = `${event.unitScope.unitSlug}:${event.projection.reference}`
               const previousRevision = revisions.get(revisionKey)
               if (previousRevision !== undefined && event.revision <= previousRevision) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_REVISION_REGRESSION')
-              if (previousRevision === undefined && event.revision !== 1) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_REVISION_REGRESSION')
+              // The explicit baseline may already have materialized revision 1
+              // via the backfill. New identities may still begin at revision 1,
+              // while existing ones legitimately resume at revision 2+.
               revisions.set(revisionKey, event.revision)
             }
             const signed = assertAtendimentoProjectionDeltaDelivery(await deliverySigner.signBatch(batch))

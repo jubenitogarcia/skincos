@@ -147,6 +147,21 @@ segredo, banco ou deploy. O transporte HTTPS separado usa a rota futura
 desativadas até que o owner do CRM Core publique o consumidor correspondente e
 prove o mesmo ciclo de artefato, smoke e rollback em staging.
 
+O runner só aceita um handoff `atendimento/crm-core/projection-delta-baseline/v1`
+em estado `delta-ready`. Esse handoff é uma máquina de estados explícita:
+`baseline-prepared` vincula o backfill, o digest do snapshot, o escopo e o
+watermark; `baseline-accepted` acrescenta o recibo exato do Core; e
+`delta-ready` exige o readback do Core com o mesmo digest, seed e watermark.
+Assim, o cursor inicial não é inferido de `0` e a primeira revisão de uma
+projeção já presente no backfill pode ser `2`, enquanto uma identidade nova
+continua podendo começar em `1`. O comando
+`prepare-atendimento-crm-core-projection-delta-baseline.mjs` apenas transforma
+envelopes JSON fornecidos pelo operador (`--prepare`, `--accept` ou `--ready`);
+ele não abre conexão, lê ambiente, acessa rede ou manipula segredo. A seed deve
+ser calculada no mesmo snapshot repeatable-read usado para montar o backfill;
+se o digest/cursor/escopo divergir, o handoff é rejeitado antes de qualquer
+delta.
+
 Nenhuma migration, reconciliação, drenagem de outbox ou cópia de dados reais é
 executada por estes módulos automaticamente. O grant do principal
 `crm_core_projection_exporter` deve ser concedido pelo operador de banco com
