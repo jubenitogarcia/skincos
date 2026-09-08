@@ -62,6 +62,10 @@ function digestOpaqueBackfillBatch(value) {
     return `sha256:${createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')}`
 }
 
+function digestOpaqueBackfillEvents(events) {
+    return `sha256:${createHash('sha256').update(JSON.stringify(canonicalize(events))).digest('hex')}`
+}
+
 /**
  * Canonical membership rule owned by Atendimento.  It deliberately selects
  * only identity UUID, canonical unit slug and an observed timestamp.  The
@@ -222,6 +226,7 @@ function assertBackfillFactoryBatches({ batches, manifest, source, snapshot, tar
     const projectionKeys = new Set()
     for (const [index, batch] of batches.entries()) {
         const descriptor = manifest.batches[index]
+        const eventUnitSlugs = new Set()
         if (!batch || typeof batch !== 'object' || Array.isArray(batch)
             || Object.keys(batch).length !== 7
             || !['contract', 'batchId', 'producer', 'sourceSnapshot', 'target', 'events', 'integrity'].every((key) => Object.hasOwn(batch, key))) {
@@ -279,6 +284,12 @@ function assertBackfillFactoryBatches({ batches, manifest, source, snapshot, tar
             }
             eventIds.add(eventId)
             projectionKeys.add(projectionKey)
+            eventUnitSlugs.add(unitSlug)
+        }
+        if (String(integrity.eventsDigest || '').toLowerCase() !== digestOpaqueBackfillEvents(batch.events)
+            || JSON.stringify([...eventUnitSlugs].sort()) !== JSON.stringify([...descriptor.unitSlugs].sort())
+            || JSON.stringify([...sourceSnapshot.unitSlugs].sort()) !== JSON.stringify([...descriptor.unitSlugs].sort())) {
+            throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_BACKFILL_DERIVATION_FAILED')
         }
     }
     if (eventIds.size !== manifest.eventCount || projectionKeys.size !== manifest.eventCount) {
@@ -508,20 +519,21 @@ async function assertReconcileBaselineReady(client) {
     if (!handoff || handoff.state !== CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY) {
         throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_NOT_READY')
     }
-    if (handoff.baseline_json !== undefined && handoff.baseline_json !== null) {
-        try {
-            const storedBaseline = assertAtendimentoProjectionDeltaBaseline(typeof handoff.baseline_json === 'string'
-                ? JSON.parse(handoff.baseline_json)
-                : handoff.baseline_json)
-            if (storedBaseline.state !== CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY
-                || digestAtendimentoProjectionDeltaBaseline(storedBaseline) !== String(handoff.baseline_digest || '').toLowerCase()
-                || storedBaseline.readback?.membershipDigest !== String(handoff.readback_membership_digest || '').toLowerCase()
-                || storedBaseline.readback?.watermark !== Number(handoff.readback_watermark)) {
-                throw new Error('baseline document mismatch')
-            }
-        } catch {
-            throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
+    if (handoff.baseline_json === undefined || handoff.baseline_json === null) {
+        throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
+    }
+    try {
+        const storedBaseline = assertAtendimentoProjectionDeltaBaseline(typeof handoff.baseline_json === 'string'
+            ? JSON.parse(handoff.baseline_json)
+            : handoff.baseline_json)
+        if (storedBaseline.state !== CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY
+            || digestAtendimentoProjectionDeltaBaseline(storedBaseline) !== String(handoff.baseline_digest || '').toLowerCase()
+            || storedBaseline.readback?.membershipDigest !== String(handoff.readback_membership_digest || '').toLowerCase()
+            || storedBaseline.readback?.watermark !== Number(handoff.readback_watermark)) {
+            throw new Error('baseline document mismatch')
         }
+    } catch {
+        throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
     }
     return handoff
 }
@@ -791,4 +803,5 @@ export const __testables = Object.freeze({
     assertStoredHandoffMatches,
     assertBackfillFactoryBatches,
     digestOpaqueBackfillBatch,
+    digestOpaqueBackfillEvents,
 })

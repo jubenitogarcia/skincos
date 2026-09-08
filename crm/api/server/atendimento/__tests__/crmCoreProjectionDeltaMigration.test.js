@@ -10,8 +10,11 @@ import {
     __testables as migrationTestables,
 } from '../crmCoreProjectionDeltaMigration.js'
 import {
+    acceptAtendimentoProjectionDeltaBaseline,
     createAtendimentoProjectionDeltaBaselineBackfill,
     createAtendimentoProjectionDeltaBaselineSnapshot,
+    markAtendimentoProjectionDeltaReady,
+    __testables as baselineTestables,
 } from '../../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
 const LOCAL_SOCKET_URL = 'postgresql:///skincos_crm_local?host=/var/run/postgresql'
@@ -24,6 +27,28 @@ const BASELINE_ROWS = [
 const BASELINE_SNAPSHOT = createAtendimentoProjectionDeltaBaselineSnapshot({ rows: BASELINE_ROWS, capturedAt: '2026-09-08T12:05:00.000Z', watermark: 0 })
 const BASELINE_BATCH_ID = 'backfill:atendimento:migration-baseline-test'
 const BASELINE_CURSOR_DIGEST = BASELINE_SNAPSHOT.snapshot.cursorDigest
+const BASELINE_EVENTS = [
+    {
+        contractVersion: 'crm-projection-event/v2',
+        id: 'event:baseline-migration-0001',
+        projection: { reference: 'projection:baseline-migration-0001', kind: 'client-reference' },
+        source: { owner: 'atendimento', reference: 'source:baseline-migration-0001' },
+        unitScope: { unitSlug: 'jardins' },
+        revision: 1,
+        operation: 'upsert',
+        occurredAt: '2026-09-08T12:00:00.000Z',
+    },
+    {
+        contractVersion: 'crm-projection-event/v2',
+        id: 'event:baseline-migration-0002',
+        projection: { reference: 'projection:baseline-migration-0002', kind: 'client-reference' },
+        source: { owner: 'atendimento', reference: 'source:baseline-migration-0002' },
+        unitScope: { unitSlug: 'pinheiros' },
+        revision: 1,
+        operation: 'upsert',
+        occurredAt: '2026-09-08T12:00:00.000Z',
+    },
+]
 const BASELINE_REAL_BATCH = {
     contract: 'skincos-crm/projection-backfill-batch/v2',
     batchId: BASELINE_BATCH_ID,
@@ -35,29 +60,8 @@ const BASELINE_REAL_BATCH = {
         unitSlugs: BASELINE_SNAPSHOT.snapshot.unitSlugs,
     },
     target: BASELINE_TARGET,
-    events: [
-        {
-            contractVersion: 'crm-projection-event/v2',
-            id: 'event:baseline-migration-0001',
-            projection: { reference: 'projection:baseline-migration-0001', kind: 'client-reference' },
-            source: { owner: 'atendimento', reference: 'source:baseline-migration-0001' },
-            unitScope: { unitSlug: 'jardins' },
-            revision: 1,
-            operation: 'upsert',
-            occurredAt: '2026-09-08T12:00:00.000Z',
-        },
-        {
-            contractVersion: 'crm-projection-event/v2',
-            id: 'event:baseline-migration-0002',
-            projection: { reference: 'projection:baseline-migration-0002', kind: 'client-reference' },
-            source: { owner: 'atendimento', reference: 'source:baseline-migration-0002' },
-            unitScope: { unitSlug: 'pinheiros' },
-            revision: 1,
-            operation: 'upsert',
-            occurredAt: '2026-09-08T12:00:00.000Z',
-        },
-    ],
-    integrity: { algorithm: 'sha256', eventCount: 2, eventsDigest: `sha256:${'c'.repeat(64)}` },
+    events: BASELINE_EVENTS,
+    integrity: { algorithm: 'sha256', eventCount: 2, eventsDigest: migrationTestables.digestOpaqueBackfillEvents(BASELINE_EVENTS) },
 }
 const BASELINE_BACKFILL = createAtendimentoProjectionDeltaBaselineBackfill({
     batches: [{
@@ -73,6 +77,63 @@ const BASELINE_BACKFILL = createAtendimentoProjectionDeltaBaselineBackfill({
     }],
     rowCount: BASELINE_SNAPSHOT.snapshot.rowCount,
 })
+const BASELINE_RECEIPTS = [{
+    contractVersion: 'crm-core/projection-backfill-receipt/v2',
+    status: 'accepted',
+    batchId: BASELINE_BATCH_ID,
+    eventCount: BASELINE_REAL_BATCH.events.length,
+    target: BASELINE_TARGET,
+}]
+const BASELINE_PROOF = (() => {
+    const proof = {
+        contract: 'crm-core/projection-baseline-batch-readback/v1',
+        status: 'batch-ledger-readback-verified',
+        pins: {
+            producer: { owner: BASELINE_SOURCE.owner, scope: BASELINE_SOURCE.scope, keyId: BASELINE_SOURCE.backfillKeyId },
+            target: BASELINE_TARGET,
+            unitSlugs: BASELINE_BACKFILL.batches[0].unitSlugs,
+        },
+        counts: { events: BASELINE_REAL_BATCH.events.length, sources: BASELINE_REAL_BATCH.events.length, units: BASELINE_BACKFILL.batches[0].unitSlugs.length },
+        digests: {
+            batch: BASELINE_BACKFILL.batches[0].batchDigest,
+            events: migrationTestables.digestOpaqueBackfillEvents(BASELINE_REAL_BATCH.events),
+            cursor: BASELINE_BACKFILL.batches[0].cursorDigest,
+            receipt: baselineTestables.digest(BASELINE_RECEIPTS[0]),
+            ledger: `sha256:${'d'.repeat(64)}`,
+            sources: `sha256:${'e'.repeat(64)}`,
+        },
+    }
+    return { ...proof, digests: { ...proof.digests, readback: baselineTestables.digest(proof) } }
+})()
+const BASELINE_READBACK = {
+    contract: 'atendimento/crm-core/projection-delta-baseline-readback/v2',
+    status: 'verified',
+    manifestDigest: BASELINE_BACKFILL.manifestDigest,
+    membershipDigest: BASELINE_SNAPSHOT.seed.membershipDigest,
+    watermark: BASELINE_SNAPSHOT.snapshot.watermark,
+    verifiedBatchCount: BASELINE_BACKFILL.batches.length,
+    verifiedEventCount: BASELINE_BACKFILL.eventCount,
+    ledgerProofDigest: baselineTestables.digest([{ batchDigest: BASELINE_PROOF.digests.batch, readbackDigest: BASELINE_PROOF.digests.readback }]),
+    proofs: [BASELINE_PROOF],
+    target: BASELINE_TARGET,
+}
+const BASELINE_READY = markAtendimentoProjectionDeltaReady(
+    acceptAtendimentoProjectionDeltaBaseline(
+        {
+            contract: 'atendimento/crm-core/projection-delta-baseline/v2',
+            state: 'baseline-prepared',
+            target: BASELINE_TARGET,
+            source: BASELINE_SOURCE,
+            snapshot: BASELINE_SNAPSHOT.snapshot,
+            backfill: BASELINE_BACKFILL,
+            seed: BASELINE_SNAPSHOT.seed,
+            receipts: null,
+            readback: null,
+        },
+        BASELINE_RECEIPTS,
+    ),
+    BASELINE_READBACK,
+)
 
 test('defines additive membership and append-only outbox ownership', () => {
     const plan = crmCoreProjectionDeltaMigrationPlan()
@@ -184,6 +245,78 @@ test('rejects duplicate opaque event identities across paginated baseline batche
     assert.throws(() => migrationTestables.assertBackfillFactoryBatches({ batches: [first, second], manifest, source: BASELINE_SOURCE, snapshot: { ...BASELINE_SNAPSHOT.snapshot, rowCount: 2, unitSlugs: ['jardins'] }, target: BASELINE_TARGET }), /DUPLICATE|DERIVATION_FAILED/)
 })
 
+test('recomputes each page events digest before allowing the baseline seed', () => {
+    const tampered = {
+        ...BASELINE_REAL_BATCH,
+        integrity: { ...BASELINE_REAL_BATCH.integrity, eventsDigest: `sha256:${'f'.repeat(64)}` },
+    }
+    const manifest = createAtendimentoProjectionDeltaBaselineBackfill({
+        batches: [{
+            batchId: tampered.batchId,
+            batchDigest: migrationTestables.digestOpaqueBackfillBatch(tampered),
+            capturedAt: tampered.sourceSnapshot.capturedAt,
+            cursorDigest: tampered.sourceSnapshot.cursorDigest,
+            fromOrdinal: 1,
+            toOrdinal: tampered.events.length,
+            rowCount: tampered.events.length,
+            unitSlugs: tampered.sourceSnapshot.unitSlugs,
+            eventCount: tampered.events.length,
+        }],
+        rowCount: tampered.events.length,
+    })
+    assert.throws(() => migrationTestables.assertBackfillFactoryBatches({
+        batches: [tampered], manifest, source: BASELINE_SOURCE, snapshot: BASELINE_SNAPSHOT.snapshot, target: BASELINE_TARGET,
+    }), /DERIVATION_FAILED/)
+})
+
+test('requires the page unit union to equal the event unit union', () => {
+    const extraUnit = {
+        ...BASELINE_EVENTS[0],
+        id: 'event:baseline-migration-extra',
+        projection: { reference: 'projection:baseline-migration-extra', kind: 'client-reference' },
+        unitScope: { unitSlug: 'moema' },
+    }
+    const tampered = {
+        ...BASELINE_REAL_BATCH,
+        events: [extraUnit, BASELINE_EVENTS[1]],
+        integrity: { ...BASELINE_REAL_BATCH.integrity, eventsDigest: migrationTestables.digestOpaqueBackfillEvents([extraUnit, BASELINE_EVENTS[1]]) },
+    }
+    const manifest = createAtendimentoProjectionDeltaBaselineBackfill({
+        batches: [{
+            batchId: tampered.batchId,
+            batchDigest: migrationTestables.digestOpaqueBackfillBatch(tampered),
+            capturedAt: tampered.sourceSnapshot.capturedAt,
+            cursorDigest: tampered.sourceSnapshot.cursorDigest,
+            fromOrdinal: 1,
+            toOrdinal: tampered.events.length,
+            rowCount: tampered.events.length,
+            unitSlugs: tampered.sourceSnapshot.unitSlugs,
+            eventCount: tampered.events.length,
+        }],
+        rowCount: tampered.events.length,
+    })
+    assert.throws(() => migrationTestables.assertBackfillFactoryBatches({
+        batches: [tampered], manifest, source: BASELINE_SOURCE, snapshot: BASELINE_SNAPSHOT.snapshot, target: BASELINE_TARGET,
+    }), /DUPLICATE|DERIVATION_FAILED/)
+})
+
+test('fails closed when a delta-ready handoff has no durable baseline document', async () => {
+    for (const missingBaseline of [undefined, null]) {
+        const calls = []
+        const client = {
+            async query(sql) {
+                calls.push(sql)
+                if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
+                if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [{ state: 'delta-ready', handoff_key: 'initial', baseline_json: missingBaseline }] }
+                return { rows: [] }
+            },
+            release() {},
+        }
+        await assert.rejects(() => reconcileAtendimentoProjectionDelta({ pool: { connect: async () => client }, databaseUrl: LOCAL_SOCKET_URL }), /BASELINE_STATE_CONFLICT/)
+        assert.equal(calls.some((sql) => /canonical_delta_source/i.test(sql)), false)
+    }
+})
+
 test('refuses reconciliation until the persisted baseline handoff is delta-ready', async () => {
     const calls = []
     const client = {
@@ -206,7 +339,14 @@ test('reconciles new, changed and removed memberships under one advisory transac
         async query(sql, params = []) {
             calls.push({ sql, params })
             if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
-            if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [{ state: 'delta-ready', handoff_key: 'initial' }] }
+            if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [{
+                state: 'delta-ready',
+                handoff_key: 'initial',
+                baseline_digest: baselineTestables.digest(BASELINE_READY),
+                baseline_json: JSON.stringify(BASELINE_READY),
+                readback_membership_digest: BASELINE_READY.readback.membershipDigest,
+                readback_watermark: BASELINE_READY.readback.watermark,
+            }] }
             if (/canonical_delta_source/i.test(sql)) return { rows: [{ identity_id: '11111111-1111-4111-8111-111111111111', unit_slug: 'jardins', observed_at: '2026-09-08T12:01:00.000Z' }] }
             if (/from crm_atendimento\.crm_core_projection_memberships/i.test(sql)) return { rows: [{ identity_id: '22222222-2222-4222-8222-222222222222', unit_slug: 'pinheiros', active: true, revision: 2, observed_at: '2026-09-08T12:00:00.000Z' }] }
             if (/returning event_order/i.test(sql)) return { rows: [{ event_order: nextEventOrder++ }] }
