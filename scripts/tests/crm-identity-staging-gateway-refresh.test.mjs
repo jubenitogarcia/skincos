@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { attestCrmActiveGateway, gatewayBindingIdentity, refreshCrmStagingGateway } from '../crm-identity-staging-gateway-refresh.mjs';
+import { attestCrmActiveGateway, createCrmStagingGatewayIo, gatewayBindingIdentity, refreshCrmStagingGateway } from '../crm-identity-staging-gateway-refresh.mjs';
 
 const id = (n) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
 const sha = 'a'.repeat(40); const oldSha = 'b'.repeat(40);
@@ -36,30 +36,175 @@ function fixture() {
   ] } };
   const deployment = (versionId, deploymentId) => ({ id: deploymentId, strategy: 'percentage', versions: [{ version_id: versionId, percentage: 100 }] });
   const state = { api: deployment(id(1), id(10)), issuer: deployment(id(2), id(20)), operations: [], reports: [] };
+  const deployments = new Map([[state.api.id, structuredClone(state.api)]]);
   const io = {
     snapshot: async (script) => script === API ? { deployment: structuredClone(state.api), version: structuredClone(versions.get(state.api.versions[0].version_id)) }
       : { deployment: structuredClone(state.issuer), version: structuredClone(issuer) },
     version: async (script, versionId) => { assert.equal(script, API); return structuredClone(versions.get(versionId)); },
+    deployment: async (script, deploymentId) => { assert.equal(script, API); return structuredClone(deployments.get(deploymentId)); },
     guard: async () => { state.operations.push('guard'); },
     ready: async () => { state.operations.push('ready'); },
     upload: async (options) => { assert.deepEqual(options, { sourceSha: sha, timekeepingVersionId: id(8) }); state.operations.push('upload'); return id(3); },
-    deploy: async (versionId) => { state.operations.push(`deploy:${versionId}`); state.api = deployment(versionId, id(state.api.id === id(10) ? 30 : 40)); return structuredClone(state.api); },
+    deploy: async (versionId, message) => {
+      state.operations.push(`deploy:${versionId}`);
+      state.api = { ...deployment(versionId, id(state.api.id === id(10) ? 30 : 40)), annotations: { 'workers/message': message } };
+      deployments.set(state.api.id, structuredClone(state.api)); return structuredClone(state.api);
+    },
     probe: async () => { state.operations.push('probe'); },
   };
   const args = { sourceSha: sha, coreReleaseSha: 'c'.repeat(40), coreArtifactDigest: `sha256:${'d'.repeat(64)}`,
     expectedApiVersionId: id(1), expectedIssuerVersionId: id(2), runId: '123', io,
     onReport: (report) => state.reports.push(structuredClone(report)),
   };
-  return { args, io, state, versions, issuer };
+  return { args, io, state, versions, issuer, deployments };
 }
 
 test('refresh uploads at zero traffic, preserves complete typed bindings, then switches only API', async () => {
   const f = fixture(); const result = await refreshCrmStagingGateway(f.args);
+  assert.equal(result.schemaVersion, 2);
   assert.equal(result.state, 'verified'); assert.equal(result.deploymentId, id(30));
   assert.equal(result.issuer.versionId, id(2)); assert.equal(result.timekeepingVersionId, id(8));
   assert.deepEqual(f.state.operations, ['ready', 'guard', 'upload', 'ready', 'guard', `deploy:${id(3)}`, 'probe']);
   assert.doesNotMatch(JSON.stringify(result), /retained-private-config|PRIVATE_JWK|CALLER_HMAC/);
   assert.equal(result.issuerWritten, false); assert.equal(result.secretsWritten, false); assert.equal(result.d1Written, false);
+});
+
+test('minimal POST acknowledgement is durably captured before exact GET and never fabricated into a deployment', async () => {
+  const f = fixture(); const deploy = f.io.deploy; const read = f.io.deployment; let reads = 0;
+  f.io.deploy = async (...args) => ({ id: (await deploy(...args)).id });
+  f.io.deployment = async (...args) => {
+    if (reads++ === 0) {
+      const checkpoint = f.state.reports.at(-1);
+      assert.equal(checkpoint.state, 'switch-acknowledged');
+      assert.equal(checkpoint.acknowledgedDeploymentId, id(30));
+      assert.equal(Object.hasOwn(checkpoint, 'deploymentId'), false);
+      assert.equal(Object.hasOwn(checkpoint, 'verifiedAt'), false);
+    }
+    return read(...args);
+  };
+  const result = await refreshCrmStagingGateway(f.args);
+  assert.equal(result.state, 'verified'); assert.equal(result.deploymentId, id(30)); assert.equal(reads, 2);
+  assert.deepEqual(result.switchAcknowledgement, { resultType: 'object', idType: 'string', strategyType: 'undefined',
+    versionsType: 'undefined', annotationsType: 'undefined', unknownFieldCount: 0 });
+});
+
+test('actual HTTP adapter handles minimal and full successful POST envelopes through exact deployment GETs', async (t) => {
+  for (const minimal of [true, false]) await t.test(minimal ? 'minimal HTTP result' : 'full HTTP result', async () => {
+    const f = fixture(); const deploy = f.io.deploy; const calls = [];
+    const api = createCrmStagingGatewayIo({ CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: 'synthetic-not-live',
+      RUNNER_TEMP: '/tmp/synthetic-unused', GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/main',
+      GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: sha, RELEASE_SHA: sha,
+    }, { fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname; const method = init.method || 'GET'; calls.push({ path, method });
+      assert.equal(init.redirect, 'manual'); assert.ok(init.signal instanceof AbortSignal);
+      let result;
+      if (method === 'POST') {
+        assert.ok(path.endsWith(`/${API}/deployments`)); const body = JSON.parse(init.body);
+        const full = await deploy(body.versions[0].version_id, body.annotations['workers/message']);
+        result = minimal ? { id: full.id } : full;
+      } else if (path.endsWith('/deployments')) {
+        result = { deployments: [{ ...structuredClone(path.includes(`/${API}/`) ? f.state.api : f.state.issuer), created_on: '2026-09-08T00:00:00.000Z' }] };
+      } else if (path.includes('/deployments/')) {
+        assert.equal(f.state.reports.at(-1).acknowledgedDeploymentId, id(30));
+        result = f.deployments.get(path.split('/').at(-1));
+      } else if (path.includes('/versions/')) {
+        result = path.includes(`/${API}/`) ? f.versions.get(path.split('/').at(-1)) : f.issuer;
+      } else assert.fail('unexpected test HTTP path');
+      return new Response(JSON.stringify({ success: true, result }), { headers: { 'content-type': 'application/json' } });
+    } });
+    Object.assign(f.io, { deploy: api.deploy, deployment: api.deployment, snapshot: api.snapshot, version: api.version });
+    const report = await refreshCrmStagingGateway(f.args);
+    assert.equal(report.state, 'verified'); assert.equal(report.deploymentId, id(30));
+    assert.equal(calls.filter((entry) => entry.method === 'POST').length, 1);
+    assert.equal(calls.filter((entry) => entry.path.endsWith(`/deployments/${id(30)}`)).length, 2);
+    assert.doesNotMatch(JSON.stringify(report), /synthetic-not-live|retained-private-config/);
+  });
+});
+
+test('missing or malformed acknowledgement UUID remains unknown even when the switch actually occurred', async (t) => {
+  for (const [label, response] of [
+    ['null', null], ['missing', {}], ['invalid string', { id: 'private-invalid-id' }],
+    ['number', { id: 123 }], ['array id', { id: [id(30)] }], ['array response', [{ id: id(30) }]],
+  ]) await t.test(label, async () => {
+    const f = fixture(); const deploy = f.io.deploy;
+    f.io.deploy = async (...args) => { await deploy(...args); return response; };
+    await assert.rejects(refreshCrmStagingGateway(f.args), /CRM_GATEWAY_REFRESH_ACK_INVALID/);
+    assert.equal(f.state.api.versions[0].version_id, id(3));
+    assert.equal(f.state.operations.filter((entry) => entry.startsWith('deploy:')).length, 1);
+    const report = f.state.reports.at(-1);
+    assert.equal(report.rollback, 'forbidden-outcome-unknown');
+    assert.equal(Object.hasOwn(report, 'acknowledgedDeploymentId'), false);
+    assert.doesNotMatch(JSON.stringify(report), /private-invalid-id/);
+  });
+});
+
+test('malformed optional acknowledgement fields retain the UUID, fail closed and require ownership before rollback', async () => {
+  const f = fixture(); const deploy = f.io.deploy; let posts = 0;
+  f.io.deploy = async (...args) => {
+    const result = await deploy(...args);
+    return posts++ === 0 ? { id: result.id, strategy: 'private-response-detail', 'private-field-name': 'private-value' } : result;
+  };
+  await assert.rejects(refreshCrmStagingGateway(f.args), /CRM_GATEWAY_REFRESH_ACK_INVALID/);
+  const report = f.state.reports.at(-1);
+  assert.equal(report.acknowledgedDeploymentId, id(30));
+  assert.equal(report.rollback, 'verified-api-incumbent-restored'); assert.equal(posts, 2);
+  assert.equal(report.switchAcknowledgement.unknownFieldCount, 1);
+  assert.doesNotMatch(JSON.stringify(f.state.reports), /private-response-detail|private-field-name|private-value/);
+});
+
+test('foreign ID or annotation cannot grant custody merely because the candidate version matches', async (t) => {
+  for (const kind of ['foreign ack ID', 'foreign GET ID', 'foreign annotation', 'missing annotation', 'wrong version']) await t.test(kind, async () => {
+    const f = fixture(); const deploy = f.io.deploy;
+    f.io.deploy = async (...args) => {
+      const result = await deploy(...args);
+      if (kind === 'foreign ack ID') {
+        f.deployments.set(id(99), { ...result, id: id(99) }); return { id: id(99) };
+      }
+      if (kind === 'foreign GET ID') f.deployments.get(result.id).id = id(99);
+      if (kind === 'foreign annotation') f.deployments.get(result.id).annotations['workers/message'] = 'another run';
+      if (kind === 'missing annotation') delete f.deployments.get(result.id).annotations;
+      if (kind === 'wrong version') f.deployments.get(result.id).versions[0].version_id = id(1);
+      return { id: result.id };
+    };
+    await assert.rejects(refreshCrmStagingGateway(f.args), /CRM_GATEWAY_REFRESH_OWNERSHIP_CONFLICT/);
+    const report = f.state.reports.at(-1);
+    assert.equal(Object.hasOwn(report, 'verifiedAt'), false); assert.equal(report.rollback, 'not-proven');
+    assert.equal(f.state.operations.filter((entry) => entry.startsWith('deploy:')).length, 1);
+  });
+});
+
+test('unavailable exact deployment GET preserves acknowledged UUID but cannot authorize rollback', async () => {
+  const f = fixture(); f.io.deployment = async () => { throw new Error('private connection detail'); };
+  await assert.rejects(refreshCrmStagingGateway(f.args), /CRM_GATEWAY_REFRESH_FAILED/);
+  const report = f.state.reports.at(-1);
+  assert.equal(report.acknowledgedDeploymentId, id(30)); assert.equal(report.rollback, 'not-proven');
+  assert.equal(Object.hasOwn(report, 'deploymentId'), false);
+  assert.equal(f.state.operations.filter((entry) => entry.startsWith('deploy:')).length, 1);
+  assert.doesNotMatch(JSON.stringify(f.state.reports), /private connection detail/);
+});
+
+test('rollback preserves a minimal acknowledgement before full GET and never retries a missing rollback UUID', async (t) => {
+  for (const valid of [true, false]) await t.test(valid ? 'minimal rollback ACK' : 'missing rollback ACK', async () => {
+    const f = fixture(); const deploy = f.io.deploy; const read = f.io.deployment; let posts = 0;
+    f.io.probe = async () => { throw new Error('probe failed'); };
+    f.io.deploy = async (...args) => {
+      const result = await deploy(...args); posts += 1;
+      return posts === 2 ? (valid ? { id: result.id } : {}) : result;
+    };
+    f.io.deployment = async (...args) => {
+      if (args[1] === id(40)) {
+        const checkpoint = f.state.reports.at(-1);
+        assert.equal(checkpoint.rollbackAcknowledgedDeploymentId, id(40));
+        assert.equal(Object.hasOwn(checkpoint, 'rollbackDeploymentId'), false);
+      }
+      return read(...args);
+    };
+    await assert.rejects(refreshCrmStagingGateway(f.args));
+    assert.equal(posts, 2); const report = f.state.reports.at(-1);
+    assert.equal(report.rollback, valid ? 'verified-api-incumbent-restored' : 'not-proven');
+    if (valid) assert.equal(report.rollbackDeploymentId, id(40));
+    else assert.equal(report.rollbackFailure, 'CRM_GATEWAY_REFRESH_ROLLBACK_ACK_INVALID');
+  });
 });
 
 test('candidate binding or compatibility drift never receives traffic', async (t) => {
@@ -140,10 +285,12 @@ test('issuer deployment drift after switching cannot grant rollback or a verifie
 });
 
 test('uncertain switch response is not retried and grants no rollback authority', async () => {
-  const f = fixture(); let attempts = 0;
-  f.io.deploy = async () => { attempts += 1; throw new Error('network detail'); };
+  const f = fixture(); let attempts = 0; const deploy = f.io.deploy;
+  f.io.deploy = async (...args) => { attempts += 1; await deploy(...args); throw new Error('network detail'); };
   await assert.rejects(refreshCrmStagingGateway(f.args));
   assert.equal(attempts, 1); assert.equal(f.state.reports.at(-1).rollback, 'forbidden-outcome-unknown');
+  assert.equal(f.state.api.versions[0].version_id, id(3));
+  assert.equal(Object.hasOwn(f.state.reports.at(-1), 'acknowledgedDeploymentId'), false);
 });
 
 test('lease refusal and intervening deployment prevent subsequent mutations', async () => {

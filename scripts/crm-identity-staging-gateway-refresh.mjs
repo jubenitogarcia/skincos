@@ -129,6 +129,31 @@ function deploymentIdentity(deployment) {
   return { deploymentId: deployment.id, versionId: deployment.versions[0].version_id };
 }
 
+function deploymentAcknowledgement(value) {
+  const type = (item) => item === null ? 'null' : Array.isArray(item) ? 'array'
+    : ['object', 'string', 'number', 'boolean', 'undefined'].includes(typeof item) ? typeof item : 'other';
+  const object = type(value) === 'object';
+  const own = (key) => object && Object.hasOwn(value, key) ? value[key] : undefined;
+  const fields = ['id', 'strategy', 'versions', 'annotations'];
+  // Only fixed field names and coarse types/counts survive. Never persist a
+  // raw response, arbitrary property name, annotation, email or error detail.
+  const shape = { resultType: type(value), ...Object.fromEntries(fields.map((key) => [`${key}Type`, type(own(key))])),
+    unknownFieldCount: object ? Object.keys(value).filter((key) => !fields.includes(key)).length : 0 };
+  const id = own('id');
+  return { deploymentId: typeof id === 'string' && UUID.test(id) ? id : undefined, shape };
+}
+
+function assertDeploymentAcknowledgement(value, expectedVersionId, message) {
+  if (Object.hasOwn(value, 'strategy') && value.strategy !== 'percentage') fail('CRM_GATEWAY_REFRESH_ACK_INVALID');
+  if (Object.hasOwn(value, 'versions')) {
+    if (!Array.isArray(value.versions) || value.versions.length !== 1
+      || value.versions[0]?.version_id !== expectedVersionId || value.versions[0]?.percentage !== 100) fail('CRM_GATEWAY_REFRESH_ACK_INVALID');
+  }
+  if (Object.hasOwn(value, 'annotations') && (value.annotations === null || typeof value.annotations !== 'object'
+    || Array.isArray(value.annotations) || (Object.hasOwn(value.annotations, 'workers/message')
+      && value.annotations['workers/message'] !== message))) fail('CRM_GATEWAY_REFRESH_ACK_INVALID');
+}
+
 function exactSnapshot(snapshot, expected) {
   const identity = deploymentIdentity(snapshot?.deployment);
   if (snapshot?.version?.id !== identity.versionId || identity.versionId !== expected.versionId
@@ -147,7 +172,7 @@ export async function refreshCrmStagingGateway({ sourceSha, coreReleaseSha, core
   if (!SHA.test(sourceSha || '') || !SHA.test(coreReleaseSha || '') || !DIGEST.test(coreArtifactDigest || '')
     || !UUID.test(expectedApiVersionId || '') || !UUID.test(expectedIssuerVersionId || '')
     || !/^\d{1,20}$/.test(runId || '')) fail('CRM_GATEWAY_REFRESH_INPUT_INVALID');
-  const report = { schemaVersion: 1, operation: 'refresh-gateway', environment: 'staging', sourceSha,
+  const report = { schemaVersion: 2, operation: 'refresh-gateway', environment: 'staging', sourceSha,
     coreReleaseSha, coreArtifactDigest, runId, state: 'preflight', at: new Date().toISOString(),
     credentialMaterialIncluded: false, piiIncluded: false, issuerWritten: false, secretsWritten: false, d1Written: false,
     rollback: 'not-needed' };
@@ -159,6 +184,25 @@ export async function refreshCrmStagingGateway({ sourceSha, coreReleaseSha, core
     unchangedBindings(gatewayBindingIdentity(apiNow.version), originalBindings);
     issuerIdentity(issuerNow.version);
   };
+  const ownedApi = async (deploymentId, versionId, message, expectedSourceSha) => {
+    // An acknowledgement is an anchor, not ownership. Read that exact ID and
+    // also require it to remain the active deployment; a matching version alone
+    // must never grant custody over a foreign or intervening deployment.
+    const exact = await io.deployment(API, deploymentId);
+    const identity = deploymentIdentity(exact);
+    if (identity.deploymentId !== deploymentId || identity.versionId !== versionId
+      || exact.annotations?.['workers/message'] !== message) fail('CRM_GATEWAY_REFRESH_OWNERSHIP_CONFLICT');
+    const active = await io.snapshot(API);
+    exactSnapshot(active, { deploymentId, versionId });
+    if (active.deployment.annotations?.['workers/message'] !== message) fail('CRM_GATEWAY_REFRESH_OWNERSHIP_CONFLICT');
+    const bindings = gatewayBindingIdentity(active.version);
+    unchangedBindings(bindings, originalBindings);
+    if (bindings.sourceSha !== expectedSourceSha) fail('CRM_GATEWAY_REFRESH_SOURCE_INVALID');
+  };
+  const unchangedIssuer = async () => {
+    const current = await io.snapshot(ISSUER); exactSnapshot(current, issuer); issuerIdentity(current.version);
+  };
+  const switchMessage = `crm:gateway:${sourceSha}:${runId}`;
   try {
     const apiBefore = await io.snapshot(API); const issuerBefore = await io.snapshot(ISSUER);
     incumbent = exactSnapshot(apiBefore, { versionId: expectedApiVersionId });
@@ -181,32 +225,44 @@ export async function refreshCrmStagingGateway({ sourceSha, coreReleaseSha, core
     await io.ready({ coreReleaseSha, coreArtifactDigest });
     await io.guard('switch'); await unchanged();
     report.state = 'switch-attempted'; persist();
-    // A timed-out POST is never retried. Without its exact returned deployment id,
-    // the report remains outcome-unknown and automatic rollback is forbidden.
-    const deployed = deploymentIdentity(await io.deploy(candidateVersionId, `crm:gateway:${sourceSha}:${runId}`));
-    if (deployed.versionId !== candidateVersionId) fail('CRM_GATEWAY_REFRESH_DEPLOYMENT_INVALID');
-    report.deploymentId = deployed.deploymentId; report.state = 'switched'; persist();
-    const apiAfter = await io.snapshot(API); const issuerAfter = await io.snapshot(ISSUER);
-    exactSnapshot(apiAfter, deployed); exactSnapshot(issuerAfter, issuer);
-    unchangedBindings(gatewayBindingIdentity(apiAfter.version), originalBindings);
+    // A successful POST may acknowledge only its UUID. Preserve that anchor
+    // before inspecting optional fields or doing further IO; do not fabricate
+    // omitted fields. A failed/ambiguous POST is never retried.
+    const response = await io.deploy(candidateVersionId, switchMessage);
+    const acknowledged = deploymentAcknowledgement(response);
+    report.switchAcknowledgement = acknowledged.shape;
+    if (acknowledged.deploymentId) {
+      report.acknowledgedDeploymentId = acknowledged.deploymentId; report.state = 'switch-acknowledged';
+    }
+    persist();
+    if (!acknowledged.deploymentId) fail('CRM_GATEWAY_REFRESH_ACK_INVALID');
+    assertDeploymentAcknowledgement(response, candidateVersionId, switchMessage);
+    await ownedApi(acknowledged.deploymentId, candidateVersionId, switchMessage, sourceSha);
+    await unchangedIssuer();
+    report.deploymentId = acknowledged.deploymentId; report.state = 'switched'; persist();
     await io.probe({ sourceSha, candidateVersionId, coreReleaseSha, coreArtifactDigest });
-    exactSnapshot(await io.snapshot(API), deployed); exactSnapshot(await io.snapshot(ISSUER), issuer);
+    await ownedApi(report.deploymentId, candidateVersionId, switchMessage, sourceSha);
+    await unchangedIssuer();
     report.state = 'verified'; report.verifiedAt = new Date().toISOString(); persist();
     return report;
   } catch (cause) {
     report.failure = safeCode(cause);
-    if (report.deploymentId) {
+    if (report.acknowledgedDeploymentId) {
       try {
         await io.guard('rollback');
-        exactSnapshot(await io.snapshot(API), { deploymentId: report.deploymentId, versionId: report.candidateVersionId });
-        exactSnapshot(await io.snapshot(ISSUER), issuer);
-        const restored = deploymentIdentity(await io.deploy(incumbent.versionId, `crm:gateway:rollback:${sourceSha}:${runId}`));
-        if (restored.versionId !== incumbent.versionId) fail('CRM_GATEWAY_REFRESH_ROLLBACK_INVALID');
-        report.rollbackDeploymentId = restored.deploymentId;
-        const restoredSnapshot = await io.snapshot(API);
-        exactSnapshot(restoredSnapshot, restored);
-        exactSnapshot(await io.snapshot(ISSUER), issuer);
-        unchangedBindings(gatewayBindingIdentity(restoredSnapshot.version), originalBindings);
+        await ownedApi(report.acknowledgedDeploymentId, report.candidateVersionId, switchMessage, sourceSha);
+        await unchangedIssuer();
+        const message = `crm:gateway:rollback:${sourceSha}:${runId}`;
+        const response = await io.deploy(incumbent.versionId, message);
+        const acknowledged = deploymentAcknowledgement(response);
+        report.rollbackAcknowledgement = acknowledged.shape;
+        if (acknowledged.deploymentId) report.rollbackAcknowledgedDeploymentId = acknowledged.deploymentId;
+        persist();
+        if (!acknowledged.deploymentId) fail('CRM_GATEWAY_REFRESH_ROLLBACK_ACK_INVALID');
+        assertDeploymentAcknowledgement(response, incumbent.versionId, message);
+        await ownedApi(acknowledged.deploymentId, incumbent.versionId, message, originalBindings.sourceSha);
+        await unchangedIssuer();
+        report.rollbackDeploymentId = acknowledged.deploymentId;
         report.rollback = 'verified-api-incumbent-restored';
       } catch (rollbackError) {
         report.rollback = 'not-proven'; report.rollbackFailure = safeCode(rollbackError);
@@ -217,8 +273,8 @@ export async function refreshCrmStagingGateway({ sourceSha, coreReleaseSha, core
   }
 }
 
-async function jsonFetch(url, init = {}) {
-  const response = await fetch(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(15_000) });
+async function jsonFetch(url, init = {}, fetchImpl = globalThis.fetch) {
+  const response = await fetchImpl(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(15_000) });
   if (!response.ok) fail('CRM_GATEWAY_REFRESH_READBACK_FAILED');
   return { response, body: await response.json() };
 }
@@ -237,7 +293,7 @@ export async function attestCrmActiveGateway({ sourceSha, expectedApiVersionId, 
   return { state: 'active-attested', sourceSha, gatewayVersionId: expectedApiVersionId, issuerVersionId: expectedIssuerVersionId, credentialMaterialIncluded: false };
 }
 
-function createIo(env) {
+export function createCrmStagingGatewayIo(env, { fetchImpl = globalThis.fetch } = {}) {
   if (!/^[0-9a-f]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID || '') || !env.CLOUDFLARE_API_TOKEN
     || !env.RUNNER_TEMP || env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REF !== 'refs/heads/main'
     || env.GITHUB_RUN_ATTEMPT !== '1' || env.GITHUB_SHA !== env.RELEASE_SHA) fail('CRM_GATEWAY_REFRESH_RUNNER_REQUIRED');
@@ -245,7 +301,7 @@ function createIo(env) {
   const cloud = async (script, suffix, options = {}) => {
     if (![API, ISSUER].includes(script) || (options.method && (script !== API || suffix !== '/deployments' || options.method !== 'POST'))) fail('CRM_GATEWAY_REFRESH_TARGET_INVALID');
     const { body } = await jsonFetch(`${base}/${script}${suffix}`, { ...options,
-      headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } });
+      headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } }, fetchImpl);
     if (body?.success !== true) fail('CRM_GATEWAY_REFRESH_CLOUDFLARE_FAILED');
     return body.result;
   };
@@ -254,12 +310,16 @@ function createIo(env) {
     return cloud(script, `/versions/${id}`);
   };
   const ready = async ({ coreReleaseSha, coreArtifactDigest }) => {
-    const { response, body } = await jsonFetch('https://api-staging.skincos.com.br/crm/ready', { headers: { accept: 'application/json', 'cache-control': 'no-store' } });
+    const { response, body } = await jsonFetch('https://api-staging.skincos.com.br/crm/ready', { headers: { accept: 'application/json', 'cache-control': 'no-store' } }, fetchImpl);
     if (response.status !== 200 || response.headers.has('set-cookie') || body.ok !== true || body.environment !== 'staging'
       || body.reason !== 'CRM_STAGING_READY' || body.release !== coreReleaseSha || body.artifactDigest !== coreArtifactDigest) fail('CRM_GATEWAY_REFRESH_CORE_DRIFT');
   };
   return {
     version, ready,
+    deployment: (script, id) => {
+      if (script !== API || !UUID.test(id || '')) fail('CRM_GATEWAY_REFRESH_DEPLOYMENT_INVALID');
+      return cloud(script, `/deployments/${id}`);
+    },
     snapshot: async (script) => {
       const result = await cloud(script, '/deployments');
       const list = Array.isArray(result) ? result : result?.deployments;
@@ -312,7 +372,7 @@ function createIo(env) {
       await ready({ coreReleaseSha, coreArtifactDigest });
       for (const origin of CRM_SMOKE_CONSOLE_ORIGINS) {
         for (const target of ['/crm/session', '/crm/projections?units=novo-hamburgo']) {
-          const response = await fetch(`https://api-staging.skincos.com.br${target}`, {
+          const response = await fetchImpl(`https://api-staging.skincos.com.br${target}`, {
             headers: { accept: 'application/json', 'cache-control': 'no-store', origin }, redirect: 'manual', signal: AbortSignal.timeout(15_000),
           });
           assertCrmSmokeCors(response, origin);
@@ -332,7 +392,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     if (process.argv.length === 3 && process.argv[2] === '--attest-active') {
       const result = await attestCrmActiveGateway({ sourceSha: env.RELEASE_SHA,
-        expectedApiVersionId: env.EXPECTED_API_VERSION_ID, expectedIssuerVersionId: env.EXPECTED_ISSUER_VERSION_ID, io: createIo(env) });
+        expectedApiVersionId: env.EXPECTED_API_VERSION_ID, expectedIssuerVersionId: env.EXPECTED_ISSUER_VERSION_ID, io: createCrmStagingGatewayIo(env) });
       process.stdout.write(`${JSON.stringify(result)}\n`);
       process.exit(0);
     }
@@ -342,7 +402,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     const result = await refreshCrmStagingGateway({ sourceSha: env.RELEASE_SHA,
       coreReleaseSha: env.CRM_CORE_RELEASE_SHA, coreArtifactDigest: env.CRM_CORE_ARTIFACT_DIGEST,
       expectedApiVersionId: env.EXPECTED_API_VERSION_ID, expectedIssuerVersionId: env.EXPECTED_ISSUER_VERSION_ID,
-      runId: env.GITHUB_RUN_ID, io: createIo(env),
+      runId: env.GITHUB_RUN_ID, io: createCrmStagingGatewayIo(env),
       onReport: (report) => fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);
