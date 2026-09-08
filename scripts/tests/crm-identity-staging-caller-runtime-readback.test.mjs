@@ -17,14 +17,14 @@ function versionDetail(id, bindings) {
     return { success: true, result: { id, resources: { bindings } } };
 }
 
-function disabledState(overrides = {}) {
+function callerDisabledState(overrides = {}) {
     const apiBindings = [
         plainText('ENVIRONMENT', 'staging'),
         plainText('CRM_IDENTITY_ISSUER_CALLER_ENABLED', 'false'),
         plainText('CRM_IDENTITY_ISSUER_CALLER_ID', 'crm-api-staging-v1'),
     ];
     const issuerBindings = [
-        plainText('IDENTITY_CRM_DELIVERY_ENABLED', 'false'),
+        plainText('IDENTITY_CRM_DELIVERY_ENABLED', 'true'),
         plainText('IDENTITY_CRM_DELIVERY_ENVIRONMENT', 'staging'),
         plainText('IDENTITY_CRM_DELIVERY_CALLER_ENABLED', 'false'),
         plainText('IDENTITY_CRM_DELIVERY_CALLER_ID', 'crm-api-staging-v1'),
@@ -38,12 +38,12 @@ function disabledState(overrides = {}) {
     };
 }
 
-test('accepts only the exact active disabled public caller bindings', () => {
-    const report = verifyActiveRuntimeState(disabledState());
+test('accepts only the exact active caller-disabled public bindings while the issuer delivery remains enabled', () => {
+    const report = verifyActiveRuntimeState(callerDisabledState());
 
     assert.deepEqual(report, {
         schemaVersion: 1,
-        state: 'disabled',
+        state: 'caller-disabled',
         observation: 'exact-active-worker-version-bindings',
         api: {
             script: 'skincos-api-staging',
@@ -54,7 +54,7 @@ test('accepts only the exact active disabled public caller bindings', () => {
         issuer: {
             script: 'skincos-identity-crm-delivery-staging',
             activeVersion: issuerVersion,
-            deliveryEnabled: false,
+            deliveryEnabled: true,
             callerEnabled: false,
             callerId: 'crm-api-staging-v1',
         },
@@ -62,23 +62,30 @@ test('accepts only the exact active disabled public caller bindings', () => {
 });
 
 test('rejects an active API version with an enabled caller before any bootstrap receipt can be written', () => {
-    const state = disabledState();
+    const state = callerDisabledState();
     state.apiVersionDetail.result.resources.bindings[1].text = 'true';
 
     assert.throws(() => verifyActiveRuntimeState(state), /api_CRM_IDENTITY_ISSUER_CALLER_ENABLED_MISMATCH/);
 });
 
 test('rejects a caller flag that is missing, secret, or bound to another active version', () => {
-  const missing = disabledState();
+  const missing = callerDisabledState();
   missing.issuerVersionDetail.result.resources.bindings = missing.issuerVersionDetail.result.resources.bindings
     .filter((binding) => binding.name !== 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED');
   assert.throws(() => verifyActiveRuntimeState(missing), /issuer_IDENTITY_CRM_DELIVERY_CALLER_ENABLED_MISMATCH/);
 
-  const secret = disabledState();
+  const secret = callerDisabledState();
   secret.apiVersionDetail.result.resources.bindings[1] = { name: 'CRM_IDENTITY_ISSUER_CALLER_ENABLED', type: 'secret_text' };
   assert.throws(() => verifyActiveRuntimeState(secret), /api_CRM_IDENTITY_ISSUER_CALLER_ENABLED_MISMATCH/);
 
-  const wrongVersion = disabledState();
+  const wrongVersion = callerDisabledState();
     wrongVersion.apiVersionDetail.result.id = issuerVersion;
     assert.throws(() => verifyActiveRuntimeState(wrongVersion), /api_VERSION_DETAIL_INVALID/);
+});
+
+test('rejects a disabled issuer delivery even when both caller flags remain disabled', () => {
+  const state = callerDisabledState();
+  state.issuerVersionDetail.result.resources.bindings[0].text = 'false';
+
+  assert.throws(() => verifyActiveRuntimeState(state), /issuer_IDENTITY_CRM_DELIVERY_ENABLED_MISMATCH/);
 });

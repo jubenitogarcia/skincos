@@ -20,7 +20,7 @@ const ISSUER_RUNTIME = Object.freeze({
     label: 'issuer',
     script: 'skincos-identity-crm-delivery-staging',
     expectedPlainTextBindings: Object.freeze({
-        IDENTITY_CRM_DELIVERY_ENABLED: 'false',
+        IDENTITY_CRM_DELIVERY_ENABLED: 'true',
         IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'staging',
         IDENTITY_CRM_DELIVERY_CALLER_ENABLED: 'false',
         IDENTITY_CRM_DELIVERY_CALLER_ID: 'crm-api-staging-v1',
@@ -73,7 +73,7 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
     const issuer = verifyRuntime(issuerDeployment, issuerVersionDetail, ISSUER_RUNTIME);
     return Object.freeze({
         schemaVersion: 1,
-        state: 'disabled',
+        state: 'caller-disabled',
         observation: 'exact-active-worker-version-bindings',
         api: Object.freeze({
             ...api,
@@ -82,7 +82,7 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
         }),
         issuer: Object.freeze({
             ...issuer,
-            deliveryEnabled: false,
+            deliveryEnabled: true,
             callerEnabled: false,
             callerId: 'crm-api-staging-v1',
         }),
