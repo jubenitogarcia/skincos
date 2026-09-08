@@ -120,6 +120,13 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22.12.0'
+      - name: Resolve runner-local evidence paths
+        run: |
+          set -euo pipefail
+          {
+            echo "WORKER_LEASE_PROOF=$RUNNER_TEMP/crm-identity-workers-lease.json"
+            echo "D1_LEASE_PROOF=$RUNNER_TEMP/crm-identity-smoke-d1-lease.json"
+          } >> "$GITHUB_ENV"
 
       - name: Pin the restricted staging operation to current protected main
         run: |
