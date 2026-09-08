@@ -222,7 +222,7 @@ jobs:
 
       - name: Acquire canonical Core and Identity Worker custody lease
         id: worker_lease
-        if: ${{ inputs.operation == 'bootstrap' || inputs.operation == 'activate' || inputs.operation == 'disable' || inputs.operation == 'refresh-gateway' }}
+        if: ${{ inputs.operation == 'bootstrap' || inputs.operation == 'activate' || inputs.operation == 'disable' || inputs.operation == 'refresh-gateway' || (inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections') }}
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: 'true'
@@ -733,8 +733,22 @@ jobs:
             --var 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED:false' \
             --var 'IDENTITY_CRM_DELIVERY_CALLER_ID:crm-api-staging-v1' >/dev/null
 
-      - name: Attest exact active gateway and unchanged issuer before extended smoke fixtures
+      - name: Check Worker custody before extended smoke attestation and fixtures
+        id: worker_smoke_preflight_lease
         if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Attest exact active gateway and unchanged issuer before extended smoke fixtures
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.worker_smoke_preflight_lease.outcome == 'success' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -797,8 +811,25 @@ jobs:
           resource: global:staging-d1
           module: core
           source_sha: ${{ inputs.release_sha }}
+      - name: Check Worker custody immediately before the extended authenticated journey
+        id: worker_smoke_journey_lease
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.synthetic_fixture.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
       - name: Prove a real synthetic login reaches the CRM session without forwarding its cookie
-        if: ${{ inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' }}
+        if: ${{ inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' && (inputs.smoke_profile != 'session-and-projections' || steps.worker_smoke_journey_lease.outcome == 'success') }}
+        # Extended journey must finish inside the check action's five-minute
+        # remaining-lease floor. The original profile retains the job ceiling.
+        timeout-minutes: ${{ inputs.smoke_profile == 'session-and-projections' && 4 || 35 }}
         env:
           CRM_IDENTITY_SMOKE_FIXTURES: ${{ runner.temp }}/crm-identity-smoke-fixtures.json
           CRM_IDENTITY_SMOKE_REPORT: ${{ runner.temp }}/crm-identity-smoke-report.json
@@ -832,8 +863,22 @@ jobs:
           node inventory/scripts/insumosStagingRbacFixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$fixtures" --sql "$RUNNER_TEMP/crm-identity-smoke-teardown.sql" >/dev/null
           npx --yes wrangler@4.112.0 d1 execute skincos-db-staging --config inventory/wrangler.toml --env staging --remote --file "$RUNNER_TEMP/crm-identity-smoke-teardown.sql" >/dev/null
           rm -f "$fixtures" "$RUNNER_TEMP/crm-identity-smoke-provision.sql" "$RUNNER_TEMP/crm-identity-smoke-teardown.sql"
+      - name: Check Worker custody after extended smoke teardown and before reattestation
+        id: worker_smoke_postflight_lease
+        if: ${{ always() && inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.synthetic_teardown.outcome == 'success' && steps.worker_lease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
       - name: Reattest exact active gateway and issuer after extended smoke teardown
-        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.synthetic_teardown.outcome == 'success' }}
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.synthetic_teardown.outcome == 'success' && steps.worker_smoke_postflight_lease.outcome == 'success' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

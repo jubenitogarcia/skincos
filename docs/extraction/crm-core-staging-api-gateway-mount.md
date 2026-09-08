@@ -218,7 +218,16 @@ Identity. A prova original do Core deve continuar usando esse perfil.
 Para comprovar a nova origem e as projeções, usar
 `smoke_profile=session-and-projections`, com SHA/digest Core e os dois UUIDs
 ativos exatos. Há readback tipado API/emissor antes das fixtures e depois do
-teardown. As mesmas fixtures canônicas `nh`, `bss`, `both` e `admin` são
+teardown. Esse perfil mantém também a lease canônica
+`global:ponto-workers-writer` desde antes do primeiro readback até a liberação
+final, além da custódia D1 já existente. A lease Worker é conferida/renovada
+antes das fixtures, imediatamente antes da jornada e depois do teardown, antes
+do readback final; falha de custódia impede a comprovação. A jornada ampliada
+tem teto de quatro minutos, menor que os cinco minutos mínimos de lease
+restante garantidos pelo helper. A concorrência por nome da operação não
+substitui essa exclusividade frente a refresh, activate ou disable. O perfil
+original `session` não adquire essa lease adicional nem altera o relatório v1.
+As mesmas fixtures canônicas `nh`, `bss`, `both` e `admin` são
 autenticadas pelo login Inventory; nenhuma permissão ou bypass é acrescentado.
 A sessão NH deve continuar com zero permissões. As duas sessões usam as origens
 nova e incumbente. Quatro leituras de projeção comprovam NH, BSS, união das duas

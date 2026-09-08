@@ -214,3 +214,80 @@ test('workflow keeps original session delta and separates refresh, extended smok
   assert.doesNotMatch(source, /'secret',\s*'(?:put|delete|bulk)'|'d1',\s*'(?:execute|migrations)'/);
   assert.match(workflow, /node scripts\/crm-identity-staging-caller-runtime-readback\.mjs/);
 });
+
+test('extended smoke holds and revalidates the canonical Worker lease across the entire journey', () => {
+  const workflow = fs.readFileSync(new URL('../../.github/workflows/identity-crm-delivery.yml', import.meta.url), 'utf8');
+  const blocks = workflow.split(/(?=^      - name: )/m);
+  const step = (name) => {
+    const found = blocks.find((block) => block.startsWith(`      - name: ${name}\n`) || block.startsWith(`      - name: ${name}\r\n`));
+    assert.ok(found, name); return found;
+  };
+  const acquire = step('Acquire canonical Core and Identity Worker custody lease');
+  const pre = step('Check Worker custody before extended smoke attestation and fixtures');
+  const attest = step('Attest exact active gateway and unchanged issuer before extended smoke fixtures');
+  const d1 = step('Acquire staging D1 custody for one synthetic session proof');
+  const fixture = step('Generate runner-private synthetic Identity fixtures');
+  const before = step('Check Worker custody immediately before the extended authenticated journey');
+  const journey = step('Prove a real synthetic login reaches the CRM session without forwarding its cookie');
+  const teardownGate = step('Check D1 custody before synthetic fixture teardown');
+  const teardown = step("Tear down only this run's synthetic staging Identity fixture");
+  const after = step('Check Worker custody after extended smoke teardown and before reattestation');
+  const reattest = step('Reattest exact active gateway and issuer after extended smoke teardown');
+  const release = step('Release canonical Core and Identity Worker custody lease');
+  const ordered = [acquire, pre, attest, d1, fixture, before, journey, teardownGate, teardown, after, reattest, release];
+  for (let i = 1; i < ordered.length; i += 1) assert.ok(workflow.indexOf(ordered[i - 1]) < workflow.indexOf(ordered[i]));
+
+  for (const check of [pre, before, after]) {
+    assert.match(check, /uses: \.\/\.github\/actions\/global-coordination-check/);
+    assert.match(check, /required: 'true'/);
+    assert.match(check, /resource: global:ponto-workers-writer/);
+    assert.match(check, /module: core/);
+    assert.match(check, /source_sha: \$\{\{ inputs.release_sha \}\}/);
+    assert.match(check, /proof_file: \$\{\{ runner.temp \}\}\/crm-identity-workers-lease.json/);
+  }
+  assert.match(acquire, /resource: global:ponto-workers-writer/);
+  assert.match(release, /always\(\) && steps.worker_lease.outcome == 'success'/);
+  assert.match(d1, /resource: global:staging-d1/);
+  assert.match(teardownGate, /always\(\)/);
+  assert.match(teardownGate, /resource: global:staging-d1/);
+  assert.match(teardown, /always\(\)/);
+  assert.match(journey, /timeout-minutes: \$\{\{ inputs.smoke_profile == 'session-and-projections' && 4 \|\| 35 \}\}/);
+  const helper = fs.readFileSync(new URL('../../.github/actions/global-coordination-check/action.yml', import.meta.url), 'utf8');
+  assert.match(helper, /expiresAt - Date.now\(\) > 5 \* 60 \* 1000/);
+
+  // Evaluate only the checked-in GitHub boolean conditions, including its
+  // implicit success gate, against synthetic outcome tables; no action runs.
+  const applies = (block, inputs, steps = {}, priorSuccess = true) => {
+    const expression = block.match(/^        if: \$\{\{ (.+) \}\}$/m)?.[1];
+    assert.ok(expression);
+    return (expression.includes('always()') || priorSuccess)
+      && Function('inputs', 'steps', 'always', `return (${expression});`)(inputs, steps, () => true);
+  };
+  const success = { synthetic_fixture: { outcome: 'success' }, synthetic_teardown: { outcome: 'success' },
+    worker_lease: { outcome: 'success' }, worker_smoke_preflight_lease: { outcome: 'success' },
+    worker_smoke_journey_lease: { outcome: 'success' }, worker_smoke_postflight_lease: { outcome: 'success' } };
+  const extended = { operation: 'session-smoke', smoke_profile: 'session-and-projections' };
+  const original = { operation: 'session-smoke', smoke_profile: 'session' };
+  for (const operation of ['bootstrap', 'activate', 'disable', 'refresh-gateway']) assert.equal(applies(acquire, { operation, smoke_profile: 'session' }), true);
+  assert.equal(applies(acquire, extended), true);
+  assert.equal(applies(acquire, original), false);
+  assert.equal(applies(acquire, { operation: 'test', smoke_profile: 'session-and-projections' }), false);
+  for (const check of [pre, attest, before, after, reattest]) {
+    assert.equal(applies(check, extended, success), true);
+    assert.equal(applies(check, original, success), false);
+  }
+  for (const profile of [extended, original]) {
+    assert.equal(applies(d1, profile, success), true);
+    assert.equal(applies(journey, profile, success), true);
+  }
+  const lost = structuredClone(success); lost.worker_smoke_journey_lease.outcome = 'failure';
+  assert.equal(applies(journey, extended, lost), false);
+  assert.equal(applies(journey, original, lost), true);
+  assert.equal(applies(before, extended, success, false), false);
+  assert.equal(applies(after, extended, success, false), true);
+  lost.worker_smoke_postflight_lease.outcome = 'failure';
+  assert.equal(applies(reattest, extended, lost), false);
+  assert.equal(applies(release, extended, success, false), true);
+  lost.worker_lease.outcome = 'failure';
+  assert.equal(applies(release, extended, lost, false), false);
+});
