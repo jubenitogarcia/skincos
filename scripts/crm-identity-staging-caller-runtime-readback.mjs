@@ -20,10 +20,7 @@ const ISSUER_RUNTIME = Object.freeze({
     label: 'issuer',
     script: 'skincos-identity-crm-delivery-staging',
     expectedPlainTextBindings: Object.freeze({
-        IDENTITY_CRM_DELIVERY_ENABLED: 'false',
         IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'staging',
-        IDENTITY_CRM_DELIVERY_CALLER_ENABLED: 'false',
-        IDENTITY_CRM_DELIVERY_CALLER_ID: 'crm-api-staging-v1',
     }),
 });
 
@@ -53,6 +50,20 @@ function exactPlainTextBinding(versionDetail, runtime, activeVersionId, name, ex
     }
 }
 
+function optionalPlainTextBinding(versionDetail, runtime, activeVersionId, name) {
+    if (versionDetail?.success !== true || String(versionDetail?.result?.id || '').toLowerCase() !== activeVersionId) {
+        fail(`${runtime.label}_VERSION_DETAIL_INVALID`);
+    }
+    const bindings = versionDetail?.result?.resources?.bindings;
+    if (!Array.isArray(bindings)) fail(`${runtime.label}_VERSION_BINDINGS_INVALID`);
+    const matches = bindings.filter((binding) => binding?.name === name);
+    if (matches.length === 0) return null;
+    if (matches.length !== 1 || matches[0]?.type !== 'plain_text') {
+        fail(`${runtime.label}_${name}_MISMATCH`);
+    }
+    return String(matches[0]?.text);
+}
+
 function verifyRuntime(deployment, versionDetail, runtime) {
     const version = activeVersion(deployment, runtime);
     for (const [name, expected] of Object.entries(runtime.expectedPlainTextBindings)) {
@@ -71,9 +82,36 @@ function verifyRuntime(deployment, versionDetail, runtime) {
 export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiVersionDetail, issuerVersionDetail }) {
     const api = verifyRuntime(apiDeployment, apiVersionDetail, API_RUNTIME);
     const issuer = verifyRuntime(issuerDeployment, issuerVersionDetail, ISSUER_RUNTIME);
+    const deliveryEnabled = optionalPlainTextBinding(
+        issuerVersionDetail,
+        ISSUER_RUNTIME,
+        issuer.activeVersion,
+        'IDENTITY_CRM_DELIVERY_ENABLED',
+    );
+    if (deliveryEnabled !== 'true') {
+        fail('issuer_IDENTITY_CRM_DELIVERY_ENABLED_MISMATCH');
+    }
+    const callerEnabled = optionalPlainTextBinding(
+        issuerVersionDetail,
+        ISSUER_RUNTIME,
+        issuer.activeVersion,
+        'IDENTITY_CRM_DELIVERY_CALLER_ENABLED',
+    );
+    if (callerEnabled !== null && callerEnabled !== 'false') {
+        fail('issuer_IDENTITY_CRM_DELIVERY_CALLER_ENABLED_MISMATCH');
+    }
+    const callerId = optionalPlainTextBinding(
+        issuerVersionDetail,
+        ISSUER_RUNTIME,
+        issuer.activeVersion,
+        'IDENTITY_CRM_DELIVERY_CALLER_ID',
+    );
+    if (callerId !== null && callerId !== 'crm-api-staging-v1') {
+        fail('issuer_IDENTITY_CRM_DELIVERY_CALLER_ID_MISMATCH');
+    }
     return Object.freeze({
         schemaVersion: 1,
-        state: 'disabled',
+        state: 'caller-disabled',
         observation: 'exact-active-worker-version-bindings',
         api: Object.freeze({
             ...api,
@@ -82,9 +120,12 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
         }),
         issuer: Object.freeze({
             ...issuer,
-            deliveryEnabled: false,
+            deliveryEnabled: deliveryEnabled === 'true',
             callerEnabled: false,
-            callerId: 'crm-api-staging-v1',
+            callerEnabledBinding: callerEnabled === null ? null : false,
+            effectiveCallerEnabled: false,
+            callerId,
+            expectedCallerId: 'crm-api-staging-v1',
         }),
     });
 }

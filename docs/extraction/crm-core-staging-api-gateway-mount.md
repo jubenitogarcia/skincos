@@ -138,8 +138,9 @@ que já seja `main` e separa as operações em quatro etapas deliberadas:
 - `session-smoke` cria uma identidade estritamente sintética no D1 de staging,
   comprova login e `GET /crm/session` sem cookie ou PII no relatório, e remove
   a fixture no mesmo run mesmo se o smoke falhar;
-- `disable` desativa primeiro o caller do gateway e depois o emissor, sem
-  apagar a chave necessária para uma recuperação controlada.
+- `disable` desativa primeiro o caller do gateway e depois o caller do emissor,
+  mantendo a entrega já ativa do emissor e sem apagar a chave necessária para
+  uma recuperação controlada.
 
 Cada mutação revalida o lease `global:ponto-workers-writer` ou
 `global:staging-d1` imediatamente antes de ocorrer. A automação está pronta

@@ -120,14 +120,6 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22.12.0'
-      - name: Resolve runner-local evidence paths
-        run: |
-          set -euo pipefail
-          {
-            echo "WORKER_LEASE_PROOF=$RUNNER_TEMP/crm-identity-workers-lease.json"
-            echo "D1_LEASE_PROOF=$RUNNER_TEMP/crm-identity-smoke-d1-lease.json"
-          } >> "$GITHUB_ENV"
-
       - name: Pin the restricted staging operation to current protected main
         run: |
           set -euo pipefail
@@ -245,11 +237,11 @@ jobs:
           const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
           if (
-            report?.schemaVersion !== 1 || report.state !== 'disabled' || report.observation !== 'exact-active-worker-version-bindings'
+            report?.schemaVersion !== 1 || report.state !== 'caller-disabled' || report.observation !== 'exact-active-worker-version-bindings'
             || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== false || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags are not proven disabled');
-          process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
+          process.stdout.write(`state=caller-disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
 
       - name: Refuse partial caller HMAC custody and attest existing signer custody
@@ -286,7 +278,7 @@ jobs:
           process.stdout.write(`state=${api.has('CRM_IDENTITY_ISSUER_CALLER_HMAC') ? 'already-provisioned' : 'missing'}\n`);
           NODE
 
-      - name: Provision one generated HMAC into both disabled staging runtimes
+      - name: Provision one generated HMAC into both caller-disabled staging runtimes
         id: bootstrap_provision
         if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_preflight.outputs.state == 'missing' }}
         env:
@@ -303,7 +295,7 @@ jobs:
             observed="$(git rev-parse refs/remotes/origin/main)"
             [[ "$observed" == "$RELEASE_SHA" ]] || { echo 'main advanced before a caller HMAC mutation'; return 1; }
             node scripts/codex-global-coordination-workflow.mjs check \
-              --proof-file "$WORKER_LEASE_PROOF" \
+              --proof-file "$RUNNER_TEMP/crm-identity-workers-lease.json" \
               --resource global:ponto-workers-writer \
               --module core \
               --source "$observed" \
@@ -383,22 +375,22 @@ jobs:
           const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
           if (
-            report?.schemaVersion !== 1 || report.state !== 'disabled' || report.observation !== 'exact-active-worker-version-bindings'
+            report?.schemaVersion !== 1 || report.state !== 'caller-disabled' || report.observation !== 'exact-active-worker-version-bindings'
             || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== false || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags changed or are not proven disabled');
-          process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
+          process.stdout.write(`state=caller-disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
 
-      - name: Write sanitised disabled bootstrap evidence
-        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_runtime_preflight.outputs.state == 'disabled' && steps.bootstrap_readback.outputs.state == 'both-present' && steps.bootstrap_runtime_readback.outputs.state == 'disabled' }}
+      - name: Write sanitised caller-disabled bootstrap evidence
+        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_runtime_preflight.outputs.state == 'caller-disabled' && steps.bootstrap_readback.outputs.state == 'both-present' && steps.bootstrap_runtime_readback.outputs.state == 'caller-disabled' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/crm-identity-bootstrap"
           RELEASE_SHA="$RELEASE_SHA" BOOTSTRAP_STATE="${{ steps.bootstrap_provision.outputs.state || steps.bootstrap_preflight.outputs.state }}" API_VERSION="${{ steps.bootstrap_runtime_readback.outputs.api_version }}" ISSUER_VERSION="${{ steps.bootstrap_runtime_readback.outputs.issuer_version }}" node - "$RUNNER_TEMP/crm-identity-bootstrap/evidence.json" <<'NODE'
           const fs = require('node:fs');
           const version = (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
-          if (!version(process.env.API_VERSION) || !version(process.env.ISSUER_VERSION)) throw new Error('disabled active version evidence is missing');
+          if (!version(process.env.API_VERSION) || !version(process.env.ISSUER_VERSION)) throw new Error('caller-disabled active version evidence is missing');
           fs.writeFileSync(process.argv[2], `${JSON.stringify({
             schemaVersion: 2,
             operation: 'bootstrap',
@@ -412,11 +404,12 @@ jobs:
             apiSecretName: 'CRM_IDENTITY_ISSUER_CALLER_HMAC',
             issuerSecretName: 'IDENTITY_CRM_DELIVERY_CALLER_HMAC',
             callerEnabled: false,
+            issuerDeliveryEnabled: true,
             secretValuesIncluded: false,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
-      - name: Upload sanitised disabled bootstrap evidence
-        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_runtime_preflight.outputs.state == 'disabled' && steps.bootstrap_readback.outputs.state == 'both-present' && steps.bootstrap_runtime_readback.outputs.state == 'disabled' }}
+      - name: Upload sanitised caller-disabled bootstrap evidence
+        if: ${{ inputs.operation == 'bootstrap' && steps.bootstrap_runtime_preflight.outputs.state == 'caller-disabled' && steps.bootstrap_readback.outputs.state == 'both-present' && steps.bootstrap_runtime_readback.outputs.state == 'caller-disabled' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crm-identity-caller-bootstrap-${{ inputs.release_sha }}
@@ -452,9 +445,9 @@ jobs:
           if (
             evidence?.schemaVersion !== 2 || evidence.operation !== 'bootstrap' || evidence.environment !== 'staging' || evidence.sourceSha !== process.env.RELEASE_SHA
             || evidence.runtimeReadback !== 'exact-active-worker-version-bindings' || !version(evidence.apiActiveVersion) || !version(evidence.issuerActiveVersion)
-            || evidence.callerEnabled !== false || evidence.secretValuesIncluded !== false
+            || evidence.callerEnabled !== false || evidence.issuerDeliveryEnabled !== true || evidence.secretValuesIncluded !== false
           ) {
-            throw new Error('bootstrap evidence does not bind the current disabled staging source');
+            throw new Error('bootstrap evidence does not bind the current caller-disabled staging source');
           }
           NODE
           api_names="$RUNNER_TEMP/crm-identity-api-activation-names.json"
@@ -678,7 +671,7 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4.112.0 deploy --config identity/wrangler.staging.toml --env staging --keep-vars \
-            --var 'IDENTITY_CRM_DELIVERY_ENABLED:false' \
+            --var 'IDENTITY_CRM_DELIVERY_ENABLED:true' \
             --var 'IDENTITY_CRM_DELIVERY_ENVIRONMENT:staging' \
             --var 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED:false' \
             --var 'IDENTITY_CRM_DELIVERY_CALLER_ID:crm-api-staging-v1' >/dev/null
