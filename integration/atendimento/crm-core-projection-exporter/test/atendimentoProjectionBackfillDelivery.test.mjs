@@ -68,7 +68,7 @@ test('refuses a signing key that belongs to another environment before it can si
   }), /ATENDIMENTO_CRM_BACKFILL_DELIVERY_KEY_ENVIRONMENT_MISMATCH/)
 })
 
-test('uses the internal HTTPS route with no credential, cookie, origin, or authorization forwarding', async () => {
+test('uses the CRM-scoped internal HTTPS route with no credential, cookie, origin, or authorization forwarding', async () => {
   const currentBatch = batch()
   const { signer } = signerFor()
   const delivery = await signer.signBatch(currentBatch)
@@ -101,6 +101,7 @@ test('uses the internal HTTPS route with no credential, cookie, origin, or autho
   })
 
   assert.equal(calls.length, 1)
+  assert.equal(ATENDIMENTO_CRM_BACKFILL_HTTP_PATH, '/crm/_internal/backfill/atendimento')
   assert.equal(calls[0].url, `https://crm-core-staging.example.test${ATENDIMENTO_CRM_BACKFILL_HTTP_PATH}`)
   assert.equal(calls[0].init.method, 'POST')
   assert.equal(calls[0].init.credentials, 'omit')
@@ -183,9 +184,14 @@ test('bounds a stalled receipt body with the same abort deadline', async () => {
   assert.equal(signal?.aborted, true)
 })
 
-test('refuses an arbitrary route before it can invoke fetch', () => {
-  assert.throws(() => createAtendimentoProjectionBackfillHttpTransport({
-    endpoint: 'https://crm-core-staging.example.test/crm/backfill',
-    fetch: async () => ({ status: 200, json: async () => ({}) }),
-  }), /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_ENDPOINT_INVALID/)
+test('refuses the legacy or arbitrary route before it can invoke fetch', () => {
+  for (const suppliedEndpoint of [
+    'https://crm-core-staging.example.test/_internal/crm/backfill/atendimento',
+    'https://crm-core-staging.example.test/crm/backfill',
+  ]) {
+    assert.throws(() => createAtendimentoProjectionBackfillHttpTransport({
+      endpoint: suppliedEndpoint,
+      fetch: async () => ({ status: 200, json: async () => ({}) }),
+    }), /ATENDIMENTO_CRM_BACKFILL_TRANSPORT_ENDPOINT_INVALID/)
+  }
 })
