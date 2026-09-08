@@ -9,9 +9,11 @@ import {
 import { ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE } from '../src/atendimentoProjectionDeltaExporter.mjs'
 import {
   acceptAtendimentoProjectionDeltaBaseline,
+  createAtendimentoProjectionDeltaBaselineBackfill,
   createAtendimentoProjectionDeltaBaselinePrepared,
   createAtendimentoProjectionDeltaBaselineSeed,
   markAtendimentoProjectionDeltaReady,
+  __testables as baselineTestables,
 } from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
 const TARGET = { environment: 'staging', release: 'a'.repeat(40), artifactDigest: `sha256:${'b'.repeat(64)}` }
@@ -23,27 +25,49 @@ const BASELINE_ROWS = [
   { identity_id: B, unit_slug: 'pinheiros', observed_at: '2026-09-08T12:00:00.000Z' },
 ]
 const BASELINE_SEED = createAtendimentoProjectionDeltaBaselineSeed({ rows: BASELINE_ROWS, capturedAt: '2026-09-08T12:05:00.000Z' })
-const BASELINE_BACKFILL = {
-  batchId: 'backfill:atendimento:delta-runner-test',
-  batchDigest: `sha256:${'c'.repeat(64)}`,
-  capturedAt: BASELINE_SEED.capturedAt,
-  cursorDigest: `sha256:${'d'.repeat(64)}`,
+const BASELINE_BACKFILL = createAtendimentoProjectionDeltaBaselineBackfill({
+  batches: [{
+    batchId: 'backfill:atendimento:delta-runner-test',
+    batchDigest: `sha256:${'c'.repeat(64)}`,
+    capturedAt: BASELINE_SEED.capturedAt,
+    cursorDigest: `sha256:${'d'.repeat(64)}`,
+    fromOrdinal: 1,
+    toOrdinal: BASELINE_SEED.rowCount,
+    rowCount: BASELINE_SEED.rowCount,
+    unitSlugs: BASELINE_SEED.unitSlugs,
+    eventCount: BASELINE_SEED.rowCount,
+  }],
   rowCount: BASELINE_SEED.rowCount,
-  unitSlugs: BASELINE_SEED.unitSlugs,
-  eventCount: BASELINE_SEED.rowCount,
+})
+const BASELINE_RECEIPT = {
+  contractVersion: 'crm-core/projection-backfill-receipt/v2',
+  status: 'accepted',
+  batchId: BASELINE_BACKFILL.batches[0].batchId,
+  eventCount: BASELINE_BACKFILL.batches[0].eventCount,
+  target: TARGET,
 }
+const BASELINE_PROOF = (() => {
+  const proof = {
+    contract: 'crm-core/projection-baseline-batch-readback/v1',
+    status: 'batch-ledger-readback-verified',
+    pins: { producer: { owner: 'atendimento', scope: 'global-client-identities/v1', keyId: 'atendimento-projection-key-v2' }, target: TARGET, unitSlugs: BASELINE_BACKFILL.batches[0].unitSlugs },
+    counts: { events: BASELINE_BACKFILL.eventCount, sources: BASELINE_BACKFILL.eventCount, units: BASELINE_BACKFILL.batches[0].unitSlugs.length },
+    digests: { batch: BASELINE_BACKFILL.batches[0].batchDigest, events: `sha256:${'e'.repeat(64)}`, cursor: BASELINE_BACKFILL.batches[0].cursorDigest, receipt: baselineTestables.digest(BASELINE_RECEIPT), ledger: `sha256:${'f'.repeat(64)}`, sources: `sha256:${'a'.repeat(64)}` },
+  }
+  return { ...proof, digests: { ...proof.digests, readback: baselineTestables.digest(proof) } }
+})()
 const BASELINE = markAtendimentoProjectionDeltaReady(
   acceptAtendimentoProjectionDeltaBaseline(
     createAtendimentoProjectionDeltaBaselinePrepared({
       target: TARGET,
       source: { owner: 'atendimento', scope: 'global-client-identities/v1', backfillKeyId: 'atendimento-projection-key-v2', deltaKeyId: 'crm-staging-atendimento-delta-v1' },
-      snapshot: { capturedAt: BASELINE_SEED.capturedAt, cursorDigest: BASELINE_BACKFILL.cursorDigest, rowCount: BASELINE_SEED.rowCount, unitSlugs: BASELINE_SEED.unitSlugs, watermark: 0 },
+      snapshot: { capturedAt: BASELINE_SEED.capturedAt, cursorDigest: BASELINE_BACKFILL.batches[0].cursorDigest, rowCount: BASELINE_SEED.rowCount, unitSlugs: BASELINE_SEED.unitSlugs, watermark: 0 },
       backfill: BASELINE_BACKFILL,
       seed: BASELINE_SEED,
     }),
-    { contractVersion: 'crm-core/projection-backfill-receipt/v2', status: 'accepted', batchId: BASELINE_BACKFILL.batchId, batchDigest: BASELINE_BACKFILL.batchDigest, eventCount: BASELINE_BACKFILL.eventCount, target: TARGET },
+  [BASELINE_RECEIPT],
   ),
-  { contract: 'atendimento/crm-core/projection-delta-baseline-readback/v1', status: 'verified', batchId: BASELINE_BACKFILL.batchId, batchDigest: BASELINE_BACKFILL.batchDigest, membershipDigest: BASELINE_SEED.membershipDigest, watermark: 0, target: TARGET },
+  { contract: 'atendimento/crm-core/projection-delta-baseline-readback/v2', status: 'verified', manifestDigest: BASELINE_BACKFILL.manifestDigest, membershipDigest: BASELINE_SEED.membershipDigest, watermark: 0, verifiedBatchCount: BASELINE_BACKFILL.batches.length, verifiedEventCount: BASELINE_BACKFILL.eventCount, ledgerProofDigest: baselineTestables.digest([{ batchDigest: BASELINE_PROOF.digests.batch, readbackDigest: BASELINE_PROOF.digests.readback }]), proofs: [BASELINE_PROOF], target: TARGET },
 )
 
 function row(eventOrder, identityId, revision, operation) {
@@ -94,6 +118,9 @@ test('runs bounded outbox pages, accepts receipts, resumes through an opaque che
   assert.equal(delivered.length, 2)
   assert.equal(checkpoint.completed.fromExclusive, 3)
   assert.equal(checkpoint.value, null)
+  assert.equal(checkpoint.completed.baseline.owner, 'atendimento')
+  assert.equal(checkpoint.completed.baseline.scope, 'global-client-identities/v1')
+  assert.match(checkpoint.completed.baseline.digest, /^sha256:[a-f0-9]{64}$/)
   assert.ok(delivered.every(({ batch }) => batch.events.every((event) => ['upsert', 'revoke'].includes(event.operation))))
 })
 

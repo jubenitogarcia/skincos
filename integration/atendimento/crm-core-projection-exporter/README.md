@@ -147,20 +147,46 @@ segredo, banco ou deploy. O transporte HTTPS separado usa a rota futura
 desativadas até que o owner do CRM Core publique o consumidor correspondente e
 prove o mesmo ciclo de artefato, smoke e rollback em staging.
 
-O runner só aceita um handoff `atendimento/crm-core/projection-delta-baseline/v1`
-em estado `delta-ready`. Esse handoff é uma máquina de estados explícita:
-`baseline-prepared` vincula o backfill, o digest do snapshot, o escopo e o
-watermark; `baseline-accepted` acrescenta o recibo exato do Core; e
-`delta-ready` exige o readback do Core com o mesmo digest, seed e watermark.
-Assim, o cursor inicial não é inferido de `0` e a primeira revisão de uma
-projeção já presente no backfill pode ser `2`, enquanto uma identidade nova
-continua podendo começar em `1`. O comando
-`prepare-atendimento-crm-core-projection-delta-baseline.mjs` apenas transforma
-envelopes JSON fornecidos pelo operador (`--prepare`, `--accept` ou `--ready`);
-ele não abre conexão, lê ambiente, acessa rede ou manipula segredo. A seed deve
-ser calculada no mesmo snapshot repeatable-read usado para montar o backfill;
-se o digest/cursor/escopo divergir, o handoff é rejeitado antes de qualquer
-delta.
+O runner só aceita um handoff
+`atendimento/crm-core/projection-delta-baseline/v2` em estado `delta-ready`.
+Esse handoff é uma máquina de estados explícita, persistida pelo owner da
+fonte: `baseline-prepared` é capturado e semeado em uma única transação
+`REPEATABLE READ`, com revisão 1 e watermark inicial; `baseline-accepted`
+acrescenta um recibo Core v2 para cada lote; e `delta-ready` exige um readback
+verificado que vincule o manifesto, a seed, as contagens e o watermark.
+
+Na preparação transacional do owner, `prepareAtendimentoProjectionDeltaBaseline`
+exige uma `backfillFactory` injetada. Ela é chamada somente depois da consulta
+canônica, ainda dentro da mesma transação `REPEATABLE READ`, recebendo as linhas
+opacas lidas, o snapshot, a seed e o watermark. A factory devolve
+`{ backfill, batches }`: o manifesto sanitizado e os lotes v2 reais sob custódia
+privada. O preparador confere a correspondência de cada página e rejeita
+duplicação global de `event.id` ou do par `(unitSlug, projection.reference)`
+antes de semear ou confirmar a transação. Um manifesto pronto calculado fora
+dessa transação não é aceito como atalho; a factory deve ser determinística,
+sem nova leitura de banco, rede, segredo ou persistência de linhas.
+
+O backfill é um manifesto de 1 a 500 lotes, cada um com no máximo 20 eventos.
+Os intervalos `fromOrdinal`/`toOrdinal` precisam cobrir exatamente a sequência
+1..`rowCount`, sem lacunas, sobreposição ou omissão; a soma de eventos e a
+união de `unitSlugs` precisam coincidir com o snapshot. O recibo HTTP real do
+Core é exatamente `crm-core/projection-backfill-receipt/v2` com
+`contractVersion`, `status`, `batchId`, `eventCount` e `target`; o `batchDigest`
+fica no lote assinado e no manifesto, não é inventado no recibo. O readback v2
+repete `manifestDigest`, `membershipDigest`, `watermark`,
+`verifiedBatchCount`, `verifiedEventCount` e `target`, e só então o reconciliador
+é liberado. Assim, o cursor inicial não é inferido de `0` e a primeira revisão
+de uma projeção já presente no backfill pode ser `2`, enquanto uma identidade
+nova continua podendo começar em `1`.
+
+O comando `prepare-atendimento-crm-core-projection-delta-baseline.mjs` apenas
+transforma envelopes JSON fornecidos pelo operador (`--prepare`, `--accept` ou
+`--ready`); ele não abre conexão, lê ambiente, acessa rede ou manipula segredo.
+`--accept` recebe `{ baseline, receipt: [...] }`, com todos os recibos dos
+lotes, e `--ready` recebe `{ baseline, readback }`. A seed deve ser calculada
+no mesmo snapshot `REPEATABLE READ` usado para montar o manifesto; se o
+digest/cursor/escopo, a cobertura ordinal, qualquer recibo ou o readback
+divergir, o handoff é rejeitado antes de qualquer delta.
 
 Nenhuma migration, reconciliação, drenagem de outbox ou cópia de dados reais é
 executada por estes módulos automaticamente. O grant do principal

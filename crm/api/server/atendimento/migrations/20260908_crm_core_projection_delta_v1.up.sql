@@ -61,3 +61,37 @@ DROP TRIGGER IF EXISTS crm_core_projection_outbox_no_truncate
 CREATE TRIGGER crm_core_projection_outbox_no_truncate
   BEFORE TRUNCATE ON crm_atendimento.crm_core_projection_outbox
   FOR EACH STATEMENT EXECUTE FUNCTION crm_atendimento.prevent_crm_core_projection_outbox_mutation();
+
+-- The source owner records the baseline handoff in the same transaction that
+-- seeds revision-1 memberships. Reconciliation is blocked until this single
+-- row reaches delta-ready after every paginated backfill receipt and ledger
+-- readback has been verified.
+CREATE TABLE IF NOT EXISTS crm_atendimento.crm_core_projection_delta_handoffs (
+  handoff_key text PRIMARY KEY CHECK (handoff_key = 'initial'),
+  state text NOT NULL CHECK (state IN ('baseline-prepared', 'baseline-accepted', 'delta-ready')),
+  baseline_digest text NOT NULL CHECK (baseline_digest ~ '^sha256:[a-f0-9]{64}$'),
+  captured_at timestamptz NOT NULL,
+  cursor_digest text NOT NULL CHECK (cursor_digest ~ '^sha256:[a-f0-9]{64}$'),
+  membership_digest text NOT NULL CHECK (membership_digest ~ '^sha256:[a-f0-9]{64}$'),
+  row_count bigint NOT NULL CHECK (row_count >= 1),
+  unit_slugs jsonb NOT NULL,
+  watermark bigint NOT NULL CHECK (watermark >= 0),
+  manifest_digest text NOT NULL CHECK (manifest_digest ~ '^sha256:[a-f0-9]{64}$'),
+  batch_count bigint NOT NULL CHECK (batch_count >= 1),
+  event_count bigint NOT NULL CHECK (event_count >= 1),
+  backfill_key_id text NOT NULL,
+  delta_key_id text NOT NULL,
+  target_environment text NOT NULL CHECK (target_environment IN ('staging', 'production')),
+  target_release text NOT NULL CHECK (target_release ~ '^[0-9a-f]{40}$'),
+  target_artifact_digest text NOT NULL CHECK (target_artifact_digest ~ '^sha256:[a-f0-9]{64}$'),
+  -- Complete sanitized baseline/receipt/readback document for durable resume.
+  -- The contract contains only opaque identifiers, digests and release pins.
+  baseline_json jsonb NOT NULL,
+  receipt_status text,
+  receipt_count bigint,
+  accepted_at timestamptz,
+  readback_membership_digest text CHECK (readback_membership_digest IS NULL OR readback_membership_digest ~ '^sha256:[a-f0-9]{64}$'),
+  readback_watermark bigint CHECK (readback_watermark IS NULL OR readback_watermark >= 0),
+  ready_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);

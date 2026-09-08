@@ -5,7 +5,10 @@
  * The command reads one operator-supplied JSON envelope and writes the next
  * envelope to stdout. It has no database, network, environment, secret or
  * deployment access by construction. A real operator must obtain the source
- * snapshot, Core receipt and readback from their separately governed steps.
+ * snapshot, every paginated Core receipt and the verified ledger readback from
+ * their separately governed steps. `--accept` consumes
+ * `{ baseline, receipt: [...] }`; `--ready` consumes
+ * `{ baseline, readback }`.
  */
 import { readFile } from 'node:fs/promises'
 

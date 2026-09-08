@@ -12,12 +12,16 @@ import {
   readAtendimentoProjectionDeltaPage,
 } from './atendimentoProjectionDeltaExporter.mjs'
 import { assertAtendimentoProjectionDeltaDelivery } from './atendimentoProjectionDeltaDelivery.mjs'
-import { assertAtendimentoProjectionDeltaBaseline, CRM_CORE_PROJECTION_DELTA_BASELINE_STATES } from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
+import {
+  assertAtendimentoProjectionDeltaBaseline,
+  CRM_CORE_PROJECTION_DELTA_BASELINE_STATES,
+  digestAtendimentoProjectionDeltaBaseline,
+} from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUNNER_VERSION = 'atendimento/crm-core/projection-delta-runner/v1'
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT = 'atendimento/crm-core/staging-projection-delta/v1'
 
-const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-delta-checkpoint/v1'
+const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-delta-checkpoint/v2'
 const REQUEST_ID_PREFIX = 'crm-atendimento-delta-'
 
 function fail(code) { throw new Error(code) }
@@ -50,6 +54,35 @@ function batchSize(value) {
 }
 function sameTarget(left, right) {
   return left.environment === right.environment && left.release === right.release && left.artifactDigest === right.artifactDigest
+}
+function baselinePin(value) {
+  const baseline = assertAtendimentoProjectionDeltaBaseline(value)
+  return Object.freeze({
+    digest: digestAtendimentoProjectionDeltaBaseline(baseline),
+    owner: baseline.source.owner,
+    scope: baseline.source.scope,
+    backfillKeyId: baseline.source.backfillKeyId,
+    deltaKeyId: baseline.source.deltaKeyId,
+    unitSlugs: Object.freeze([...baseline.snapshot.unitSlugs]),
+  })
+}
+function assertBaselinePin(value, code) {
+  const pin = object(value, code)
+  exactKeys(pin, ['digest', 'owner', 'scope', 'backfillKeyId', 'deltaKeyId', 'unitSlugs'], code)
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(pin.digest || '').toLowerCase())
+    || pin.owner !== 'atendimento' || pin.scope !== 'global-client-identities/v1'
+    || !/^[A-Za-z0-9._-]{3,96}$/.test(String(pin.backfillKeyId || ''))
+    || !/^[A-Za-z0-9._-]{3,96}$/.test(String(pin.deltaKeyId || ''))) fail(code)
+  const unitSlugs = pin.unitSlugs
+  if (!Array.isArray(unitSlugs) || unitSlugs.length < 1 || unitSlugs.some((slug) => !/^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(String(slug)))) fail(code)
+  const sorted = [...unitSlugs].sort()
+  if (JSON.stringify(sorted) !== JSON.stringify(unitSlugs) || new Set(unitSlugs).size !== unitSlugs.length) fail(code)
+  return Object.freeze({ digest: String(pin.digest).toLowerCase(), owner: pin.owner, scope: pin.scope, backfillKeyId: pin.backfillKeyId, deltaKeyId: pin.deltaKeyId, unitSlugs: Object.freeze([...unitSlugs]) })
+}
+function sameBaselinePin(left, right) {
+  return left.digest === right.digest && left.owner === right.owner && left.scope === right.scope
+    && left.backfillKeyId === right.backfillKeyId && left.deltaKeyId === right.deltaKeyId
+    && JSON.stringify(left.unitSlugs) === JSON.stringify(right.unitSlugs)
 }
 function readyBaseline(value, target, deltaKeyId) {
   if (value === undefined || value === null) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_REQUIRED')
@@ -106,20 +139,23 @@ function revisionWatermarks(value, code) {
   }
   return Object.freeze(rows.sort((left, right) => `${left.unitSlug}:${left.projectionReference}`.localeCompare(`${right.unitSlug}:${right.projectionReference}`)))
 }
-function storedPending(value, { target, code }) {
+function storedPending(value, { target, baseline, code }) {
   if (value === null) return null
   const pending = object(value, code)
   exactKeys(pending, ['batch', 'delivery', 'requestId'], code)
   const batch = assertAtendimentoProjectionDeltaBatch(pending.batch)
   const delivery = assertAtendimentoProjectionDeltaDelivery(pending.delivery)
-  if (!sameTarget(batch.target, target) || delivery.batchDigest !== digestAtendimentoProjectionDeltaBatch(batch) || !sameTarget(target, batch.target)) fail(code)
+  if (!sameTarget(batch.target, target) || delivery.batchDigest !== digestAtendimentoProjectionDeltaBatch(batch) || !sameTarget(target, batch.target)
+    || batch.producer.owner !== baseline.owner || batch.producer.scope !== baseline.scope || batch.producer.keyId !== baseline.deltaKeyId
+    || batch.events.some((event) => !baseline.unitSlugs.includes(event.unitScope.unitSlug))) fail(code)
   return Object.freeze({ batch, delivery, requestId: requestId(pending.requestId, code) })
 }
 function storedCheckpoint(value) {
   const checkpoint = object(value, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
-  exactKeys(checkpoint, ['contractVersion', 'state', 'target', 'sourceSnapshot', 'progress', 'revisionWatermarks', 'pending'], 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
+  exactKeys(checkpoint, ['contractVersion', 'state', 'target', 'baseline', 'sourceSnapshot', 'progress', 'revisionWatermarks', 'pending'], 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   if (checkpoint.contractVersion !== CHECKPOINT_VERSION || checkpoint.state !== 'running') fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const target = assertAtendimentoProjectionExportTarget(checkpoint.target)
+  const baseline = assertBaselinePin(checkpoint.baseline, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const snapshot = object(checkpoint.sourceSnapshot, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const progress = object(checkpoint.progress, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   exactKeys(snapshot, ['capturedAt', 'watermark'], 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
@@ -130,23 +166,24 @@ function storedCheckpoint(value) {
   const acceptedCount = nonNegativeInteger(progress.acceptedCount, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const idempotentCount = nonNegativeInteger(progress.idempotentCount, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   if (acceptedCount + idempotentCount !== batchCount || !/^sha256:[a-f0-9]{64}$/.test(String(progress.reconciliationDigest || ''))) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
-  const pending = storedPending(checkpoint.pending, { target, code: 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID' })
+  const pending = storedPending(checkpoint.pending, { target, baseline, code: 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID' })
   if (pending && pending.batch.sourceDelta.fromExclusive !== fromExclusive) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
-  return Object.freeze({ target, capturedAt: timestamp(snapshot.capturedAt, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), watermark: nonNegativeInteger(snapshot.watermark, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest: progress.reconciliationDigest, revisionWatermarks: revisionWatermarks(checkpoint.revisionWatermarks, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), pending })
+  return Object.freeze({ target, baseline, capturedAt: timestamp(snapshot.capturedAt, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), watermark: nonNegativeInteger(snapshot.watermark, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest: progress.reconciliationDigest, revisionWatermarks: revisionWatermarks(checkpoint.revisionWatermarks, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), pending })
 }
-function makeCheckpoint({ target, capturedAt, watermark, fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest, revisionWatermarks: watermarks, pending }) {
+function makeCheckpoint({ target, baseline, capturedAt, watermark, fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest, revisionWatermarks: watermarks, pending }) {
   return Object.freeze({
     contractVersion: CHECKPOINT_VERSION,
     state: 'running',
     target: Object.freeze({ ...target }),
+    baseline: assertBaselinePin(baseline, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'),
     sourceSnapshot: Object.freeze({ capturedAt, watermark }),
     progress: Object.freeze({ fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest }),
     revisionWatermarks: revisionWatermarks(watermarks, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'),
     pending: pending ? Object.freeze({ batch: pending.batch, delivery: pending.delivery, requestId: pending.requestId }) : null,
   })
 }
-function completedSummary({ target, capturedAt, watermark, fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest }) {
-  return Object.freeze({ contractVersion: 'atendimento/crm-core/projection-delta-reconciliation/v1', status: 'reconciled', target: Object.freeze({ ...target }), sourceSnapshot: Object.freeze({ capturedAt, watermark }), fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest })
+function completedSummary({ target, baseline, capturedAt, watermark, fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest }) {
+  return Object.freeze({ contractVersion: 'atendimento/crm-core/projection-delta-reconciliation/v2', status: 'reconciled', target: Object.freeze({ ...target }), baseline: assertBaselinePin(baseline, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), sourceSnapshot: Object.freeze({ capturedAt, watermark }), fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest })
 }
 async function readCheckpoint(store) {
   try { return await store.read() } catch { fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_UNAVAILABLE') }
@@ -186,14 +223,16 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
     async run({ intent, baseline } = {}) {
       if (intent !== ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_INTENT_REQUIRED')
       const baselineValue = readyBaseline(baseline, targetValue, keyId)
+      const baselineValuePin = baselinePin(baselineValue)
       const existing = await readCheckpoint(privateCheckpointStore)
       let restored = null
       if (existing !== null && existing !== undefined) {
         try { restored = storedCheckpoint(existing) } catch { fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_RECOVERY_REQUIRED') }
       }
       if (restored && !sameTarget(restored.target, targetValue)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_TARGET_MISMATCH')
+      if (restored && !sameBaselinePin(restored.baseline, baselineValuePin)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_BASELINE_MISMATCH')
       if (restored && restored.fromExclusive < baselineValue.snapshot.watermark) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_CURSOR_REGRESSION')
-      let state = restored || Object.freeze({ target: targetValue, capturedAt: null, watermark: baselineValue.snapshot.watermark, fromExclusive: baselineValue.snapshot.watermark, deliveredCount: 0, batchCount: 0, acceptedCount: 0, idempotentCount: 0, reconciliationDigest: digest([]), revisionWatermarks: Object.freeze([]), pending: null })
+      let state = restored || Object.freeze({ target: targetValue, baseline: baselineValuePin, capturedAt: null, watermark: baselineValue.snapshot.watermark, fromExclusive: baselineValue.snapshot.watermark, deliveredCount: 0, batchCount: 0, acceptedCount: 0, idempotentCount: 0, reconciliationDigest: digest([]), revisionWatermarks: Object.freeze([]), pending: null })
       try {
         if (state.pending) {
           const receipt = await deliveryTransport.deliver({ batch: state.pending.batch, delivery: state.pending.delivery, requestId: state.pending.requestId })
@@ -234,7 +273,7 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
             state = confirmedState(state, pending, receipt)
             await writeCheckpoint(privateCheckpointStore, makeCheckpoint(state))
           }
-          const summary = completedSummary({ target: targetValue, capturedAt: snapshot.capturedAt, watermark: snapshot.watermark, fromExclusive: state.fromExclusive, deliveredCount: state.deliveredCount, batchCount: state.batchCount, acceptedCount: state.acceptedCount, idempotentCount: state.idempotentCount, reconciliationDigest: state.reconciliationDigest })
+          const summary = completedSummary({ target: targetValue, baseline: baselineValuePin, capturedAt: snapshot.capturedAt, watermark: snapshot.watermark, fromExclusive: state.fromExclusive, deliveredCount: state.deliveredCount, batchCount: state.batchCount, acceptedCount: state.acceptedCount, idempotentCount: state.idempotentCount, reconciliationDigest: state.reconciliationDigest })
           await completeCheckpoint(privateCheckpointStore, summary)
           await client.query('ROLLBACK')
           transactionOpen = false
