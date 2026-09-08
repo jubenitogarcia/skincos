@@ -81,6 +81,11 @@ binding = "CF_VERSION_METADATA"
 [env.staging.vars]
 APP_VERSION = "unreleased"
 ENVIRONMENT = "staging"
+# The persistent Identity caller remains off until a source-pinned staging
+# release enables both sides and provisions its separate HMAC through the
+# protected bootstrap. No production counterpart exists in this manifest.
+CRM_IDENTITY_ISSUER_CALLER_ENABLED = "false"
+CRM_IDENTITY_ISSUER_CALLER_ID = "crm-api-staging-v1"
 
 [[env.staging.durable_objects.bindings]]
 name = "RATE_LIMITER"
@@ -118,6 +123,14 @@ service = "skincos-finance-staging"
 [[env.staging.services]]
 binding = "CRM_CORE"
 service = "skincos-crm-core-staging"
+
+# Identity signs the one GET /crm/session capability through a private staging
+# binding. The browser never supplies an envelope and no production API worker
+# gets this binding. Provision CRM_IDENTITY_ISSUER_CALLER_HMAC only through the
+# protected staging secret bootstrap; it is intentionally absent from Git.
+[[env.staging.services]]
+binding = "IDENTITY_CRM_ISSUER"
+service = "skincos-identity-crm-delivery-staging"
 
 [[env.staging.r2_buckets]]
 binding = "BACKUP_BUCKET"

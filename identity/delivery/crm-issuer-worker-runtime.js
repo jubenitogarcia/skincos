@@ -200,6 +200,22 @@ function assertSecretNames(secretNames) {
   return secretNames;
 }
 
+function assertCallerConfig(caller) {
+  if (caller === undefined || caller === null) return null;
+  const required = ['enabled', 'id', 'hmac', 'expectedId', 'header'];
+  if (!caller || typeof caller !== 'object'
+    || required.some((name) => typeof caller[name] !== 'string' || !caller[name])) {
+    throw new TypeError('IDENTITY_CALLER_CONFIG_INVALID');
+  }
+  return Object.freeze({
+    enabled: caller.enabled,
+    id: caller.id,
+    hmac: caller.hmac,
+    expectedId: caller.expectedId,
+    header: caller.header,
+  });
+}
+
 /**
  * Creates an isolated Identity CRM delivery Worker handler. The profile is
  * deliberately explicit: a Worker can enable signing only when both its
@@ -221,11 +237,13 @@ export function createIdentityCrmIssuerWorker({
     publicJwk: 'IDENTITY_CRM_DELIVERY_PUBLIC_JWK',
     requestHmac: 'IDENTITY_CRM_DELIVERY_REQUEST_HMAC',
   },
+  caller = null,
 } = {}) {
   if (typeof environment !== 'string' || !environment) throw new TypeError('IDENTITY_WORKER_ENVIRONMENT_INVALID');
   if (typeof keyIdPrefix !== 'string' || !keyIdPrefix) throw new TypeError('IDENTITY_KEY_PREFIX_INVALID');
   if (!['single', 'production-ring'].includes(publicKeyMode)) throw new TypeError('IDENTITY_PUBLIC_KEY_MODE_INVALID');
   const names = assertSecretNames(secretNames);
+  const callerConfig = assertCallerConfig(caller);
 
   function enabled(env) {
     return env?.IDENTITY_CRM_DELIVERY_ENABLED === 'true'
@@ -249,11 +267,24 @@ export function createIdentityCrmIssuerWorker({
       })();
     if (privateJwk.x !== publicKeyRing.activeJwk.x) fail('IDENTITY_PUBLIC_KEY_MISMATCH');
     if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
+    let callerMaterial = null;
+    if (callerConfig && env[callerConfig.enabled] === 'true') {
+      const callerId = String(env[callerConfig.id] || '').trim();
+      const callerHmac = env[callerConfig.hmac];
+      if (callerId !== callerConfig.expectedId
+        || typeof callerHmac !== 'string'
+        || callerHmac.trim() !== callerHmac
+        || TEXT_ENCODER.encode(callerHmac).byteLength < 32) {
+        fail(errorCodes.custody);
+      }
+      callerMaterial = Object.freeze({ id: callerId, hmac: callerHmac, header: callerConfig.header });
+    }
     return Object.freeze({
       kid,
       privateJwk,
       publicKeys: publicKeyRing.keys,
       requestHmac: env[names.requestHmac],
+      caller: callerMaterial,
     });
   }
 
@@ -303,7 +334,13 @@ export function createIdentityCrmIssuerWorker({
     const rawBody = await request.text();
     if (TEXT_ENCODER.encode(rawBody).byteLength > MAX_REQUEST_BYTES) return json({ ok: false, error: 'REQUEST_TOO_LARGE' }, 413);
     try {
-      if (!await isAuthorizedIssueRequest(request, rawBody, material.requestHmac, errorCodes.auth, errorCodes.crypto)) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
+      const requestedCallerId = callerConfig ? request.headers.get(callerConfig.header) : null;
+      const requestHmac = requestedCallerId === null
+        ? material.requestHmac
+        : material.caller?.id === requestedCallerId
+          ? material.caller.hmac
+          : null;
+      if (!requestHmac || !await isAuthorizedIssueRequest(request, rawBody, requestHmac, errorCodes.auth, errorCodes.crypto)) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
     } catch {
       return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
     }

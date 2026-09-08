@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { webcrypto } from 'node:crypto';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
 import { createApiGateway, forwardCrmCoreToService, forwardFinanceProbe, forwardFinanceToService, handleGatewayRequest, prepareTimekeepingRequest } from '../src/gateway.js';
@@ -8,6 +9,8 @@ import { createCrmCoreProductionReceiptSigningInput } from '../src/crm-core-prod
 import pontoCoreWorker from '../workers/ponto.js';
 import { verifySignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
+
+if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true });
 
 const calls = [];
 const crmProductionGatewayVersionId = '11111111-1111-4111-8111-111111111111';
@@ -826,7 +829,7 @@ test('CRM Core keeps its public staging mount with a narrow request-header allow
   assert.equal(received.headers.get('content-type'), 'application/json');
   assert.equal(received.headers.get('origin'), 'https://crm-staging.skincos.com.br');
   assert.equal(received.headers.get('x-request-id'), 'crm-core-gateway-1');
-  assert.equal(received.headers.get('x-identity-delivery'), 'identity-crm-delivery/v1.synthetic-envelope');
+  assert.equal(received.headers.get('x-identity-delivery'), null);
   for (const name of [
     'authorization',
     'cookie',
@@ -851,6 +854,251 @@ test('CRM Core keeps its public staging mount with a narrow request-header allow
   assert.equal(response.headers.get('x-skincos-gateway-environment'), 'staging');
   assert.equal(response.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
   resetBoundServiceResilienceForTest();
+});
+
+test('CRM session resolves Identity only at the staging gateway and forwards its minimal signed envelope', async () => {
+  resetBoundServiceResilienceForTest();
+  let issuerRequest = null;
+  let coreRequest = null;
+  let resolverCalls = 0;
+  const callerSecret = 'synthetic-crm-identity-caller-hmac-secret-2026';
+  const sessionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async (request) => {
+      resolverCalls += 1;
+      assert.equal(request.headers.get('cookie'), 'session=browser-only');
+      return {
+        actor: {
+          identitySubject: 'idn:session_identity_actor_0001',
+          username: 'must-not-cross',
+          email: 'private@example.invalid',
+          displayName: 'Private Identity',
+          role: 'GESTOR',
+          scopes: {
+            units: ['novo-hamburgo'],
+            modules: ['overview', 'clients'],
+            permissions: ['clients:read', 'overview:read'],
+          },
+        },
+        csrf: 'browser-csrf-not-forwarded',
+      };
+    },
+  });
+  const response = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    headers: {
+      accept: 'application/json',
+      authorization: 'Bearer browser-credential',
+      cookie: 'session=browser-only',
+      origin: 'https://crm-staging.skincos.com.br',
+      'x-csrf-token': 'browser-csrf-not-forwarded',
+      'x-identity-delivery': 'forged.browser.envelope',
+      'x-request-id': 'crm-session-gateway-1',
+    },
+  }), {
+    ENVIRONMENT: 'staging',
+    CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
+    CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-staging-v1',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: callerSecret,
+    IDENTITY_CRM_ISSUER: {
+      fetch: async (request) => {
+        issuerRequest = request;
+        return new Response(JSON.stringify({
+          ok: true,
+          version: 'identity-crm-delivery/v1',
+          keyId: 'crm-staging-identity-2026-09',
+          compact: 'test.header.signature',
+        }), { headers: { 'content-type': 'application/json' } });
+      },
+    },
+    CRM_CORE: {
+      fetch: async (request) => {
+        coreRequest = request;
+        return new Response(JSON.stringify({ ok: true, identity: { identitySubject: 'idn:session_identity_actor_0001', role: 'GESTOR', scopes: {} }, requestId: 'crm-session-gateway-1' }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    },
+  }, {});
+
+  assert.equal(response.status, 200);
+  assert.equal(resolverCalls, 1);
+  assert.ok(issuerRequest);
+  assert.ok(coreRequest);
+  assert.equal(new URL(issuerRequest.url).pathname, '/internal/identity-crm-delivery/v1/issue');
+  assert.equal(issuerRequest.headers.get('x-skincos-identity-issuer-caller'), 'crm-api-staging-v1');
+  assert.equal(issuerRequest.headers.get('cookie'), null);
+  assert.equal(issuerRequest.headers.get('authorization'), null);
+  assert.equal(issuerRequest.headers.get('x-identity-delivery'), null);
+  const rawIssuerBody = await issuerRequest.text();
+  const issuerPayload = JSON.parse(rawIssuerBody);
+  assert.deepEqual(issuerPayload.identity, {
+    identitySubject: 'idn:session_identity_actor_0001',
+    role: 'GESTOR',
+    scopes: {
+      units: ['novo-hamburgo'],
+      modules: ['clients', 'overview'],
+      permissions: ['clients:read', 'overview:read'],
+    },
+  });
+  assert.deepEqual(issuerPayload.request, { method: 'GET', target: '/api/crm/session', bodyBase64: '' });
+  assert.match(issuerPayload.jti, /^[A-Za-z0-9_-]{16,160}$/);
+  assert.doesNotMatch(rawIssuerBody, /must-not-cross|private@example|Private Identity|browser-csrf/i);
+  const hmacKey = await webcrypto.subtle.importKey('raw', new TextEncoder().encode(callerSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  assert.equal(await webcrypto.subtle.verify(
+    'HMAC',
+    hmacKey,
+    Buffer.from(issuerRequest.headers.get('x-skincos-identity-issuer-auth'), 'base64url'),
+    new TextEncoder().encode(rawIssuerBody),
+  ), true);
+
+  assert.equal(new URL(coreRequest.url).pathname, '/crm/session');
+  assert.equal(coreRequest.headers.get('x-identity-delivery'), 'test.header.signature');
+  for (const name of ['cookie', 'authorization', 'x-csrf-token']) assert.equal(coreRequest.headers.get(name), null, name);
+  assert.equal(coreRequest.headers.get('x-request-id'), 'crm-session-gateway-1');
+  resetBoundServiceResilienceForTest();
+});
+
+test('CRM session remains unavailable by default and rejects an Identity actor without an opaque subject', async () => {
+  resetBoundServiceResilienceForTest();
+  let issuerCalls = 0;
+  let coreCalls = 0;
+  let actor = {
+    identitySubject: null,
+    role: 'GESTOR',
+    scopes: { units: ['novo-hamburgo'], modules: ['clients'], permissions: ['clients:read'] },
+  };
+  const sessionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => ({ actor, csrf: '' }),
+  });
+  const env = {
+    ENVIRONMENT: 'staging',
+    CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'false',
+    CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-staging-v1',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-identity-caller-hmac-secret-2026',
+    IDENTITY_CRM_ISSUER: { fetch: async () => { issuerCalls += 1; return new Response('must-not-run'); } },
+    CRM_CORE: { fetch: async () => { coreCalls += 1; return new Response('must-not-run'); } },
+  };
+
+  const subjectMissing = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session'), { ...env, CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true' }, {});
+  assert.equal(subjectMissing.status, 403);
+  assert.equal((await subjectMissing.json()).error, 'CRM_IDENTITY_SUBJECT_REQUIRED');
+  assert.equal(issuerCalls, 0);
+  assert.equal(coreCalls, 0);
+
+  actor = { ...actor, identitySubject: 'idn:session_identity_actor_0001' };
+  const defaultOff = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session'), env, {});
+  assert.equal(defaultOff.status, 503);
+  assert.equal((await defaultOff.json()).error, 'CRM_IDENTITY_DELIVERY_UNAVAILABLE');
+  assert.equal(issuerCalls, 0);
+  assert.equal(coreCalls, 0);
+  resetBoundServiceResilienceForTest();
+});
+
+test('CRM session rejects query strings and non-GET requests before Identity or Core is called', async () => {
+  let resolverCalls = 0;
+  const sessionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => { resolverCalls += 1; return { actor: null, csrf: null }; },
+    crmCoreHandler: async () => new Response('must-not-run'),
+  });
+  const query = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session?unexpected=true'), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(query.status, 400);
+  assert.equal((await query.json()).error, 'CRM_SESSION_QUERY_NOT_ALLOWED');
+  const post = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', { method: 'POST' }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(post.status, 405);
+  assert.equal((await post.json()).error, 'CRM_SESSION_METHOD_NOT_ALLOWED');
+  assert.equal(resolverCalls, 0);
+});
+
+test('CRM session has an exact staging CORS preflight and never resolves Identity for it', async () => {
+  let resolverCalls = 0;
+  let coreCalls = 0;
+  const sessionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => { resolverCalls += 1; return { actor: null, csrf: null }; },
+    crmCoreHandler: async () => { coreCalls += 1; return new Response('must-not-run'); },
+  });
+  const preflight = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://crm-staging.skincos.com.br',
+      'access-control-request-method': 'GET',
+      'access-control-request-headers': 'cache-control',
+    },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET');
+  assert.equal(preflight.headers.get('access-control-allow-headers'), 'accept, cache-control');
+  assert.equal(resolverCalls, 0);
+  assert.equal(coreCalls, 0);
+
+  const deniedHeader = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://crm-staging.skincos.com.br',
+      'access-control-request-method': 'GET',
+      'access-control-request-headers': 'authorization',
+    },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(deniedHeader.status, 400);
+  assert.equal((await deniedHeader.json()).error, 'CRM_SESSION_CORS_PREFLIGHT_INVALID');
+  assert.equal(deniedHeader.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(resolverCalls, 0);
+  assert.equal(coreCalls, 0);
+});
+
+test('CRM session supplies credentialed CORS only to its exact staging origin', async () => {
+  let resolverCalls = 0;
+  const sessionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => { resolverCalls += 1; return { actor: null, csrf: null }; },
+  });
+  const allowed = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    headers: { origin: 'https://crm-staging.skincos.com.br' },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(allowed.status, 401);
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(allowed.headers.get('access-control-allow-credentials'), 'true');
+
+  const denied = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
+    headers: { origin: 'https://untrusted.example' },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
+  assert.equal(denied.headers.get('access-control-allow-origin'), null);
+  assert.equal(resolverCalls, 1);
+});
+
+test('CRM session remains staging-only even when a production Core route is receipt-authorized', async () => {
+  let resolverCalls = 0;
+  let issuerCalls = 0;
+  let receiptProbes = 0;
+  let coreForwards = 0;
+  const receipt = signedCrmProductionReceipt();
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/session'), crmProductionEnvironment(receipt, {
+    CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-identity-caller-hmac-secret-2026',
+    IDENTITY_CRM_ISSUER: { fetch: async () => { issuerCalls += 1; return new Response('must-not-run'); } },
+    CRM_CORE: {
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === '/ready') {
+          receiptProbes += 1;
+          return new Response(JSON.stringify(crmCoreReceiptReadyBody(receipt)), { headers: { 'content-type': 'application/json' } });
+        }
+        coreForwards += 1;
+        return new Response('must-not-run');
+      },
+    },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'CRM_CORE_STAGING_ONLY');
+  assert.equal(receiptProbes, 1);
+  assert.equal(issuerCalls, 0);
+  assert.equal(coreForwards, 0);
+  assert.equal(resolverCalls, 0);
 });
 
 test('CRM Core keeps its Core-owned CORS origin while omitting unneeded preflight negotiation headers', async () => {
@@ -1054,5 +1302,8 @@ test('general API Worker binds CRM Core only in the staging environment', async 
   const config = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
   const productionConfig = config.slice(0, config.indexOf('[env.staging]'));
   assert.doesNotMatch(productionConfig, /binding\s*=\s*"CRM_CORE"/);
+  assert.doesNotMatch(productionConfig, /IDENTITY_CRM_ISSUER|CRM_IDENTITY_ISSUER_CALLER/);
   assert.match(config, /\[\[env\.staging\.services\]\]\r?\nbinding = "CRM_CORE"\r?\nservice = "skincos-crm-core-staging"/);
+  assert.match(config, /CRM_IDENTITY_ISSUER_CALLER_ENABLED\s*=\s*"false"/);
+  assert.match(config, /\[\[env\.staging\.services\]\]\r?\nbinding = "IDENTITY_CRM_ISSUER"\r?\nservice = "skincos-identity-crm-delivery-staging"/);
 });
