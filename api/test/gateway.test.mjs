@@ -958,6 +958,141 @@ test('CRM session resolves Identity only at the staging gateway and forwards its
   resetBoundServiceResilienceForTest();
 });
 
+test('CRM projections signs only an explicit canonical unit query before reaching Core', async () => {
+  resetBoundServiceResilienceForTest();
+  let issuerRequest = null;
+  let coreRequest = null;
+  let resolverCalls = 0;
+  const callerSecret = 'synthetic-crm-identity-caller-hmac-secret-2026';
+  const projectionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => {
+      resolverCalls += 1;
+      return {
+        actor: {
+          identitySubject: 'idn:projection_identity_actor_0001',
+          username: 'must-not-cross',
+          email: 'private@example.invalid',
+          displayName: 'Private Identity',
+          role: 'GESTOR',
+          scopes: {
+            units: ['novo-hamburgo', 'barra-shopping-sul'],
+            modules: ['overview', 'clients'],
+            permissions: ['clients:read', 'overview:read'],
+          },
+        },
+        csrf: 'browser-csrf-not-forwarded',
+      };
+    },
+  });
+  const response = await projectionGateway(new Request('https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul,novo-hamburgo', {
+    headers: {
+      accept: 'application/json',
+      authorization: 'Bearer browser-credential',
+      cookie: 'session=browser-only',
+      origin: 'https://crm-staging.skincos.com.br',
+      'x-csrf-token': 'browser-csrf-not-forwarded',
+      'x-identity-delivery': 'forged.browser.envelope',
+      'x-request-id': 'crm-projection-gateway-1',
+    },
+  }), {
+    ENVIRONMENT: 'staging',
+    CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
+    CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-staging-v1',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: callerSecret,
+    IDENTITY_CRM_ISSUER: {
+      fetch: async (request) => {
+        issuerRequest = request;
+        return new Response(JSON.stringify({
+          ok: true,
+          version: 'identity-crm-delivery/v1',
+          keyId: 'crm-staging-identity-2026-09',
+          compact: 'test.header.signature',
+        }), { headers: { 'content-type': 'application/json' } });
+      },
+    },
+    CRM_CORE: {
+      fetch: async (request) => {
+        coreRequest = request;
+        return new Response(JSON.stringify({
+          ok: true,
+          contractVersion: 'crm-core/projection-read/v2',
+          state: 'available',
+          scope: { mode: 'intersection', units: ['barra-shopping-sul', 'novo-hamburgo'] },
+          projections: [],
+          count: 0,
+          requestId: 'crm-projection-gateway-1',
+        }), { headers: { 'content-type': 'application/json' } });
+      },
+    },
+  }, {});
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
+  assert.equal(resolverCalls, 1);
+  assert.ok(issuerRequest);
+  assert.ok(coreRequest);
+  const rawIssuerBody = await issuerRequest.text();
+  const issuerPayload = JSON.parse(rawIssuerBody);
+  assert.deepEqual(issuerPayload.identity, {
+    identitySubject: 'idn:projection_identity_actor_0001',
+    role: 'GESTOR',
+    scopes: {
+      units: ['barra-shopping-sul', 'novo-hamburgo'],
+      modules: ['clients', 'overview'],
+      permissions: ['clients:read', 'overview:read'],
+    },
+  });
+  assert.deepEqual(issuerPayload.request, {
+    method: 'GET',
+    target: '/api/crm/projections?units=barra-shopping-sul,novo-hamburgo',
+    bodyBase64: '',
+  });
+  assert.doesNotMatch(rawIssuerBody, /must-not-cross|private@example|Private Identity|browser-csrf/i);
+  const hmacKey = await webcrypto.subtle.importKey('raw', new TextEncoder().encode(callerSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  assert.equal(await webcrypto.subtle.verify(
+    'HMAC',
+    hmacKey,
+    Buffer.from(issuerRequest.headers.get('x-skincos-identity-issuer-auth'), 'base64url'),
+    new TextEncoder().encode(rawIssuerBody),
+  ), true);
+
+  assert.equal(new URL(coreRequest.url).pathname, '/crm/projections');
+  assert.equal(new URL(coreRequest.url).search, '?units=barra-shopping-sul,novo-hamburgo');
+  assert.equal(coreRequest.headers.get('x-identity-delivery'), 'test.header.signature');
+  for (const name of ['cookie', 'authorization', 'x-csrf-token']) assert.equal(coreRequest.headers.get(name), null, name);
+  assert.equal(coreRequest.headers.get('x-request-id'), 'crm-projection-gateway-1');
+  resetBoundServiceResilienceForTest();
+});
+
+test('CRM projections rejects noncanonical unit queries and non-GET requests before Identity or Core', async () => {
+  let resolverCalls = 0;
+  let coreCalls = 0;
+  const projectionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => { resolverCalls += 1; return { actor: null, csrf: null }; },
+    crmCoreHandler: async () => { coreCalls += 1; return new Response('must-not-run'); },
+  });
+  const env = { ENVIRONMENT: 'staging' };
+  for (const url of [
+    'https://api-staging.skincos.com.br/crm/projections',
+    'https://api-staging.skincos.com.br/crm/projections?units=novo-hamburgo,barra-shopping-sul',
+    'https://api-staging.skincos.com.br/crm/projections?units=novo-hamburgo,novo-hamburgo',
+    'https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul,novo-hamburgo&unexpected=true',
+    'https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul%2Cnovo-hamburgo',
+  ]) {
+    const response = await projectionGateway(new Request(url, { headers: { origin: 'https://crm-staging.skincos.com.br' } }), env, {});
+    assert.equal(response.status, 400, url);
+    assert.equal((await response.json()).error, 'CRM_PROJECTION_QUERY_INVALID', url);
+  }
+  const post = await projectionGateway(new Request('https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul,novo-hamburgo', { method: 'POST' }), env, {});
+  assert.equal(post.status, 405);
+  assert.equal((await post.json()).error, 'CRM_PROJECTION_METHOD_NOT_ALLOWED');
+  assert.equal(resolverCalls, 0);
+  assert.equal(coreCalls, 0);
+});
+
 test('CRM session remains unavailable by default and rejects an Identity actor without an opaque subject', async () => {
   resetBoundServiceResilienceForTest();
   let issuerCalls = 0;
@@ -1035,6 +1170,20 @@ test('CRM session has an exact staging CORS preflight and never resolves Identit
   assert.equal(resolverCalls, 0);
   assert.equal(coreCalls, 0);
 
+  const projectionPreflight = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul,novo-hamburgo', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://crm-staging.skincos.com.br',
+      'access-control-request-method': 'GET',
+      'access-control-request-headers': 'accept',
+    },
+  }), { ENVIRONMENT: 'staging' }, {});
+  assert.equal(projectionPreflight.status, 204);
+  assert.equal(projectionPreflight.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(projectionPreflight.headers.get('access-control-allow-credentials'), 'true');
+  assert.equal(resolverCalls, 0);
+  assert.equal(coreCalls, 0);
+
   const deniedHeader = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
     method: 'OPTIONS',
     headers: {
@@ -1099,6 +1248,35 @@ test('CRM session remains staging-only even when a production Core route is rece
   assert.equal(issuerCalls, 0);
   assert.equal(coreForwards, 0);
   assert.equal(resolverCalls, 0);
+});
+
+test('CRM projections remain staging-only even when a production Core route is receipt-authorized', async () => {
+  resetBoundServiceResilienceForTest();
+  let issuerCalls = 0;
+  let receiptProbes = 0;
+  let coreForwards = 0;
+  const receipt = signedCrmProductionReceipt();
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/projections?units=novo-hamburgo'), crmProductionEnvironment(receipt, {
+    CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-identity-caller-hmac-secret-2026',
+    IDENTITY_CRM_ISSUER: { fetch: async () => { issuerCalls += 1; return new Response('must-not-run'); } },
+    CRM_CORE: {
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === '/ready') {
+          receiptProbes += 1;
+          return new Response(JSON.stringify(crmCoreReceiptReadyBody(receipt)), { headers: { 'content-type': 'application/json' } });
+        }
+        coreForwards += 1;
+        return new Response('must-not-run');
+      },
+    },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'CRM_CORE_STAGING_ONLY');
+  assert.equal(receiptProbes, 1);
+  assert.equal(issuerCalls, 0);
+  assert.equal(coreForwards, 0);
+  resetBoundServiceResilienceForTest();
 });
 
 test('CRM Core keeps its Core-owned CORS origin while omitting unneeded preflight negotiation headers', async () => {

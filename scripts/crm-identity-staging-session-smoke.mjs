@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { assertCrmSmokeCors, CRM_SMOKE_CONSOLE_ORIGINS, runCrmIdentityStagingProjectionSmoke } from './crm-identity-staging-projection-smoke.mjs';
 
 const EXPECTED_ORIGIN = 'https://api-staging.skincos.com.br';
 const ERROR_PATTERN = /^[A-Z0-9_]{3,120}$/;
@@ -45,12 +46,12 @@ function assertStagingOrigin(value) {
   return url.origin;
 }
 
-function loadScenario(fixturesPath) {
+function loadScenario(fixturesPath, scenarioId = 'nh') {
   if (typeof fixturesPath !== 'string' || !fixturesPath) fail('CRM_SESSION_SMOKE_FIXTURES_REQUIRED');
   const fixtures = parseJson(fs.readFileSync(fixturesPath, 'utf8'), 'CRM_SESSION_SMOKE_FIXTURES_INVALID');
   plainObject(fixtures, 'CRM_SESSION_SMOKE_FIXTURES_INVALID');
   if (fixtures.environment !== 'staging' || !Array.isArray(fixtures.scenarios)) fail('CRM_SESSION_SMOKE_FIXTURES_INVALID');
-  const scenario = fixtures.scenarios.find((candidate) => candidate?.id === 'nh');
+  const scenario = fixtures.scenarios.find((candidate) => candidate?.id === scenarioId);
   exactKeys(scenario, ['allowedUnits', 'email', 'expectedUnits', 'id', 'identitySubject', 'password', 'role', 'username'], 'CRM_SESSION_SMOKE_FIXTURES_INVALID');
   if (
     typeof scenario.email !== 'string'
@@ -134,10 +135,16 @@ export async function runCrmIdentityStagingSessionSmoke({
   fixturesPath = process.env.CRM_IDENTITY_SMOKE_FIXTURES,
   reportPath = process.env.CRM_IDENTITY_SMOKE_REPORT,
   apiOrigin = process.env.CRM_IDENTITY_SMOKE_API_ORIGIN || EXPECTED_ORIGIN,
+  profile = process.env.CRM_IDENTITY_SMOKE_PROFILE || 'session',
+  projectionReportPath = process.env.CRM_IDENTITY_PROJECTION_SMOKE_REPORT,
+  projectionPins,
   now = () => new Date().toISOString(),
 } = {}) {
   if (typeof fetchImpl !== 'function') fail('CRM_SESSION_SMOKE_FETCH_UNAVAILABLE');
   const origin = assertStagingOrigin(apiOrigin);
+  if (!['session', 'session-and-projections'].includes(profile)) fail('CRM_SESSION_SMOKE_PROFILE_INVALID');
+  const projectionsEnabled = profile === 'session-and-projections';
+  if (projectionsEnabled && !projectionReportPath) fail('CRM_SESSION_SMOKE_PROJECTION_REPORT_REQUIRED');
   const scenario = loadScenario(fixturesPath);
   const report = {
     schemaVersion: 1,
@@ -170,30 +177,50 @@ export async function runCrmIdentityStagingSessionSmoke({
     if (method.status !== 405) fail('CRM_SESSION_SMOKE_METHOD_STATUS_INVALID');
     assertGatewayError(await jsonResponse(method, 'CRM_SESSION_SMOKE_METHOD_RESPONSE_INVALID'), 'CRM_SESSION_METHOD_NOT_ALLOWED');
 
-    const login = await fetchImpl(`${origin}/inventory/auth/login`, {
+    const loginScenario = async (fixture) => {
+      const login = await fetchImpl(`${origin}/inventory/auth/login`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json', 'cache-control': 'no-store' },
-      body: JSON.stringify({ email: scenario.email, password: scenario.password }),
+      body: JSON.stringify({ email: fixture.email, password: fixture.password }),
       redirect: 'manual',
+      signal: AbortSignal.timeout(15_000),
     });
     if (login.status !== 200) fail('CRM_SESSION_SMOKE_LOGIN_STATUS_INVALID', { stage: 'login', status: login.status });
     const loginPayload = await jsonResponse(login, 'CRM_SESSION_SMOKE_LOGIN_RESPONSE_INVALID');
     if (!loginPayload || typeof loginPayload !== 'object' || loginPayload.success === false) fail('CRM_SESSION_SMOKE_LOGIN_RESPONSE_INVALID');
-    const cookie = cookieHeader(login);
+      return cookieHeader(login);
+    };
+    const cookie = await loginScenario(scenario);
 
     const session = await fetchImpl(`${origin}/crm/session`, {
-      method: 'GET', headers: { accept: 'application/json', cookie, 'cache-control': 'no-store' }, redirect: 'manual',
+      method: 'GET', headers: { accept: 'application/json', cookie, 'cache-control': 'no-store', ...(projectionsEnabled ? { origin: CRM_SMOKE_CONSOLE_ORIGINS[0] } : {}) }, redirect: 'manual',
     });
     assertNoCookie(session, 'CRM_SESSION_SMOKE_SESSION_SET_COOKIE');
     if (session.status !== 200) fail('CRM_SESSION_SMOKE_SESSION_STATUS_INVALID');
     const identity = assertVerifiedSession(await jsonResponse(session, 'CRM_SESSION_SMOKE_RESPONSE_INVALID'), scenario);
+    if (projectionsEnabled) {
+      assertCrmSmokeCors(session, CRM_SMOKE_CONSOLE_ORIGINS[0]);
+      if (identity.scopes.permissions.length !== 0) fail('CRM_SESSION_SMOKE_FIXTURE_PERMISSION_MISMATCH');
+    }
 
     const repeated = await fetchImpl(`${origin}/crm/session`, {
-      method: 'GET', headers: { accept: 'application/json', cookie, 'cache-control': 'no-store' }, redirect: 'manual',
+      method: 'GET', headers: { accept: 'application/json', cookie, 'cache-control': 'no-store', ...(projectionsEnabled ? { origin: CRM_SMOKE_CONSOLE_ORIGINS[1] } : {}) }, redirect: 'manual',
     });
     assertNoCookie(repeated, 'CRM_SESSION_SMOKE_REPEATED_SET_COOKIE');
     if (repeated.status !== 200) fail('CRM_SESSION_SMOKE_REPEATED_STATUS_INVALID');
     assertVerifiedSession(await jsonResponse(repeated, 'CRM_SESSION_SMOKE_REPEATED_RESPONSE_INVALID'), scenario);
+    if (projectionsEnabled) {
+      assertCrmSmokeCors(repeated, CRM_SMOKE_CONSOLE_ORIGINS[1]);
+      const cookies = new Map([['nh', cookie]]);
+      await runCrmIdentityStagingProjectionSmoke({
+        fetchImpl, reportPath: projectionReportPath, now, pins: projectionPins,
+        getCookie: async (id) => {
+          if (!['nh', 'bss', 'both', 'admin'].includes(id)) fail('CRM_SESSION_SMOKE_FIXTURES_INVALID');
+          if (!cookies.has(id)) cookies.set(id, await loginScenario(loadScenario(fixturesPath, id)));
+          return cookies.get(id);
+        },
+      });
+    }
 
     Object.assign(report, {
       result: 'verified',

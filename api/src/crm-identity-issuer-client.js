@@ -9,6 +9,9 @@ const IDENTITY_ISSUER_CALLER_HEADER = 'x-skincos-identity-issuer-caller';
 const IDENTITY_ISSUER_AUTH_HEADER = 'x-skincos-identity-issuer-auth';
 const CRM_SESSION_PATH = '/crm/session';
 const CRM_SESSION_TARGET = '/api/crm/session';
+const CRM_PROJECTION_PATH = '/crm/projections';
+const CRM_PROJECTION_TARGET = '/api/crm/projections';
+const MAX_PROJECTION_QUERY_BYTES = 2048;
 const TEXT_ENCODER = new TextEncoder();
 const ROLE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const SCOPE_ITEM_PATTERN = /^[a-z][a-z0-9:-]{0,159}$/;
@@ -142,19 +145,61 @@ export function isCrmSessionRequest(request) {
     return request.method === 'GET' && url.pathname === CRM_SESSION_PATH && !url.search;
 }
 
-/**
- * The public gateway is the only component that may resolve a browser
- * session. It turns the resulting server-owned actor into a minimal, signed
- * delivery envelope, then discards the browser credential before CRM Core is
- * called. This route is intentionally a GET-only session capability.
- */
-export async function issueCrmSessionIdentityDelivery(request, env, actor) {
-    if (!isCrmSessionRequest(request)) fail('CRM_SESSION_REQUEST_INVALID');
+export function isCrmProjectionPath(request) {
+    return new URL(request.url).pathname === CRM_PROJECTION_PATH;
+}
+
+function crmProjectionTarget(request) {
+    const url = new URL(request.url);
+    if (url.pathname !== CRM_PROJECTION_PATH) fail('CRM_PROJECTION_REQUEST_INVALID');
+    const prefix = '?units=';
+    if (!url.search.startsWith(prefix)) fail('CRM_PROJECTION_REQUEST_INVALID');
+    const rawUnits = url.search.slice(prefix.length);
+    if (rawUnits.length === 0 || rawUnits.length > MAX_PROJECTION_QUERY_BYTES) fail('CRM_PROJECTION_REQUEST_INVALID');
+    const units = rawUnits.split(',');
+    if (units.length === 0 || units.length > 64
+        || units.some((unit) => unit !== unit.trim() || !isCanonicalUnitScope(unit))
+        || new Set(units).size !== units.length) {
+        fail('CRM_PROJECTION_REQUEST_INVALID');
+    }
+    const sorted = [...units].sort();
+    if (sorted.some((unit, index) => unit !== units[index])) fail('CRM_PROJECTION_REQUEST_INVALID');
+    const canonical = sorted.join(',');
+    if (url.search !== `${prefix}${canonical}`) fail('CRM_PROJECTION_REQUEST_INVALID');
+    return `${CRM_PROJECTION_TARGET}${prefix}${canonical}`;
+}
+
+export function isCrmProjectionRequest(request) {
+    if (request.method !== 'GET' || !isCrmProjectionPath(request)) return false;
+    try {
+        crmProjectionTarget(request);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+export function crmProjectionRequestUnits(request) {
+    if (!isCrmProjectionRequest(request)) fail('CRM_PROJECTION_REQUEST_INVALID');
+    return Object.freeze(new URL(request.url).search.slice('?units='.length).split(','));
+}
+
+export function isCrmProjectionPreflightRequest(request) {
+    if (request.method !== 'OPTIONS' || !isCrmProjectionPath(request)) return false;
+    try {
+        crmProjectionTarget(request);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function issueCrmIdentityDelivery(request, env, actor, target) {
     const caller = loadCallerConfiguration(env);
     const identity = trustedIdentityProjection(actor);
     const rawBody = JSON.stringify({
         identity,
-        request: { method: 'GET', target: CRM_SESSION_TARGET, bodyBase64: '' },
+        request: { method: 'GET', target, bodyBase64: '' },
         jti: createJti(),
     });
     const authorization = await requestAuthentication(caller.secret, rawBody);
@@ -176,4 +221,30 @@ export async function issueCrmSessionIdentityDelivery(request, env, actor) {
         if (error instanceof TypeError && error.message === 'CRM_IDENTITY_DELIVERY_UNAVAILABLE') throw error;
         fail('CRM_IDENTITY_DELIVERY_UNAVAILABLE');
     }
+}
+
+/**
+ * The public gateway is the only component that may resolve a browser
+ * session. It turns the resulting server-owned actor into a minimal, signed
+ * delivery envelope, then discards the browser credential before CRM Core is
+ * called. This route is intentionally a GET-only session capability.
+ */
+export async function issueCrmSessionIdentityDelivery(request, env, actor) {
+    if (!isCrmSessionRequest(request)) fail('CRM_SESSION_REQUEST_INVALID');
+    return issueCrmIdentityDelivery(request, env, actor, CRM_SESSION_TARGET);
+}
+
+/**
+ * Projection reads use the same private caller boundary as the session
+ * capability, but bind the signed envelope to one explicit, sorted set of
+ * canonical units. The browser never supplies an envelope or chooses an
+ * alternate internal target spelling.
+ */
+export async function issueCrmProjectionIdentityDelivery(request, env, actor) {
+    if (!isCrmProjectionRequest(request)) fail('CRM_PROJECTION_REQUEST_INVALID');
+    const identity = trustedIdentityProjection(actor);
+    if (crmProjectionRequestUnits(request).some((unit) => !identity.scopes.units.includes(unit))) {
+        fail('CRM_PROJECTION_SCOPE_FORBIDDEN');
+    }
+    return issueCrmIdentityDelivery(request, env, identity, crmProjectionTarget(request));
 }
