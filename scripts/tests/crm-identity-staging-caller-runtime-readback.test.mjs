@@ -56,7 +56,10 @@ test('accepts only the exact active caller-disabled public bindings while the is
             activeVersion: issuerVersion,
             deliveryEnabled: true,
             callerEnabled: false,
+            callerEnabledBinding: false,
+            effectiveCallerEnabled: false,
             callerId: 'crm-api-staging-v1',
+            expectedCallerId: 'crm-api-staging-v1',
         },
     });
 });
@@ -72,7 +75,10 @@ test('preserves an already-enabled delivery issuer while the isolated caller is 
 
     assert.equal(report.issuer.deliveryEnabled, true);
     assert.equal(report.issuer.callerEnabled, false);
-    assert.equal(report.issuer.callerId, 'crm-api-staging-v1');
+    assert.equal(report.issuer.callerEnabledBinding, null);
+    assert.equal(report.issuer.effectiveCallerEnabled, false);
+    assert.equal(report.issuer.callerId, null);
+    assert.equal(report.issuer.expectedCallerId, 'crm-api-staging-v1');
 });
 
 test('rejects an active API version with an enabled caller before any bootstrap receipt can be written', () => {

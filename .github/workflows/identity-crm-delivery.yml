@@ -239,9 +239,9 @@ jobs:
           if (
             report?.schemaVersion !== 1 || report.state !== 'caller-disabled' || report.observation !== 'exact-active-worker-version-bindings'
             || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags are not proven disabled');
-          process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
+          process.stdout.write(`state=caller-disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
 
       - name: Refuse partial caller HMAC custody and attest existing signer custody
@@ -377,9 +377,9 @@ jobs:
           if (
             report?.schemaVersion !== 1 || report.state !== 'caller-disabled' || report.observation !== 'exact-active-worker-version-bindings'
             || report?.api?.script !== 'skincos-api-staging' || report.api.callerEnabled !== false || report.api.callerId !== 'crm-api-staging-v1' || !version(report.api.activeVersion)
-            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.callerId !== 'crm-api-staging-v1' || !version(report.issuer.activeVersion)
+            || report?.issuer?.script !== 'skincos-identity-crm-delivery-staging' || report.issuer.deliveryEnabled !== true || report.issuer.callerEnabled !== false || report.issuer.effectiveCallerEnabled !== false || report.issuer.expectedCallerId !== 'crm-api-staging-v1' || (report.issuer.callerId !== null && report.issuer.callerId !== 'crm-api-staging-v1') || !version(report.issuer.activeVersion)
           ) throw new Error('active staging caller flags changed or are not proven disabled');
-          process.stdout.write(`state=disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
+          process.stdout.write(`state=caller-disabled\napi_version=${report.api.activeVersion}\nissuer_version=${report.issuer.activeVersion}\n`);
           NODE
 
       - name: Write sanitised caller-disabled bootstrap evidence

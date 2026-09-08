@@ -122,10 +122,10 @@ export function verifyActiveRuntimeState({ apiDeployment, issuerDeployment, apiV
             ...issuer,
             deliveryEnabled: deliveryEnabled === 'true',
             callerEnabled: false,
-            // A missing caller id is safe while the caller is disabled; the
-            // expected id becomes explicit as soon as the isolated caller is
-            // provisioned and enabled.
-            callerId: callerId ?? 'crm-api-staging-v1',
+            callerEnabledBinding: callerEnabled === null ? null : false,
+            effectiveCallerEnabled: false,
+            callerId,
+            expectedCallerId: 'crm-api-staging-v1',
         }),
     });
 }
