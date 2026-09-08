@@ -4,9 +4,13 @@ import { pathToFileURL } from 'node:url';
 
 const EXPECTED_ORIGIN = 'https://api-staging.skincos.com.br';
 const ERROR_PATTERN = /^[A-Z0-9_]{3,120}$/;
+const FAILURE_STAGES = new Set(['anonymous', 'query', 'method', 'login', 'session', 'repeated']);
 
-function fail(code) {
-  throw new Error(code);
+function fail(code, { stage, status } = {}) {
+  const error = new Error(code);
+  if (FAILURE_STAGES.has(stage)) error.failureStage = stage;
+  if (Number.isInteger(status) && status >= 100 && status <= 599) error.failureHttpStatus = status;
+  throw error;
 }
 
 function plainObject(value, code) {
@@ -105,6 +109,15 @@ function safeFailureCode(error) {
   return ERROR_PATTERN.test(candidate) ? candidate : 'CRM_SESSION_SMOKE_FAILED';
 }
 
+function safeFailureDiagnostics(error) {
+  const diagnostics = {};
+  if (FAILURE_STAGES.has(error?.failureStage)) diagnostics.failureStage = error.failureStage;
+  if (Number.isInteger(error?.failureHttpStatus) && error.failureHttpStatus >= 100 && error.failureHttpStatus <= 599) {
+    diagnostics.failureHttpStatus = error.failureHttpStatus;
+  }
+  return diagnostics;
+}
+
 function writeReport(reportPath, report) {
   if (typeof reportPath !== 'string' || !reportPath) return;
   fs.mkdirSync(path.dirname(path.resolve(reportPath)), { recursive: true });
@@ -157,13 +170,13 @@ export async function runCrmIdentityStagingSessionSmoke({
     if (method.status !== 405) fail('CRM_SESSION_SMOKE_METHOD_STATUS_INVALID');
     assertGatewayError(await jsonResponse(method, 'CRM_SESSION_SMOKE_METHOD_RESPONSE_INVALID'), 'CRM_SESSION_METHOD_NOT_ALLOWED');
 
-    const login = await fetchImpl(`${origin}/auth/login`, {
+    const login = await fetchImpl(`${origin}/inventory/auth/login`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json', 'cache-control': 'no-store' },
       body: JSON.stringify({ email: scenario.email, password: scenario.password }),
       redirect: 'manual',
     });
-    if (login.status !== 200) fail('CRM_SESSION_SMOKE_LOGIN_STATUS_INVALID');
+    if (login.status !== 200) fail('CRM_SESSION_SMOKE_LOGIN_STATUS_INVALID', { stage: 'login', status: login.status });
     const loginPayload = await jsonResponse(login, 'CRM_SESSION_SMOKE_LOGIN_RESPONSE_INVALID');
     if (!loginPayload || typeof loginPayload !== 'object' || loginPayload.success === false) fail('CRM_SESSION_SMOKE_LOGIN_RESPONSE_INVALID');
     const cookie = cookieHeader(login);
@@ -199,7 +212,7 @@ export async function runCrmIdentityStagingSessionSmoke({
     writeReport(reportPath, report);
     return report;
   } catch (error) {
-    const failed = { ...report, result: 'failed', failure: safeFailureCode(error) };
+    const failed = { ...report, result: 'failed', failure: safeFailureCode(error), ...safeFailureDiagnostics(error) };
     writeReport(reportPath, failed);
     throw error;
   }
