@@ -12,7 +12,7 @@ import {
   createAtendimentoProjectionDeltaBaselinePrepared,
   createAtendimentoProjectionDeltaBaselineSeed,
   markAtendimentoProjectionDeltaReady,
-} from '../../../../crm/api/server/atendimento/crmCoreProjectionDeltaBaseline.js'
+} from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
 const TARGET = { environment: 'staging', release: 'a'.repeat(40), artifactDigest: `sha256:${'b'.repeat(64)}` }
 const HMAC_KEY = `delta-runner-test-${'x'.repeat(40)}`

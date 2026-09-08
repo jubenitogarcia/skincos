@@ -12,7 +12,7 @@ import {
   readAtendimentoProjectionDeltaPage,
 } from './atendimentoProjectionDeltaExporter.mjs'
 import { assertAtendimentoProjectionDeltaDelivery } from './atendimentoProjectionDeltaDelivery.mjs'
-import { assertAtendimentoProjectionDeltaBaseline, CRM_CORE_PROJECTION_DELTA_BASELINE_STATES } from '../../../../crm/api/server/atendimento/crmCoreProjectionDeltaBaseline.js'
+import { assertAtendimentoProjectionDeltaBaseline, CRM_CORE_PROJECTION_DELTA_BASELINE_STATES } from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUNNER_VERSION = 'atendimento/crm-core/projection-delta-runner/v1'
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT = 'atendimento/crm-core/staging-projection-delta/v1'
