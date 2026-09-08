@@ -6,10 +6,16 @@ on:
       - 'identity/**'
       - 'api/src/gateway.js'
       - 'api/src/crm-identity-issuer-client.js'
+      - 'api/src/crm-projection-response.js'
       - 'api/test/gateway.test.mjs'
+      - 'api/test/crm-projection-*.test.mjs'
       - 'api/wrangler.toml'
       - 'scripts/crm-identity-staging-caller-runtime-readback.mjs'
       - 'scripts/crm-identity-staging-session-smoke.mjs'
+      - 'scripts/crm-identity-staging-projection-smoke.mjs'
+      - 'scripts/crm-identity-staging-gateway-refresh.mjs'
+      - 'scripts/tests/crm-identity-staging-projection-smoke.test.mjs'
+      - 'scripts/tests/crm-identity-staging-gateway-refresh.test.mjs'
       - 'scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs'
       - 'scripts/tests/crm-identity-staging-session-smoke.test.mjs'
       - 'shared/identity-contract/**'
@@ -21,10 +27,16 @@ on:
       - 'identity/**'
       - 'api/src/gateway.js'
       - 'api/src/crm-identity-issuer-client.js'
+      - 'api/src/crm-projection-response.js'
       - 'api/test/gateway.test.mjs'
+      - 'api/test/crm-projection-*.test.mjs'
       - 'api/wrangler.toml'
       - 'scripts/crm-identity-staging-caller-runtime-readback.mjs'
       - 'scripts/crm-identity-staging-session-smoke.mjs'
+      - 'scripts/crm-identity-staging-projection-smoke.mjs'
+      - 'scripts/crm-identity-staging-gateway-refresh.mjs'
+      - 'scripts/tests/crm-identity-staging-projection-smoke.test.mjs'
+      - 'scripts/tests/crm-identity-staging-gateway-refresh.test.mjs'
       - 'scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs'
       - 'scripts/tests/crm-identity-staging-session-smoke.test.mjs'
       - 'shared/identity-contract/**'
@@ -33,11 +45,11 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Read-only test, disabled HMAC bootstrap, staging activation, synthetic session smoke, or staging disable"
+        description: "Test, disabled bootstrap, activation, synthetic smoke, API-only active refresh, or disable; staging only"
         required: true
         default: test
         type: choice
-        options: [test, bootstrap, activate, session-smoke, disable]
+        options: [test, bootstrap, activate, session-smoke, refresh-gateway, disable]
       release_sha:
         description: "Exact current main SHA for every non-test operation"
         required: false
@@ -58,6 +70,20 @@ on:
         description: "Exact already-live CRM Core staging sha256 digest; required for activate and session-smoke"
         required: false
         type: string
+      expected_api_version_id:
+        description: "Exact active API version for refresh-gateway or session-and-projections smoke"
+        required: false
+        type: string
+      expected_issuer_version_id:
+        description: "Exact active unchanged issuer version for refresh-gateway or session-and-projections smoke"
+        required: false
+        type: string
+      smoke_profile:
+        description: "Session keeps the original receipt delta +2; extended profile adds four projection deliveries (+6 total)"
+        required: true
+        default: session
+        type: choice
+        options: [session, session-and-projections]
 
 permissions:
   actions: read
@@ -98,6 +124,7 @@ jobs:
           npm --prefix api test
           node --test scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs
           node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
+          node --test scripts/tests/crm-identity-staging-projection-smoke.test.mjs scripts/tests/crm-identity-staging-gateway-refresh.test.mjs
 
   staging:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation != 'test' }}
@@ -112,6 +139,9 @@ jobs:
       BOOTSTRAP_RUN_ID: ${{ inputs.bootstrap_run_id }}
       CRM_CORE_RELEASE_SHA: ${{ inputs.crm_core_release_sha }}
       CRM_CORE_ARTIFACT_DIGEST: ${{ inputs.crm_core_artifact_digest }}
+      EXPECTED_API_VERSION_ID: ${{ inputs.expected_api_version_id }}
+      EXPECTED_ISSUER_VERSION_ID: ${{ inputs.expected_issuer_version_id }}
+      CRM_IDENTITY_SMOKE_PROFILE: ${{ inputs.smoke_profile || 'session' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -127,10 +157,13 @@ jobs:
             bootstrap) expected_confirmation='bootstrap-crm-identity-staging' ;;
             activate) expected_confirmation='activate-crm-identity-staging' ;;
             session-smoke) expected_confirmation='smoke-crm-identity-staging' ;;
+            refresh-gateway) expected_confirmation='refresh-crm-gateway-staging' ;;
             disable) expected_confirmation='disable-crm-identity-staging' ;;
             *) echo 'Unsupported controlled operation'; exit 1 ;;
           esac
           [[ "$CONFIRMATION" == "$expected_confirmation" ]] || { echo 'Explicit non-secret operation confirmation is invalid'; exit 1; }
+          [[ "$CRM_IDENTITY_SMOKE_PROFILE" == session || "$CRM_IDENTITY_SMOKE_PROFILE" == session-and-projections ]] || { echo 'Invalid smoke profile'; exit 1; }
+          [[ "$OPERATION" == session-smoke || "$CRM_IDENTITY_SMOKE_PROFILE" == session ]] || { echo 'Extended profile is smoke-only'; exit 1; }
           [[ "$GITHUB_REF" == 'refs/heads/main' ]] || { echo 'Controlled CRM Identity staging operations run only from main'; exit 1; }
           [[ "$GITHUB_RUN_ATTEMPT" == '1' ]] || { echo 'Reruns are refused after a potentially mutating operation'; exit 1; }
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
@@ -160,11 +193,12 @@ jobs:
           npm --prefix api test
           node --test scripts/tests/crm-identity-staging-caller-runtime-readback.test.mjs
           node --test scripts/tests/crm-identity-staging-session-smoke.test.mjs
+          node --test scripts/tests/crm-identity-staging-projection-smoke.test.mjs scripts/tests/crm-identity-staging-gateway-refresh.test.mjs
           npx --yes wrangler@4.112.0 deploy --dry-run --config identity/wrangler.staging.toml --env staging --outdir "$RUNNER_TEMP/identity-crm-delivery-dry-run" >/dev/null
           npx --yes wrangler@4.112.0 deploy --dry-run --config api/wrangler.toml --env staging --outdir "$RUNNER_TEMP/api-crm-session-dry-run" >/dev/null
 
       - name: Attest the externally published CRM Core before activation or synthetic session smoke
-        if: ${{ inputs.operation == 'activate' || inputs.operation == 'session-smoke' }}
+        if: ${{ inputs.operation == 'activate' || inputs.operation == 'session-smoke' || inputs.operation == 'refresh-gateway' }}
         run: |
           set -euo pipefail
           [[ "$CRM_CORE_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'crm_core_release_sha must be a full SHA'; exit 1; }
@@ -188,7 +222,7 @@ jobs:
 
       - name: Acquire canonical Core and Identity Worker custody lease
         id: worker_lease
-        if: ${{ inputs.operation == 'bootstrap' || inputs.operation == 'activate' || inputs.operation == 'disable' }}
+        if: ${{ inputs.operation == 'bootstrap' || inputs.operation == 'activate' || inputs.operation == 'disable' || inputs.operation == 'refresh-gateway' || (inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections') }}
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: 'true'
@@ -201,6 +235,24 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
           inputs_json: '{"target":"staging","surface":"identity-crm-delivery"}'
+
+      - name: Refresh only the already-active staging gateway with exact binding custody and API-only rollback
+        if: ${{ inputs.operation == 'refresh-gateway' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+        run: node scripts/crm-identity-staging-gateway-refresh.mjs
+      - name: Upload sanitised gateway refresh checkpoint and terminal custody
+        if: ${{ always() && inputs.operation == 'refresh-gateway' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-gateway-refresh-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/crm-gateway-refresh-report.json
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: Check custody before reading bootstrap secret names
         if: ${{ inputs.operation == 'bootstrap' }}
@@ -681,6 +733,27 @@ jobs:
             --var 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED:false' \
             --var 'IDENTITY_CRM_DELIVERY_CALLER_ID:crm-api-staging-v1' >/dev/null
 
+      - name: Check Worker custody before extended smoke attestation and fixtures
+        id: worker_smoke_preflight_lease
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Attest exact active gateway and unchanged issuer before extended smoke fixtures
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.worker_smoke_preflight_lease.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/crm-identity-staging-gateway-refresh.mjs --attest-active
+
       - name: Acquire staging D1 custody for one synthetic session proof
         id: d1_lease
         if: ${{ inputs.operation == 'session-smoke' }}
@@ -738,12 +811,30 @@ jobs:
           resource: global:staging-d1
           module: core
           source_sha: ${{ inputs.release_sha }}
+      - name: Check Worker custody immediately before the extended authenticated journey
+        id: worker_smoke_journey_lease
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.synthetic_fixture.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
       - name: Prove a real synthetic login reaches the CRM session without forwarding its cookie
-        if: ${{ inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' }}
+        if: ${{ inputs.operation == 'session-smoke' && steps.synthetic_fixture.outcome == 'success' && (inputs.smoke_profile != 'session-and-projections' || steps.worker_smoke_journey_lease.outcome == 'success') }}
+        # Extended journey must finish inside the check action's five-minute
+        # remaining-lease floor. The original profile retains the job ceiling.
+        timeout-minutes: ${{ inputs.smoke_profile == 'session-and-projections' && 4 || 35 }}
         env:
           CRM_IDENTITY_SMOKE_FIXTURES: ${{ runner.temp }}/crm-identity-smoke-fixtures.json
           CRM_IDENTITY_SMOKE_REPORT: ${{ runner.temp }}/crm-identity-smoke-report.json
           CRM_IDENTITY_SMOKE_API_ORIGIN: https://api-staging.skincos.com.br
+          CRM_IDENTITY_PROJECTION_SMOKE_REPORT: ${{ runner.temp }}/crm-identity-projection-smoke-report.json
         run: node scripts/crm-identity-staging-session-smoke.mjs
       - name: Check D1 custody before synthetic fixture teardown
         id: synthetic_teardown_lease
@@ -772,12 +863,41 @@ jobs:
           node inventory/scripts/insumosStagingRbacFixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$fixtures" --sql "$RUNNER_TEMP/crm-identity-smoke-teardown.sql" >/dev/null
           npx --yes wrangler@4.112.0 d1 execute skincos-db-staging --config inventory/wrangler.toml --env staging --remote --file "$RUNNER_TEMP/crm-identity-smoke-teardown.sql" >/dev/null
           rm -f "$fixtures" "$RUNNER_TEMP/crm-identity-smoke-provision.sql" "$RUNNER_TEMP/crm-identity-smoke-teardown.sql"
+      - name: Check Worker custody after extended smoke teardown and before reattestation
+        id: worker_smoke_postflight_lease
+        if: ${{ always() && inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.synthetic_teardown.outcome == 'success' && steps.worker_lease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/crm-identity-workers-lease.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+      - name: Reattest exact active gateway and issuer after extended smoke teardown
+        if: ${{ inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' && steps.synthetic_teardown.outcome == 'success' && steps.worker_smoke_postflight_lease.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/crm-identity-staging-gateway-refresh.mjs --attest-active
       - name: Upload only the sanitised synthetic session proof
         if: ${{ always() && inputs.operation == 'session-smoke' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crm-identity-session-smoke-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/crm-identity-smoke-report.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload only the separate sanitised projection and CORS proof
+        if: ${{ always() && inputs.operation == 'session-smoke' && inputs.smoke_profile == 'session-and-projections' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-identity-projection-smoke-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/crm-identity-projection-smoke-report.json
           retention-days: 30
           if-no-files-found: warn
 
