@@ -1,9 +1,11 @@
 import { createHash, createHmac } from 'node:crypto'
 
-export const ATENDIMENTO_CRM_PROJECTION_EXPORTER_VERSION = 'atendimento/crm-core-projection-exporter/v1'
-export const CRM_PROJECTION_BACKFILL_BATCH_VERSION = 'skincos-crm/projection-backfill-batch/v1'
+export const ATENDIMENTO_CRM_PROJECTION_EXPORTER_VERSION = 'atendimento/crm-core-projection-exporter/v2'
+export const CRM_PROJECTION_BACKFILL_BATCH_VERSION = 'skincos-crm/projection-backfill-batch/v2'
 export const ATENDIMENTO_PROJECTION_SCOPE = 'global-client-identities/v1'
 export const ATENDIMENTO_CRM_PROJECTION_MAX_ROWS = 10_000
+export const ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS = 20
+export const ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT = 'atendimento/crm-core/unit-scoped-projection-source/v1'
 
 export const ATENDIMENTO_PROJECTION_EXPORTER_DATABASE = Object.freeze({
   database: 'skincos_clientes_production',
@@ -18,28 +20,22 @@ export const ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL = `SELECT
 
 export const ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL = 'SELECT transaction_timestamp()::timestamptz AS captured_at'
 
-export const ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL = `SELECT count(*)::int AS row_count
+// These retired v1 queries deliberately remain named as legacy evidence only.
+// They are never selected by this exporter: a v2 caller must inject an owner
+// source contract with an explicit canonical `unit_slug` for every emitted row.
+export const ATENDIMENTO_PROJECTION_EXPORT_LEGACY_COUNT_SQL = `SELECT count(*)::int AS row_count
 FROM crm_atendimento.global_client_identities`
-
-// This source query deliberately has no join and no selectable field beyond the
-// stable identity UUID and its revision timestamp. The UUID is converted to an
-// HMAC reference in memory before anything leaves this adapter.
-export const ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL = `/* bounded source-input fingerprint */
-SELECT id::text AS id,
+export const ATENDIMENTO_PROJECTION_EXPORT_LEGACY_ROWS_SQL = `SELECT id::text AS id,
   to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
 FROM crm_atendimento.global_client_identities
 ORDER BY updated_at ASC, id ASC
 LIMIT $1`
-
-// The paginated runner uses keyset pagination, never OFFSET. Both queries keep
-// the source shape deliberately limited to the stable UUID and revision time.
-export const ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL = `SELECT id::text AS id,
+export const ATENDIMENTO_PROJECTION_EXPORT_LEGACY_FIRST_PAGE_SQL = `SELECT id::text AS id,
   to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
 FROM crm_atendimento.global_client_identities
 ORDER BY updated_at ASC, id ASC
 LIMIT $1`
-
-export const ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL = `SELECT id::text AS id,
+export const ATENDIMENTO_PROJECTION_EXPORT_LEGACY_NEXT_PAGE_SQL = `SELECT id::text AS id,
   to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
 FROM crm_atendimento.global_client_identities
 WHERE (updated_at, id) > ($1::timestamptz, $2::uuid)
@@ -51,6 +47,10 @@ const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/
 const RELEASE_PATTERN = /^[0-9a-f]{40}$/
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{3,96}$/
 const OPAQUE_PART_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
+const UNIT_SLUG_PATTERN = /^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+const SOURCE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{1,6})Z$/
+const SOURCE_QUERY_FORBIDDEN = /\b(?:alter|call|copy|create|delete|drop|grant|insert|merge|offset|revoke|truncate|update|vacuum)\b/i
+
 function fail(code) {
   throw new Error(code)
 }
@@ -74,6 +74,13 @@ function timestamp(value, code) {
   const parsed = value instanceof Date ? value : new Date(String(value || '').trim())
   if (Number.isNaN(parsed.getTime())) fail(code)
   return parsed.toISOString()
+}
+
+function sourceTimestamp(value, code) {
+  const raw = value instanceof Date ? value.toISOString() : text(value, code)
+  const match = SOURCE_TIMESTAMP_PATTERN.exec(raw)
+  if (!match || Number.isNaN(new Date(raw).getTime())) fail(code)
+  return `${match[1]}.${match[2].padEnd(6, '0')}Z`
 }
 
 function canonicalize(value) {
@@ -119,6 +126,79 @@ function maximumRows(value) {
   return normalized
 }
 
+function maximumBatchRows(value) {
+  const normalized = value === undefined ? ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS : Number(value)
+  if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS) {
+    fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_SIZE_INVALID')
+  }
+  return normalized
+}
+
+function unitSlug(value, code) {
+  const normalized = text(value, code)
+  if (normalized !== normalized.toLowerCase() || !UNIT_SLUG_PATTERN.test(normalized)) fail(code)
+  return normalized
+}
+
+function sourceQuery(value, code, requiredAliases = []) {
+  const sql = text(value, code)
+  if (
+    sql.length > 32_768
+    || sql.includes(';')
+    || SOURCE_QUERY_FORBIDDEN.test(sql)
+    || !/^\s*(?:(?:\/\*[\s\S]*?\*\/)\s*)*(?:select|with)\b/i.test(sql)
+  ) fail(code)
+  for (const alias of requiredAliases) {
+    const expression = new RegExp(`\\bas\\s+(?:"${alias}"|${alias})\\b`, 'i')
+    if (!expression.test(sql)) fail(code)
+  }
+  return sql
+}
+
+function sourcePageQuery(value, code, { parameters, keyset = false } = {}) {
+  const sql = sourceQuery(value, code, ['id', 'updated_at', 'unit_slug'])
+  const actualParameters = [...sql.matchAll(/\$(\d+)\b/g)].map((match) => Number(match[1]))
+  const orderedTuple = /\border\s+by\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?updated_at\s+asc\s*,\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?id\s+asc\s*,\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?unit_slug\s+asc\s*\blimit\b/i
+  const keysetTuple = /\bwhere\b[\s\S]*?\bupdated_at\b[\s\S]*?\bid\b[\s\S]*?\bunit_slug\b/i
+  if (
+    !orderedTuple.test(sql)
+    || actualParameters.length === 0
+    || new Set(actualParameters).size !== actualParameters.length
+    || actualParameters.some((parameter) => !parameters.includes(parameter))
+    || parameters.some((parameter) => !actualParameters.includes(parameter))
+    || (keyset && !keysetTuple.test(sql))
+  ) fail(code)
+  return sql
+}
+
+/**
+ * Validates a source owned by Atendimento. The export adapter does not know
+ * how a global identity maps to units and intentionally offers no default SQL.
+ * The owner must attest an immutable read-only query family that emits exactly
+ * one row per canonical identity/unit membership.
+ */
+export function assertAtendimentoUnitScopedProjectionSource(value) {
+  const source = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_REQUIRED')
+  exactKeys(source, ['contract', 'countSql', 'rowsSql', 'firstPageSql', 'nextPageSql'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID')
+  if (source.contract !== ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT) {
+    fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID')
+  }
+  return Object.freeze({
+    contract: ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
+    countSql: sourceQuery(source.countSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', ['row_count']),
+    rowsSql: sourcePageQuery(source.rowsSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', { parameters: [1] }),
+    firstPageSql: sourcePageQuery(source.firstPageSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', { parameters: [1] }),
+    nextPageSql: sourcePageQuery(source.nextPageSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', {
+      parameters: [1, 2, 3, 4],
+      keyset: true,
+    }),
+  })
+}
+
+export function createAtendimentoUnitScopedProjectionSource(value) {
+  return assertAtendimentoUnitScopedProjectionSource(value)
+}
+
 export function assertAtendimentoProjectionExportTarget(value) {
   const target = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
   exactKeys(target, ['environment', 'release', 'artifactDigest'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
@@ -150,47 +230,68 @@ function sourceIdentity(value) {
 
 export function assertAtendimentoProjectionSourceRow(value) {
   const row = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
-  exactKeys(row, ['id', 'updated_at'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
+  exactKeys(row, ['id', 'updated_at', 'unit_slug'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
   const id = text(row.id, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID').toLowerCase()
   if (!UUID_PATTERN.test(id)) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
   return Object.freeze({
     id,
     updatedAt: timestamp(row.updated_at, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID'),
+    sourceUpdatedAt: sourceTimestamp(row.updated_at, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID'),
+    unitSlug: unitSlug(row.unit_slug, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID'),
   })
 }
 
 function normalizedSourceRow(value) {
   const row = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
   if (
-    Object.keys(row).length === 2
+    Object.keys(row).length === 4
     && Object.hasOwn(row, 'id')
     && Object.hasOwn(row, 'updatedAt')
+    && Object.hasOwn(row, 'sourceUpdatedAt')
+    && Object.hasOwn(row, 'unitSlug')
   ) {
-    return assertAtendimentoProjectionSourceRow({ id: row.id, updated_at: row.updatedAt })
+    const normalized = assertAtendimentoProjectionSourceRow({
+      id: row.id,
+      updated_at: row.sourceUpdatedAt,
+      unit_slug: row.unitSlug,
+    })
+    if (timestamp(row.updatedAt, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID') !== normalized.updatedAt) {
+      fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_ROW_INVALID')
+    }
+    return normalized
   }
   return assertAtendimentoProjectionSourceRow(row)
 }
 
+function compareSourceRows(left, right) {
+  return left.sourceUpdatedAt.localeCompare(right.sourceUpdatedAt)
+    || left.id.localeCompare(right.id)
+    || left.unitSlug.localeCompare(right.unitSlug)
+}
+
 function sourceRows(value, expectedCount) {
-  if (!Array.isArray(value) || value.length !== expectedCount) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_READBACK_INVALID')
-  const identifiers = new Set()
-  const rows = value.map(normalizedSourceRow)
+  if (!Array.isArray(value) || value.length !== expectedCount || value.length > ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS) {
+    fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_READBACK_INVALID')
+  }
+  const rows = value.map(normalizedSourceRow).sort(compareSourceRows)
+  const identities = new Set()
   for (const row of rows) {
-    if (identifiers.has(row.id)) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_READBACK_INVALID')
-    identifiers.add(row.id)
+    const key = `${row.id}\u0000${row.unitSlug}`
+    if (identities.has(key)) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_READBACK_INVALID')
+    identities.add(key)
   }
   return Object.freeze(rows)
 }
 
 /**
- * Attests the already-open source transaction before any source identity row
- * is selected. Callers must start a repeatable-read, read-only transaction
- * first; the identity query then proves the dedicated source principal and
- * returns only snapshot metadata needed to bound a later read.
+ * Attests an already-open source transaction before the owner-defined unit
+ * mapping is selected. A missing source or a legacy two-column query fails
+ * closed before any domain row is requested.
  */
-export async function preflightAtendimentoProjectionSource(client, { maxRows } = {}) {
+export async function preflightAtendimentoProjectionSource(client, { maxRows, source } = {}) {
   if (!client || typeof client.query !== 'function') fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_CLIENT_INVALID')
   const limit = maximumRows(maxRows)
+  const sourceDefinition = assertAtendimentoUnitScopedProjectionSource(source)
 
   const identityResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL)
   const identity = sourceIdentity(identityResult?.rows?.[0])
@@ -198,45 +299,49 @@ export async function preflightAtendimentoProjectionSource(client, { maxRows } =
   const snapshotResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL)
   const capturedAt = timestamp(snapshotResult?.rows?.[0]?.captured_at, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SNAPSHOT_INVALID')
 
-  const countResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL)
+  const countResult = await client.query(sourceDefinition.countSql)
   const rowCount = Number(countResult?.rows?.[0]?.row_count)
   if (!Number.isSafeInteger(rowCount) || rowCount < 0) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_COUNT_INVALID')
   if (rowCount > limit) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_LIMIT_EXCEEDED')
 
-  return Object.freeze({ identity, capturedAt, rowCount })
+  return Object.freeze({ identity, capturedAt, rowCount, source: sourceDefinition })
 }
 
-function eventFromSourceRow(row, { key, capturedAt }) {
-  const sourceReference = hmacReference(key, 'source-reference/v1', row.id, 'source')
-  const projectionReference = hmacReference(key, 'projection-reference/v1', row.id, 'projection')
+function eventFromSourceRow(row, { key }) {
+  // Source/projection references preserve one opaque global identity across
+  // units. Only the event identity incorporates unit and microsecond cursor
+  // material, so a legitimate multi-unit identity cannot collide in v2.
+  const sourceReference = hmacReference(key, 'source-reference/v2', row.id, 'source')
+  const projectionReference = hmacReference(key, 'projection-reference/v2', row.id, 'projection')
   const eventId = hmacReference(
     key,
-    'projection-event/v1',
-    `${sourceReference}\u0000${projectionReference}\u0000${row.updatedAt}\u00001\u0000upsert`,
+    'projection-event/v2',
+    `${sourceReference}\u0000${projectionReference}\u0000${row.unitSlug}\u0000${row.sourceUpdatedAt}\u00001\u0000upsert`,
     'event',
   )
   return Object.freeze({
-    contractVersion: 'crm-projection-event/v1',
+    contractVersion: 'crm-projection-event/v2',
     id: eventId,
     projection: Object.freeze({ reference: projectionReference, kind: 'client-reference' }),
     source: Object.freeze({ owner: 'atendimento', reference: sourceReference }),
+    unitScope: Object.freeze({ unitSlug: row.unitSlug }),
     revision: 1,
     operation: 'upsert',
     occurredAt: row.updatedAt,
-    // Deliberately do not include source UUID, snapshot timestamp, or any
-    // contact field in the event. `capturedAt` participates only in batch ID.
   })
 }
 
 function assertProjectionEvent(value) {
   const event = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
-  exactKeys(event, ['contractVersion', 'id', 'projection', 'source', 'revision', 'operation', 'occurredAt'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
+  exactKeys(event, ['contractVersion', 'id', 'projection', 'source', 'unitScope', 'revision', 'operation', 'occurredAt'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   const projection = object(event.projection, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   const source = object(event.source, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
+  const scope = object(event.unitScope, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   exactKeys(projection, ['reference', 'kind'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   exactKeys(source, ['owner', 'reference'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
+  exactKeys(scope, ['unitSlug'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   if (
-    event.contractVersion !== 'crm-projection-event/v1'
+    event.contractVersion !== 'crm-projection-event/v2'
     || !/^event:[A-Za-z0-9_-]{8,160}$/.test(text(event.id, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID'))
     || !/^projection:[A-Za-z0-9_-]{8,160}$/.test(text(projection.reference, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID'))
     || projection.kind !== 'client-reference'
@@ -248,10 +353,11 @@ function assertProjectionEvent(value) {
     fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   }
   return Object.freeze({
-    contractVersion: event.contractVersion,
+    contractVersion: 'crm-projection-event/v2',
     id: event.id,
     projection: Object.freeze({ reference: projection.reference, kind: projection.kind }),
     source: Object.freeze({ owner: source.owner, reference: source.reference }),
+    unitScope: Object.freeze({ unitSlug: unitSlug(scope.unitSlug, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID') }),
     revision: event.revision,
     operation: event.operation,
     occurredAt: timestamp(event.occurredAt, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID'),
@@ -259,7 +365,7 @@ function assertProjectionEvent(value) {
 }
 
 function batchId(key, keyIdentifier, capturedAt, eventsDigest) {
-  return `backfill:atendimento:${hmacPart(key, 'projection-backfill-batch/v1', `${keyIdentifier}\u0000${capturedAt}\u0000${eventsDigest}`)}`
+  return `backfill:atendimento:${hmacPart(key, 'projection-backfill-batch/v2', `${keyIdentifier}\u0000${capturedAt}\u0000${eventsDigest}`)}`
 }
 
 function batchCursorDigest(capturedAt, events) {
@@ -268,13 +374,17 @@ function batchCursorDigest(capturedAt, events) {
     scope: ATENDIMENTO_PROJECTION_SCOPE,
     capturedAt,
     sourceReferences: events.map((event) => event.source.reference),
+    unitSlugs: events.map((event) => event.unitScope.unitSlug),
   })
 }
 
+function uniqueUnitSlugs(events) {
+  return Object.freeze([...new Set(events.map((event) => event.unitScope.unitSlug))].sort())
+}
+
 /**
- * Builds one opaque CRM batch from an already-bounded source page. This has no
- * transport or database side effect; callers that paginate must keep the raw
- * source cursor private and send only the returned opaque batch.
+ * Builds one bounded opaque CRM v2 batch from a unit-scoped owner page. This
+ * function has no transport or source database side effect.
  */
 export function createAtendimentoProjectionBackfillBatch({
   rows,
@@ -288,14 +398,20 @@ export function createAtendimentoProjectionBackfillBatch({
   const targetValue = assertAtendimentoProjectionExportTarget(target)
   const normalizedCapturedAt = timestamp(capturedAt, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SNAPSHOT_INVALID')
   const normalizedRows = sourceRows(rows, Array.isArray(rows) ? rows.length : -1)
-  const events = Object.freeze(normalizedRows.map((row) => eventFromSourceRow(row, { key, capturedAt: normalizedCapturedAt })))
+  if (normalizedRows.length === 0) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
+  const events = Object.freeze(normalizedRows.map((row) => eventFromSourceRow(row, { key })))
   const eventsDigest = sha256(events)
   const cursorDigest = batchCursorDigest(normalizedCapturedAt, events)
   return assertAtendimentoProjectionBackfillBatch({
     contract: CRM_PROJECTION_BACKFILL_BATCH_VERSION,
     batchId: batchId(key, keyIdentifier, normalizedCapturedAt, eventsDigest),
     producer: { owner: 'atendimento', scope: ATENDIMENTO_PROJECTION_SCOPE, keyId: keyIdentifier },
-    sourceSnapshot: { capturedAt: normalizedCapturedAt, cursorDigest, rowCount: normalizedRows.length },
+    sourceSnapshot: {
+      capturedAt: normalizedCapturedAt,
+      cursorDigest,
+      rowCount: normalizedRows.length,
+      unitSlugs: uniqueUnitSlugs(events),
+    },
     target: targetValue,
     events,
     integrity: { algorithm: 'sha256', eventCount: events.length, eventsDigest },
@@ -309,7 +425,7 @@ export function assertAtendimentoProjectionBackfillBatch(value) {
   const sourceSnapshot = object(batch.sourceSnapshot, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   const integrity = object(batch.integrity, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   exactKeys(producer, ['owner', 'scope', 'keyId'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
-  exactKeys(sourceSnapshot, ['capturedAt', 'cursorDigest', 'rowCount'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
+  exactKeys(sourceSnapshot, ['capturedAt', 'cursorDigest', 'rowCount', 'unitSlugs'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   exactKeys(integrity, ['algorithm', 'eventCount', 'eventsDigest'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   if (
     batch.contract !== CRM_PROJECTION_BACKFILL_BATCH_VERSION
@@ -318,9 +434,16 @@ export function assertAtendimentoProjectionBackfillBatch(value) {
     || producer.scope !== ATENDIMENTO_PROJECTION_SCOPE
     || !KEY_ID_PATTERN.test(text(producer.keyId, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID'))
     || !SHA256_PATTERN.test(text(sourceSnapshot.cursorDigest, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID'))
-    || !Number.isSafeInteger(sourceSnapshot.rowCount) || sourceSnapshot.rowCount < 0
+    || !Number.isSafeInteger(sourceSnapshot.rowCount)
+    || sourceSnapshot.rowCount < 1
+    || sourceSnapshot.rowCount > ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS
+    || !Array.isArray(sourceSnapshot.unitSlugs)
+    || sourceSnapshot.unitSlugs.length < 1
+    || sourceSnapshot.unitSlugs.length > ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS
     || integrity.algorithm !== 'sha256'
-    || !Number.isSafeInteger(integrity.eventCount) || integrity.eventCount < 0
+    || !Number.isSafeInteger(integrity.eventCount)
+    || integrity.eventCount < 1
+    || integrity.eventCount > ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS
     || !SHA256_PATTERN.test(text(integrity.eventsDigest, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID'))
   ) {
     fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
@@ -332,28 +455,37 @@ export function assertAtendimentoProjectionBackfillBatch(value) {
   }
   const events = Object.freeze(batch.events.map(assertProjectionEvent))
   const identifiers = new Set()
+  const projectionKeys = new Set()
   for (const event of events) {
-    if (identifiers.has(event.id)) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
+    const projectionKey = `${event.unitScope.unitSlug}:${event.projection.reference}`
+    if (identifiers.has(event.id) || projectionKeys.has(projectionKey)) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
     identifiers.add(event.id)
+    projectionKeys.add(projectionKey)
+  }
+  const unitSlugs = sourceSnapshot.unitSlugs.map((value) => unitSlug(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')).sort()
+  if (new Set(unitSlugs).size !== unitSlugs.length || JSON.stringify(unitSlugs) !== JSON.stringify(uniqueUnitSlugs(events))) {
+    fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   }
   if (integrity.eventsDigest !== sha256(events) || sourceSnapshot.cursorDigest !== batchCursorDigest(capturedAt, events)) {
     fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   }
   return Object.freeze({
-    contract: batch.contract,
+    contract: CRM_PROJECTION_BACKFILL_BATCH_VERSION,
     batchId: batch.batchId,
     producer: Object.freeze({ owner: producer.owner, scope: producer.scope, keyId: producer.keyId }),
-    sourceSnapshot: Object.freeze({ capturedAt, cursorDigest: sourceSnapshot.cursorDigest, rowCount: sourceSnapshot.rowCount }),
+    sourceSnapshot: Object.freeze({
+      capturedAt,
+      cursorDigest: sourceSnapshot.cursorDigest,
+      rowCount: sourceSnapshot.rowCount,
+      unitSlugs: Object.freeze(unitSlugs),
+    }),
     target,
     events,
     integrity: Object.freeze({ algorithm: integrity.algorithm, eventCount: integrity.eventCount, eventsDigest: integrity.eventsDigest }),
   })
 }
 
-/**
- * Matches the CRM Core's canonical batch digest without importing its source
- * tree. It is intentionally over the validated opaque batch only.
- */
+/** Matches the CRM Core v2 canonical digest without importing its source tree. */
 export function digestAtendimentoProjectionBackfillBatch(value) {
   return sha256(assertAtendimentoProjectionBackfillBatch(value))
 }
@@ -363,12 +495,13 @@ function knownError(error) {
 }
 
 /**
- * Export exactly one bounded, repeatable-read snapshot of Atendimento global
- * identities. It never writes to the source, never returns source UUIDs, and
- * fails rather than silently paginating an incomplete historical backfill.
+ * Exports exactly one bounded unit-scoped snapshot. This compatibility helper
+ * is intentionally capped to the CRM receiver batch maximum; larger work uses
+ * the paginated runner and a private checkpoint.
  */
 export async function exportAtendimentoClientProjectionBatch({
   pool,
+  source,
   hmacKey: suppliedHmacKey,
   keyId: suppliedKeyId,
   target,
@@ -378,7 +511,8 @@ export async function exportAtendimentoClientProjectionBatch({
   const key = hmacKey(suppliedHmacKey)
   const keyIdentifier = keyId(suppliedKeyId)
   const targetValue = assertAtendimentoProjectionExportTarget(target)
-  const limit = maximumRows(maxRows)
+  const sourceDefinition = assertAtendimentoUnitScopedProjectionSource(source)
+  const limit = maximumBatchRows(maxRows)
   let client
   let transactionOpen = false
 
@@ -388,9 +522,8 @@ export async function exportAtendimentoClientProjectionBatch({
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
     transactionOpen = true
 
-    const { capturedAt, rowCount } = await preflightAtendimentoProjectionSource(client, { maxRows: limit })
-
-    const rowsResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL, [rowCount])
+    const { capturedAt, rowCount } = await preflightAtendimentoProjectionSource(client, { maxRows: limit, source: sourceDefinition })
+    const rowsResult = await client.query(sourceDefinition.rowsSql, [rowCount])
     const rows = sourceRows(rowsResult?.rows, rowCount)
     const batch = createAtendimentoProjectionBackfillBatch({
       rows,

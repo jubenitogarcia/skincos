@@ -22,12 +22,12 @@ const TARGET = Object.freeze({
 })
 const SOURCE_ID = '123e4567-e89b-42d3-a456-426614174000'
 
-function batch(rows = [{ id: SOURCE_ID, updated_at: '2026-09-07T00:00:00.000Z' }]) {
+function batch(rows = [{ id: SOURCE_ID, updated_at: '2026-09-07T00:00:00.000Z', unit_slug: 'novo-hamburgo' }]) {
   return createAtendimentoProjectionBackfillBatch({
     rows,
     capturedAt: '2026-09-07T00:00:00.000Z',
     hmacKey: HMAC_KEY,
-    keyId: 'atendimento-projection-key-v1',
+    keyId: 'atendimento-projection-key-v2',
     target: TARGET,
   })
 }

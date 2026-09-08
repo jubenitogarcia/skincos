@@ -3,12 +3,10 @@ import crypto from 'node:crypto'
 import test from 'node:test'
 
 import {
-  ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL,
-  ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL,
-  ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL,
-  ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL,
+  ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
+  createAtendimentoUnitScopedProjectionSource,
 } from '../src/atendimentoProjectionExporter.mjs'
 import {
   createAtendimentoProjectionBackfillDeliverySigner,
@@ -29,10 +27,29 @@ const OTHER_TARGET = Object.freeze({
   release: 'c'.repeat(40),
 })
 const CAPTURED_AT = '2026-09-07T00:00:00.000Z'
+const SOURCE = createAtendimentoUnitScopedProjectionSource({
+  contract: ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
+  countSql: 'SELECT count(*)::int AS row_count FROM test_atendimento_unit_projection_source',
+  rowsSql: `/* bounded source-input fingerprint */
+SELECT id::text AS id, updated_at AS updated_at, unit_slug AS unit_slug
+FROM test_atendimento_unit_projection_source
+ORDER BY updated_at ASC, id ASC, unit_slug ASC
+LIMIT $1`,
+  firstPageSql: `/* first keyset page */
+SELECT id::text AS id, updated_at AS updated_at, unit_slug AS unit_slug
+FROM test_atendimento_unit_projection_source
+ORDER BY updated_at ASC, id ASC, unit_slug ASC
+LIMIT $1`,
+  nextPageSql: `SELECT id::text AS id, updated_at AS updated_at, unit_slug AS unit_slug
+FROM test_atendimento_unit_projection_source
+WHERE (updated_at, id, unit_slug) > ($1::timestamptz, $2::uuid, $3::text)
+ORDER BY updated_at ASC, id ASC, unit_slug ASC
+LIMIT $4`,
+})
 
-function sourceRowAt(index, timestamp) {
+function sourceRowAt(index, timestamp, unit_slug = index % 2 === 0 ? 'barra-shopping-sul' : 'novo-hamburgo') {
   const suffix = index.toString(16).padStart(12, '0')
-  return Object.freeze({ id: `123e4567-e89b-42d3-a456-${suffix}`, updated_at: timestamp })
+  return Object.freeze({ id: `123e4567-e89b-42d3-a456-${suffix}`, updated_at: timestamp, unit_slug })
 }
 
 function sourceRow(index) {
@@ -41,7 +58,9 @@ function sourceRow(index) {
 }
 
 function compareRows(left, right) {
-  return left.updated_at.localeCompare(right.updated_at) || left.id.localeCompare(right.id)
+  return left.updated_at.localeCompare(right.updated_at)
+    || left.id.localeCompare(right.id)
+    || left.unit_slug.localeCompare(right.unit_slug)
 }
 
 function fakePool({
@@ -65,20 +84,23 @@ function fakePool({
         transaction_read_only: 'on',
       }] }
       if (sql === ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL) return { rows: [{ captured_at: capturedAt }] }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL) return { rows: [{ row_count: rowCount }] }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL) {
+      if (sql === SOURCE.countSql) return { rows: [{ row_count: rowCount }] }
+      if (sql === SOURCE.rowsSql) {
         if (params.length !== 1 || params[0] !== rowCount) throw new Error('unexpected source-input query parameters')
         return { rows: sourceRows.slice(0, params[0]) }
       }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL) {
+      if (sql === SOURCE.firstPageSql) {
         return { rows: sourceRows.slice(0, params[0]) }
       }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL) {
-        const [updatedAt, id, limit] = params
+      if (sql === SOURCE.nextPageSql) {
+        const [updatedAt, id, unitSlug, limit] = params
         return {
           rows: sourceRows.filter((row) => (
             row.updated_at.localeCompare(updatedAt) > 0
-            || (row.updated_at === updatedAt && row.id.localeCompare(id) > 0)
+            || (row.updated_at === updatedAt && (
+              row.id.localeCompare(id) > 0
+              || (row.id === id && row.unit_slug.localeCompare(unitSlug) > 0)
+            ))
           )).slice(0, limit),
         }
       }
@@ -147,6 +169,7 @@ function transportFixture({ statuses = ['accepted'], failure } = {}) {
 function runner({ pool, checkpointStore, transport, target = TARGET, batchSize = 20, maxRows = 10_000 } = {}) {
   return createPaginatedAtendimentoProjectionBackfillRunner({
     pool,
+    source: SOURCE,
     hmacKey: HMAC_KEY,
     keyId: 'atendimento-projection-key-v1',
     target,
@@ -186,12 +209,12 @@ test('delivers deterministic keyset pages, stores private checkpoints, and recon
   assert.deepEqual(deliveries.deliveries().map(({ batch }) => batch.events.length), [20, 20, 5])
   assert.equal(deliveries.deliveries().every(({ batch }) => !JSON.stringify(batch).includes(sourceRow(0).id)), true)
   assert.equal(JSON.stringify(summary).includes(sourceRow(0).id), false)
-  assert.equal(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL).length, 1)
-  assert.equal(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL).length, 2)
-  assert.equal(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL).length, 1)
+  assert.equal(source.calls.filter((call) => call.sql === SOURCE.firstPageSql).length, 1)
+  assert.equal(source.calls.filter((call) => call.sql === SOURCE.nextPageSql).length, 2)
+  assert.equal(source.calls.filter((call) => call.sql === SOURCE.rowsSql).length, 1)
   assert.equal(source.calls.some((call) => /\bOFFSET\b/i.test(call.sql)), false)
-  assert.deepEqual(source.calls.find((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL).params, [20])
-  assert.deepEqual(source.calls.filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL).map((call) => call.params.at(-1)), [20, 5])
+  assert.deepEqual(source.calls.find((call) => call.sql === SOURCE.firstPageSql).params, [20])
+  assert.deepEqual(source.calls.filter((call) => call.sql === SOURCE.nextPageSql).map((call) => call.params.at(-1)), [20, 5])
   assert.equal(source.calls.at(-1).sql, 'ROLLBACK')
   assert.equal(source.released(), true)
   assert.equal(checkpoints.active(), null)
@@ -272,7 +295,7 @@ test('replays the exact private pending packet and resumes when a new transactio
   assert.equal(summary.batchCount, 1)
   assert.equal(summary.acceptedCount, 0)
   assert.equal(summary.idempotentCount, 1)
-  assert.equal(resumedSource.calls.some((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL), false)
+  assert.equal(resumedSource.calls.some((call) => call.sql === SOURCE.firstPageSql), false)
   assert.equal(checkpoints.active(), null)
 })
 
@@ -346,10 +369,10 @@ test('refuses a checkpoint for another CRM target before replaying its pending p
   assert.ok(checkpoints.active()?.pending)
 })
 
-test('keeps the exact PostgreSQL microsecond cursor for keyset pagination', async () => {
+test('keeps the exact PostgreSQL microsecond and unit cursor for three-column keyset pagination', async () => {
   const rows = [
-    sourceRowAt(1, '2026-09-07T00:00:00.123001Z'),
-    sourceRowAt(2, '2026-09-07T00:00:00.123456Z'),
+    sourceRowAt(1, '2026-09-07T00:00:00.123001Z', 'barra-shopping-sul'),
+    sourceRowAt(1, '2026-09-07T00:00:00.123001Z', 'novo-hamburgo'),
     sourceRowAt(3, '2026-09-07T00:00:00.124000Z'),
   ]
   const source = fakePool({ rows })
@@ -363,14 +386,14 @@ test('keeps the exact PostgreSQL microsecond cursor for keyset pagination', asyn
   })
   const summary = await currentRunner.run({ intent: ATENDIMENTO_CRM_PROJECTION_BACKFILL_RUN_INTENT })
   const cursorParameters = source.calls
-    .filter((call) => call.sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL)
-    .map((call) => call.params[0])
+    .filter((call) => call.sql === SOURCE.nextPageSql)
+    .map((call) => call.params.slice(0, 3))
 
   assert.equal(summary.deliveredCount, 3)
   assert.equal(deliveries.deliveries().length, 3)
   assert.deepEqual(cursorParameters, [
-    '2026-09-07T00:00:00.123001Z',
-    '2026-09-07T00:00:00.123456Z',
+    ['2026-09-07T00:00:00.123001Z', '123e4567-e89b-42d3-a456-000000000001', 'barra-shopping-sul'],
+    ['2026-09-07T00:00:00.123001Z', '123e4567-e89b-42d3-a456-000000000001', 'novo-hamburgo'],
   ])
 })
 
