@@ -25,7 +25,7 @@ Create it for the final merged source SHA, outside Git. Its exact fields are:
 | probeWorker | `skincos-schedule-public-read-probe-staging` |
 | probeOrigin | `https://skincos-schedule-public-read-probe-staging.skincos.workers.dev` |
 | probeLifetimeSeconds | `1800` |
-| expiresAt | ISO UTC expiry within the next 24 hours; allow the whole release/rollback window |
+| expiresAt | ISO UTC expiry within the next 24 hours, with at least 35 minutes remaining when a publication/recovery job starts |
 
 Production also requires `ENABLE_SCHEDULE_PUBLIC_READ_PRODUCTION=true`, the
 normal core deploy flag, active global coordination and the **production**
@@ -76,6 +76,9 @@ probe share `deploy:schedule-public-read-adapter:production`; core retains
 `global:crm-cloudflare-writer` on the production authority. A failed lease stops
 the next mutation, including rollback or cleanup. Reruns after a possibly
 mutating attempt are refused; create a new dispatch with explicit evidence.
+The manifest is also revalidated in each mutating Wrangler step, before the
+existing core migration, and by the fixed resource cleanup/reconciliation CLI.
+Publication jobs are bounded; the initial window reserves time for fallback.
 
 ## Private verifier and cleanup
 
@@ -97,15 +100,35 @@ Absence is read back from Cloudflare. A cleanup error fails the workflow, and
 its protected ownership/checkpoint artifact identifies the precise residual
 resource for reconciliation; self-expiry is not claimed as successful deletion.
 
+If that runner is lost, wait for the probe's fixed 30-minute expiry, then dispatch
+`target=production, operation=reconcile-probe` with the probe owner's exact
+`release_sha`, a fresh protected manifest/digest, and
+`probe_recovery_run_id=<previous failed/cancelled/timed-out run>`. No staging or
+bootstrap artifact is needed for this cleanup-only path. Protected-main
+ancestry, canonical previous workflow/attempt/final status, the exact active
+probe version/owner/source/binding and its expired deadline are checked.
+A new mandatory production lease fences deletion of only that fixed probe;
+remote absence is recorded in `schedule-public-read-probe-recovery-evidence`.
+A running, unexpired, replaced or foreign probe is never removed. Once absence
+is proved, a new disabled dispatch can proceed.
+
 ## Rollback and acceptance
 
-After a potentially mutating candidate promotion, failure of smoke, active
+After a potentially mutating candidate promotion, failure or cancellation of smoke, active
 version readback or core opt-in evidence triggers an explicitly disabled version
-under the same checked lease. The disabled readback uses `!cancelled()` so prior
-failure does not silently suppress verification. No DO state or Schedule data
+under the same checked lease while the runner survives. The fallback and its
+readback explicitly cover cancellation; a forcibly lost runner is not a
+successful rollback and requires a new canonical disabled dispatch. No DO state or Schedule data
 is deleted. Core default production dispatches keep public-read disabled and
-prove the 503 projection; adapter explicit `operation=disable` uses the same
-bootstrap/SHA/manifest prerequisites and private probe.
+prove the 503 projection. Production adapter `operation=disable` requires its
+active source SHA and a fresh manifest, but not expired staging/bootstrap
+artifacts. Every production bootstrap/candidate/disabled version persists the
+source SHA and complete lifecycle-config digest as non-secret metadata. Before
+disabled upload, the recovery path checks that durable metadata against the
+exact 100% active version, existing nonce-guard DO namespace/class, private
+subdomain and fixed core binding. A missing or changed proof fails closed;
+it never treats a mere uploaded version as lifecycle bootstrap. This durable
+rollback proof remains with the active Worker for its whole supported lifetime.
 
 Acceptance requires successful runs plus the sanitized production resource
 evidence: prior Worker versions, active deployment/version identity, correct

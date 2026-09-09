@@ -76,7 +76,7 @@ test('Schedule public-read adapter retains the manual preview and isolated stagi
   assert.match(workflow, /release_sha: \$\{\{ inputs\.release_sha \}\}/)
   assert.match(workflow, /preview_run_id: \$\{\{ inputs\.preview_run_id \}\}/)
   assert.match(workflow, /bootstrap_run_id:/)
-  assert.match(workflow, /options: \[bootstrap-disabled, deploy, disable\]/)
+  assert.match(workflow, /options: \[bootstrap-disabled, deploy, disable, reconcile-probe\]/)
   assert.match(workflow, /bootstrap-disabled creates its own proof and must not accept a prior bootstrap run id/)
   assert.match(workflow, /deploy and disable require the successful disabled bootstrap run id before any versions upload/)
   assert.match(workflow, /environment: preview/)

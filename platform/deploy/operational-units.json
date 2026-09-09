@@ -179,7 +179,7 @@
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY", "SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY", "SCHEDULE_PUBLIC_READ_PROBE_HMAC_KEY"],
       "migrationPaths": ["workforce/schedule/public-read.wrangler.toml"],
       "environments": ["preview", "staging", "production"],
-      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "stagingOnly": false, "bootstrap": "same-SHA canonical bootstrap-disabled per target; production requires protected manifest and authenticated ephemeral probe", "rollback": "disabled version under the exact environment lease; production probe cleanup must be verified"}
+      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "stagingOnly": false, "bootstrap": "same-SHA canonical bootstrap-disabled per target; production persists durable source/lifecycle proof for long-lived disable", "rollback": "disabled version under exact environment lease and fresh manifest; expired residual probe has canonical exact-owner reconciliation"}
     },
     {
       "id": "timekeeping",

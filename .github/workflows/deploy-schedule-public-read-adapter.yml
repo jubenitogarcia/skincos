@@ -37,12 +37,16 @@ on:
         description: "SHA-256 of the protected production manifest"
         required: false
         type: string
+      probe_recovery_run_id:
+        description: "Completed unsuccessful canonical run owning an expired residual verifier; reconcile-probe only"
+        required: false
+        type: string
       operation:
         description: "Bootstrap a disabled Durable Object, deploy an HMAC-gated candidate, or fail closed by disabling it"
         required: true
         default: deploy
         type: choice
-        options: [bootstrap-disabled, deploy, disable]
+        options: [bootstrap-disabled, deploy, disable, reconcile-probe]
 
 concurrency:
   group: deploy-schedule-public-read-adapter-${{ inputs.target }}
@@ -54,6 +58,7 @@ permissions:
 
 jobs:
   promotion:
+    if: ${{ !(inputs.target == 'production' && (inputs.operation == 'disable' || inputs.operation == 'reconcile-probe')) }}
     uses: ./.github/workflows/promotion-gate.yml
     with:
       unit: schedule-public-read-adapter
@@ -89,7 +94,7 @@ jobs:
           grep -q 'workers_dev = true' workforce/schedule/public-read.wrangler.toml || { echo 'isolated staging workers.dev surface is missing'; exit 1; }
 
       - name: Run isolated adapter contract tests
-        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-ready-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js workforce/schedule/public-read-production.test.js
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-ready-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js workforce/schedule/public-read-production.test.js workforce/schedule/public-read-production-recovery-workflow.test.js workforce/schedule/public-read-production-reconcile.test.js
 
       - name: Validate staging adapter configuration without a remote mutation
         run: npx --yes wrangler@4.120.0 deploy --dry-run --config workforce/schedule/public-read.wrangler.toml --env staging --outdir "$RUNNER_TEMP/schedule-public-read-adapter-preview"
@@ -142,7 +147,7 @@ jobs:
           grep -q 'service = "skincos-escala-api-staging"' workforce/schedule/public-read.wrangler.toml || { echo 'adapter must bind only the isolated staging Schedule core'; exit 1; }
 
       - name: Run isolated adapter contract tests
-        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-ready-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js workforce/schedule/public-read-production.test.js
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-disabled-health.test.js workforce/schedule/public-read-ready-health.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js workforce/schedule/public-read-production.test.js workforce/schedule/public-read-production-recovery-workflow.test.js workforce/schedule/public-read-production-reconcile.test.js
 
       - name: Verify exact Escala staging predecessor for candidate enablement
         if: ${{ inputs.operation == 'deploy' }}
@@ -575,13 +580,13 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
 
   production:
-    needs: promotion
-    if: ${{ inputs.target == 'production' }}
+    needs: [promotion, recovery-source]
+    if: ${{ !cancelled() && inputs.target == 'production' && inputs.operation != 'reconcile-probe' && (needs.promotion.result == 'success' || needs.recovery-source.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
     env:
-      RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+      RELEASE_SHA: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST: ${{ vars.SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST }}
@@ -593,7 +598,7 @@ jobs:
       - name: Checkout immutable private adapter and probe
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ needs.promotion.outputs.source_sha }}
+          ref: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -611,12 +616,14 @@ jobs:
           [[ "$DISPATCH_REF" == 'refs/heads/main' && "$RUN_ATTEMPT" == '1' ]] || exit 1
           [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || exit 1
           [[ "$OPERATION" == 'bootstrap-disabled' || "$OPERATION" == 'deploy' || "$OPERATION" == 'disable' ]] || exit 1
-          if [[ "$OPERATION" == 'bootstrap-disabled' ]]; then
+          if [[ "$OPERATION" == 'bootstrap-disabled' || "$OPERATION" == 'disable' ]]; then
             [[ -z "$BOOTSTRAP_RUN_ID" ]] || exit 1
           else
             [[ "$BOOTSTRAP_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
           fi
           node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          node workforce/schedule/scripts/public-read-production-release-guard.mjs window
+          node workforce/schedule/scripts/public-read-production-release-guard.mjs lifecycle >> "$GITHUB_ENV"
           node --input-type=module <<'NODE'
           const own = String(process.env.SCHEDULE_PUBLIC_READ_PROBE_HMAC_KEY || '').trim()
           const edge = String(process.env.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY || '').trim()
@@ -627,8 +634,9 @@ jobs:
             || [edge, core, actor].some(key => key.length < 32) || new Set([edge, core, actor]).size !== 3)) throw new Error('production capability custody invalid')
           NODE
       - name: Test private probe and production release contracts
-        run: node --test workforce/schedule/public-read-production.test.js
+        run: node --test workforce/schedule/public-read-production.test.js workforce/schedule/public-read-production-recovery-workflow.test.js workforce/schedule/public-read-production-reconcile.test.js
       - name: Verify adapter staging predecessor is a completed successful canonical dispatch
+        if: ${{ inputs.operation != 'disable' }}
         env:
           GH_TOKEN: ${{ github.token }}
           STAGING_RUN_ID: ${{ inputs.staging_run_id }}
@@ -640,11 +648,14 @@ jobs:
           CORE_PRODUCTION_RUN_ID: ${{ inputs.core_production_run_id }}
         run: node workforce/schedule/scripts/public-read-production-predecessor.mjs core-production
       - name: Verify exact disabled production bootstrap before versions upload
-        if: ${{ inputs.operation != 'bootstrap-disabled' }}
+        if: ${{ inputs.operation == 'deploy' }}
         env:
           GH_TOKEN: ${{ github.token }}
           BOOTSTRAP_RUN_ID: ${{ inputs.bootstrap_run_id }}
         run: node workforce/schedule/scripts/public-read-production-predecessor.mjs adapter-bootstrap
+      - name: Verify durable active lifecycle proof for long-lived disabled rollback
+        if: ${{ inputs.operation == 'disable' }}
+        run: node workforce/schedule/scripts/public-read-production-release-guard.mjs disable
       - name: Validate private production configs without mutation
         run: |
           set -euo pipefail
@@ -663,7 +674,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Check production adapter lease before disabled DO bootstrap
@@ -677,14 +688,15 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Bootstrap private production adapter disabled with its DO lifecycle
         if: ${{ inputs.operation == 'bootstrap-disabled' }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.120.0 deploy --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "schedule-production-bootstrap-${GITHUB_RUN_ID}" --message "schedule-public-read-adapter:production-bootstrap-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          npx --yes wrangler@4.120.0 deploy --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_SOURCE_SHA:$RELEASE_SHA" --var "SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256:$SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256" --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "schedule-production-bootstrap-${GITHUB_RUN_ID}" --message "schedule-public-read-adapter:production-bootstrap-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
       - name: Establish absent ephemeral probe and exact run ownership
         id: probe-prepare
         run: node workforce/schedule/scripts/public-read-production-resources.mjs prepare
@@ -699,13 +711,14 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Deploy authenticated expiring probe with fixed private binding
         id: probe-create
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           expires_at_ms="$(node -e 'process.stdout.write(String(Date.now() + 1800000))')"
           node --input-type=module <<'NODE' | npx --yes wrangler@4.120.0 deploy --config workforce/schedule/public-read-production-probe.wrangler.toml --var "PROBE_SOURCE_SHA:$RELEASE_SHA" --var "PROBE_EXPIRES_AT_MS:$expires_at_ms" --secrets-file /dev/stdin --tag "schedule-production-probe-${GITHUB_RUN_ID}" --message "schedule-public-read-probe:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
           process.stdout.write(JSON.stringify({
@@ -724,7 +737,7 @@ jobs:
       - name: Write private production bootstrap evidence
         if: ${{ inputs.operation == 'bootstrap-disabled' }}
         env:
-          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          PROMOTION_SOURCE_SHA: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           SCHEDULE_PUBLIC_READ_TARGET: production
         run: node workforce/schedule/scripts/public-read-bootstrap-evidence.mjs write "$RUNNER_TEMP/schedule-public-read-adapter-bootstrap/schedule-public-read-adapter-bootstrap-evidence.json" workforce/schedule/public-read.wrangler.toml
       - name: Upload private production bootstrap evidence
@@ -753,7 +766,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Upload private production adapter candidate and both capabilities
@@ -761,9 +774,10 @@ jobs:
         if: ${{ inputs.operation == 'deploy' }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           candidate_tag="schedule-public-read-production-${GITHUB_RUN_ID}"
           echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
-          node --input-type=module <<'NODE' | npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:true" --secrets-file /dev/stdin --tag "$candidate_tag" --message "schedule-public-read-adapter:production:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+          node --input-type=module <<'NODE' | npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_SOURCE_SHA:$RELEASE_SHA" --var "SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256:$SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256" --var "SCHEDULE_PUBLIC_READ_ENABLED:true" --secrets-file /dev/stdin --tag "$candidate_tag" --message "schedule-public-read-adapter:production:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
           process.stdout.write(JSON.stringify({
             SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: process.env.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY.trim(),
             SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY.trim(),
@@ -781,7 +795,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Promote private production adapter candidate
@@ -791,6 +805,7 @@ jobs:
           CANDIDATE_TAG: ${{ steps.production-version.outputs.tag }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           [[ -n "$CANDIDATE_TAG" ]] || exit 1
           echo 'mutated=true' >> "$GITHUB_OUTPUT"
           npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/public-read.wrangler.toml --version-tag "${CANDIDATE_TAG}@100%" --yes --message "schedule-public-read-adapter:production:${RELEASE_SHA}:${GITHUB_RUN_ID}"
@@ -819,7 +834,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Upload explicit disabled production adapter version
@@ -827,9 +842,10 @@ jobs:
         if: ${{ inputs.operation == 'disable' }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           disabled_tag="schedule-production-manual-disabled-${GITHUB_RUN_ID}"
           echo "tag=$disabled_tag" >> "$GITHUB_OUTPUT"
-          npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "schedule-public-read-adapter:production-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+          npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_SOURCE_SHA:$RELEASE_SHA" --var "SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256:$SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256" --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "schedule-public-read-adapter:production-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
 
       - name: Check private production adapter lease before explicit disabled deployment
         if: ${{ inputs.operation == 'disable' }}
@@ -842,7 +858,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Promote explicit disabled production adapter version
@@ -851,6 +867,7 @@ jobs:
           DISABLED_TAG: ${{ steps.production-disabled-version.outputs.tag }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           [[ -n "$DISABLED_TAG" ]] || exit 1
           npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/public-read.wrangler.toml --version-tag "${DISABLED_TAG}@100%" --yes --message "schedule-public-read-adapter:production-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
       - name: Prove explicit private production disabled rollback
@@ -864,7 +881,7 @@ jobs:
         run: node workforce/schedule/scripts/public-read-production-resources.mjs readback adapter disabled
       - name: Check private production adapter lease before automatic disabled upload
         id: production-fallback-upload-lease
-        if: ${{ failure() && steps.production-candidate.outputs.mutated == 'true' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-candidate.outputs.mutated == 'true' }}
         uses: ./.github/actions/global-coordination-check
         with:
           required: 'true'
@@ -874,21 +891,22 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Upload automatic disabled private adapter version
         id: production-fallback-version
-        if: ${{ failure() && steps.production-fallback-upload-lease.outcome == 'success' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-fallback-upload-lease.outcome == 'success' }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           disabled_tag="schedule-production-fallback-${GITHUB_RUN_ID}"
           echo "tag=$disabled_tag" >> "$GITHUB_OUTPUT"
-          npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "schedule-public-read-adapter:production-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+          npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/public-read.wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_SOURCE_SHA:$RELEASE_SHA" --var "SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256:$SCHEDULE_PUBLIC_READ_LIFECYCLE_SHA256" --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "schedule-public-read-adapter:production-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
 
       - name: Check private production adapter lease before automatic disabled deployment
         id: production-fallback-deploy-lease
-        if: ${{ failure() && steps.production-fallback-version.outcome == 'success' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-fallback-version.outcome == 'success' }}
         uses: ./.github/actions/global-coordination-check
         with:
           required: 'true'
@@ -898,26 +916,27 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Promote automatic disabled private adapter version
         id: production-fallback
-        if: ${{ failure() && steps.production-fallback-deploy-lease.outcome == 'success' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-fallback-deploy-lease.outcome == 'success' }}
         env:
           DISABLED_TAG: ${{ steps.production-fallback-version.outputs.tag }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           [[ -n "$DISABLED_TAG" ]] || exit 1
           npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/public-read.wrangler.toml --version-tag "${DISABLED_TAG}@100%" --yes --message "schedule-public-read-adapter:production-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
       - name: Prove private production fallback after prior failure
-        if: ${{ !cancelled() && steps.production-fallback.outcome == 'success' }}
+        if: ${{ always() && steps.production-fallback.outcome == 'success' }}
         env:
           SCHEDULE_PUBLIC_READ_SMOKE_MODE: disabled
         run: node workforce/schedule/scripts/public-read-production-probe-smoke.mjs
 
       - name: Read back private production disabled fallback identity
-        if: ${{ !cancelled() && steps.production-fallback.outcome == 'success' }}
+        if: ${{ always() && steps.production-fallback.outcome == 'success' }}
         run: node workforce/schedule/scripts/public-read-production-resources.mjs readback adapter disabled
       - name: Check production adapter lease before exact probe cleanup
         id: probe-cleanup-lease
@@ -931,7 +950,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: deploy:schedule-public-read-adapter:production
           module: schedule-public-read-adapter
-          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          source_sha: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
       - name: Remove only this run probe and prove remote absence
@@ -954,3 +973,115 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
+
+  recovery-source:
+    if: ${{ inputs.target == 'production' && (inputs.operation == 'disable' || inputs.operation == 'reconcile-probe') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST: ${{ vars.SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST }}
+      PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
+    steps:
+      - name: Checkout immutable recovery source without an expiring promotion artifact
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+      - name: Verify protected recovery source and fresh manifest
+        id: source
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "$DISPATCH_REF" == 'refs/heads/main' && "$RUN_ATTEMPT" == '1' && "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || exit 1
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          node workforce/schedule/scripts/public-read-production-release-guard.mjs window
+          echo "source_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+  reconcile-probe:
+    needs: recovery-source
+    if: ${{ inputs.target == 'production' && inputs.operation == 'reconcile-probe' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      RELEASE_SHA: ${{ needs.recovery-source.outputs.source_sha }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST: ${{ vars.SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST }}
+      PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
+      PROBE_RECOVERY_RUN_ID: ${{ inputs.probe_recovery_run_id }}
+    steps:
+      - name: Checkout immutable residual-probe reconciler
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.recovery-source.outputs.source_sha }}
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+      - name: Verify previous failed canonical run and current recovery window
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-release-guard.mjs window
+          node workforce/schedule/scripts/public-read-production-predecessor.mjs probe-recovery
+      - name: Acquire residual-probe recovery lease
+        id: recovery-lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: deploy:schedule-public-read-adapter:production
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.recovery-source.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/schedule-production-recovery-lease.json
+      - name: Check production lease before exact residual probe reconciliation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: deploy:schedule-public-read-adapter:production
+          module: schedule-public-read-adapter
+          source_sha: ${{ needs.recovery-source.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/schedule-production-recovery-lease.json
+      - name: Reconcile only expired exact-owner probe and prove remote absence
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          node workforce/schedule/scripts/public-read-production-resources.mjs reconcile
+      - name: Retain exact residual-probe recovery evidence
+        if: ${{ always() && steps.recovery-lease.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: schedule-public-read-probe-recovery-evidence
+          path: ${{ runner.temp }}/schedule-production-probe-recovery*.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Release residual-probe recovery lease
+        if: ${{ always() && steps.recovery-lease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          proof_file: ${{ runner.temp }}/schedule-production-recovery-lease.json

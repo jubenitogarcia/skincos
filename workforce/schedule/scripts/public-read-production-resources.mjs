@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { manifestFromEnv, PRODUCTION_RESOURCES, assertProbeOwnership, assertProductionReadback } from './public-read-production-manifest.mjs'
+import { manifestFromEnv, PRODUCTION_RESOURCES, assertProbeOwnership, assertProbeRecovery, assertProductionReadback } from './public-read-production-manifest.mjs'
 import { boundedProductionJson } from './public-read-production-http.mjs'
 
 async function main() {
@@ -20,7 +20,10 @@ async function main() {
     const response = await fetch(`https://api.cloudflare.com/client/v4${path}${suffix}`, {
       method, headers: { Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` }, signal: AbortSignal.timeout(15_000), redirect: 'error',
     })
-    if (response.status === 404 && absentAllowed) return null
+    if (response.status === 404 && absentAllowed) {
+      void response.body?.cancel().catch(() => {})
+      return null
+    }
     const body = await boundedProductionJson(response)
     if (!response.ok || body?.success !== true) throw new Error('probe_resource_operation_failed')
     return body.result
@@ -29,6 +32,28 @@ async function main() {
     const versionId = state?.deployments?.[0]?.versions?.[0]?.version_id
     if (!/^[0-9a-f-]{36}$/.test(versionId || '')) throw new Error('production_version_invalid')
     return api(`/versions/${versionId}`)
+  }
+  if (operation === 'reconcile') {
+    const recoveryRunId = process.env.PROBE_RECOVERY_RUN_ID
+    if (!/^[1-9][0-9]*$/.test(recoveryRunId || '') || recoveryRunId === runId || surface || mode) throw new Error('probe_recovery_identity_invalid')
+    // No marker from a previous runner is trusted or required. Live immutable
+    // version metadata must identify the exact prior run, source and binding.
+    const state = await api('/deployments', 'GET', true)
+    let proof = null
+    if (state !== null) {
+      proof = assertProbeRecovery(state.deployments?.[0], await currentVersion(state), {
+        sourceSha: manifest.sourceSha, runId, recoveryRunId,
+      })
+      await api('', 'DELETE')
+    }
+    if (await api('/settings', 'GET', true) !== null) throw new Error('probe_reconcile_readback_failed')
+    writeFileSync(join(process.env.RUNNER_TEMP, 'schedule-production-probe-recovery.json'), JSON.stringify({
+      contract: 'schedule-production-probe-recovery/v1', sourceSha: manifest.sourceSha, runId, recoveryRunId,
+      worker, versionId: proof?.versionId ?? null, expiresAtMs: proof?.expiresAtMs ?? null,
+      removed: state !== null, absent: true, cleanupReadback: true,
+    }), { mode: 0o600, flag: 'wx' })
+    console.log('{"ok":true,"probeReconciled":true,"cleanupReadback":true}')
+    return
   }
   if (operation === 'predecessor') {
     const predecessorRunId = process.env.CORE_PRODUCTION_RUN_ID

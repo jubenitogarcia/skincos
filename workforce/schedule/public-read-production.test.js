@@ -189,7 +189,7 @@ test('production mutations have exact-target mandatory lease checks, rollback an
         assert.equal(syntax.status, 0, syntax.stderr)
       }
     }
-    assert.match(document, /!cancelled\(\) && steps\.production-fallback\.outcome == 'success'/)
+    assert.match(document, /always\(\) && steps\.production-fallback\.outcome == 'success'/)
     assert.match(document, /SCHEDULE_PUBLIC_READ_ENABLED:false/)
     assert.match(document, /--secrets-file \/dev\/stdin/)
   }

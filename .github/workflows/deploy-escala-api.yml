@@ -232,8 +232,15 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENABLE_SCHEDULE_PUBLIC_READ: ${{ inputs.enable_schedule_public_read && 'true' || 'false' }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST: ${{ vars.SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST }}
+          PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
         run: |
           set -euo pipefail
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' ]]; then
+            node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          fi
           npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config workforce/schedule/wrangler.toml
 
       - name: Check Escala API deployment lease before production deployment
@@ -533,6 +540,7 @@ jobs:
         run: |
           set -euo pipefail
           node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          node workforce/schedule/scripts/public-read-production-release-guard.mjs window
           node --input-type=module <<'NODE'
           const actor = String(process.env.ESCALA_ACTOR_HMAC_KEY || '').trim()
           const core = String(process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY || '').trim()
@@ -571,6 +579,7 @@ jobs:
         id: production-version
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           candidate_tag="escala-api-production-public-read-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
           node --input-type=module <<'NODE' | npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:true" --secrets-file /dev/stdin --tag "$candidate_tag" --message "escala-api:production-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
@@ -599,6 +608,7 @@ jobs:
           CANDIDATE_TAG: ${{ steps.production-version.outputs.tag }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           [[ -n "$CANDIDATE_TAG" ]] || exit 1
           echo 'mutated=true' >> "$GITHUB_OUTPUT"
           npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/wrangler.toml --version-tag "${CANDIDATE_TAG}@100%" --yes --message "escala-api:production-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}"
@@ -629,7 +639,7 @@ jobs:
 
       - name: Check production core lease before disabled fallback upload
         id: production-fallback-upload-lease
-        if: ${{ failure() && steps.production-candidate.outputs.mutated == 'true' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-candidate.outputs.mutated == 'true' }}
         uses: ./.github/actions/global-coordination-check
         with:
           required: 'true'
@@ -644,16 +654,17 @@ jobs:
 
       - name: Upload disabled production core fallback
         id: production-fallback-version
-        if: ${{ failure() && steps.production-candidate.outputs.mutated == 'true' && steps.production-fallback-upload-lease.outcome == 'success' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-candidate.outputs.mutated == 'true' && steps.production-fallback-upload-lease.outcome == 'success' }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           disabled_tag="escala-api-production-public-read-disabled-${GITHUB_RUN_ID}"
           echo "tag=$disabled_tag" >> "$GITHUB_OUTPUT"
           npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "escala-api:production-schedule-public-read-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
 
       - name: Check production core lease before disabled fallback deployment
         id: production-fallback-deploy-lease
-        if: ${{ failure() && steps.production-fallback-version.outcome == 'success' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-fallback-version.outcome == 'success' }}
         uses: ./.github/actions/global-coordination-check
         with:
           required: 'true'
@@ -668,22 +679,23 @@ jobs:
 
       - name: Promote disabled production core fallback
         id: production-fallback
-        if: ${{ failure() && steps.production-fallback-deploy-lease.outcome == 'success' }}
+        if: ${{ always() && (failure() || cancelled()) && steps.production-fallback-deploy-lease.outcome == 'success' }}
         env:
           DISABLED_TAG: ${{ steps.production-fallback-version.outputs.tag }}
         run: |
           set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
           [[ -n "$DISABLED_TAG" ]] || exit 1
           npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/wrangler.toml --version-tag "${DISABLED_TAG}@100%" --yes --message "escala-api:production-schedule-public-read-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
       - name: Prove production core disabled fallback after prior failure
-        if: ${{ !cancelled() && steps.production-fallback.outcome == 'success' }}
+        if: ${{ always() && steps.production-fallback.outcome == 'success' }}
         env:
           SCHEDULE_PUBLIC_READ_CORE_TARGET: production
           SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL: https://escala-api.skincos.com.br
           SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE: disabled
         run: node workforce/schedule/scripts/public-read-core-staging-smoke.mjs
       - name: Read back production core disabled fallback identity
-        if: ${{ !cancelled() && steps.production-fallback.outcome == 'success' }}
+        if: ${{ always() && steps.production-fallback.outcome == 'success' }}
         run: node workforce/schedule/scripts/public-read-production-resources.mjs readback core disabled
       - name: Retain sanitized production core checkpoint and readback
         if: ${{ always() && steps.production-lease.outcome == 'success' }}

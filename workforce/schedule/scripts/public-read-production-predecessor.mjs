@@ -5,10 +5,10 @@ import { pathToFileURL } from 'node:url'
 import { verifySchedulePublicReadCoreOptInEvidence } from './public-read-core-opt-in-evidence.mjs'
 import { lifecycleConfigDigest, verifySchedulePublicReadAdapterBootstrapEvidence } from './public-read-bootstrap-evidence.mjs'
 
-export function verifyCanonicalRun(workflow, run, { workflowPath, runId, repository = 'jubenitogarcia/skincos' }) {
+export function verifyCanonicalRun(workflow, run, { workflowPath, runId, repository = 'jubenitogarcia/skincos', allowedConclusions = ['success'] }) {
   if (workflow?.state !== 'active' || workflow.path !== workflowPath || run?.workflow_id !== workflow.id
     || ![workflowPath, `${workflowPath}@refs/heads/main`].includes(run.path)
-    || String(run.id) !== runId || run.status !== 'completed' || run.conclusion !== 'success' || run.run_attempt !== 1
+    || String(run.id) !== runId || run.status !== 'completed' || !allowedConclusions.includes(run.conclusion) || run.run_attempt !== 1
     || run.event !== 'workflow_dispatch' || run.head_branch !== 'main'
     || run.repository?.full_name !== repository || run.head_repository?.full_name !== repository) {
     throw new Error('schedule_production_predecessor_invalid')
@@ -29,6 +29,7 @@ async function main() {
     'core-staging': ['deploy-escala-api.yml', process.env.STAGING_RUN_ID, 'staging'],
     'core-production': ['deploy-escala-api.yml', process.env.CORE_PRODUCTION_RUN_ID, 'production'],
     'adapter-staging': ['deploy-schedule-public-read-adapter.yml', process.env.STAGING_RUN_ID, 'staging'],
+    'probe-recovery': ['deploy-schedule-public-read-adapter.yml', process.env.PROBE_RECOVERY_RUN_ID, 'production'],
     'adapter-bootstrap': ['deploy-schedule-public-read-adapter.yml', process.env.BOOTSTRAP_RUN_ID, 'production'],
   }
   const [workflowName, runId, target] = modes[mode] || []
@@ -41,7 +42,13 @@ async function main() {
   const gh = args => execFileSync('gh', args, { encoding: 'utf8', timeout: 60_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
   const workflowPath = `.github/workflows/${workflowName}`
   verifyCanonicalRun(JSON.parse(gh(['api', `repos/${repository}/actions/workflows/${workflowName}`])),
-    JSON.parse(gh(['api', `repos/${repository}/actions/runs/${runId}`])), { workflowPath, runId })
+    JSON.parse(gh(['api', `repos/${repository}/actions/runs/${runId}`])), { workflowPath, runId,
+      ...(mode === 'probe-recovery' ? { allowedConclusions: ['failure', 'cancelled', 'timed_out'] } : {}) })
+  if (mode === 'probe-recovery') {
+    if (runId === process.env.GITHUB_RUN_ID) throw new Error('schedule_production_predecessor_input_invalid')
+    console.log('{"ok":true,"unsuccessfulProbeOwnerVerified":true}')
+    return
+  }
   const artifact = mode === 'adapter-staging' ? 'promotion-evidence-schedule-public-read-adapter'
     : mode === 'adapter-bootstrap' ? 'schedule-public-read-adapter-bootstrap-evidence' : 'schedule-public-read-core-opt-in-evidence'
   gh(['run', 'download', runId, '--repo', repository, '--name', artifact, '--dir', root])

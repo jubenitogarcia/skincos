@@ -14,6 +14,47 @@ export function assertProbeOwnership(deployment, { sourceSha, runId }, version =
     || deployment.versions?.length !== 1 || deployment.versions[0].percentage !== 100
     || (version && version.id !== deployment.versions[0].version_id)) throw new Error('probe_ownership_not_verified')
 }
+// Cross-run deletion is narrower than normal same-run cleanup. Only an expired
+// fixed verifier from the explicitly named predecessor can be reclaimed. The
+// workflow separately proves the predecessor's canonical failed run and owns
+// the fresh global surface lease immediately around the mutation.
+export function assertProbeRecovery(deployment, version, { sourceSha, runId, recoveryRunId, now = Date.now() }) {
+  const fail = () => { throw new Error('probe_recovery_not_verified') }
+  const runPattern = /^[1-9][0-9]*$/
+  const versionPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+  if (typeof sourceSha !== 'string' || !/^[0-9a-f]{40}$/.test(sourceSha) || typeof runId !== 'string' || typeof recoveryRunId !== 'string'
+    || !runPattern.test(runId) || !runPattern.test(recoveryRunId) || runId === recoveryRunId
+    || !Number.isSafeInteger(now) || now < 0 || !Array.isArray(deployment?.versions)
+    || deployment.versions.length !== 1 || deployment.versions[0]?.percentage !== 100
+    || !versionPattern.test(version?.id || '') || version.id !== deployment.versions[0]?.version_id) fail()
+  const message = `schedule-public-read-probe:${sourceSha}:${recoveryRunId}`
+  const deploymentMessage = deployment?.annotations?.['workers/message']
+  const versionMessage = version?.annotations?.['workers/message']
+  if ((!deploymentMessage && !versionMessage) || (deploymentMessage !== undefined && deploymentMessage !== message)
+    || (versionMessage !== undefined && versionMessage !== message)) fail()
+  const bindings = version?.resources?.bindings
+  const expectedBindings = new Map([
+    ['SCHEDULE_PUBLIC_READ', 'service'], ['PROBE_SOURCE_SHA', 'plain_text'], ['PROBE_EXPIRES_AT_MS', 'plain_text'],
+    ['SCHEDULE_PUBLIC_READ_PROBE_HMAC_KEY', 'secret_text'], ['SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY', 'secret_text'],
+  ])
+  if (!Array.isArray(bindings)) fail()
+  const names = new Set()
+  for (const binding of bindings) {
+    if (!binding || !expectedBindings.has(binding.name) || expectedBindings.get(binding.name) !== binding.type || names.has(binding.name)) fail()
+    names.add(binding.name)
+  }
+  const services = bindings.filter(binding => binding.type === 'service')
+  if (services.length !== 1 || services[0].name !== 'SCHEDULE_PUBLIC_READ'
+    || services[0].service !== PRODUCTION_RESOURCES.adapterWorker
+    || (services[0].environment !== undefined && services[0].environment !== 'production')
+    || (services[0].entrypoint !== undefined && services[0].entrypoint !== null && services[0].entrypoint !== '')) fail()
+  if (bindings.find(binding => binding.name === 'PROBE_SOURCE_SHA')?.text !== sourceSha) fail()
+  const expiry = bindings.find(binding => binding.name === 'PROBE_EXPIRES_AT_MS')?.text
+  if (typeof expiry !== 'string' || !/^[1-9][0-9]{12}$/.test(expiry)
+    || !Number.isSafeInteger(Number(expiry)) || Number(expiry) > now) fail()
+  return Object.freeze({ sourceSha, runId, recoveryRunId, worker: PRODUCTION_RESOURCES.probeWorker,
+    versionId: version.id, expiresAtMs: Number(expiry) })
+}
 export function assertProductionReadback(deployment, version, { surface, mode, sourceSha, runId }) {
   const prefix = surface === 'core' ? `escala-api:production-schedule-public-read${mode === 'disabled' ? '-disabled' : ''}`
     : `schedule-public-read-adapter:production${mode === 'bootstrap-disabled' ? '-bootstrap-disabled' : mode === 'disabled' ? '-disabled' : ''}`
