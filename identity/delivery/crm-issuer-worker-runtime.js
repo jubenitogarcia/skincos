@@ -243,11 +243,17 @@ function custodyProofCacheKey(environment, kid, activePublicJwk) {
   return JSON.stringify([environment, kid, activePublicJwk.kty, activePublicJwk.crv, activePublicJwk.x, activePublicJwk.alg, activePublicJwk.use]);
 }
 
-function cacheVerifiedSigner({ environment, kid, privateKey, activePublicJwk, cryptoErrorCode }) {
+function cacheVerifiedSigner({ environment, kid, activePublicJwk, loadPrivateKey, cryptoErrorCode }) {
+  if (typeof loadPrivateKey !== 'function') throw new TypeError('IDENTITY_PRIVATE_KEY_LOADER_INVALID');
   const cacheKey = custodyProofCacheKey(environment, kid, activePublicJwk);
   const existing = verifiedSignerByActiveKey.get(cacheKey);
   if (existing) return existing;
-  const pending = createVerifiedSigner(privateKey, activePublicJwk, cryptoErrorCode);
+  // Check the cache before touching staging's serialised private JWK. That
+  // keeps public-key refreshes cheap and, more importantly, lets the request
+  // handler authenticate an issue request before its first private-key import.
+  const pending = Promise.resolve()
+    .then(loadPrivateKey)
+    .then((privateKey) => createVerifiedSigner(privateKey, activePublicJwk, cryptoErrorCode));
   verifiedSignerByActiveKey.set(cacheKey, pending);
   while (verifiedSignerByActiveKey.size > MAX_CACHED_CUSTODY_PROOFS) {
     verifiedSignerByActiveKey.delete(verifiedSignerByActiveKey.keys().next().value);
@@ -305,16 +311,6 @@ export function createIdentityCrmIssuerWorker({
         const activeJwk = parsePublicJwk(env[names.publicJwk]);
         return Object.freeze({ activeJwk, keys: Object.freeze([{ ...activeJwk, kid }]) });
       })();
-    const privateKey = names.hasSigningKey
-      ? env[names.signingKey]
-      : await importPrivateKey(parsePrivateJwk(env[names.privateJwk]), errorCodes.crypto);
-    const signer = await cacheVerifiedSigner({
-      environment,
-      kid,
-      privateKey,
-      activePublicJwk: publicKeyRing.activeJwk,
-      cryptoErrorCode: errorCodes.crypto,
-    });
     if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
     let callerMaterial = null;
     if (callerConfig && env[callerConfig.enabled] === 'true') {
@@ -331,10 +327,23 @@ export function createIdentityCrmIssuerWorker({
     if (callerConfig?.required && !callerMaterial) fail(errorCodes.custody);
     return Object.freeze({
       kid,
-      signer,
+      activePublicJwk: publicKeyRing.activeJwk,
       publicKeys: publicKeyRing.keys,
       requestHmac: env[names.requestHmac],
       caller: callerMaterial,
+    });
+  }
+
+  function loadSigner(env, material) {
+    const loadPrivateKey = names.hasSigningKey
+      ? () => env[names.signingKey]
+      : () => importPrivateKey(parsePrivateJwk(env[names.privateJwk]), errorCodes.crypto);
+    return cacheVerifiedSigner({
+      environment,
+      kid: material.kid,
+      activePublicJwk: material.activePublicJwk,
+      loadPrivateKey,
+      cryptoErrorCode: errorCodes.crypto,
     });
   }
 
@@ -376,6 +385,14 @@ export function createIdentityCrmIssuerWorker({
     }
 
     if (isPublicKeysRequest) {
+      // Publication remains coupled to a verified signer, but cache lookup
+      // happens before a staging JWK import. A public endpoint never needs to
+      // parse private material more than once per active key/isolate.
+      try {
+        await loadSigner(env, material);
+      } catch {
+        return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: errorCodes.custody }, 503);
+      }
       if (request.method === 'HEAD') return noContent(200, { 'cache-control': 'no-store' });
       return publicKeyResponse(material);
     }
@@ -403,8 +420,11 @@ export function createIdentityCrmIssuerWorker({
     }
 
     try {
+      // Do not import the staging private JWK until the caller HMAC has been
+      // verified. Production's non-extractable key follows the same order.
+      const signer = await loadSigner(env, material);
       const payload = assertPayloadShape(parseJson(rawBody, 'IDENTITY_ISSUE_PAYLOAD_INVALID'));
-      const issuer = await createEnabledIssuer(material);
+      const issuer = await createEnabledIssuer({ ...material, signer });
       const result = await issuer.issue({
         identity: payload.identity,
         request: {
