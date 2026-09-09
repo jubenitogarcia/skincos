@@ -91,6 +91,11 @@
       "purpose": "Serializes the isolated Schedule public-read staging adapter only; it is not authority to publish the Schedule core."
     },
     {
+      "id": "schedule-public-read-adapter-production-writer",
+      "resource": "deploy:schedule-public-read-adapter:production",
+      "purpose": "Private production adapter and exact ephemeral verifier only; never the Schedule core."
+    },
+    {
       "id": "ponto-waf-writer",
       "resource": "cloudflare:ponto-waf:production",
       "purpose": "Ponto WAF ruleset mutation authority."
@@ -178,6 +183,13 @@
       "mutationWorkflows": [
         ".github/workflows/deploy-schedule-public-read-adapter.yml"
       ]
+    },
+    {
+      "id": "schedule-public-read-adapter-production",
+      "platform": "cloudflare-worker-durable-object",
+      "canonicalDeployWorkflow": ".github/workflows/deploy-schedule-public-read-adapter.yml",
+      "coordinationGroup": "schedule-public-read-adapter-production-writer",
+      "mutationWorkflows": [".github/workflows/deploy-schedule-public-read-adapter.yml"]
     },
     {
       "id": "meta-ads-report-worker",
