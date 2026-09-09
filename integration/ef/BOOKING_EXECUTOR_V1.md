@@ -83,6 +83,15 @@ previous browser request reached EF. No recovered row triggers another booking.
 At 30 minutes pending, readback becomes `manual_review`; queued work rechecks its
 age and state **after** acquiring the execution lock before making any EF call.
 Graceful close stops admission and retains ownership until all callbacks exit.
+Private callbacks are non-daemon threads, so orderly interpreter shutdown waits
+for an active callback instead of terminating its browser operation mid-submit.
+Forced process termination remains uncertain and is recovered as `manual_review`.
+
+Only the private adapter opts into strict slot readback: a reopened event modal
+must match the patient/service and expose the exact requested date, start and
+end. Missing date/time fields, whole-agenda text matches and readback exceptions
+cannot produce a durable `confirmed`. Legacy callers keep their existing success
+behavior, but do not set the new strict `verifiedInAgenda` flag.
 
 Do not delete, truncate, restore an older copy of, or switch the ledger when
 rolling back source: losing delivery history permits duplicate appointments.

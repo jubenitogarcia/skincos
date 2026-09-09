@@ -940,7 +940,7 @@ def _calendar_event_candidate_score(element, request: BookingRequest) -> int:
     return score
 
 
-def _verify_booking_in_date_candidates(driver: WebDriver, request: BookingRequest) -> bool:
+def _verify_booking_in_date_candidates(driver: WebDriver, request: BookingRequest, *, require_slot_match: bool = False) -> bool:
     candidates = []
     for element in _calendar_events_for_date(driver, request.appointment_date):
         try:
@@ -956,7 +956,7 @@ def _verify_booking_in_date_candidates(driver: WebDriver, request: BookingReques
         if not _real_click(driver, element):
             continue
         try:
-            if _verify_booking_modal_fields(driver, request):
+            if _verify_booking_modal_fields(driver, request, require_slot_match=require_slot_match):
                 _close_booking_sheet(driver)
                 return True
         except Exception:
@@ -985,7 +985,7 @@ def _close_booking_sheet(driver: WebDriver) -> None:
             continue
 
 
-def _verify_booking_modal_fields(driver: WebDriver, request: BookingRequest) -> bool:
+def _verify_booking_modal_fields(driver: WebDriver, request: BookingRequest, *, require_slot_match: bool = False) -> bool:
     dialog = _find_booking_sheet(driver, timeout=10)
 
     expected_name = _normalize_spaces(request.client_name)
@@ -1016,6 +1016,10 @@ def _verify_booking_modal_fields(driver: WebDriver, request: BookingRequest) -> 
     current_start, current_end = _read_sheet_datetimes(driver, dialog)
     expected_start = datetime.strptime(f"{request.appointment_date} {request.start_time}", "%d/%m/%Y %H:%M")
     expected_end = datetime.strptime(f"{request.appointment_date} {request.end_time}", "%d/%m/%Y %H:%M")
+    # A private durable confirmation requires positive slot evidence. Missing
+    # modal fields are not equivalent to the requested date/start/end.
+    if require_slot_match and (current_start != expected_start or current_end != expected_end):
+        return False
     if current_start and current_start != expected_start:
         return False
     if current_end and current_end != expected_end:
@@ -1082,7 +1086,8 @@ def _ensure_date_visible(driver: WebDriver, target_date: str, *, timeout: int = 
         time.sleep(0.8)
 
 
-def _verify_booking_in_agenda(driver: WebDriver, request: BookingRequest, *, timeout: int = 40) -> bool:
+def _verify_booking_in_agenda(driver: WebDriver, request: BookingRequest, *, timeout: int = 40,
+                              require_slot_match: bool = False) -> bool:
     deadline = time.time() + timeout
     attempts = 0
 
@@ -1092,16 +1097,16 @@ def _verify_booking_in_agenda(driver: WebDriver, request: BookingRequest, *, tim
             _ensure_date_visible(driver, request.appointment_date, timeout=10)
             event = _find_calendar_event(driver, request)
             if event is not None and _real_click(driver, event):
-                if _verify_booking_modal_fields(driver, request):
+                if _verify_booking_modal_fields(driver, request, require_slot_match=require_slot_match):
                     _close_booking_sheet(driver)
                     return True
                 _close_booking_sheet(driver)
-            if _verify_booking_in_date_candidates(driver, request):
+            if _verify_booking_in_date_candidates(driver, request, require_slot_match=require_slot_match):
                 return True
-            if _agenda_text_contains_request(driver, request):
+            if not require_slot_match and _agenda_text_contains_request(driver, request):
                 return True
         except Exception:
-            if _agenda_text_contains_request(driver, request):
+            if not require_slot_match and _agenda_text_contains_request(driver, request):
                 return True
 
         if attempts % 2 == 0:
@@ -2548,6 +2553,7 @@ def execute_booking(
     request: BookingRequest,
     debug_dir: Path,
     timeout_seconds: int = 20,
+    require_verified_slot: bool = False,
     ) -> BookingResult:
     try:
         if not navigate_to_reception(driver, reception_url, timeout_seconds=timeout_seconds):
@@ -2575,7 +2581,7 @@ def execute_booking(
             raise BookingError("booking dialog remained open after submit; likely validation error or missing required field")
 
         log("Booking flow: verifying saved event in agenda")
-        if not _verify_booking_in_agenda(driver, request, timeout=45):
+        if not _verify_booking_in_agenda(driver, request, timeout=45, require_slot_match=require_verified_slot):
             raise BookingError("booking submit returned, but appointment was not found in agenda index for the requested date/time")
 
         return BookingResult(
@@ -2583,7 +2589,7 @@ def execute_booking(
             message="Booking flow submitted and verified in agenda index.",
             request=request,
             current_url=driver.current_url or "",
-            verified_in_agenda=True,
+            verified_in_agenda=require_verified_slot,
         )
     except Exception as exc:
         artifacts = capture_artifacts(driver, output_dir=debug_dir, label="booking_error")

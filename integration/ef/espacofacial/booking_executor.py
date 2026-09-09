@@ -205,7 +205,9 @@ class BookingExecutor:
             raise ExecutorError("booking_executor_configuration_invalid")
         self.ledger, self._secret, self._execute, self._now = ledger, secret, execute, now
         self._allowed_units = frozenset(allowed_units)
-        self._launch = launch or (lambda callback: threading.Thread(target=callback, daemon=True).start())
+        # Orderly interpreter shutdown must wait for an admitted EF call;
+        # close() retains ledger ownership until that callback completes.
+        self._launch = launch or (lambda callback: threading.Thread(target=callback, daemon=False).start())
         self._execution_lock = execution_lock or threading.Lock()
         self._lifecycle_lock = threading.Lock()
         self._closing = False
@@ -311,7 +313,8 @@ def execute_existing_ef_booking(reservation: dict, *, cfg, debug_dir: Path) -> E
                                          unit_name=request.unit_name, timeout_seconds=cfg.timeout_seconds):
                 return ExecutionResult("manual_review")
             result = execute_booking(driver, reception_url=cfg.reception_url, request=request,
-                                     debug_dir=debug_dir, timeout_seconds=cfg.timeout_seconds)
+                                     debug_dir=debug_dir, timeout_seconds=cfg.timeout_seconds,
+                                     require_verified_slot=True)
             return ExecutionResult("confirmed", result.ok is True and result.verified_in_agenda is True and not request.dry_run)
         finally:
             if driver is not None:

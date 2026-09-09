@@ -9,11 +9,14 @@ import http.client
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 from contextlib import ExitStack
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -252,6 +255,18 @@ class ExecutorTests(ExecutorFixture):
             self.assertEqual(db.execute("SELECT status FROM executor_deliveries").fetchone()[0], "manual_review")
         self.execute.assert_not_called()
 
+    def test_expired_callbacks_release_all_capacity_without_polling(self):
+        for index in range(16):
+            self.assertEqual(self.dispatch(encode(delivery_id=f"synthetic-expired-{index}"))[0], 202)
+        self.now += MAX_PENDING_MS
+        for callback in self.queue[:]:
+            callback()
+        self.queue.clear()
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM executor_deliveries WHERE status='manual_review'").fetchone()[0], 16)
+        self.assertEqual(self.dispatch()[0], 202)
+        self.execute.assert_not_called()
+
     def test_terminal_polling_cannot_bypass_live_callback_capacity(self):
         bodies = [encode(delivery_id=f"synthetic-stalled-{index}") for index in range(16)]
         for body in bodies:
@@ -285,6 +300,39 @@ class ExecutorTests(ExecutorFixture):
         self.execute.assert_not_called()
         reopened = ExecutorLedger(self.path)
         reopened.close()
+
+    def test_default_callbacks_are_non_daemon(self):
+        self.executor = BookingExecutor(ledger=self.ledger, secret=SECRET, allowed_units=["barrashoppingsul"],
+                                        execute=self.execute, now=lambda: self.now)
+        with patch("espacofacial.booking_executor.threading.Thread") as thread:
+            self.assertEqual(self.dispatch()[0], 202)
+            self.assertFalse(thread.call_args.kwargs["daemon"])
+            thread.return_value.start.assert_called_once()
+
+    def test_orderly_interpreter_exit_finishes_active_synthetic_callback(self):
+        child_path = Path(self.temp.name) / "child.sqlite"
+        source = """
+import sys, threading, time
+from pathlib import Path
+from test_booking_executor import SECRET, NOW, encode, signed
+from espacofacial.booking_executor import BookingExecutor, ExecutorLedger, ExecutionResult
+entered = threading.Event()
+def execute(_reservation):
+    entered.set()
+    time.sleep(0.3)
+    return ExecutionResult('confirmed', True)
+executor = BookingExecutor(ledger=ExecutorLedger(Path(sys.argv[1])), secret=SECRET,
+    allowed_units=['barrashoppingsul'], execute=execute, now=lambda: NOW)
+raw = encode()
+assert executor.dispatch(raw, signed(raw))[0] == 202
+assert entered.wait(5)
+executor.close()
+"""
+        result = subprocess.run([sys.executable, "-B", "-c", source, str(child_path)],
+                                cwd=Path(__file__).parent, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, "synthetic child must exit cleanly")
+        with sqlite3.connect(child_path) as db:
+            self.assertEqual(db.execute("SELECT status FROM executor_deliveries").fetchone()[0], "confirmed")
 
     def test_close_does_not_release_ownership_during_running_external_call(self):
         entered, release = threading.Event(), threading.Event()
@@ -341,6 +389,70 @@ class ExecutorTests(ExecutorFixture):
 
 
 class PrivateEfBridgeTests(unittest.TestCase):
+    def test_strict_readback_refuses_body_fallback_in_normal_and_error_paths(self):
+        from espacofacial.booking import (
+            BookingRequest,
+            _agenda_text_contains_request,
+            _verify_booking_in_agenda,
+        )
+
+        request = BookingRequest(unit_name="BarraShoppingSul", client_name="Paciente Sintetico",
+                                 appointment_date="10/09/2026", start_time="12:00", end_time="12:30",
+                                 service_name="Avaliação")
+        driver = Mock()
+        driver.find_element.return_value.text = "Paciente Sintetico Avaliação 11/09/2026 15:00 - 15:30"
+        for raises in (False, True):
+            for strict in (False, True):
+                with self.subTest(raises=raises, strict=strict), ExitStack() as stack:
+                    stack.enter_context(patch("espacofacial.booking.time.time", side_effect=[0, 0, 99]))
+                    stack.enter_context(patch("espacofacial.booking.time.sleep"))
+                    stack.enter_context(patch("espacofacial.booking._ensure_date_visible", side_effect=RuntimeError() if raises else None))
+                    stack.enter_context(patch("espacofacial.booking._find_calendar_event", return_value=None))
+                    stack.enter_context(patch("espacofacial.booking._verify_booking_in_date_candidates", return_value=False))
+                    fallback = stack.enter_context(patch("espacofacial.booking._agenda_text_contains_request", wraps=_agenda_text_contains_request))
+                    self.assertEqual(_verify_booking_in_agenda(driver, request, require_slot_match=strict), not strict)
+                    self.assertEqual(fallback.call_count, 0 if strict else 1)
+
+    def test_strict_modal_readback_requires_exact_present_start_and_end(self):
+        from espacofacial.booking import BookingRequest, _verify_booking_modal_fields
+
+        request = BookingRequest(unit_name="BarraShoppingSul", client_name="Paciente Sintetico",
+                                 appointment_date="10/09/2026", start_time="12:00", end_time="12:30",
+                                 service_name="Avaliação")
+        start, end = datetime(2026, 9, 10, 12), datetime(2026, 9, 10, 12, 30)
+        with ExitStack() as stack:
+            stack.enter_context(patch("espacofacial.booking._find_booking_sheet", return_value=Mock()))
+            stack.enter_context(patch("espacofacial.booking._input_value_by_placeholder", return_value=request.client_name))
+            stack.enter_context(patch("espacofacial.booking._service_summary_contains_any", return_value=True))
+            read = stack.enter_context(patch("espacofacial.booking._read_sheet_datetimes"))
+            for actual in ((None, None), (start, None), (None, end),
+                           (start + timedelta(days=1), end + timedelta(days=1)),
+                           (start + timedelta(hours=1), end + timedelta(hours=1)), (start, end)):
+                with self.subTest(actual=actual):
+                    read.return_value = actual
+                    self.assertEqual(_verify_booking_modal_fields(Mock(), request, require_slot_match=True), actual == (start, end))
+            read.return_value = (None, None)
+            self.assertTrue(_verify_booking_modal_fields(Mock(), request))  # legacy behavior is unchanged
+
+    def test_strict_readback_is_propagated_to_direct_and_date_candidate_modals(self):
+        from espacofacial.booking import BookingRequest, _verify_booking_in_agenda
+
+        request = BookingRequest(unit_name="BarraShoppingSul", client_name="Paciente Sintetico",
+                                 appointment_date="10/09/2026", start_time="12:00", end_time="12:30",
+                                 service_name="Avaliação")
+        for direct in (False, True):
+            with self.subTest(direct=direct), ExitStack() as stack:
+                event = Mock()
+                stack.enter_context(patch("espacofacial.booking._ensure_date_visible"))
+                stack.enter_context(patch("espacofacial.booking._find_calendar_event", return_value=event if direct else None))
+                stack.enter_context(patch("espacofacial.booking._calendar_events_for_date", return_value=[event]))
+                stack.enter_context(patch("espacofacial.booking._calendar_event_candidate_score", return_value=1))
+                stack.enter_context(patch("espacofacial.booking._real_click", return_value=True))
+                stack.enter_context(patch("espacofacial.booking._close_booking_sheet"))
+                verify = stack.enter_context(patch("espacofacial.booking._verify_booking_modal_fields", return_value=True))
+                self.assertTrue(_verify_booking_in_agenda(Mock(), request, require_slot_match=True))
+                self.assertTrue(verify.call_args.kwargs["require_slot_match"])
+
     def test_ef_result_only_marks_verified_after_actual_agenda_readback(self):
         from espacofacial.booking import BookingError, BookingRequest, execute_booking
         from espacofacial.private_operation import private_operation
@@ -356,9 +468,12 @@ class PrivateEfBridgeTests(unittest.TestCase):
                 stack.enter_context(patch("espacofacial.booking." + function, return_value=True))
             stack.enter_context(patch("espacofacial.booking._booking_dialog_still_open", return_value=False))
             verify = stack.enter_context(patch("espacofacial.booking._verify_booking_in_agenda", return_value=True))
-            args = {"reception_url": "https://synthetic.invalid", "debug_dir": Path("unused")}
+            args = {"reception_url": "https://synthetic.invalid", "debug_dir": Path("unused"), "require_verified_slot": True}
             self.assertTrue(execute_booking(driver, request=request, **args).verified_in_agenda)
-            verify.assert_called_once()
+            verify.assert_called_once_with(driver, request, timeout=45, require_slot_match=True)
+            legacy = execute_booking(driver, request=request, **{**args, "require_verified_slot": False})
+            self.assertTrue(legacy.ok)
+            self.assertFalse(legacy.verified_in_agenda)
             verify.reset_mock()
             self.assertFalse(execute_booking(driver, request=replace(request, dry_run=True), **args).verified_in_agenda)
             verify.assert_not_called()
@@ -378,6 +493,7 @@ class PrivateEfBridgeTests(unittest.TestCase):
             result = execute_existing_ef_booking(reservation(), cfg=cfg, debug_dir=Path("unused"))
             self.assertEqual(result, ExecutionResult("confirmed", True))
             request = execute.call_args.kwargs["request"]
+            self.assertTrue(execute.call_args.kwargs["require_verified_slot"])
             self.assertEqual(request.unit_name, "BarraShoppingSul")
             self.assertEqual(request.client_name, "Paciente Sintetico")
             self.assertEqual(request.professional_name, "Profissional Sintetico")
