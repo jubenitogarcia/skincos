@@ -6,9 +6,11 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 
-const workflow = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8')
+// Keep the original staging invariants scoped to its unchanged job. Production
+// has independent authenticated-probe and mandatory-lease coverage.
+const workflow = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8').split('\n  production:\n')[0]
 const contractWorkflow = readFileSync(new URL('../../.github/workflows/schedule-public-read-contract.yml', import.meta.url), 'utf8')
-const coreWorkflow = readFileSync(new URL('../../.github/workflows/deploy-escala-api.yml', import.meta.url), 'utf8')
+const coreWorkflow = readFileSync(new URL('../../.github/workflows/deploy-escala-api.yml', import.meta.url), 'utf8').split('\n  production-public-read:\n')[0]
 const adapterConfig = readFileSync(new URL('./public-read.wrangler.toml', import.meta.url), 'utf8')
 const coreConfig = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8')
 const smoke = readFileSync(new URL('./scripts/public-read-staging-smoke.mjs', import.meta.url), 'utf8')
@@ -66,16 +68,15 @@ function runEscalaDeployGuard(overrides = {}) {
   }
 }
 
-test('Schedule public-read adapter is a manual preview/staging-only publisher', () => {
+test('Schedule public-read adapter retains the manual preview and isolated staging publisher', () => {
   assert.match(workflow, /workflow_dispatch:/)
-  assert.match(workflow, /options: \[preview, staging\]/)
-  assert.doesNotMatch(workflow, /options: \[[^\]]*production/i)
+  assert.match(workflow, /options: \[preview, staging, production\]/)
   assert.match(workflow, /uses: \.\/\.github\/workflows\/promotion-gate\.yml/)
   assert.match(workflow, /unit: schedule-public-read-adapter/)
   assert.match(workflow, /release_sha: \$\{\{ inputs\.release_sha \}\}/)
   assert.match(workflow, /preview_run_id: \$\{\{ inputs\.preview_run_id \}\}/)
   assert.match(workflow, /bootstrap_run_id:/)
-  assert.match(workflow, /options: \[bootstrap-disabled, deploy, disable\]/)
+  assert.match(workflow, /options: \[bootstrap-disabled, deploy, disable, reconcile-probe\]/)
   assert.match(workflow, /bootstrap-disabled creates its own proof and must not accept a prior bootstrap run id/)
   assert.match(workflow, /deploy and disable require the successful disabled bootstrap run id before any versions upload/)
   assert.match(workflow, /environment: preview/)
@@ -209,7 +210,7 @@ test('Schedule public-read defaults disabled and only the canonical core publish
   assert.match(coreWorkflow, /enable_schedule_public_read:/)
   assert.match(coreWorkflow, /default: false/)
   assert.match(coreWorkflow, /type: boolean/)
-  assert.match(coreWorkflow, /Reject Schedule public-read enablement outside staging/)
+  assert.match(coreWorkflow, /Guard explicit Schedule public-read enablement/)
   assert.match(coreWorkflow, /DISPATCH_REF.*github\.ref/)
   assert.match(coreWorkflow, /RUN_ATTEMPT.*github\.run_attempt/)
   assert.match(coreWorkflow, /must dispatch from protected main/)
@@ -380,8 +381,8 @@ test('Schedule public-read core staging smoke uses only the core capability and 
 test('deployment catalog and single-writer policy assign only the isolated adapter Worker', () => {
   const unit = units.units.find((entry) => entry.id === 'schedule-public-read-adapter')
   assert.ok(unit)
-  assert.deepEqual(unit.environments, ['preview', 'staging'])
-  assert.deepEqual(unit.publishes, ['Worker:skincos-schedule-public-read-staging'])
+  assert.deepEqual(unit.environments, ['preview', 'staging', 'production'])
+  assert.deepEqual(unit.publishes, ['Worker:skincos-schedule-public-read-staging', 'Worker:skincos-schedule-public-read', 'Worker:skincos-schedule-public-read-probe-staging'])
   assert.deepEqual(unit.migrationPaths, ['workforce/schedule/public-read.wrangler.toml'])
   assert.equal(unit.workflow, '.github/workflows/deploy-schedule-public-read-adapter.yml')
 
