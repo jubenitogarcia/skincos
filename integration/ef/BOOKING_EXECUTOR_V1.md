@@ -47,7 +47,10 @@ a bounded transport deadline, and **repeat the same deliveryId/reservation with
 a fresh signed nonce**. It must not POST to the legacy job endpoint on timeout.
 
 An existing delivery is read back, never executed twice. Reused nonce or changed
-reservation fingerprint for a delivery returns 409. Terminal readback returns
+reservation fingerprint for a delivery returns 409. Authenticated capacity and
+fingerprint rejections also consume the nonce after a successful durable commit;
+retry them with a fresh signed nonce. A database failure remains unavailable,
+without reporting a durable admission or business rejection. Terminal readback returns
 200 with `{ok:true, contract, outcome, providerReference:null, detail:{code}}`.
 `confirmed` requires `BookingResult.verified_in_agenda == true`, which is set only
 after EF agenda readback succeeds; dry runs and unverified `ok` cannot confirm.

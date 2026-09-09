@@ -171,16 +171,22 @@ class ExecutorLedger:
             row = db.execute("SELECT fingerprint,status,created_at_ms FROM executor_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone()
             if row:
                 if not hmac.compare_digest(row[0], fingerprint):
-                    raise ExecutorError("booking_executor_delivery_conflict", 409)
-                status = row[1]
-                if status in {"accepted", "running"} and now_ms - row[2] >= MAX_PENDING_MS:
-                    db.execute("UPDATE executor_deliveries SET status='manual_review',updated_at_ms=? WHERE delivery_id=?", (now_ms, delivery_id))
-                    status = "manual_review"
-                return status, False
-            if not callback_capacity_available or db.execute("SELECT COUNT(*) FROM executor_deliveries WHERE status IN ('accepted','running')").fetchone()[0] >= 16:
-                raise ExecutorError("booking_executor_capacity_unavailable")
-            db.execute("INSERT INTO executor_deliveries VALUES (?,?,'accepted',?,?)", (delivery_id, fingerprint, now_ms, now_ms))
-            return "accepted", True
+                    rejection = ExecutorError("booking_executor_delivery_conflict", 409)
+                else:
+                    status = row[1]
+                    if status in {"accepted", "running"} and now_ms - row[2] >= MAX_PENDING_MS:
+                        db.execute("UPDATE executor_deliveries SET status='manual_review',updated_at_ms=? WHERE delivery_id=?", (now_ms, delivery_id))
+                        status = "manual_review"
+                    return status, False
+            elif not callback_capacity_available or db.execute("SELECT COUNT(*) FROM executor_deliveries WHERE status IN ('accepted','running')").fetchone()[0] >= 16:
+                rejection = ExecutorError("booking_executor_capacity_unavailable")
+            else:
+                db.execute("INSERT INTO executor_deliveries VALUES (?,?,'accepted',?,?)", (delivery_id, fingerprint, now_ms, now_ms))
+                return "accepted", True
+        # Business rejections consume the authenticated nonce durably too.
+        # Only raise after a successful commit; database failures must escape
+        # unchanged to the unavailable path, never as an accepted/rejected result.
+        raise rejection
 
     def start(self, delivery_id, now_ms):
         with self._connection() as db:

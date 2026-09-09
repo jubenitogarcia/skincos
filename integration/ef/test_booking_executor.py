@@ -14,7 +14,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -173,6 +173,48 @@ class ExecutorTests(ExecutorFixture):
         self.assertEqual(self.dispatch(encode(changed)),
                          (409, {"ok": False, "error": "booking_executor_delivery_conflict"}))
         self.assertEqual(len(self.queue), 1)
+
+    def test_conflicting_fingerprint_consumes_nonce_without_changing_delivery(self):
+        self.assertEqual(self.dispatch()[0], 202)
+        changed = reservation()
+        changed["patient"]["name"] = "Outro Paciente Sintetico"
+        raw = encode(changed)
+        headers = signed(raw, nonce="synthetic-conflict-nonce")
+        self.assertEqual(self.executor.dispatch(raw, headers),
+                         (409, {"ok": False, "error": "booking_executor_delivery_conflict"}))
+        self.assertEqual(self.executor.dispatch(raw, headers),
+                         (409, {"ok": False, "error": "booking_executor_replay"}))
+        self.assertEqual(self.dispatch(raw),
+                         (409, {"ok": False, "error": "booking_executor_delivery_conflict"}))
+        self.assertEqual(self.dispatch()[0], 202)
+        self.assertEqual(len(self.queue), 1)
+        self.execute.assert_not_called()
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM executor_nonces WHERE nonce=?", (headers[HEADER_PREFIX + "nonce"],)).fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM executor_deliveries").fetchone()[0], 1)
+
+    def test_database_commit_failure_never_becomes_admission_or_business_rejection(self):
+        original_connection = self.ledger._connection
+
+        @contextmanager
+        def failing_commit():
+            with original_connection() as db:
+                yield db
+                raise sqlite3.OperationalError("synthetic private commit detail")
+
+        with patch.object(self.ledger, "_connection", failing_commit):
+            self.assertEqual(self.dispatch(), (503, {"ok": False, "error": "booking_executor_unavailable"}))
+        self.assertEqual(self.queue, [])
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM executor_deliveries").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM executor_nonces").fetchone()[0], 0)
+        self.assertEqual(self.dispatch()[0], 202)
+        changed = reservation()
+        changed["patient"]["name"] = "Outro Paciente Sintetico"
+        with patch.object(self.ledger, "_connection", failing_commit):
+            self.assertEqual(self.dispatch(encode(changed)), (503, {"ok": False, "error": "booking_executor_unavailable"}))
+        self.assertEqual(len(self.queue), 1)
+        self.execute.assert_not_called()
 
     def test_fingerprint_ignores_json_key_order(self):
         raw = encode()
@@ -364,6 +406,33 @@ executor.close()
             self.assertEqual(self.dispatch(encode(delivery_id=f"synthetic-capacity-{index}"))[0], 202)
         self.assertEqual(self.dispatch()[0], 503)
         self.assertEqual(len(self.queue), 16)
+
+    def _assert_capacity_rejection_consumes_nonce(self, *, ledger_only):
+        for index in range(16):
+            self.assertEqual(self.dispatch(encode(delivery_id=f"synthetic-full-{index}"))[0], 202)
+        if ledger_only:
+            # Exercise the durable pending-row bound independently of the
+            # in-memory callback bound. Existing callbacks remain queued.
+            self.executor = self.make_executor()
+        raw = encode(delivery_id="synthetic-rejected-capacity")
+        headers = signed(raw, nonce="synthetic-rejected-capacity-nonce")
+        self.assertEqual(self.executor.dispatch(raw, headers),
+                         (503, {"ok": False, "error": "booking_executor_capacity_unavailable"}))
+        self.queue.pop(0)()  # A real synthetic callback frees one slot.
+        self.assertEqual(self.executor.dispatch(raw, headers),
+                         (409, {"ok": False, "error": "booking_executor_replay"}))
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM executor_nonces WHERE nonce=?", (headers[HEADER_PREFIX + "nonce"],)).fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM executor_deliveries WHERE delivery_id=?", ("synthetic-rejected-capacity",)).fetchone()[0], 0)
+        self.assertEqual(self.dispatch(raw)[0], 202)  # Fresh signature/nonce can retry.
+        self.assertEqual(len(self.queue), 16)
+        self.assertEqual(self.execute.call_count, 1)  # Only the earlier delivery ran.
+
+    def test_callback_capacity_rejection_consumes_nonce_before_retry(self):
+        self._assert_capacity_rejection_consumes_nonce(ledger_only=False)
+
+    def test_durable_capacity_rejection_consumes_nonce_before_retry(self):
+        self._assert_capacity_rejection_consumes_nonce(ledger_only=True)
 
     def test_launch_failure_never_retries_execution(self):
         self.executor._launch = Mock(side_effect=RuntimeError("PRIVATE"))
