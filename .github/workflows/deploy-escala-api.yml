@@ -12,8 +12,9 @@ on:
       release_sha: { description: "Immutable commit SHA", required: false, type: string }
       preview_run_id: { description: "Required for staging", required: false, type: string }
       staging_run_id: { description: "Required for production", required: false, type: string }
+      production_manifest_sha256: { description: "SHA-256 of the protected production manifest", required: false, type: string }
       enable_schedule_public_read:
-        description: "Staging-only opt-in for the HMAC-gated Schedule public-read core projection"
+        description: "Explicit HMAC-gated opt-in; production requires same-SHA staging and protected manifest"
         required: false
         default: false
         type: boolean
@@ -40,8 +41,9 @@ jobs:
   schedule-public-read-policy:
     needs: promotion
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
     steps:
-      - name: Reject Schedule public-read enablement outside staging
+      - name: Guard explicit Schedule public-read enablement
         env:
           TARGET: ${{ inputs.target }}
           ENABLE_SCHEDULE_PUBLIC_READ: ${{ inputs.enable_schedule_public_read && 'true' || 'false' }}
@@ -50,8 +52,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' || "$ENABLE_SCHEDULE_PUBLIC_READ" == 'false' ]] || { echo 'Schedule public-read opt-in is invalid'; exit 1; }
-          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$TARGET" != 'staging' ]]; then
-            echo 'Schedule public-read may be enabled only by the canonical staging Escala workflow.'
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$TARGET" != 'staging' && "$TARGET" != 'production' ]]; then
+            echo 'Schedule public-read may be enabled only by the canonical staging or production Escala workflow.'
             exit 1
           fi
           if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' && "$DISPATCH_REF" != 'refs/heads/main' ]]; then
@@ -63,6 +65,43 @@ jobs:
             exit 1
           fi
 
+
+      - name: Checkout production opt-in verifier
+        if: ${{ inputs.target == 'production' && inputs.enable_schedule_public_read }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+
+      - name: Setup production opt-in verifier Node
+        if: ${{ inputs.target == 'production' && inputs.enable_schedule_public_read }}
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Validate protected production manifest before any core mutation
+        if: ${{ inputs.target == 'production' && inputs.enable_schedule_public_read }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST: ${{ vars.SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST }}
+          PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
+          ENABLE_SCHEDULE_PUBLIC_READ_PRODUCTION: ${{ vars.ENABLE_SCHEDULE_PUBLIC_READ_PRODUCTION }}
+          SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_SCHEDULE_PUBLIC_READ_PRODUCTION" == 'true' ]] || { echo 'Production Schedule public-read opt-in is disabled'; exit 1; }
+          [[ "$SKINCOS_GLOBAL_COORDINATION_REQUIRED" == 'true' && -n "$SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL" ]] || { echo 'Production coordination is required before any core mutation'; exit 1; }
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+
+      - name: Verify successful same-SHA core staging opt-in before production
+        if: ${{ inputs.target == 'production' && inputs.enable_schedule_public_read }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+        run: node workforce/schedule/scripts/public-read-production-predecessor.mjs core-staging
+
   deploy:
     needs: [promotion, schedule-public-read-policy]
     if: ${{ inputs.target != 'preview' }}
@@ -70,6 +109,8 @@ jobs:
     environment: ${{ inputs.target }}
     permissions:
       contents: read
+    outputs:
+      skip: ${{ steps.guard.outputs.skip }}
 
     steps:
       - name: Guard Escala deploy settings
@@ -162,7 +203,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Sync Escala worker secret (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && !inputs.enable_schedule_public_read }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -191,8 +232,15 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENABLE_SCHEDULE_PUBLIC_READ: ${{ inputs.enable_schedule_public_read && 'true' || 'false' }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST: ${{ vars.SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST }}
+          PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
         run: |
           set -euo pipefail
+          if [[ "$ENABLE_SCHEDULE_PUBLIC_READ" == 'true' ]]; then
+            node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          fi
           npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config workforce/schedule/wrangler.toml
 
       - name: Check Escala API deployment lease before production deployment
@@ -210,7 +258,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
       - name: Deploy Escala worker (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && !inputs.enable_schedule_public_read }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -328,13 +376,21 @@ jobs:
           npx --yes wrangler@4 versions deploy --config workforce/schedule/wrangler.toml --env staging --version-tag "${CANDIDATE_TAG}@100%" --yes --message "escala-api:staging-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}"
 
       - name: Smoke check Escala API (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && !inputs.enable_schedule_public_read }}
         env:
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
           ESCALA_SMOKE_BASE_URL: https://escala-api.skincos.com.br
         run: |
           set -euo pipefail
           node workforce/schedule/scripts/smoke.mjs
+
+      - name: Prove default production Schedule public-read stays disabled
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && !inputs.enable_schedule_public_read }}
+        env:
+          SCHEDULE_PUBLIC_READ_CORE_TARGET: production
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL: https://escala-api.skincos.com.br
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE: disabled
+        run: node workforce/schedule/scripts/public-read-core-staging-smoke.mjs
 
       - name: Smoke check Escala API (staging)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
@@ -456,3 +512,206 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
+
+  production-public-read:
+    needs: [promotion, deploy]
+    # Job-level cancellation must not prevent the checked disabled fallback.
+    if: ${{ always() && needs.promotion.result == 'success' && needs.deploy.result == 'success' && inputs.target == 'production' && inputs.enable_schedule_public_read && needs.deploy.outputs.skip == 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+      SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
+      SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST: ${{ vars.SCHEDULE_PUBLIC_READ_PRODUCTION_MANIFEST }}
+      PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
+    steps:
+      - name: Checkout immutable production core
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+      - name: Revalidate manifest and distinct core custody
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          node workforce/schedule/scripts/public-read-production-release-guard.mjs window
+          node --input-type=module <<'NODE'
+          const actor = String(process.env.ESCALA_ACTOR_HMAC_KEY || '').trim()
+          const core = String(process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY || '').trim()
+          if (actor.length < 32 || core.length < 32 || actor === core) throw new Error('production core custody invalid')
+          NODE
+      - name: Capture production core rollback checkpoint
+        run: node workforce/schedule/scripts/public-read-production-resources.mjs checkpoint core
+      - name: Acquire production core opt-in lease
+        id: production-lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-production-opt-in.json
+
+      - name: Check production core lease before candidate upload
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-production-opt-in.json
+
+      - name: Upload production core candidate with capabilities only through stdin
+        id: production-version
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          candidate_tag="escala-api-production-public-read-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE' | npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:true" --secrets-file /dev/stdin --tag "$candidate_tag" --message "escala-api:production-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+          process.stdout.write(JSON.stringify({
+            ESCALA_ACTOR_HMAC_KEY: process.env.ESCALA_ACTOR_HMAC_KEY.trim(),
+            SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: process.env.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY.trim(),
+          }))
+          NODE
+
+      - name: Check production core lease before candidate deployment
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-production-opt-in.json
+
+      - name: Promote production core candidate
+        id: production-candidate
+        env:
+          CANDIDATE_TAG: ${{ steps.production-version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          [[ -n "$CANDIDATE_TAG" ]] || exit 1
+          echo 'mutated=true' >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/wrangler.toml --version-tag "${CANDIDATE_TAG}@100%" --yes --message "escala-api:production-schedule-public-read:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+      - name: Verify production core authenticated readiness and legacy surface
+        env:
+          SCHEDULE_PUBLIC_READ_CORE_TARGET: production
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL: https://escala-api.skincos.com.br
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE: ready
+          ESCALA_SMOKE_BASE_URL: https://escala-api.skincos.com.br
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-core-staging-smoke.mjs
+          node workforce/schedule/scripts/smoke.mjs
+      - name: Read back production core exact enabled version
+        run: node workforce/schedule/scripts/public-read-production-resources.mjs readback core ready
+      - name: Write exact production core opt-in evidence
+        env:
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          SCHEDULE_PUBLIC_READ_TARGET: production
+        run: node workforce/schedule/scripts/public-read-core-opt-in-evidence.mjs write "$RUNNER_TEMP/schedule-public-read-core-opt-in/schedule-public-read-core-opt-in-evidence.json"
+      - name: Upload production core opt-in evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: schedule-public-read-core-opt-in-evidence
+          path: ${{ runner.temp }}/schedule-public-read-core-opt-in/schedule-public-read-core-opt-in-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Check production core lease before disabled fallback upload
+        id: production-fallback-upload-lease
+        if: ${{ always() && (failure() || cancelled()) && steps.production-candidate.outputs.mutated == 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-production-opt-in.json
+
+      - name: Upload disabled production core fallback
+        id: production-fallback-version
+        if: ${{ always() && (failure() || cancelled()) && steps.production-candidate.outputs.mutated == 'true' && steps.production-fallback-upload-lease.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          disabled_tag="escala-api-production-public-read-disabled-${GITHUB_RUN_ID}"
+          echo "tag=$disabled_tag" >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@4.120.0 versions upload --config workforce/schedule/wrangler.toml --keep-vars --var "SCHEDULE_PUBLIC_READ_ENABLED:false" --tag "$disabled_tag" --message "escala-api:production-schedule-public-read-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}" >/dev/null
+
+      - name: Check production core lease before disabled fallback deployment
+        id: production-fallback-deploy-lease
+        if: ${{ always() && (failure() || cancelled()) && steps.production-fallback-version.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: global:crm-cloudflare-writer
+          module: escala-api
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-production-opt-in.json
+
+      - name: Promote disabled production core fallback
+        id: production-fallback
+        if: ${{ always() && (failure() || cancelled()) && steps.production-fallback-deploy-lease.outcome == 'success' }}
+        env:
+          DISABLED_TAG: ${{ steps.production-fallback-version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          node workforce/schedule/scripts/public-read-production-manifest.mjs verify
+          [[ -n "$DISABLED_TAG" ]] || exit 1
+          npx --yes wrangler@4.120.0 versions deploy --config workforce/schedule/wrangler.toml --version-tag "${DISABLED_TAG}@100%" --yes --message "escala-api:production-schedule-public-read-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+      - name: Prove production core disabled fallback after prior failure
+        if: ${{ always() && steps.production-fallback.outcome == 'success' }}
+        env:
+          SCHEDULE_PUBLIC_READ_CORE_TARGET: production
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL: https://escala-api.skincos.com.br
+          SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE: disabled
+        run: node workforce/schedule/scripts/public-read-core-staging-smoke.mjs
+      - name: Read back production core disabled fallback identity
+        if: ${{ always() && steps.production-fallback.outcome == 'success' }}
+        run: node workforce/schedule/scripts/public-read-production-resources.mjs readback core disabled
+      - name: Retain sanitized production core checkpoint and readback
+        if: ${{ always() && steps.production-lease.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: schedule-public-read-production-core-resource-evidence
+          path: ${{ runner.temp }}/schedule-production-core-*.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Release production core opt-in lease
+        if: ${{ always() && steps.production-lease.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-production-opt-in.json
