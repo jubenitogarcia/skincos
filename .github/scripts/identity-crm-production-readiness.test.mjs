@@ -5,6 +5,7 @@ import {
   IDENTITY_CRM_DELIVERY_PROTOCOL,
   PRODUCTION_WORKER_NAME,
   REQUIRED_PRODUCTION_SECRET_NAMES,
+  REQUIRED_PRODUCTION_SECRET_TYPES,
   runIdentityCrmProductionReadiness,
 } from './identity-crm-production-readiness.mjs';
 
@@ -21,6 +22,14 @@ const secondRoutesUrl = `https://api.cloudflare.com/client/v4/zones/${secondZone
 const domainsUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains?page=1&per_page=50`;
 const domainsSecondPageUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains?page=2&per_page=50`;
 const completeReadUrls = [...workerUrls, zonesUrl, domainsUrl, routesUrl];
+
+function requiredSecretInventory(overrides = {}) {
+  return REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({
+    name,
+    type: REQUIRED_PRODUCTION_SECRET_TYPES[name],
+    ...overrides,
+  }));
+}
 
 function assertReadCalls(calls, expectedUrls = completeReadUrls) {
   assert.deepEqual(calls.map(({ url }) => url), expectedUrls);
@@ -60,7 +69,7 @@ function completeWorkerResponse(url, { previewsEnabled = false } = {}) {
   if (url === `${workerUrl}/deployments`) {
     return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
   }
-  if (url === `${workerUrl}/secrets`) return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name })));
+  if (url === `${workerUrl}/secrets`) return cloudflareResponse(requiredSecretInventory());
   if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: previewsEnabled });
   return null;
 }
@@ -83,6 +92,12 @@ test('production defaults are distinct from staging and protocol values are fixe
     'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
     'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC',
   ]);
+  assert.deepEqual(REQUIRED_PRODUCTION_SECRET_TYPES, {
+    IDENTITY_CRM_DELIVERY_PRODUCTION_KID: 'secret_text',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: 'secret_key',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK: 'secret_text',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+  });
 });
 
 test('missing external credentials produces a blocked, non-mutating report', async () => {
@@ -122,7 +137,7 @@ test('complete external readback is eligible only when all attestations are pres
         return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
       }
       if (url === `${workerUrl}/secrets`) {
-        return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name, type: 'secret_text', value: privateMarker })));
+        return cloudflareResponse(requiredSecretInventory({ value: privateMarker }));
       }
       if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: false });
       if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
@@ -139,6 +154,28 @@ test('complete external readback is eligible only when all attestations are pres
   assertReadCalls(calls);
   assert.doesNotMatch(JSON.stringify(report), new RegExp(apiToken));
   assert.doesNotMatch(JSON.stringify(report), new RegExp(privateMarker));
+});
+
+test('production readiness rejects a textual signing binding before approving cutover', async () => {
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment(),
+    fetchImpl: async (url) => {
+      if (url === `${workerUrl}/secrets`) {
+        return cloudflareResponse(requiredSecretInventory().map((entry) => entry.name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+          ? { ...entry, type: 'secret_text' }
+          : entry));
+      }
+      const workerResponse = completeWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'blocked');
+  assert.ok(report.blockers.includes('production Worker has required secret bindings with incorrect types: IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY (expected secret_key)'));
+  assert.equal(report.cloudflare.secretInventory.types.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY, 'secret_text');
+  assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
 });
 
 test('route readback paginates every account zone and blocks a matching route in a later zone', async () => {
@@ -360,7 +397,7 @@ for (const configuredZone of ['', 'invalid-zone']) {
         if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
         if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
         if (url.endsWith('/subdomain')) return cloudflareResponse({ enabled: false, previews_enabled: false });
-        if (url.endsWith('/secrets')) return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name })));
+        if (url.endsWith('/secrets')) return cloudflareResponse(requiredSecretInventory());
         return cloudflareResponse([]);
       },
     });

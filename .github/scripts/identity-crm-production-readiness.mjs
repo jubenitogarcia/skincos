@@ -5,15 +5,17 @@ import { pathToFileURL } from 'node:url';
 export const PRODUCTION_WORKER_NAME = 'skincos-identity-crm-delivery-production';
 export const STAGING_WORKER_NAME = 'skincos-identity-crm-delivery-staging';
 
-// These names are an inventory contract for the future production runtime. The
-// audit only checks their presence by name; it never reads or emits a value.
-// Provisioning them is deliberately a separate, reviewed custody operation.
-export const REQUIRED_PRODUCTION_SECRET_NAMES = Object.freeze([
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC',
-]);
+// This inventory contract checks only names and binding types; it never reads
+// or emits a value. The signing key must be a non-extractable Cloudflare
+// `secret_key`, while the remaining short configuration values are
+// `secret_text`. Provisioning remains a separate custody operation.
+export const REQUIRED_PRODUCTION_SECRET_TYPES = Object.freeze({
+  IDENTITY_CRM_DELIVERY_PRODUCTION_KID: 'secret_text',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: 'secret_key',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK: 'secret_text',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+});
+export const REQUIRED_PRODUCTION_SECRET_NAMES = Object.freeze(Object.keys(REQUIRED_PRODUCTION_SECRET_TYPES));
 
 export const IDENTITY_CRM_DELIVERY_PROTOCOL = Object.freeze({
   version: 'identity-crm-delivery/v1',
@@ -152,12 +154,26 @@ export function sanitizeDeployments(value) {
 
 export function sanitizeSecretInventory(value) {
   const entries = resultArray(value, 'secrets');
-  const names = [...new Set(entries
-    .map((entry) => safeIdentifier(entry?.name))
-    .filter(Boolean))].sort();
+  const typesByName = new Map();
+  for (const entry of entries) {
+    const name = safeIdentifier(entry?.name);
+    const type = safeIdentifier(entry?.type);
+    if (!name || !type) continue;
+    if (!typesByName.has(name)) {
+      typesByName.set(name, type);
+    } else if (typesByName.get(name) !== type) {
+      // A contradictory inventory is not evidence that the required binding
+      // has either safe type. Preserve no value and make the later exact-type
+      // comparison fail closed.
+      typesByName.set(name, null);
+    }
+  }
+  const names = [...typesByName.keys()].sort();
+  const types = Object.fromEntries(names.map((name) => [name, typesByName.get(name)]));
   return {
     count: names.length,
     names,
+    types,
     valuesReadOrEmitted: false,
   };
 }
@@ -396,7 +412,7 @@ export function evaluateIdentityCrmProductionReadiness({
     : { count: 0, entries: [] };
   const secretReadback = worker?.secrets?.state === 'available'
     ? sanitizeSecretInventory(worker.secrets.result)
-    : { count: 0, names: [], valuesReadOrEmitted: false };
+    : { count: 0, names: [], types: {}, valuesReadOrEmitted: false };
   const subdomain = worker?.subdomain?.state === 'available' ? worker.subdomain.result : null;
   const routeReadback = routes?.state === 'available'
     ? sanitizeRoutes(routes.result, productionWorker, routes.resultInfo?.zoneCount)
@@ -427,6 +443,12 @@ export function evaluateIdentityCrmProductionReadiness({
     .filter((name) => !secretReadback.names.includes(name));
   if (missingSecretNames.length > 0) {
     blockers.push(`production Worker is missing required secret names: ${missingSecretNames.join(', ')}`);
+  }
+  const wrongSecretTypes = Object.entries(REQUIRED_PRODUCTION_SECRET_TYPES)
+    .filter(([name, expectedType]) => secretReadback.types[name] !== expectedType)
+    .map(([name, expectedType]) => `${name} (expected ${expectedType})`);
+  if (wrongSecretTypes.length > 0) {
+    blockers.push(`production Worker has required secret bindings with incorrect types: ${wrongSecretTypes.join(', ')}`);
   }
   if (!hasAvailableEndpoint(worker?.subdomain)) {
     blockers.push('production Worker public subdomain state could not be read');
