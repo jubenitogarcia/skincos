@@ -51,7 +51,9 @@ signing input.
 Run `Identity CRM delivery production readiness` manually from the protected
 `production` environment. The workflow uses only Cloudflare `GET` requests for
 the production Worker settings, deployments, secret-name inventory, public
-subdomain state and (when `CLOUDFLARE_ZONE_ID` is configured) route inventory.
+subdomain state, every zone's route inventory, and the account-wide custom
+domain inventory. The audit fails closed if any inventory cannot be read; a
+single configured zone cannot narrow that check.
 It writes a sanitized JSON artifact containing no token, key, secret value or
 PII. `strict=false` records a blocked result without failing the workflow;
 `strict=true` fails unless every gate is externally attested.
@@ -74,9 +76,9 @@ secret merely to satisfy this inventory.
 
 1. A production Worker exists under the canonical Identity owner and has an
    immutable deployment baseline with a tested rollback artifact.
-2. The Worker has no public `workers.dev` access and no public zone route. CRM
-   access is private and authenticated; the staging public endpoint is not a
-   production precedent.
+2. The Worker has no public `workers.dev` or preview access, public zone route,
+   or custom domain. CRM access is private and authenticated; the staging public
+   endpoint is not a production precedent.
 3. Identity has a durable non-exportable key custody/registry reference and a
    documented active/overlap/revoked rotation window. Public keys are published
    and pinned by CRM by `kid`.
