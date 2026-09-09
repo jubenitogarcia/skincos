@@ -2,9 +2,6 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-// sharp exposes these declarations at runtime, but its package export map is
-// not resolvable by the project's TypeScript checker.
-// @ts-expect-error -- exercised by the Node test runner in this file.
 import sharp from "sharp";
 
 const sourceUrl = (relativePath: string) => new URL(`../${relativePath}`, import.meta.url);
