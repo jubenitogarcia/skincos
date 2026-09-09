@@ -581,7 +581,9 @@ jobs:
 
   production:
     needs: [promotion, recovery-source]
-    if: ${{ !cancelled() && inputs.target == 'production' && inputs.operation != 'reconcile-probe' && (needs.promotion.result == 'success' || needs.recovery-source.result == 'success') }}
+    # Keep an already-running job alive so checked fallback/cleanup can execute.
+    # Normal steps retain their implicit success() and never start on cancellation.
+    if: ${{ always() && inputs.target == 'production' && inputs.operation != 'reconcile-probe' && (needs.promotion.result == 'success' || needs.recovery-source.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -1011,7 +1013,7 @@ jobs:
 
   reconcile-probe:
     needs: recovery-source
-    if: ${{ inputs.target == 'production' && inputs.operation == 'reconcile-probe' }}
+    if: ${{ always() && needs.recovery-source.result == 'success' && inputs.target == 'production' && inputs.operation == 'reconcile-probe' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production

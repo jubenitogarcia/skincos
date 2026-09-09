@@ -48,6 +48,27 @@ test('production cancellation reaches checked disabled fallback and readback whi
     assert.match(document, /always\(\) && steps\.production-fallback\.outcome == 'success'/)
   }
 })
+test('production job gates survive cancellation while retaining successful source prerequisites', () => {
+  const jobCondition = document => document.split('\n    steps:')[0].match(/^    if: \$\{\{ (.+) \}\}/m)?.[1]
+  const conditions = [jobCondition(production), jobCondition(coreProduction), jobCondition(workflow.split('\n  reconcile-probe:\n')[1])]
+  for (const condition of conditions) {
+    assert.match(condition, /^always\(\) && /)
+    assert.doesNotMatch(condition, /cancelled\(\)|success\(\)|failure\(\)/)
+    assert.match(condition, /needs\.[\w-]+\.result == 'success'/)
+  }
+  assert.match(conditions[0], /\(needs\.promotion\.result == 'success' \|\| needs\.recovery-source\.result == 'success'\)/)
+  assert.match(conditions[1], /needs\.promotion\.result == 'success' && needs\.deploy\.result == 'success'/)
+  assert.match(conditions[2], /needs\.recovery-source\.result == 'success'/)
+  // GitHub re-evaluates the job before any unfinished step on cancellation.
+  // An explicit always status function prevents implicit success() injection;
+  // no mutable cancellation status remains in these job-level predicates.
+  // Candidate/normal steps are not made always-running by this change.
+  for (const document of [production, coreProduction]) {
+    const candidate = document.split(/(?=^      - name: )/m).find(block => /id: production-candidate\n/.test(block))
+    assert.ok(candidate)
+    assert.doesNotMatch(candidate.split('        run:')[0], /always\(\)/)
+  }
+})
 test('each production Wrangler mutation rechecks manifest in the mutating step after its lease gate', () => {
   for (const document of [production, coreProduction]) {
     const steps = document.split(/(?=^      - name: )/m).slice(1)

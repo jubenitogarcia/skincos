@@ -515,7 +515,8 @@ jobs:
 
   production-public-read:
     needs: [promotion, deploy]
-    if: ${{ inputs.target == 'production' && inputs.enable_schedule_public_read && needs.deploy.outputs.skip == 'false' }}
+    # Job-level cancellation must not prevent the checked disabled fallback.
+    if: ${{ always() && needs.promotion.result == 'success' && needs.deploy.result == 'success' && inputs.target == 'production' && inputs.enable_schedule_public_read && needs.deploy.outputs.skip == 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

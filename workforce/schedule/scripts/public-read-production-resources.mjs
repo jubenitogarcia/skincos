@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { manifestFromEnv, PRODUCTION_RESOURCES, assertProbeOwnership, assertProbeRecovery, assertProductionReadback } from './public-read-production-manifest.mjs'
 import { boundedProductionJson } from './public-read-production-http.mjs'
+import { assertProductionAdapterPrivateSurface } from './public-read-production-private-surface.mjs'
 
 async function main() {
   const operation = process.argv[2]
@@ -32,6 +33,11 @@ async function main() {
     const versionId = state?.deployments?.[0]?.versions?.[0]?.version_id
     if (!/^[0-9a-f-]{36}$/.test(versionId || '')) throw new Error('production_version_invalid')
     return api(`/versions/${versionId}`)
+  }
+  async function privateAdapterSurface(allowAbsent = false) {
+    const domain = await api('/subdomain', 'GET', allowAbsent)
+    if (domain !== null && (domain?.enabled !== false || domain?.previews_enabled !== false)) throw new Error('production_adapter_not_private')
+    return assertProductionAdapterPrivateSurface({ accountId: manifest.accountId, apiToken: process.env.CLOUDFLARE_API_TOKEN })
   }
   if (operation === 'reconcile') {
     const recoveryRunId = process.env.PROBE_RECOVERY_RUN_ID
@@ -71,8 +77,11 @@ async function main() {
   if (operation === 'checkpoint') {
     const state = await api('/deployments', 'GET', true)
     const versions = state?.deployments?.[0]?.versions || []
+    // Reject stale public triggers before any adapter publication, not only
+    // after candidate promotion. A first bootstrap may have no script yet.
+    const privateSurface = surface === 'adapter' ? await privateAdapterSurface(state === null) : null
     const safe = { contract: 'schedule-production-resource-checkpoint/v1', sourceSha: manifest.sourceSha, runId, worker,
-      existed: state !== null, deploymentId: state?.deployments?.[0]?.id || null,
+      existed: state !== null, deploymentId: state?.deployments?.[0]?.id || null, privateSurface,
       versions: versions.map(item => ({ versionId: item.version_id, percentage: item.percentage })) }
     writeFileSync(join(process.env.RUNNER_TEMP, `schedule-production-${surface}-checkpoint.json`), JSON.stringify(safe), { mode: 0o600, flag: 'wx' })
     console.log('{"ok":true,"checkpointRecorded":true}')
@@ -83,13 +92,10 @@ async function main() {
     const state = await api('/deployments')
     const version = await currentVersion(state)
     assertProductionReadback(state.deployments?.[0], version, { surface, mode, sourceSha: manifest.sourceSha, runId })
-    if (surface === 'adapter') {
-      const domain = await api('/subdomain')
-      if (domain?.enabled !== false || domain?.previews_enabled !== false) throw new Error('production_adapter_not_private')
-    }
+    const privateSurface = surface === 'adapter' ? await privateAdapterSurface() : null
     writeFileSync(join(process.env.RUNNER_TEMP, `schedule-production-${surface}-${mode}-readback.json`), JSON.stringify({
       contract: 'schedule-production-resource-readback/v1', sourceSha: manifest.sourceSha, runId, worker, mode,
-      versionId: version.id, deploymentId: state.deployments[0].id, privateAdapter: surface === 'adapter',
+      versionId: version.id, deploymentId: state.deployments[0].id, privateAdapter: surface === 'adapter', privateSurface,
     }), { mode: 0o600, flag: 'wx' })
     console.log('{"ok":true,"resourceReadback":true}')
     return

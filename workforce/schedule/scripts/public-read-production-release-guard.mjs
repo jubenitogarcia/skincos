@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { manifestFromEnv, PRODUCTION_RESOURCES } from './public-read-production-manifest.mjs'
 import { lifecycleConfigDigest } from './public-read-bootstrap-evidence.mjs'
 import { boundedProductionJson } from './public-read-production-http.mjs'
+import { assertProductionAdapterPrivateSurface } from './public-read-production-private-surface.mjs'
 
 export function lifecycleDigest() {
   return lifecycleConfigDigest(readFileSync(new URL('../public-read.wrangler.toml', import.meta.url), 'utf8'))
@@ -57,8 +58,9 @@ async function main() {
   const proof = assertDurableDisableProof(deployment, await api(`/versions/${id}`), { sourceSha: manifest.sourceSha })
   const domain = await api('/subdomain')
   if (domain?.enabled !== false || domain?.previews_enabled !== false) throw new Error('production_disable_private_surface_invalid')
+  const privateSurface = await assertProductionAdapterPrivateSurface({ accountId: manifest.accountId, apiToken: process.env.CLOUDFLARE_API_TOKEN })
   writeFileSync(join(process.env.RUNNER_TEMP, 'schedule-production-durable-disable-proof.json'), JSON.stringify({
-    contract: 'schedule-public-read-durable-disable-proof/v1', runId: process.env.GITHUB_RUN_ID, worker: PRODUCTION_RESOURCES.adapterWorker, ...proof,
+    contract: 'schedule-public-read-durable-disable-proof/v1', runId: process.env.GITHUB_RUN_ID, worker: PRODUCTION_RESOURCES.adapterWorker, ...proof, privateSurface,
   }), { mode: 0o600, flag: 'wx' })
   console.log('{"ok":true,"durableDisableProofVerified":true}')
 }

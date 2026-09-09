@@ -83,7 +83,13 @@ Publication jobs are bounded; the initial window reserves time for fallback.
 ## Private verifier and cleanup
 
 The production adapter retains `workers_dev=false`, `preview_urls=false`, no
-public routes and no D1. Its fixed-binding probe has workers.dev only while the
+public routes and no D1. Acceptance and durable disable proof also inventory
+all account zones' Worker routes and account Worker custom domains, failing
+closed on any adapter association, incomplete pagination or missing read
+permission. The canonical token therefore needs read access to those inventories
+in addition to the existing Worker deployment permissions; no route/domain is
+removed automatically. Sanitized evidence retains only absence booleans and a
+zone count. Its fixed-binding probe has workers.dev only while the
 release runs. `GET /verify/ready` and `/verify/disabled` require the dedicated
 HMAC service identity `schedule-production-verifier`; no other paths, methods,
 queries, URLs or caller data are accepted. It calls only fixed adapter health
@@ -117,7 +123,10 @@ is proved, a new disabled dispatch can proceed.
 After a potentially mutating candidate promotion, failure or cancellation of smoke, active
 version readback or core opt-in evidence triggers an explicitly disabled version
 under the same checked lease while the runner survives. The fallback and its
-readback explicitly cover cancellation; a forcibly lost runner is not a
+readback explicitly cover cancellation. The production job-level conditions
+also use `always()` with explicit successful prerequisite results, preserving
+the runner for those cleanup steps; normal candidate steps still stop on
+cancellation. A forcibly lost runner is not a
 successful rollback and requires a new canonical disabled dispatch. No DO state or Schedule data
 is deleted. Core default production dispatches keep public-read disabled and
 prove the 503 projection. Production adapter `operation=disable` requires its
