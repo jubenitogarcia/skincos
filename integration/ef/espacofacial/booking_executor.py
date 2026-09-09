@@ -160,7 +160,7 @@ class ExecutorLedger:
         finally:
             db.close()
 
-    def admit(self, delivery_id, fingerprint, nonce, now_ms):
+    def admit(self, delivery_id, fingerprint, nonce, now_ms, *, callback_capacity_available=True):
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM executor_nonces WHERE expires_at_ms < ?", (now_ms,))
@@ -177,7 +177,7 @@ class ExecutorLedger:
                     db.execute("UPDATE executor_deliveries SET status='manual_review',updated_at_ms=? WHERE delivery_id=?", (now_ms, delivery_id))
                     status = "manual_review"
                 return status, False
-            if db.execute("SELECT COUNT(*) FROM executor_deliveries WHERE status IN ('accepted','running')").fetchone()[0] >= 16:
+            if not callback_capacity_available or db.execute("SELECT COUNT(*) FROM executor_deliveries WHERE status IN ('accepted','running')").fetchone()[0] >= 16:
                 raise ExecutorError("booking_executor_capacity_unavailable")
             db.execute("INSERT INTO executor_deliveries VALUES (?,?,'accepted',?,?)", (delivery_id, fingerprint, now_ms, now_ms))
             return "accepted", True
@@ -231,7 +231,8 @@ class BookingExecutor:
             with self._lifecycle_lock:
                 if self._closing:
                     raise ExecutorError("booking_executor_unavailable")
-                status, admitted = self.ledger.admit(delivery_id, fingerprint, nonce, now_ms)
+                status, admitted = self.ledger.admit(delivery_id, fingerprint, nonce, now_ms,
+                                                     callback_capacity_available=self._pending_callbacks < 16)
                 if admitted:
                     self._pending_callbacks += 1
             if admitted:
@@ -260,6 +261,7 @@ class BookingExecutor:
                         self.ledger.finish(delivery_id, "manual_review", self._now())
                         return
                 if not self.ledger.start(delivery_id, self._now()):
+                    self.ledger.finish(delivery_id, "manual_review", self._now())
                     return
                 result = self._execute(reservation)
                 # A Selenium request being accepted, finishing a dry run, or a

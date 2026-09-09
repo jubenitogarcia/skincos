@@ -244,6 +244,24 @@ class ExecutorTests(ExecutorFixture):
         self.queue.pop()()
         self.execute.assert_not_called()
 
+    def test_expired_callback_becomes_terminal_without_polling(self):
+        self.assertEqual(self.dispatch()[0], 202)
+        self.now += MAX_PENDING_MS
+        self.queue.pop()()
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute("SELECT status FROM executor_deliveries").fetchone()[0], "manual_review")
+        self.execute.assert_not_called()
+
+    def test_terminal_polling_cannot_bypass_live_callback_capacity(self):
+        bodies = [encode(delivery_id=f"synthetic-stalled-{index}") for index in range(16)]
+        for body in bodies:
+            self.assertEqual(self.dispatch(body)[0], 202)
+        self.now += MAX_PENDING_MS
+        for body in bodies:
+            self.assertEqual(self.dispatch(body)[1]["outcome"], "manual_review")
+        self.assertEqual(self.dispatch()[0], 503)
+        self.assertEqual(len(self.queue), 16)
+
     def test_execution_lock_wait_is_rechecked_before_side_effect(self):
         lock = threading.Lock()
         self.executor = self.make_executor(execution_lock=lock)
