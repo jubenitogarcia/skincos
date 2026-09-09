@@ -5,10 +5,10 @@ import { pathToFileURL } from 'node:url';
 export const PRODUCTION_WORKER_NAME = 'skincos-identity-crm-delivery-production';
 export const STAGING_WORKER_NAME = 'skincos-identity-crm-delivery-staging';
 
-// This inventory contract checks only names and binding types; it never reads
-// or emits a value. The signing key must be a non-extractable Cloudflare
-// `secret_key`, while the remaining short configuration values are
-// `secret_text`. Provisioning remains a separate custody operation.
+// This inventory contract checks only auditable binding metadata; it never
+// reads or emits a value. The signing key must be a non-extractable Cloudflare
+// `secret_key` for Ed25519 signing, while the remaining short configuration
+// values are `secret_text`. Provisioning remains a separate custody operation.
 export const REQUIRED_PRODUCTION_SECRET_TYPES = Object.freeze({
   IDENTITY_CRM_DELIVERY_PRODUCTION_KID: 'secret_text',
   IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: 'secret_key',
@@ -16,6 +16,12 @@ export const REQUIRED_PRODUCTION_SECRET_TYPES = Object.freeze({
   IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
 });
 export const REQUIRED_PRODUCTION_SECRET_NAMES = Object.freeze(Object.keys(REQUIRED_PRODUCTION_SECRET_TYPES));
+export const REQUIRED_PRODUCTION_SECRET_KEY_METADATA = Object.freeze({
+  IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: Object.freeze({
+    algorithm: 'Ed25519',
+    usages: Object.freeze(['sign']),
+  }),
+});
 
 export const IDENTITY_CRM_DELIVERY_PROTOCOL = Object.freeze({
   version: 'identity-crm-delivery/v1',
@@ -154,28 +160,50 @@ export function sanitizeDeployments(value) {
 
 export function sanitizeSecretInventory(value) {
   const entries = resultArray(value, 'secrets');
-  const typesByName = new Map();
+  const bindingsByName = new Map();
   for (const entry of entries) {
     const name = safeIdentifier(entry?.name);
     const type = safeIdentifier(entry?.type);
     if (!name || !type) continue;
-    if (!typesByName.has(name)) {
-      typesByName.set(name, type);
-    } else if (typesByName.get(name) !== type) {
+    const algorithm = type === 'secret_key' ? safeIdentifier(entry?.algorithm?.name) : null;
+    const usages = type === 'secret_key' && Array.isArray(entry?.usages)
+      ? [...new Set(entry.usages.map(safeIdentifier).filter(Boolean))].sort()
+      : null;
+    const binding = {
+      type,
+      keyMetadata: type === 'secret_key' && algorithm && usages
+        ? { algorithm, usages }
+        : null,
+    };
+    const existing = bindingsByName.get(name);
+    if (!existing) {
+      bindingsByName.set(name, binding);
+    } else if (existing.type !== binding.type
+      || JSON.stringify(existing.keyMetadata) !== JSON.stringify(binding.keyMetadata)) {
       // A contradictory inventory is not evidence that the required binding
-      // has either safe type. Preserve no value and make the later exact-type
-      // comparison fail closed.
-      typesByName.set(name, null);
+      // has safe type or key metadata. Preserve no value and make the later
+      // exact comparison fail closed.
+      bindingsByName.set(name, { type: null, keyMetadata: null });
     }
   }
-  const names = [...typesByName.keys()].sort();
-  const types = Object.fromEntries(names.map((name) => [name, typesByName.get(name)]));
+  const names = [...bindingsByName.keys()].sort();
+  const types = Object.fromEntries(names.map((name) => [name, bindingsByName.get(name).type]));
+  const keyMetadata = Object.fromEntries(names
+    .filter((name) => bindingsByName.get(name).keyMetadata)
+    .map((name) => [name, bindingsByName.get(name).keyMetadata]));
   return {
     count: names.length,
     names,
     types,
+    keyMetadata,
     valuesReadOrEmitted: false,
   };
+}
+
+function hasExactKeyMetadata(actual, expected) {
+  if (!actual || actual.algorithm !== expected.algorithm || !Array.isArray(actual.usages)) return false;
+  return actual.usages.length === expected.usages.length
+    && actual.usages.every((usage, index) => usage === expected.usages[index]);
 }
 
 export function sanitizeRoutes(value, workerName, zoneCount = 0) {
@@ -412,7 +440,7 @@ export function evaluateIdentityCrmProductionReadiness({
     : { count: 0, entries: [] };
   const secretReadback = worker?.secrets?.state === 'available'
     ? sanitizeSecretInventory(worker.secrets.result)
-    : { count: 0, names: [], types: {}, valuesReadOrEmitted: false };
+    : { count: 0, names: [], types: {}, keyMetadata: {}, valuesReadOrEmitted: false };
   const subdomain = worker?.subdomain?.state === 'available' ? worker.subdomain.result : null;
   const routeReadback = routes?.state === 'available'
     ? sanitizeRoutes(routes.result, productionWorker, routes.resultInfo?.zoneCount)
@@ -449,6 +477,12 @@ export function evaluateIdentityCrmProductionReadiness({
     .map(([name, expectedType]) => `${name} (expected ${expectedType})`);
   if (wrongSecretTypes.length > 0) {
     blockers.push(`production Worker has required secret bindings with incorrect types: ${wrongSecretTypes.join(', ')}`);
+  }
+  const wrongSecretKeyMetadata = Object.entries(REQUIRED_PRODUCTION_SECRET_KEY_METADATA)
+    .filter(([name, expected]) => !hasExactKeyMetadata(secretReadback.keyMetadata[name], expected))
+    .map(([name, expected]) => `${name} (expected ${expected.algorithm} with usages ${expected.usages.join(', ')})`);
+  if (wrongSecretKeyMetadata.length > 0) {
+    blockers.push(`production Worker has required secret-key metadata: ${wrongSecretKeyMetadata.join(', ')}`);
   }
   if (!hasAvailableEndpoint(worker?.subdomain)) {
     blockers.push('production Worker public subdomain state could not be read');

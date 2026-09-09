@@ -5,6 +5,7 @@ import {
   IDENTITY_CRM_DELIVERY_PROTOCOL,
   PRODUCTION_WORKER_NAME,
   REQUIRED_PRODUCTION_SECRET_NAMES,
+  REQUIRED_PRODUCTION_SECRET_KEY_METADATA,
   REQUIRED_PRODUCTION_SECRET_TYPES,
   runIdentityCrmProductionReadiness,
 } from './identity-crm-production-readiness.mjs';
@@ -27,6 +28,9 @@ function requiredSecretInventory(overrides = {}) {
   return REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({
     name,
     type: REQUIRED_PRODUCTION_SECRET_TYPES[name],
+    ...(name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+      ? { algorithm: { name: 'Ed25519' }, usages: ['sign'], format: 'jwk' }
+      : {}),
     ...overrides,
   }));
 }
@@ -97,6 +101,12 @@ test('production defaults are distinct from staging and protocol values are fixe
     IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: 'secret_key',
     IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK: 'secret_text',
     IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+  });
+  assert.deepEqual(REQUIRED_PRODUCTION_SECRET_KEY_METADATA, {
+    IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: {
+      algorithm: 'Ed25519',
+      usages: ['sign'],
+    },
   });
 });
 
@@ -176,6 +186,35 @@ test('production readiness rejects a textual signing binding before approving cu
   assert.ok(report.blockers.includes('production Worker has required secret bindings with incorrect types: IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY (expected secret_key)'));
   assert.equal(report.cloudflare.secretInventory.types.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY, 'secret_text');
   assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
+});
+
+test('production readiness rejects a signing key with a non-Ed25519 algorithm or unsafe usages', async () => {
+  for (const replacement of [
+    { algorithm: { name: 'HMAC' }, usages: ['sign'] },
+    { algorithm: { name: 'Ed25519' }, usages: ['verify'] },
+    { algorithm: { name: 'Ed25519' }, usages: ['sign', 'verify'] },
+  ]) {
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment(),
+      fetchImpl: async (url) => {
+        if (url === `${workerUrl}/secrets`) {
+          return cloudflareResponse(requiredSecretInventory().map((entry) => entry.name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+            ? { ...entry, ...replacement }
+            : entry));
+        }
+        const workerResponse = completeWorkerResponse(url);
+        if (workerResponse) return workerResponse;
+        if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+        if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+        throw new Error(`unexpected URL ${url}`);
+      },
+    });
+    assert.equal(report.result, 'blocked');
+    assert.ok(report.blockers.includes('production Worker has required secret-key metadata: IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY (expected Ed25519 with usages sign)'));
+    assert.deepEqual(report.cloudflare.secretInventory.keyMetadata.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY,
+      { algorithm: replacement.algorithm.name, usages: [...replacement.usages].sort() });
+    assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
+  }
 });
 
 test('route readback paginates every account zone and blocks a matching route in a later zone', async () => {
