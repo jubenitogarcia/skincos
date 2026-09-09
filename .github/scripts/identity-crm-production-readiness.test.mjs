@@ -203,6 +203,57 @@ test('custom-domain inventory paginates and blocks a matching production Worker 
   assertReadCalls(calls, [...workerUrls, zonesUrl, domainsUrl, routesUrl, domainsSecondPageUrl]);
 });
 
+test('custom-domain pagination without total_pages reads through total_count and remains eligible when unmatched', async () => {
+  const calls = [];
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment(),
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      const workerResponse = completeWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl) return cloudflareResponse([]);
+      if (url === domainsUrl) {
+        return cloudflareResponse([{ service: 'unrelated-worker-one', hostname: 'unrelated-one.example' }], 200, {
+          page: 1, per_page: 50, count: 1, total_count: 2,
+        });
+      }
+      if (url === domainsSecondPageUrl) {
+        return cloudflareResponse([{ service: 'unrelated-worker-two', hostname: 'unrelated-two.example' }], 200, {
+          page: 2, per_page: 50, count: 1, total_count: 2,
+        });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'eligible-for-approved-cutover');
+  assert.deepEqual(report.blockers, []);
+  assert.deepEqual(report.cloudflare.customDomainReadback, { count: 0 });
+  assertReadCalls(calls, [...workerUrls, zonesUrl, domainsUrl, routesUrl, domainsSecondPageUrl]);
+});
+
+test('account-zone inventory rejects count-only pagination metadata', async () => {
+  const calls = [];
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment(),
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      const workerResponse = completeWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) {
+        return cloudflareResponse([{ id: zoneId, account: { id: accountId } }], 200, {
+          page: 1, per_page: 50, count: 1, total_count: 1,
+        });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'blocked');
+  assert.equal(report.cloudflare.routeInventory, 'unavailable');
+  assert.ok(report.blockers.includes('account-wide production Worker route inventory could not be read'));
+  assertReadCalls(calls, [...workerUrls, zonesUrl]);
+});
+
 test('unavailable custom-domain inventory fails closed without retaining API error text', async () => {
   const privateMarker = 'synthetic-domain-api-error';
   const report = await runIdentityCrmProductionReadiness({

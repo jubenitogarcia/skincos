@@ -258,10 +258,11 @@ function appendQuery(relativePath, values) {
   return encoded ? `${relativePath}${relativePath.includes('?') ? '&' : '?'}${encoded}` : relativePath;
 }
 
-async function readPaginated(reader, relativePath, key) {
+async function readPaginated(reader, relativePath, key, { allowTotalCountOnly = false } = {}) {
   const items = [];
   let expectedTotal = null;
   let expectedPages = null;
+  let expectedPerPage = null;
   for (let page = 1; page <= MAX_READ_PAGES; page += 1) {
     const endpoint = await reader(appendQuery(relativePath, { page, per_page: READ_PAGE_SIZE }));
     if (!hasAvailableEndpoint(endpoint)) return endpoint;
@@ -271,29 +272,55 @@ async function readPaginated(reader, relativePath, key) {
     if (endpoint.resultInfo !== null) {
       const totalPages = endpoint.resultInfo?.total_pages;
       const totalCount = endpoint.resultInfo?.total_count;
-      if (!Number.isInteger(totalPages) || !Number.isInteger(totalCount)
-        || totalPages < 0 || totalCount < 0
-        || (Number.isInteger(endpoint.resultInfo?.page) && endpoint.resultInfo.page !== page)) {
+      const currentPage = endpoint.resultInfo?.page;
+      const hasTotalPages = Number.isInteger(totalPages);
+      const hasTotalCount = Number.isInteger(totalCount);
+      if (endpoint.resultInfo?.total_pages !== undefined && !hasTotalPages) {
         return unavailableEndpoint('malformed-pagination-metadata');
       }
-      if (totalPages === 0) {
-        return totalCount === 0 && items.length === 0
-          ? endpointWithResult(items, { pages: page, total_count: totalCount })
-          : unavailableEndpoint('inconsistent-pagination');
+      if (hasTotalPages) {
+        if (!hasTotalCount || totalPages < 0 || totalCount < 0
+          || (currentPage !== undefined && (!Number.isInteger(currentPage) || currentPage !== page))) {
+          return unavailableEndpoint('malformed-pagination-metadata');
+        }
+        if (totalPages === 0) {
+          return totalCount === 0 && items.length === 0
+            ? endpointWithResult(items, { pages: page, total_count: totalCount })
+            : unavailableEndpoint('inconsistent-pagination');
+        }
+        if (totalPages < page
+          || (expectedPages !== null && totalPages !== expectedPages)
+          || (expectedTotal !== null && totalCount !== expectedTotal)) {
+          return unavailableEndpoint('inconsistent-pagination');
+        }
+        expectedPages = totalPages;
+        expectedTotal = totalCount;
+        if (page === expectedPages) {
+          return items.length === expectedTotal
+            ? endpointWithResult(items, { pages: page, total_count: expectedTotal })
+            : unavailableEndpoint('incomplete-pagination');
+        }
+        if (items.length > expectedTotal) return unavailableEndpoint('inconsistent-pagination');
+        continue;
       }
-      if (totalPages < page
-        || (expectedPages !== null && totalPages !== expectedPages)
-        || (expectedTotal !== null && totalCount !== expectedTotal)) {
-        return unavailableEndpoint('inconsistent-pagination');
+      const count = endpoint.resultInfo?.count;
+      const perPage = endpoint.resultInfo?.per_page;
+      if (!allowTotalCountOnly || !hasTotalCount
+        || !Number.isInteger(count) || !Number.isInteger(perPage)
+        || totalCount < 0 || count < 0 || perPage < 1
+        || count !== entries.length || count > perPage
+        || endpoint.resultInfo?.page !== page
+        || (expectedTotal !== null && totalCount !== expectedTotal)
+        || (expectedPerPage !== null && perPage !== expectedPerPage)) {
+        return unavailableEndpoint('malformed-pagination-metadata');
       }
-      expectedPages = totalPages;
       expectedTotal = totalCount;
-      if (page === expectedPages) {
-        return items.length === expectedTotal
-          ? endpointWithResult(items, { pages: page, total_count: expectedTotal })
-          : unavailableEndpoint('incomplete-pagination');
+      expectedPerPage = perPage;
+      if (items.length === expectedTotal) {
+        return endpointWithResult(items, { pages: page, total_count: expectedTotal });
       }
       if (items.length > expectedTotal) return unavailableEndpoint('inconsistent-pagination');
+      if (count === 0) return unavailableEndpoint('incomplete-pagination');
       continue;
     }
     if (entries.length < READ_PAGE_SIZE) {
@@ -318,7 +345,12 @@ async function readAccountWideExposure({ reader, accountId }) {
     || !zones.result.every((zone) => ZONE_ID_PATTERN.test(string(zone?.id)) && zone?.account?.id === accountId)) {
     return { routes: unavailableEndpoint('malformed-account-zone-inventory'), domains: notAttemptedEndpoint('zone-inventory-invalid') };
   }
-  const domainsPromise = readPaginated(reader, `/accounts/${encodeURIComponent(accountId)}/workers/domains`, 'domains');
+  const domainsPromise = readPaginated(
+    reader,
+    `/accounts/${encodeURIComponent(accountId)}/workers/domains`,
+    'domains',
+    { allowTotalCountOnly: true },
+  );
   const routeStates = await Promise.all(zoneIds.map((zoneId) =>
     readList(reader, `/zones/${encodeURIComponent(zoneId)}/workers/routes`, 'routes')));
   const domains = await domainsPromise;
