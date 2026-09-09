@@ -6,7 +6,7 @@
 publicador do Worker isolado `skincos-schedule-public-read-staging`. Ele não
 publica `skincos-escala-api-staging`, não escreve em D1, não adiciona
 rota/custom domain e não chama Website, Booking ou BelezaEmMovimento. A única
-exceção de lifecycle é o bootstrap explícito, desabilitado e restrito a staging
+exceção de lifecycle nesta lane é o bootstrap explícito, desabilitado em staging
 deste próprio Worker: ele cria o Worker e aplica a migration da Durable Object
 antes de qualquer uso de `wrangler versions upload`.
 
@@ -14,8 +14,10 @@ O core Schedule continua sob o publicador canônico
 `.github/workflows/deploy-escala-api.yml`. Somente esse workflow pode receber
 `enable_schedule_public_read=true`, criar uma versão candidata não publicada
 do core com as capacidades necessárias e publicar
-`skincos-escala-api-staging` com a projeção habilitada. Produção rejeita esse
-opt-in e sempre recebe `SCHEDULE_PUBLIC_READ_ENABLED=false`. O adaptador só faz
+`skincos-escala-api-staging` com a projeção habilitada. Produção permanece
+desabilitada por padrão; sua lane opt-in privada e seus pré-requisitos adicionais
+estão em [PUBLIC_READ_PRODUCTION_RUNBOOK.md](PUBLIC_READ_PRODUCTION_RUNBOOK.md).
+Nesta lane, o adaptador só faz
 uma chamada de serviço autenticada à projeção de leitura do core já publicada
 em staging.
 

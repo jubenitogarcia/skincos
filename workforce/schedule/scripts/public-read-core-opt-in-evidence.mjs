@@ -27,28 +27,30 @@ function requiredRunId(value, label) {
   return normalized
 }
 
-export function createSchedulePublicReadCoreOptInEvidence({ sourceSha, workflowRunId, workflowRunAttempt = '1' }) {
+export function createSchedulePublicReadCoreOptInEvidence({ sourceSha, workflowRunId, workflowRunAttempt = '1', target = 'staging' }) {
+  if (!['staging', 'production'].includes(target)) throw new Error('unsupported core target')
   const normalizedAttempt = requiredText(workflowRunAttempt, 'workflowRunAttempt')
   if (normalizedAttempt !== '1') throw new Error('workflowRunAttempt must be 1')
   return {
     schemaVersion: 1,
     contract: SCHEDULE_PUBLIC_READ_CORE_OPT_IN_CONTRACT,
     unit: 'escala-api',
-    target: 'staging',
+    target,
     workflowPath: SCHEDULE_PUBLIC_READ_CORE_WORKFLOW,
     workflowRunId: requiredRunId(workflowRunId, 'workflowRunId'),
     workflowRunAttempt: 1,
     sourceSha: requiredSha(sourceSha, 'sourceSha'),
-    coreWorker: SCHEDULE_PUBLIC_READ_CORE_STAGING_WORKER,
+    coreWorker: target === 'production' ? 'skincos-escala-api' : SCHEDULE_PUBLIC_READ_CORE_STAGING_WORKER,
     schedulePublicReadEnabled: true,
   }
 }
 
-export function verifySchedulePublicReadCoreOptInEvidence(document, { sourceSha, workflowRunId } = {}) {
+export function verifySchedulePublicReadCoreOptInEvidence(document, { sourceSha, workflowRunId, target = 'staging' } = {}) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) {
     throw new Error('core opt-in evidence must be an object')
   }
   const expected = createSchedulePublicReadCoreOptInEvidence({
+    target,
     sourceSha: sourceSha || document.sourceSha,
     workflowRunId: workflowRunId || document.workflowRunId,
     workflowRunAttempt: String(document.workflowRunAttempt || ''),
@@ -65,6 +67,7 @@ export function verifySchedulePublicReadCoreOptInEvidence(document, { sourceSha,
 
 async function writeEvidence(filePath) {
   const evidence = createSchedulePublicReadCoreOptInEvidence({
+    target: process.env.SCHEDULE_PUBLIC_READ_TARGET || 'staging',
     sourceSha: process.env.PROMOTION_SOURCE_SHA,
     workflowRunId: process.env.GITHUB_RUN_ID,
     workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
@@ -76,6 +79,7 @@ async function writeEvidence(filePath) {
 async function verifyEvidence(filePath) {
   const document = JSON.parse(await readFile(filePath, 'utf8'))
   verifySchedulePublicReadCoreOptInEvidence(document, {
+    target: process.env.SCHEDULE_PUBLIC_READ_EXPECTED_TARGET || 'staging',
     sourceSha: process.env.SCHEDULE_PUBLIC_READ_EXPECTED_SOURCE_SHA,
     workflowRunId: process.env.SCHEDULE_PUBLIC_READ_EXPECTED_WORKFLOW_RUN_ID,
   })
