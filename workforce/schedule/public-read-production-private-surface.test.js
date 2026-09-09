@@ -99,6 +99,28 @@ test('complete unpaginated custom domains are supported; malformed associations 
   }
 })
 
+test('live domain pagination shape may omit only redundant total_pages, with complete exact counts still required', async () => {
+  const domains = Array.from({ length: 51 }, (_, index) => ({ id: `synthetic-${index}`, service: 'other-worker' }))
+  const h = fixture({ override: async url => {
+    if (!url.pathname.endsWith('/workers/domains')) return undefined
+    const payload = page(domains, Number(url.searchParams.get('page')))
+    delete payload.result_info.total_pages
+    return response(payload)
+  } })
+  assert.equal((await h.run()).customDomainsAbsent, true)
+  assert.equal(h.calls.filter(call => call.url.pathname.endsWith('/workers/domains')).length, 2)
+  for (const missing of ['total_count', 'per_page', 'page']) {
+    const invalid = fixture({ override: async url => {
+      if (!url.pathname.endsWith('/workers/domains')) return undefined
+      const payload = page(domains, 1)
+      delete payload.result_info.total_pages
+      delete payload.result_info[missing]
+      return response(payload)
+    } })
+    await assert.rejects(invalid.run(), { message: 'production_adapter_private_surface_failed' })
+  }
+})
+
 test('provider errors, redirects and oversized declared or streamed responses stay bounded and sanitized', async () => {
   for (const mode of ['throw', 'denied', 'redirect', 'declared', 'stream']) {
     const h = fixture({ override: async (_url, options) => {

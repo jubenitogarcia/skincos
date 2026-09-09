@@ -58,14 +58,19 @@ export async function assertProductionAdapterPrivateSurface({ accountId, apiToke
           if (paginated || page !== 1) fail()
           return items
         }
+        // The live custom-domain API supplies page/per_page/total_count but
+        // may omit total_pages. Derive only that redundant field; all counts,
+        // page sizes, completeness and cross-page consistency still bind.
+        const totalPages = info.total_pages === undefined && !paginated
+          ? Math.ceil(info.total_count / info.per_page) : info.total_pages
         if (!Number.isSafeInteger(info.total_count) || info.total_count < 0 || info.total_count > 5000
-          || !Number.isSafeInteger(info.total_pages) || info.total_pages < 0 || info.total_pages > 100
+          || !Number.isSafeInteger(totalPages) || totalPages < 0 || totalPages > 100
           || info.page !== page || !Number.isSafeInteger(info.per_page) || info.per_page < 1 || info.per_page > 50
           || (info.count !== undefined && info.count !== payload.result.length)
-          || (info.total_count === 0 ? ![0, 1].includes(info.total_pages) : info.total_pages !== Math.ceil(info.total_count / info.per_page))
+          || (info.total_count === 0 ? ![0, 1].includes(totalPages) : totalPages !== Math.ceil(info.total_count / info.per_page))
           || payload.result.length !== Math.min(info.per_page, Math.max(0, info.total_count - (page - 1) * info.per_page))) fail()
-        if (page === 1) { expectedTotal = info.total_count; expectedPages = info.total_pages; pageSize = info.per_page }
-        else if (info.total_count !== expectedTotal || info.total_pages !== expectedPages || info.per_page !== pageSize) fail()
+        if (page === 1) { expectedTotal = info.total_count; expectedPages = totalPages; pageSize = info.per_page }
+        else if (info.total_count !== expectedTotal || totalPages !== expectedPages || info.per_page !== pageSize) fail()
         if (items.length === expectedTotal) return items
       }
       fail()
