@@ -441,7 +441,7 @@ jobs:
           npx --yes wrangler@4 versions deploy --config workforce/schedule/wrangler.toml --env staging --version-tag "${DISABLED_TAG}@100%" --yes --message "escala-api:staging-schedule-public-read-disabled:${RELEASE_SHA}:${GITHUB_RUN_ID}"
 
       - name: Prove automatic disabled Schedule public-read core fallback
-        if: ${{ steps.schedule-public-read-core-automatic-disabled-fallback.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.schedule-public-read-core-automatic-disabled-fallback.outcome == 'success' }}
         env:
           SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL: https://escala-api-staging.skincos.com.br
           SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE: disabled

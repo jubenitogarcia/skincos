@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
 
 const workflow = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8')
 const contractWorkflow = readFileSync(new URL('../../.github/workflows/schedule-public-read-contract.yml', import.meta.url), 'utf8')
@@ -167,6 +168,40 @@ test('Schedule public-read adapter requires a disabled Durable Object bootstrap 
     assert.match(section, /CLOUDFLARE_ACCOUNT_ID/)
   }
 })
+
+for (const [surface, document, proofName, nextName, fallbackStep] of [
+  ['adapter', workflow, 'Prove automatic disabled fallback', 'Check adapter lease before manual disabled version creation', 'automatic-disabled-fallback'],
+  ['core', coreWorkflow, 'Prove automatic disabled Schedule public-read core fallback', 'Release Escala API deployment lease', 'schedule-public-read-core-automatic-disabled-fallback'],
+]) {
+  test(`Schedule public-read ${surface} rollback readback survives prior failure but not cancellation or an unsuccessful fallback`, () => {
+    const proof = stepSection(document, proofName, nextName)
+    const condition = proof.match(/^\s+if: \$\{\{ (.+) \}\}\s*$/m)?.[1]
+    assert.ok(condition, 'rollback readback must have an explicit condition')
+
+    // GitHub adds success() unless the condition contains a status function.
+    // Evaluate this small expression subset, replacing only the step lookup
+    // (whose hyphenated ID is not a JavaScript property expression).
+    const hasStatusFunction = /\b(?:success|failure|cancelled|always)\s*\(/.test(condition)
+    const expression = condition.replace(`steps.${fallbackStep}.outcome`, 'fallbackOutcome')
+    const effectiveExpression = hasStatusFunction ? expression : `success() && (${expression})`
+    for (const priorFailed of [false, true]) {
+      for (const isCancelled of [false, true]) {
+        for (const fallbackOutcome of ['success', 'failure', 'skipped', 'cancelled', undefined]) {
+          const actual = runInNewContext(effectiveExpression, {
+            fallbackOutcome,
+            success: () => !priorFailed && !isCancelled,
+            failure: () => priorFailed,
+            cancelled: () => isCancelled,
+            always: () => true,
+          }, { timeout: 100 })
+          assert.equal(actual, !isCancelled && fallbackOutcome === 'success',
+            JSON.stringify({ surface, priorFailed, isCancelled, fallbackOutcome }))
+        }
+      }
+    }
+    assert.equal(condition, `!cancelled() && steps.${fallbackStep}.outcome == 'success'`)
+  })
+}
 
 test('Schedule public-read defaults disabled and only the canonical core publisher can opt in for staging', () => {
   assert.match(adapterConfig, /\[env\.staging\.vars\][\s\S]*SCHEDULE_PUBLIC_READ_ENABLED = "false"/)
