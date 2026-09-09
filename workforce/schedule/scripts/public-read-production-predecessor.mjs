@@ -41,8 +41,11 @@ async function main() {
   mkdirSync(root, { recursive: true, mode: 0o700 })
   const gh = args => execFileSync('gh', args, { encoding: 'utf8', timeout: 60_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
   const workflowPath = `.github/workflows/${workflowName}`
+  // A forbidden rerun may still exist in GitHub after attempt 1 lost its
+  // runner. Recover against the actual owning attempt, never the latest rerun.
+  const runPath = `repos/${repository}/actions/runs/${runId}${mode === 'probe-recovery' ? '/attempts/1' : ''}`
   verifyCanonicalRun(JSON.parse(gh(['api', `repos/${repository}/actions/workflows/${workflowName}`])),
-    JSON.parse(gh(['api', `repos/${repository}/actions/runs/${runId}`])), { workflowPath, runId,
+    JSON.parse(gh(['api', runPath])), { workflowPath, runId,
       ...(mode === 'probe-recovery' ? { allowedConclusions: ['failure', 'cancelled', 'timed_out'] } : {}) })
   if (mode === 'probe-recovery') {
     if (runId === process.env.GITHUB_RUN_ID) throw new Error('schedule_production_predecessor_input_invalid')
