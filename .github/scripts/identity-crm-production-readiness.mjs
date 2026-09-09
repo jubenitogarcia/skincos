@@ -22,6 +22,15 @@ export const REQUIRED_PRODUCTION_SECRET_KEY_METADATA = Object.freeze({
     usages: Object.freeze(['sign']),
   }),
 });
+// These deployment-owned vars are non-secret, but the readiness report never
+// emits their actual values. Each one must appear exactly once as a plain-text
+// binding with the fixed runtime value below before cutover can be approved.
+export const REQUIRED_PRODUCTION_RUNTIME_BINDINGS = Object.freeze({
+  IDENTITY_CRM_DELIVERY_ENABLED: 'true',
+  IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'production',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: 'crm-api-production-v1',
+});
 
 export const IDENTITY_CRM_DELIVERY_PROTOCOL = Object.freeze({
   version: 'identity-crm-delivery/v1',
@@ -126,9 +135,21 @@ function sanitizeBindings(settings) {
     .sort((left, right) => `${left.name}:${left.type}`.localeCompare(`${right.name}:${right.type}`));
 }
 
+function sanitizeRequiredRuntimeBindings(settings) {
+  const bindings = Array.isArray(settings?.bindings) ? settings.bindings : [];
+  return Object.fromEntries(Object.entries(REQUIRED_PRODUCTION_RUNTIME_BINDINGS).map(([name, expected]) => {
+    const matches = bindings.filter((binding) => binding?.name === name);
+    const isExact = matches.length === 1
+      && matches[0]?.type === 'plain_text'
+      && typeof matches[0]?.text === 'string'
+      && matches[0].text === expected;
+    return [name, isExact ? 'matches' : matches.length === 0 ? 'missing' : 'incorrect'];
+  }));
+}
+
 export function sanitizeWorkerSettings(settings) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-    return { compatibilityDate: null, usageModel: null, workersDev: null, bindings: [] };
+    return { compatibilityDate: null, usageModel: null, workersDev: null, bindings: [], requiredRuntimeBindings: {} };
   }
   return {
     compatibilityDate: string(settings.compatibility_date) || null,
@@ -137,6 +158,7 @@ export function sanitizeWorkerSettings(settings) {
       : null,
     workersDev: typeof settings.workers_dev === 'boolean' ? settings.workers_dev : null,
     bindings: sanitizeBindings(settings),
+    requiredRuntimeBindings: sanitizeRequiredRuntimeBindings(settings),
   };
 }
 
@@ -435,6 +457,7 @@ export function evaluateIdentityCrmProductionReadiness({
   const productionWorker = string(workerName);
   const stagingWorker = string(stagingWorkerName);
   const settings = worker?.settings?.state === 'available' ? worker.settings.result : null;
+  const sanitizedSettings = settings ? sanitizeWorkerSettings(settings) : null;
   const deploymentReadback = worker?.deployments?.state === 'available'
     ? sanitizeDeployments(worker.deployments.result)
     : { count: 0, entries: [] };
@@ -460,6 +483,11 @@ export function evaluateIdentityCrmProductionReadiness({
   }
   if (!hasAvailableEndpoint(worker?.settings)) {
     blockers.push('production Worker settings could not be read');
+  }
+  const wrongRuntimeBindings = Object.keys(REQUIRED_PRODUCTION_RUNTIME_BINDINGS)
+    .filter((name) => sanitizedSettings?.requiredRuntimeBindings?.[name] !== 'matches');
+  if (wrongRuntimeBindings.length > 0) {
+    blockers.push(`production Worker has required runtime bindings that are missing or incorrect: ${wrongRuntimeBindings.join(', ')}`);
   }
   if (!hasAvailableEndpoint(worker?.deployments) || deploymentReadback.count < 1) {
     blockers.push('production Worker has no externally verified deployment baseline');
@@ -514,7 +542,6 @@ export function evaluateIdentityCrmProductionReadiness({
     blockers.push('key rotation, overlap and rollback window are not externally attested');
   }
 
-  const sanitizedSettings = settings ? sanitizeWorkerSettings(settings) : null;
   const report = {
     schemaVersion: 1,
     result: blockers.length === 0 ? 'eligible-for-approved-cutover' : 'blocked',

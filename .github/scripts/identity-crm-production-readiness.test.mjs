@@ -6,6 +6,7 @@ import {
   PRODUCTION_WORKER_NAME,
   REQUIRED_PRODUCTION_SECRET_NAMES,
   REQUIRED_PRODUCTION_SECRET_KEY_METADATA,
+  REQUIRED_PRODUCTION_RUNTIME_BINDINGS,
   REQUIRED_PRODUCTION_SECRET_TYPES,
   runIdentityCrmProductionReadiness,
 } from './identity-crm-production-readiness.mjs';
@@ -31,6 +32,15 @@ function requiredSecretInventory(overrides = {}) {
     ...(name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
       ? { algorithm: { name: 'Ed25519' }, usages: ['sign'], format: 'jwk' }
       : {}),
+    ...overrides,
+  }));
+}
+
+function requiredRuntimeBindings(overrides = {}) {
+  return Object.entries(REQUIRED_PRODUCTION_RUNTIME_BINDINGS).map(([name, text]) => ({
+    name,
+    type: 'plain_text',
+    text,
     ...overrides,
   }));
 }
@@ -68,7 +78,7 @@ function cloudflareResponse(result, status = 200, resultInfo = null) {
 
 function completeWorkerResponse(url, { previewsEnabled = false } = {}) {
   if (url === `${workerUrl}/settings`) {
-    return cloudflareResponse({ compatibility_date: '2026-03-02', usage_model: 'standard', workers_dev: false, bindings: [] });
+    return cloudflareResponse({ compatibility_date: '2026-03-02', usage_model: 'standard', workers_dev: false, bindings: requiredRuntimeBindings() });
   }
   if (url === `${workerUrl}/deployments`) {
     return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
@@ -108,6 +118,12 @@ test('production defaults are distinct from staging and protocol values are fixe
       usages: ['sign'],
     },
   });
+  assert.deepEqual(REQUIRED_PRODUCTION_RUNTIME_BINDINGS, {
+    IDENTITY_CRM_DELIVERY_ENABLED: 'true',
+    IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'production',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: 'crm-api-production-v1',
+  });
 });
 
 test('missing external credentials produces a blocked, non-mutating report', async () => {
@@ -140,6 +156,7 @@ test('complete external readback is eligible only when all attestations are pres
           bindings: [
             { name: 'CRM_DELIVERY_SIGNER', type: 'service', service: 'identity-signer' },
             { name: 'SYNTHETIC_SECRET', type: 'secret_text', text: privateMarker },
+            ...requiredRuntimeBindings(),
           ],
         });
       }
@@ -164,6 +181,53 @@ test('complete external readback is eligible only when all attestations are pres
   assertReadCalls(calls);
   assert.doesNotMatch(JSON.stringify(report), new RegExp(apiToken));
   assert.doesNotMatch(JSON.stringify(report), new RegExp(privateMarker));
+});
+
+test('production readiness requires exact private-caller runtime bindings without emitting their values', async () => {
+  for (const { expectedName, expectedStatus, mutate } of [
+    {
+      expectedName: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED',
+      expectedStatus: 'missing',
+      mutate: (bindings) => bindings.filter((binding) => binding.name !== 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED'),
+    },
+    {
+      expectedName: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID',
+      expectedStatus: 'incorrect',
+      mutate: (bindings) => bindings.map((binding) => binding.name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID'
+      ? { ...binding, text: 'incorrect-caller' }
+        : binding),
+    },
+    {
+      expectedName: 'IDENTITY_CRM_DELIVERY_ENABLED',
+      expectedStatus: 'incorrect',
+      mutate: (bindings) => bindings.map((binding) => binding.name === 'IDENTITY_CRM_DELIVERY_ENABLED'
+      ? { ...binding, text: 'false' }
+        : binding),
+    },
+  ]) {
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment(),
+      fetchImpl: async (url) => {
+        if (url === `${workerUrl}/settings`) {
+          return cloudflareResponse({
+            compatibility_date: '2026-03-02',
+            usage_model: 'standard',
+            workers_dev: false,
+            bindings: mutate(requiredRuntimeBindings()),
+          });
+        }
+        const workerResponse = completeWorkerResponse(url);
+        if (workerResponse) return workerResponse;
+        if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+        if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+        throw new Error(`unexpected URL ${url}`);
+      },
+    });
+    assert.equal(report.result, 'blocked');
+    assert.ok(report.blockers.some((blocker) => blocker.startsWith('production Worker has required runtime bindings that are missing or incorrect:')));
+    assert.doesNotMatch(JSON.stringify(report), /incorrect-caller/);
+    assert.equal(report.cloudflare.workerSettings.requiredRuntimeBindings[expectedName], expectedStatus);
+  }
 });
 
 test('production readiness rejects a textual signing binding before approving cutover', async () => {
