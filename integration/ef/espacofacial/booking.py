@@ -1013,6 +1013,16 @@ def _verify_booking_modal_fields(driver: WebDriver, request: BookingRequest, *, 
         if not _service_summary_contains_any(dialog, service_values):
             return False
 
+    if require_slot_match:
+        if not _normalize_spaces(request.professional_name):
+            return False
+        try:
+            professional_multiselect = _find_multiselect_by_placeholder(dialog, ["Selecione o Injetor"], timeout=1)
+            if not _multiselect_has_selected_label(professional_multiselect, request.professional_name, exact=True):
+                return False
+        except Exception:
+            return False
+
     current_start, current_end = _read_sheet_datetimes(driver, dialog)
     expected_start = datetime.strptime(f"{request.appointment_date} {request.start_time}", "%d/%m/%Y %H:%M")
     expected_end = datetime.strptime(f"{request.appointment_date} {request.end_time}", "%d/%m/%Y %H:%M")
@@ -1715,7 +1725,19 @@ def _open_multiselect_by_placeholder(driver: WebDriver, scope, placeholders: Seq
     return None
 
 
-def _multiselect_has_selected_label(scope, value: str) -> bool:
+def _multiselect_has_selected_label(scope, value: str, *, exact: bool = False) -> bool:
+    if exact:
+        # Private readback must observe one selected identity, not a dropdown
+        # option, hidden label, substring or partially overlapping name.
+        labels = scope.find_elements(By.XPATH, ".//*[(contains(concat(' ', normalize-space(@class), ' '), ' multiselect-single-label ') or contains(concat(' ', normalize-space(@class), ' '), ' multiselect-tag ') or contains(concat(' ', normalize-space(@class), ' '), ' multiselect-label ')) and not(ancestor::*[@role='option' or contains(concat(' ', normalize-space(@class), ' '), ' multiselect-option ')])]")
+        selected = set()
+        for label in labels:
+            if label.is_displayed():
+                normalized = _normalize_match(label.text)
+                if normalized:
+                    selected.add(normalized)
+        expected = _normalize_match(value)
+        return bool(expected) and selected == {expected}
     for el in scope.find_elements(By.XPATH, ".//*[contains(@class, 'multiselect-single-label') and not(contains(@class, 'multiselect-single-label-el'))]"):
         try:
             if not el.is_displayed():

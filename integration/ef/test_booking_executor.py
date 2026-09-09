@@ -418,12 +418,14 @@ class PrivateEfBridgeTests(unittest.TestCase):
 
         request = BookingRequest(unit_name="BarraShoppingSul", client_name="Paciente Sintetico",
                                  appointment_date="10/09/2026", start_time="12:00", end_time="12:30",
-                                 service_name="Avaliação")
+                                 service_name="Avaliação", professional_name="Profissional Sintetico")
         start, end = datetime(2026, 9, 10, 12), datetime(2026, 9, 10, 12, 30)
         with ExitStack() as stack:
             stack.enter_context(patch("espacofacial.booking._find_booking_sheet", return_value=Mock()))
             stack.enter_context(patch("espacofacial.booking._input_value_by_placeholder", return_value=request.client_name))
             stack.enter_context(patch("espacofacial.booking._service_summary_contains_any", return_value=True))
+            stack.enter_context(patch("espacofacial.booking._find_multiselect_by_placeholder", return_value=Mock()))
+            stack.enter_context(patch("espacofacial.booking._multiselect_has_selected_label", return_value=True))
             read = stack.enter_context(patch("espacofacial.booking._read_sheet_datetimes"))
             for actual in ((None, None), (start, None), (None, end),
                            (start + timedelta(days=1), end + timedelta(days=1)),
@@ -433,6 +435,71 @@ class PrivateEfBridgeTests(unittest.TestCase):
                     self.assertEqual(_verify_booking_modal_fields(Mock(), request, require_slot_match=True), actual == (start, end))
             read.return_value = (None, None)
             self.assertTrue(_verify_booking_modal_fields(Mock(), request))  # legacy behavior is unchanged
+
+    def test_exact_professional_label_rejects_partial_hidden_and_ambiguous_selection(self):
+        from espacofacial.booking import _multiselect_has_selected_label
+
+        for texts, visible, expected in ((["Profissional Sintetico"], True, True),
+                                         (["  PROFISSIONAL   SINTETICO  "], True, True),
+                                         (["Profissional Sintetico Junior"], True, False),
+                                         (["Profissional"], True, False),
+                                         (["Profissional Sintetico", "Outro Profissional"], True, False),
+                                         (["Profissional Sintetico"], False, False), ([], True, False)):
+            with self.subTest(texts=texts, visible=visible):
+                scope = Mock()
+                scope.find_elements.return_value = [Mock(text=text, is_displayed=Mock(return_value=visible)) for text in texts]
+                self.assertEqual(_multiselect_has_selected_label(scope, "Profissional Sintetico", exact=True), expected)
+                scope.parent.execute_script.assert_not_called()
+        scope.find_elements.return_value = [Mock(text="Profissional Sintetico Junior")]
+        self.assertTrue(_multiselect_has_selected_label(scope, "Profissional Sintetico"))  # legacy fuzzy matcher
+
+    def test_strict_modal_requires_present_professional_control_and_exact_selected_name(self):
+        from espacofacial.booking import BookingRequest, _verify_booking_modal_fields
+
+        request = BookingRequest(unit_name="BarraShoppingSul", client_name="Paciente Sintetico",
+                                 appointment_date="10/09/2026", start_time="12:00", end_time="12:30",
+                                 service_name="Avaliação", professional_name="Profissional Sintetico")
+        with ExitStack() as stack:
+            stack.enter_context(patch("espacofacial.booking._find_booking_sheet", return_value=Mock()))
+            stack.enter_context(patch("espacofacial.booking._input_value_by_placeholder", return_value=request.client_name))
+            stack.enter_context(patch("espacofacial.booking._service_summary_contains_any", return_value=True))
+            stack.enter_context(patch("espacofacial.booking._read_sheet_datetimes", return_value=(datetime(2026, 9, 10, 12), datetime(2026, 9, 10, 12, 30))))
+            lookup = stack.enter_context(patch("espacofacial.booking._find_multiselect_by_placeholder"))
+            for label in ("Outro Profissional", "Profissional Sintetico Junior", "", "Profissional Sintetico"):
+                with self.subTest(label=label):
+                    lookup.return_value.find_elements.return_value = [Mock(text=label)]
+                    self.assertEqual(_verify_booking_modal_fields(Mock(), request, require_slot_match=True), label == request.professional_name)
+                    self.assertTrue(_verify_booking_modal_fields(Mock(), request))
+            lookup.side_effect = RuntimeError("synthetic missing control")
+            self.assertFalse(_verify_booking_modal_fields(Mock(), request, require_slot_match=True))
+            self.assertTrue(_verify_booking_modal_fields(Mock(), request))
+            lookup.reset_mock()
+            self.assertFalse(_verify_booking_modal_fields(Mock(), replace(request, professional_name=""), require_slot_match=True))
+            lookup.assert_not_called()
+
+    def test_date_candidates_with_identical_patient_service_slot_skip_wrong_professional(self):
+        from espacofacial.booking import BookingRequest, _verify_booking_in_date_candidates
+
+        request = BookingRequest(unit_name="BarraShoppingSul", client_name="Paciente Sintetico",
+                                 appointment_date="10/09/2026", start_time="12:00", end_time="12:30",
+                                 service_name="Avaliação", professional_name="Profissional Sintetico")
+        events = [Mock(), Mock()]
+        sheets = [Mock(), Mock()]
+        for sheet, professional in zip(sheets, ("Outro Profissional", request.professional_name)):
+            sheet.find_elements.return_value = [Mock(text=professional)]
+        with ExitStack() as stack:
+            stack.enter_context(patch("espacofacial.booking._calendar_events_for_date", return_value=events))
+            stack.enter_context(patch("espacofacial.booking._calendar_event_candidate_score", return_value=1))
+            click = stack.enter_context(patch("espacofacial.booking._real_click", return_value=True))
+            stack.enter_context(patch("espacofacial.booking._find_booking_sheet", side_effect=sheets))
+            stack.enter_context(patch("espacofacial.booking._find_multiselect_by_placeholder", side_effect=lambda dialog, *args, **kwargs: dialog))
+            stack.enter_context(patch("espacofacial.booking._input_value_by_placeholder", return_value=request.client_name))
+            stack.enter_context(patch("espacofacial.booking._service_summary_contains_any", return_value=True))
+            stack.enter_context(patch("espacofacial.booking._read_sheet_datetimes", return_value=(datetime(2026, 9, 10, 12), datetime(2026, 9, 10, 12, 30))))
+            stack.enter_context(patch("espacofacial.booking._close_booking_sheet"))
+            stack.enter_context(patch("espacofacial.booking.time.sleep"))
+            self.assertTrue(_verify_booking_in_date_candidates(Mock(), request, require_slot_match=True))
+            self.assertEqual(click.call_count, 2)
 
     def test_strict_readback_is_propagated_to_direct_and_date_candidate_modals(self):
         from espacofacial.booking import BookingRequest, _verify_booking_in_agenda

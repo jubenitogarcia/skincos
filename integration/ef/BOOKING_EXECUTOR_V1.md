@@ -89,7 +89,9 @@ Forced process termination remains uncertain and is recovered as `manual_review`
 
 Only the private adapter opts into strict slot readback: a reopened event modal
 must match the patient/service and expose the exact requested date, start and
-end. Missing date/time fields, whole-agenda text matches and readback exceptions
+end, plus one visible, fully matching selected professional in the injector
+control. Missing/ambiguous professional controls, partial professional names,
+missing date/time fields, whole-agenda text matches and readback exceptions
 cannot produce a durable `confirmed`. Legacy callers keep their existing success
 behavior, but do not set the new strict `verifiedInAgenda` flag.
 
