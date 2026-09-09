@@ -14,6 +14,12 @@ const ED25519_PUBLIC_KEY_BYTES = 32;
 const ED25519_PRIVATE_KEY_BYTES = 32;
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const JTI_PATTERN = /^[A-Za-z0-9_-]{16,160}$/;
+const MAX_CACHED_CUSTODY_PROOFS = 16;
+// A custody proof signs a fixed challenge. Cache only the non-extractable
+// signer closure, keyed by the active public key, so arbitrary traffic cannot
+// repeatedly make the Worker sign that challenge. Key-ring parsing remains
+// per request so expiry, revocation and overlap state are never cached.
+const verifiedSignerByActiveKey = new Map();
 
 function fail(code) {
   throw new TypeError(code);
@@ -233,6 +239,25 @@ async function createVerifiedSigner(privateKey, activePublicJwk, cryptoErrorCode
   return signer;
 }
 
+function custodyProofCacheKey(environment, kid, activePublicJwk) {
+  return JSON.stringify([environment, kid, activePublicJwk.kty, activePublicJwk.crv, activePublicJwk.x, activePublicJwk.alg, activePublicJwk.use]);
+}
+
+function cacheVerifiedSigner({ environment, kid, privateKey, activePublicJwk, cryptoErrorCode }) {
+  const cacheKey = custodyProofCacheKey(environment, kid, activePublicJwk);
+  const existing = verifiedSignerByActiveKey.get(cacheKey);
+  if (existing) return existing;
+  const pending = createVerifiedSigner(privateKey, activePublicJwk, cryptoErrorCode);
+  verifiedSignerByActiveKey.set(cacheKey, pending);
+  while (verifiedSignerByActiveKey.size > MAX_CACHED_CUSTODY_PROOFS) {
+    verifiedSignerByActiveKey.delete(verifiedSignerByActiveKey.keys().next().value);
+  }
+  pending.catch(() => {
+    if (verifiedSignerByActiveKey.get(cacheKey) === pending) verifiedSignerByActiveKey.delete(cacheKey);
+  });
+  return pending;
+}
+
 /**
  * Creates an isolated Identity CRM delivery Worker handler. The profile is
  * deliberately explicit: a Worker can enable signing only when both its
@@ -283,7 +308,13 @@ export function createIdentityCrmIssuerWorker({
     const privateKey = names.hasSigningKey
       ? env[names.signingKey]
       : await importPrivateKey(parsePrivateJwk(env[names.privateJwk]), errorCodes.crypto);
-    const signer = await createVerifiedSigner(privateKey, publicKeyRing.activeJwk, errorCodes.crypto);
+    const signer = await cacheVerifiedSigner({
+      environment,
+      kid,
+      privateKey,
+      activePublicJwk: publicKeyRing.activeJwk,
+      cryptoErrorCode: errorCodes.crypto,
+    });
     if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
     let callerMaterial = null;
     if (callerConfig && env[callerConfig.enabled] === 'true') {
@@ -329,6 +360,14 @@ export function createIdentityCrmIssuerWorker({
       return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: 'IDENTITY_CRM_DELIVERY_DISABLED' }, 503);
     }
 
+    const url = new URL(request.url);
+    const isPublicKeysRequest = url.pathname === IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH
+      && (request.method === 'GET' || request.method === 'HEAD');
+    const isIssueRequest = url.pathname === IDENTITY_CRM_DELIVERY_ISSUE_PATH && request.method === 'POST';
+    if (!isPublicKeysRequest && !isIssueRequest) {
+      return json({ ok: false, error: 'NOT_FOUND' }, 404);
+    }
+
     let material;
     try {
       material = await loadMaterial(env, Math.floor(Date.now() / 1000));
@@ -336,13 +375,9 @@ export function createIdentityCrmIssuerWorker({
       return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: errorCodes.custody }, 503);
     }
 
-    const url = new URL(request.url);
-    if (url.pathname === IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (isPublicKeysRequest) {
       if (request.method === 'HEAD') return noContent(200, { 'cache-control': 'no-store' });
       return publicKeyResponse(material);
-    }
-    if (url.pathname !== IDENTITY_CRM_DELIVERY_ISSUE_PATH || request.method !== 'POST') {
-      return json({ ok: false, error: 'NOT_FOUND' }, 404);
     }
 
     const declaredLength = request.headers.get('content-length');
