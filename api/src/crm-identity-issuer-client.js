@@ -4,7 +4,6 @@ import { fetchBoundService } from '../../shared/service-adapters/cloudflare-serv
 const IDENTITY_ISSUER_BINDING = 'IDENTITY_CRM_ISSUER';
 const IDENTITY_ISSUER_PATH = '/internal/identity-crm-delivery/v1/issue';
 const IDENTITY_ISSUER_ORIGIN = 'https://identity-crm-issuer.internal';
-const IDENTITY_ISSUER_CALLER_ID = 'crm-api-staging-v1';
 const IDENTITY_ISSUER_CALLER_HEADER = 'x-skincos-identity-issuer-caller';
 const IDENTITY_ISSUER_AUTH_HEADER = 'x-skincos-identity-issuer-auth';
 const CRM_SESSION_PATH = '/crm/session';
@@ -16,10 +15,19 @@ const TEXT_ENCODER = new TextEncoder();
 const ROLE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const SCOPE_ITEM_PATTERN = /^[a-z][a-z0-9:-]{0,159}$/;
 const JTI_PATTERN = /^[A-Za-z0-9_-]{16,160}$/;
-const KEY_ID_PATTERN = /^crm-staging-[A-Za-z0-9._-]{1,148}$/;
 const COMPACT_JWS_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const MAX_COMPACT_JWS_LENGTH = 16_384;
 const ISSUE_TIMEOUT_MS = 3_000;
+const IDENTITY_ISSUER_CALLER_PROFILES = Object.freeze({
+    staging: Object.freeze({
+        callerId: 'crm-api-staging-v1',
+        keyIdPattern: /^crm-staging-[A-Za-z0-9._-]{1,148}$/,
+    }),
+    production: Object.freeze({
+        callerId: 'crm-api-production-v1',
+        keyIdPattern: /^crm-production-[A-Za-z0-9._-]{1,145}$/,
+    }),
+});
 
 function fail(code) {
     throw new TypeError(code);
@@ -85,19 +93,20 @@ function trustedIdentityProjection(actor) {
 }
 
 function loadCallerConfiguration(env) {
-    if (String(env?.ENVIRONMENT || '').trim().toLowerCase() !== 'staging'
-        || env?.CRM_IDENTITY_ISSUER_CALLER_ENABLED !== 'true') {
+    const environment = String(env?.ENVIRONMENT || '').trim().toLowerCase();
+    const profile = IDENTITY_ISSUER_CALLER_PROFILES[environment];
+    if (!profile || env?.CRM_IDENTITY_ISSUER_CALLER_ENABLED !== 'true') {
         fail('CRM_IDENTITY_DELIVERY_UNAVAILABLE');
     }
     const callerId = String(env?.CRM_IDENTITY_ISSUER_CALLER_ID || '').trim();
     const secret = env?.CRM_IDENTITY_ISSUER_CALLER_HMAC;
-    if (callerId !== IDENTITY_ISSUER_CALLER_ID
+    if (callerId !== profile.callerId
         || typeof secret !== 'string'
         || secret.trim() !== secret
         || TEXT_ENCODER.encode(secret).byteLength < 32) {
         fail('CRM_IDENTITY_DELIVERY_UNAVAILABLE');
     }
-    return Object.freeze({ callerId, secret });
+    return Object.freeze({ callerId, secret, profile });
 }
 
 function createJti() {
@@ -122,12 +131,12 @@ async function requestAuthentication(secret, rawBody) {
     return encodeBase64Url(new Uint8Array(signature));
 }
 
-function parseIssuerResponse(value) {
+function parseIssuerResponse(value, profile) {
     assertExactKeys(value, ['ok', 'version', 'keyId', 'compact'], 'CRM_IDENTITY_DELIVERY_UNAVAILABLE');
     if (value.ok !== true
         || value.version !== 'identity-crm-delivery/v1'
         || typeof value.keyId !== 'string'
-        || !KEY_ID_PATTERN.test(value.keyId)
+        || !profile?.keyIdPattern?.test(value.keyId)
         || typeof value.compact !== 'string'
         || value.compact.length > MAX_COMPACT_JWS_LENGTH
         || !COMPACT_JWS_PATTERN.test(value.compact)) {
@@ -216,7 +225,7 @@ async function issueCrmIdentityDelivery(request, env, actor, target) {
     const response = await fetchBoundService(issuerRequest, env, IDENTITY_ISSUER_BINDING, { timeoutMs: ISSUE_TIMEOUT_MS });
     if (response.status !== 200) fail('CRM_IDENTITY_DELIVERY_UNAVAILABLE');
     try {
-        return parseIssuerResponse(await response.json());
+        return parseIssuerResponse(await response.json(), caller.profile);
     } catch (error) {
         if (error instanceof TypeError && error.message === 'CRM_IDENTITY_DELIVERY_UNAVAILABLE') throw error;
         fail('CRM_IDENTITY_DELIVERY_UNAVAILABLE');

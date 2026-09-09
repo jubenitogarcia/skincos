@@ -29,10 +29,14 @@ const FINANCE_WRITE_TIMEOUT_MS = 5_000;
 const CRM_CORE_TIMEOUT_MS = 3_000;
 const CRM_IDENTITY_DELIVERY_HEADER_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const CRM_IDENTITY_DELIVERY_HEADER_MAX_LENGTH = 16_384;
-const CRM_SESSION_STAGING_ORIGINS = new Set([
-    'https://crm-core-staging.skincos.com.br',
-    'https://crm-staging.skincos.com.br',
-]);
+const EMPTY_CRM_SESSION_ORIGINS = new Set();
+const CRM_SESSION_ORIGINS_BY_ENVIRONMENT = Object.freeze({
+    staging: new Set([
+        'https://crm-core-staging.skincos.com.br',
+        'https://crm-staging.skincos.com.br',
+    ]),
+    production: new Set(['https://crm.skincos.com.br']),
+});
 const CRM_SESSION_CORS_REQUEST_HEADERS = new Set(['accept', 'cache-control']);
 const CRM_CORE_REQUEST_HEADER_ALLOWLIST = Object.freeze([
     'accept',
@@ -51,10 +55,15 @@ const CLOUDFLARE_VERSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const NETWORK_CONTEXT_RE = /^v1:[A-Za-z0-9_-]{43}$/;
 const B64URL_SHA256_RE = /^[A-Za-z0-9_-]{43}$/;
 
+function crmSessionOrigins(env) {
+    const environment = String(env?.ENVIRONMENT || '').trim().toLowerCase();
+    return CRM_SESSION_ORIGINS_BY_ENVIRONMENT[environment] || EMPTY_CRM_SESSION_ORIGINS;
+}
+
 function crmSessionCorsHeaders(request, env) {
-    if (!isCrmCoreStagingEnvironment(env)) return null;
+    const origins = crmSessionOrigins(env);
     const origin = String(request.headers.get('origin') || '').trim();
-    if (!CRM_SESSION_STAGING_ORIGINS.has(origin)) return null;
+    if (!origins.has(origin)) return null;
     return {
         'access-control-allow-origin': origin,
         'access-control-allow-credentials': 'true',
@@ -62,9 +71,9 @@ function crmSessionCorsHeaders(request, env) {
     };
 }
 
-function crmSessionOriginAllowed(request) {
+function crmSessionOriginAllowed(request, env) {
     const origin = String(request.headers.get('origin') || '').trim();
-    return !origin || CRM_SESSION_STAGING_ORIGINS.has(origin);
+    return !origin || crmSessionOrigins(env).has(origin);
 }
 
 function withCrmSessionCors(response, request, env) {
@@ -217,9 +226,15 @@ export function prepareCrmCoreRequest(request, productionReceipt = null, env = n
 }
 
 function crmCoreForwardContext(value) {
-    if (value && typeof value === 'object' && !Array.isArray(value)
-        && Object.prototype.hasOwnProperty.call(value, 'identityDelivery')) {
-        return { productionReceipt: null, identityDelivery: value.identityDelivery };
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const hasProductionReceipt = Object.prototype.hasOwnProperty.call(value, 'productionReceipt');
+        const hasIdentityDelivery = Object.prototype.hasOwnProperty.call(value, 'identityDelivery');
+        if (hasProductionReceipt || hasIdentityDelivery) {
+            return {
+                productionReceipt: hasProductionReceipt ? value.productionReceipt : null,
+                identityDelivery: hasIdentityDelivery ? value.identityDelivery : null,
+            };
+        }
     }
     return { productionReceipt: value, identityDelivery: null };
 }
@@ -227,7 +242,6 @@ function crmCoreForwardContext(value) {
 export async function forwardCrmCoreToService(request, env, ctx, authorizedProductionReceipt = null) {
     const { productionReceipt: suppliedProductionReceipt, identityDelivery } = crmCoreForwardContext(authorizedProductionReceipt);
     const staging = isCrmCoreStagingEnvironment(env);
-    if (!staging && identityDelivery !== null) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
     let productionReceipt = staging ? null : suppliedProductionReceipt;
     if (!staging && !isAuthorizedCrmCoreProductionReceipt(productionReceipt, env)) {
         productionReceipt = await authorizeCrmCoreProductionRoute(request, env);
@@ -304,8 +318,11 @@ export function createApiGateway({
                 const sessionPath = isCrmSessionPath(request);
                 const projectionPath = isCrmProjectionPath(request);
                 if (!sessionPath && !projectionPath) return crmCoreHandler(request, env, ctx, productionReceipt);
-                if (!isCrmCoreStagingEnvironment(env)) return gatewayError(404, 'CRM_CORE_STAGING_ONLY');
-                if (!crmSessionOriginAllowed(request)) return gatewayError(403, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
+                const staging = isCrmCoreStagingEnvironment(env);
+                if (!staging && !isAuthorizedCrmCoreProductionReceipt(productionReceipt, env)) {
+                    return gatewayError(404, isProductionEnvironment(env) ? 'CRM_CORE_PRODUCTION_NOT_AUTHORIZED' : 'CRM_CORE_STAGING_ONLY');
+                }
+                if (!crmSessionOriginAllowed(request, env)) return gatewayError(403, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
                 if (request.method === 'OPTIONS') return crmSessionPreflight(request, env);
                 const validRequest = sessionPath ? isCrmSessionRequest(request) : isCrmProjectionRequest(request);
                 if (!validRequest) {
@@ -325,7 +342,12 @@ export function createApiGateway({
                     const identityDelivery = sessionPath
                         ? await issueCrmSessionIdentityDelivery(request, env, auth.actor)
                         : await issueCrmProjectionIdentityDelivery(request, env, auth.actor);
-                    const upstream = await crmCoreHandler(request, env, ctx, { identityDelivery });
+                    const upstream = await crmCoreHandler(
+                        request,
+                        env,
+                        ctx,
+                        staging ? { identityDelivery } : { productionReceipt, identityDelivery },
+                    );
                     const response = sessionPath ? upstream : await validatedCrmProjectionResponse(upstream, {
                         units: crmProjectionRequestUnits(request),
                         requestId: request.headers.get('x-request-id'),

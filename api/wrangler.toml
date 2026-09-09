@@ -15,10 +15,12 @@ binding = "CF_VERSION_METADATA"
 [vars]
 APP_VERSION = "unreleased"
 ENVIRONMENT = "production"
-# The production CRM binding and route remain absent until the independent
-# Worker, production receipt and legacy-retirement gates are verified. This
-# explicit default keeps a future binding fail-closed if it is added later.
+# The private production CRM bindings remain inert until the independent
+# Worker, exact signed receipt, caller custody and legacy-retirement gates are
+# verified externally. These defaults keep a deployed binding fail-closed.
 CRM_CORE_PRODUCTION_ENABLED = "false"
+CRM_IDENTITY_ISSUER_CALLER_ENABLED = "false"
+CRM_IDENTITY_ISSUER_CALLER_ID = "crm-api-production-v1"
 
 [triggers]
 crons = ["0 * * * *"]
@@ -61,6 +63,16 @@ service = "skincos-timekeeping"
 binding = "FINANCE"
 service = "skincos-finance"
 
+# The public gateway is the sole production caller. Neither binding creates a
+# public route, and no receipt, key ring or HMAC value is stored in Git.
+[[services]]
+binding = "CRM_CORE"
+service = "skincos-crm-core"
+
+[[services]]
+binding = "IDENTITY_CRM_ISSUER"
+service = "skincos-identity-crm-delivery-production"
+
 [[r2_buckets]]
 binding = "BACKUP_BUCKET"
 bucket_name = "skincos-backups"
@@ -83,7 +95,7 @@ APP_VERSION = "unreleased"
 ENVIRONMENT = "staging"
 # The persistent Identity caller remains off until a source-pinned staging
 # release enables both sides and provisions its separate HMAC through the
-# protected bootstrap. No production counterpart exists in this manifest.
+# protected bootstrap. Production has a separate default-off caller profile.
 CRM_IDENTITY_ISSUER_CALLER_ENABLED = "false"
 CRM_IDENTITY_ISSUER_CALLER_ID = "crm-api-staging-v1"
 
@@ -117,9 +129,9 @@ service = "skincos-timekeeping-staging"
 binding = "FINANCE"
 service = "skincos-finance-staging"
 
-# CRM Core is an isolated staging-only service. There is deliberately no
-# production counterpart: the main CRM publisher remains the legacy monorepo
-# surface until its independent production cutover has its own evidence.
+# CRM Core is an isolated staging service. The production counterpart is also
+# default-off and requires its own exact signed receipt before any request is
+# forwarded.
 [[env.staging.services]]
 binding = "CRM_CORE"
 service = "skincos-crm-core-staging"
