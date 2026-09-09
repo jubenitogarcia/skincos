@@ -1,0 +1,35 @@
+name: Booking executor contract
+
+on:
+  pull_request:
+    paths:
+      - "integration/ef/**"
+      - ".github/workflows/booking-executor-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "integration/ef/**"
+      - ".github/workflows/booking-executor-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-contract:
+    name: EF private executor synthetic contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install locked EF test dependencies
+        run: python -m pip install -r integration/ef/requirements.lock
+      - name: Synthetic SQLite, HTTP, mapper and legacy regression tests
+        working-directory: integration/ef
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -B -m unittest -v test_booking_executor tests_test_booking test_auth_unit_selection
