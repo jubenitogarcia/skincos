@@ -201,6 +201,7 @@ class BookingResult:
     current_url: str = ""
     html_path: str = ""
     screenshot_path: str = ""
+    verified_in_agenda: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -210,6 +211,7 @@ class BookingResult:
             "currentUrl": self.current_url,
             "htmlPath": self.html_path,
             "screenshotPath": self.screenshot_path,
+            "verifiedInAgenda": self.verified_in_agenda,
         }
 
 
@@ -2581,6 +2583,7 @@ def execute_booking(
             message="Booking flow submitted and verified in agenda index.",
             request=request,
             current_url=driver.current_url or "",
+            verified_in_agenda=True,
         )
     except Exception as exc:
         artifacts = capture_artifacts(driver, output_dir=debug_dir, label="booking_error")
