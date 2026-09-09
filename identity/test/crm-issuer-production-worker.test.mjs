@@ -13,6 +13,7 @@ const keysUrl = 'https://identity-crm-delivery-production.example/.well-known/id
 const requestHmac = 'synthetic-production-request-hmac-secret-2026';
 const activeKid = 'crm-production-identity-2026-09';
 const overlapKid = 'crm-production-identity-2026-08';
+const callerId = 'crm-api-production-v1';
 
 function encodeBase64Url(bytes) {
   let binary = '';
@@ -36,11 +37,11 @@ async function productionEnv({ activeKeyId = activeKid, overlap = true, revoked 
   const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const oldPair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const privateJwk = await webcrypto.subtle.exportKey('jwk', pair.privateKey);
+  const signingKey = await webcrypto.subtle.importKey('jwk', privateJwk, { name: 'Ed25519' }, false, ['sign']);
   const publicJwk = await webcrypto.subtle.exportKey('jwk', pair.publicKey);
   const oldPublicJwk = await webcrypto.subtle.exportKey('jwk', oldPair.publicKey);
   const activePublic = { kty: 'OKP', crv: 'Ed25519', x: publicJwk.x, alg: 'EdDSA', use: 'sig' };
   const overlapPublic = { kty: 'OKP', crv: 'Ed25519', x: oldPublicJwk.x, alg: 'EdDSA', use: 'sig' };
-  const privateKey = { kty: 'OKP', crv: 'Ed25519', x: privateJwk.x, d: privateJwk.d, alg: 'EdDSA', key_ops: ['sign'], ext: false };
   const now = Math.floor(Date.now() / 1000);
   const publicRing = {
     active: { kid: activeKeyId, jwk: activePublic },
@@ -49,15 +50,18 @@ async function productionEnv({ activeKeyId = activeKid, overlap = true, revoked 
   };
   return {
     pair,
+    signingKey,
     activePublic,
     overlapPublic,
     env: {
       IDENTITY_CRM_DELIVERY_ENABLED: enabled ? 'true' : 'false',
       IDENTITY_CRM_DELIVERY_ENVIRONMENT: environment,
       IDENTITY_CRM_DELIVERY_PRODUCTION_KID: activeKeyId,
-      IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK: JSON.stringify(privateKey),
+      IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: signingKey,
       IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK: JSON.stringify(publicRing),
-      IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC: requestHmac,
+      IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: requestHmac,
+      IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
+      IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: callerId,
     },
     now,
   };
@@ -87,7 +91,11 @@ async function signedRequest(env, payload = issuePayload()) {
   const body = JSON.stringify(payload);
   return handleIdentityCrmIssuerProductionRequest(new Request(issueUrl, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-skincos-identity-issuer-auth': await authHeader(body) },
+    headers: {
+      'content-type': 'application/json',
+      'x-skincos-identity-issuer-caller': callerId,
+      'x-skincos-identity-issuer-auth': await authHeader(body),
+    },
     body,
   }), env);
 }
@@ -115,8 +123,56 @@ test('production Worker rejects non-production key ids and malformed custody', a
   assert.match(await response.text(), /IDENTITY_PRODUCTION_CUSTODY_UNAVAILABLE/);
 });
 
+test('production Worker requires a non-extractable signing-key binding that matches its active public key', async () => {
+  const missing = await productionEnv();
+  delete missing.env.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY;
+  const missingResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), missing.env);
+  assert.equal(missingResponse.status, 503);
+  assert.match(await missingResponse.text(), /IDENTITY_PRODUCTION_CUSTODY_UNAVAILABLE/);
+
+  const extractable = await productionEnv();
+  extractable.env.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY = extractable.pair.privateKey;
+  const extractableResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), extractable.env);
+  assert.equal(extractableResponse.status, 503);
+  assert.match(await extractableResponse.text(), /IDENTITY_PRODUCTION_CUSTODY_UNAVAILABLE/);
+
+  const mismatch = await productionEnv();
+  const different = await productionEnv();
+  mismatch.env.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY = different.signingKey;
+  const mismatchResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), mismatch.env);
+  assert.equal(mismatchResponse.status, 503);
+  assert.match(await mismatchResponse.text(), /IDENTITY_PRODUCTION_CUSTODY_UNAVAILABLE/);
+});
+
+test('production Worker requires the configured private caller and never falls back to a generic HMAC', async () => {
+  const { env } = await productionEnv();
+  const body = JSON.stringify(issuePayload('production_nonce_caller_01'));
+  const missingCaller = await handleIdentityCrmIssuerProductionRequest(new Request(issueUrl, {
+    method: 'POST',
+    headers: { 'x-skincos-identity-issuer-auth': await authHeader(body) },
+    body,
+  }), env);
+  assert.equal(missingCaller.status, 401);
+
+  const wrongCaller = await handleIdentityCrmIssuerProductionRequest(new Request(issueUrl, {
+    method: 'POST',
+    headers: {
+      'x-skincos-identity-issuer-caller': 'crm-api-staging-v1',
+      'x-skincos-identity-issuer-auth': await authHeader(body),
+    },
+    body,
+  }), env);
+  assert.equal(wrongCaller.status, 401);
+
+  const callerDisabled = { ...env, IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'false' };
+  const callerDisabledResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), callerDisabled);
+  assert.equal(callerDisabledResponse.status, 503);
+  assert.match(await callerDisabledResponse.text(), /IDENTITY_PRODUCTION_CUSTODY_UNAVAILABLE/);
+});
+
 test('production manifest is disabled, route-free and data-binding-free', async () => {
   const manifest = await readFile(new URL('../wrangler.production.toml', import.meta.url), 'utf8');
+  const worker = await readFile(new URL('../delivery/crm-issuer-production-worker.js', import.meta.url), 'utf8');
   assert.match(manifest, /^name\s*=\s*"skincos-identity-crm-delivery-production"/m);
   assert.match(manifest, /^main\s*=\s*"delivery\/crm-issuer-production-worker\.js"/m);
   assert.match(manifest, /IDENTITY_CRM_DELIVERY_ENABLED\s*=\s*"false"/);
@@ -126,6 +182,8 @@ test('production manifest is disabled, route-free and data-binding-free', async 
   assert.doesNotMatch(manifest, /^\[\[kv_namespaces\]\]/m);
   assert.doesNotMatch(manifest, /^\[\[r2_buckets\]\]/m);
   assert.doesNotMatch(manifest, /^\[\[env\.production\.services\]\]/m);
+  assert.match(worker, /IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY/);
+  assert.doesNotMatch(worker, /IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK|IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC/);
 });
 
 test('production Worker signs Ed25519 delivery and publishes active plus overlap keys without private material', async () => {

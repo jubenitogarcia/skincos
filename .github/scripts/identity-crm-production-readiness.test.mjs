@@ -79,9 +79,9 @@ test('production defaults are distinct from staging and protocol values are fixe
   });
   assert.deepEqual(REQUIRED_PRODUCTION_SECRET_NAMES, [
     'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
-    'IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
     'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
-    'IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC',
   ]);
 });
 
@@ -394,7 +394,7 @@ test('workflow is dispatch-only, production-scoped and read-only', async () => {
   assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
   assert.doesNotMatch(workflow, /wrangler\s+(deploy|secret\s+put)|workers\/scripts.*(?:POST|PUT|PATCH|DELETE)/i);
   assert.doesNotMatch(workflow, /CLOUDFLARE_ZONE_ID/);
-  assert.doesNotMatch(workflow, /IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK:\s*[^$\n]/);
+  assert.doesNotMatch(workflow, /IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY:\s*[^$\n]/);
 });
 
 test('existing Identity issuer tests retain Ed25519, expiry, replay and key readback gates', async () => {

@@ -193,11 +193,14 @@ async function isAuthorizedIssueRequest(request, rawBody, secret, authErrorCode,
 }
 
 function assertSecretNames(secretNames) {
-  const required = ['kid', 'privateJwk', 'publicJwk', 'requestHmac'];
+  const required = ['kid', 'publicJwk', 'requestHmac'];
   if (!secretNames || required.some((name) => typeof secretNames[name] !== 'string' || !secretNames[name])) {
     throw new TypeError('IDENTITY_SECRET_NAMES_INVALID');
   }
-  return secretNames;
+  const hasPrivateJwk = typeof secretNames.privateJwk === 'string' && secretNames.privateJwk.length > 0;
+  const hasSigningKey = typeof secretNames.signingKey === 'string' && secretNames.signingKey.length > 0;
+  if (hasPrivateJwk === hasSigningKey) throw new TypeError('IDENTITY_SECRET_NAMES_INVALID');
+  return Object.freeze({ ...secretNames, hasPrivateJwk, hasSigningKey });
 }
 
 function assertCallerConfig(caller) {
@@ -213,7 +216,21 @@ function assertCallerConfig(caller) {
     hmac: caller.hmac,
     expectedId: caller.expectedId,
     header: caller.header,
+    required: caller.required === true,
   });
+}
+
+async function createVerifiedSigner(privateKey, activePublicJwk, cryptoErrorCode) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle || typeof subtle.importKey !== 'function' || typeof subtle.verify !== 'function') fail(cryptoErrorCode);
+  const signer = createCrmIdentityEd25519Signer(privateKey);
+  const challenge = 'skincos/identity-crm-delivery/custody-proof/v1';
+  const publicKey = await subtle.importKey('jwk', activePublicJwk, { name: 'Ed25519' }, false, ['verify']);
+  const signature = await signer(challenge);
+  if (!await subtle.verify({ name: 'Ed25519' }, publicKey, signature, TEXT_ENCODER.encode(challenge))) {
+    fail('IDENTITY_PUBLIC_KEY_MISMATCH');
+  }
+  return signer;
 }
 
 /**
@@ -250,22 +267,23 @@ export function createIdentityCrmIssuerWorker({
       && env?.IDENTITY_CRM_DELIVERY_ENVIRONMENT === environment;
   }
 
-  function loadMaterial(env, nowSeconds) {
+  async function loadMaterial(env, nowSeconds) {
     if (!enabled(env)) return null;
     const kid = assertKeyId(env[names.kid], keyIdPrefix);
-    if (typeof env[names.privateJwk] !== 'string'
-      || typeof env[names.publicJwk] !== 'string'
+    if (typeof env[names.publicJwk] !== 'string'
       || typeof env[names.requestHmac] !== 'string') {
       fail(errorCodes.custody);
     }
-    const privateJwk = parsePrivateJwk(env[names.privateJwk]);
     const publicKeyRing = publicKeyMode === 'production-ring'
       ? parsePublicKeyRing(env[names.publicJwk], kid, keyIdPrefix, nowSeconds)
       : (() => {
         const activeJwk = parsePublicJwk(env[names.publicJwk]);
         return Object.freeze({ activeJwk, keys: Object.freeze([{ ...activeJwk, kid }]) });
       })();
-    if (privateJwk.x !== publicKeyRing.activeJwk.x) fail('IDENTITY_PUBLIC_KEY_MISMATCH');
+    const privateKey = names.hasSigningKey
+      ? env[names.signingKey]
+      : await importPrivateKey(parsePrivateJwk(env[names.privateJwk]), errorCodes.crypto);
+    const signer = await createVerifiedSigner(privateKey, publicKeyRing.activeJwk, errorCodes.crypto);
     if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
     let callerMaterial = null;
     if (callerConfig && env[callerConfig.enabled] === 'true') {
@@ -279,21 +297,21 @@ export function createIdentityCrmIssuerWorker({
       }
       callerMaterial = Object.freeze({ id: callerId, hmac: callerHmac, header: callerConfig.header });
     }
+    if (callerConfig?.required && !callerMaterial) fail(errorCodes.custody);
     return Object.freeze({
       kid,
-      privateJwk,
+      signer,
       publicKeys: publicKeyRing.keys,
       requestHmac: env[names.requestHmac],
       caller: callerMaterial,
     });
   }
 
-  async function createEnabledIssuer(material) {
-    const privateKey = await importPrivateKey(material.privateJwk, errorCodes.crypto);
+  function createEnabledIssuer(material) {
     const keyRing = createCrmIdentityDeliveryKeyRing({
       active: {
         kid: material.kid,
-        sign: createCrmIdentityEd25519Signer(privateKey),
+        sign: material.signer,
       },
     });
     return createCrmIdentityDeliveryIssuer({ enabled: true, keyRing });
@@ -313,7 +331,7 @@ export function createIdentityCrmIssuerWorker({
 
     let material;
     try {
-      material = loadMaterial(env, Math.floor(Date.now() / 1000));
+      material = await loadMaterial(env, Math.floor(Date.now() / 1000));
     } catch {
       return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: errorCodes.custody }, 503);
     }
@@ -335,11 +353,15 @@ export function createIdentityCrmIssuerWorker({
     if (TEXT_ENCODER.encode(rawBody).byteLength > MAX_REQUEST_BYTES) return json({ ok: false, error: 'REQUEST_TOO_LARGE' }, 413);
     try {
       const requestedCallerId = callerConfig ? request.headers.get(callerConfig.header) : null;
-      const requestHmac = requestedCallerId === null
-        ? material.requestHmac
-        : material.caller?.id === requestedCallerId
+      const requestHmac = callerConfig?.required
+        ? material.caller?.id === requestedCallerId
           ? material.caller.hmac
-          : null;
+          : null
+        : requestedCallerId === null
+          ? material.requestHmac
+          : material.caller?.id === requestedCallerId
+            ? material.caller.hmac
+            : null;
       if (!requestHmac || !await isAuthorizedIssueRequest(request, rawBody, requestHmac, errorCodes.auth, errorCodes.crypto)) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
     } catch {
       return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
