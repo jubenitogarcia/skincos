@@ -731,6 +731,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Revalidate exact active core production predecessor before adapter candidate
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          CORE_PRODUCTION_RUN_ID: ${{ inputs.core_production_run_id }}
+        run: node workforce/schedule/scripts/public-read-production-resources.mjs predecessor core before
+
       - name: Check production adapter lease before candidate upload
         if: ${{ inputs.operation == 'deploy' }}
         uses: ./.github/actions/global-coordination-check
@@ -792,6 +798,11 @@ jobs:
       - name: Read back enabled private adapter exact version and bindings
         if: ${{ inputs.operation == 'deploy' }}
         run: node workforce/schedule/scripts/public-read-production-resources.mjs readback adapter ready
+      - name: Revalidate unchanged exact core production predecessor after adapter smoke
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          CORE_PRODUCTION_RUN_ID: ${{ inputs.core_production_run_id }}
+        run: node workforce/schedule/scripts/public-read-production-resources.mjs predecessor core after
       - name: Check private production adapter lease before explicit disabled upload
         if: ${{ inputs.operation == 'disable' }}
         uses: ./.github/actions/global-coordination-check

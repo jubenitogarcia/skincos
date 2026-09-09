@@ -66,7 +66,10 @@ staging keys. Values reach new Worker versions only via `--secrets-file
    and `core_production_run_id=<step 2 successful run>`. Predecessors must be
    completed successful canonical main dispatches, attempt 1, with matching
    source, target and lifecycle configuration. An uploaded version alone never
-   satisfies these proofs.
+   satisfies these proofs. The adapter also rereads the live core deployment
+   immediately before candidate upload and after its smoke, requiring the same
+   predecessor SHA/run and enabled flag. A changed core fails the promotion;
+   this is point-in-time verification, not a claim to own the core writer lease.
 
 Every production mutation requires a fresh checked/fenced lease. Adapter and
 probe share `deploy:schedule-public-read-adapter:production`; core retains

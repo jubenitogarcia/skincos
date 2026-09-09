@@ -12,7 +12,7 @@ async function main() {
   const marker = join(process.env.RUNNER_TEMP, 'schedule-production-probe-ownership.json')
   const surface = process.argv[3]
   const mode = process.argv[4]
-  const resourceOperations = new Set(['checkpoint', 'readback'])
+  const resourceOperations = new Set(['checkpoint', 'readback', 'predecessor'])
   if (resourceOperations.has(operation) && !['adapter', 'core'].includes(surface)) throw new Error('production_surface_invalid')
   const worker = resourceOperations.has(operation) ? PRODUCTION_RESOURCES[`${surface}Worker`] : PRODUCTION_RESOURCES.probeWorker
   const path = `/accounts/${manifest.accountId}/workers/scripts/${worker}`
@@ -29,6 +29,19 @@ async function main() {
     const versionId = state?.deployments?.[0]?.versions?.[0]?.version_id
     if (!/^[0-9a-f-]{36}$/.test(versionId || '')) throw new Error('production_version_invalid')
     return api(`/versions/${versionId}`)
+  }
+  if (operation === 'predecessor') {
+    const predecessorRunId = process.env.CORE_PRODUCTION_RUN_ID
+    if (surface !== 'core' || !['before', 'after'].includes(mode) || !/^[1-9][0-9]*$/.test(predecessorRunId || '')) throw new Error('production_predecessor_identity_invalid')
+    const state = await api('/deployments')
+    const version = await currentVersion(state)
+    assertProductionReadback(state.deployments?.[0], version, { surface: 'core', mode: 'ready', sourceSha: manifest.sourceSha, runId: predecessorRunId })
+    writeFileSync(join(process.env.RUNNER_TEMP, `schedule-production-core-predecessor-${mode}-readback.json`), JSON.stringify({
+      contract: 'schedule-production-core-predecessor-readback/v1', sourceSha: manifest.sourceSha, runId, predecessorRunId,
+      worker, phase: mode, versionId: version.id, deploymentId: state.deployments[0].id,
+    }), { mode: 0o600, flag: 'wx' })
+    console.log('{"ok":true,"liveCorePredecessorVerified":true}')
+    return
   }
   if (operation === 'checkpoint') {
     const state = await api('/deployments', 'GET', true)

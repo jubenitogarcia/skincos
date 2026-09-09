@@ -140,6 +140,10 @@ test('production readback verifies active version, flag, source/run and private 
   assert.throws(() => assertProductionReadback(deployment, { ...version, id: 'v2' }, options), /readback_invalid/)
   assert.throws(() => assertProductionReadback(deployment, { ...version, resources: { bindings: [] } }, options), /readback_invalid/)
   assert.throws(() => assertProductionReadback(deployment, version, { ...options, mode: 'disabled' }), /readback_invalid/)
+  const coreDeployment = { ...deployment, annotations: { 'workers/message': `escala-api:production-schedule-public-read:${sourceSha}:1234` } }
+  assertProductionReadback(coreDeployment, version, { ...options, surface: 'core' })
+  assert.throws(() => assertProductionReadback(coreDeployment, version, { ...options, surface: 'core', runId: '1235' }), /readback_invalid/)
+  assert.throws(() => assertProductionReadback(coreDeployment, version, { ...options, surface: 'core', sourceSha: 'f'.repeat(40) }), /readback_invalid/)
 })
 
 const adapter = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8')
@@ -184,5 +188,9 @@ test('production mutations have exact-target mandatory lease checks, rollback an
   assert.match(production, /public-read-production-manifest\.mjs verify/)
   assert.match(production, /public-read-production-predecessor\.mjs adapter-bootstrap/)
   assert.match(production, /public-read-production-predecessor\.mjs core-production/)
+  assert.match(production, /public-read-production-resources\.mjs predecessor core before/)
+  assert.match(production, /public-read-production-resources\.mjs predecessor core after/)
+  assert.ok(production.indexOf('predecessor core before') < production.indexOf('Upload private production adapter candidate'))
+  assert.ok(production.indexOf('predecessor core after') > production.indexOf('Prove authenticated production readiness'))
   assert.doesNotMatch(production, /--env staging|SCHEDULE_PUBLIC_READ_SMOKE_BASE_URL:/)
 })
