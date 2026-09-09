@@ -14,12 +14,21 @@ export function verifyCanonicalRun(workflow, run, { workflowPath, runId, reposit
     throw new Error('schedule_production_predecessor_invalid')
   }
 }
+export function verifyAdapterStagingEvidence(document, { sourceSha, runId }) {
+  // The shared promotion gate additionally verifies the immutable release digest.
+  // Here bind that artifact to the completed canonical dispatch checked above.
+  if (document?.schemaVersion !== 3 || document.unit !== 'schedule-public-read-adapter' || document.target !== 'staging'
+    || document.sourceSha !== sourceSha || String(document.runId) !== runId || document.repository !== 'jubenitogarcia/skincos') {
+    throw new Error('schedule_production_predecessor_invalid')
+  }
+}
 
 async function main() {
   const mode = process.argv[2]
   const modes = {
     'core-staging': ['deploy-escala-api.yml', process.env.STAGING_RUN_ID, 'staging'],
     'core-production': ['deploy-escala-api.yml', process.env.CORE_PRODUCTION_RUN_ID, 'production'],
+    'adapter-staging': ['deploy-schedule-public-read-adapter.yml', process.env.STAGING_RUN_ID, 'staging'],
     'adapter-bootstrap': ['deploy-schedule-public-read-adapter.yml', process.env.BOOTSTRAP_RUN_ID, 'production'],
   }
   const [workflowName, runId, target] = modes[mode] || []
@@ -33,10 +42,13 @@ async function main() {
   const workflowPath = `.github/workflows/${workflowName}`
   verifyCanonicalRun(JSON.parse(gh(['api', `repos/${repository}/actions/workflows/${workflowName}`])),
     JSON.parse(gh(['api', `repos/${repository}/actions/runs/${runId}`])), { workflowPath, runId })
-  const artifact = mode === 'adapter-bootstrap' ? 'schedule-public-read-adapter-bootstrap-evidence' : 'schedule-public-read-core-opt-in-evidence'
+  const artifact = mode === 'adapter-staging' ? 'promotion-evidence-schedule-public-read-adapter'
+    : mode === 'adapter-bootstrap' ? 'schedule-public-read-adapter-bootstrap-evidence' : 'schedule-public-read-core-opt-in-evidence'
   gh(['run', 'download', runId, '--repo', repository, '--name', artifact, '--dir', root])
-  const document = JSON.parse(readFileSync(join(root, `${artifact}.json`), 'utf8'))
-  if (mode === 'adapter-bootstrap') {
+  const document = JSON.parse(readFileSync(join(root, mode === 'adapter-staging' ? 'promotion-evidence.json' : `${artifact}.json`), 'utf8'))
+  if (mode === 'adapter-staging') {
+    verifyAdapterStagingEvidence(document, { sourceSha, runId })
+  } else if (mode === 'adapter-bootstrap') {
     verifySchedulePublicReadAdapterBootstrapEvidence(document, { sourceSha, workflowRunId: runId, target,
       lifecycleConfigDigest: lifecycleConfigDigest(readFileSync(new URL('../public-read.wrangler.toml', import.meta.url), 'utf8')) })
   } else {

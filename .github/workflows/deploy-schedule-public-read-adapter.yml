@@ -628,6 +628,11 @@ jobs:
           NODE
       - name: Test private probe and production release contracts
         run: node --test workforce/schedule/public-read-production.test.js
+      - name: Verify adapter staging predecessor is a completed successful canonical dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+        run: node workforce/schedule/scripts/public-read-production-predecessor.mjs adapter-staging
       - name: Verify exact canonical core production predecessor
         if: ${{ inputs.operation == 'deploy' }}
         env:

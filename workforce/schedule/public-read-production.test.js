@@ -6,7 +6,7 @@ import test from 'node:test'
 import { createSchedulePublicReadHeaders, verifySchedulePublicReadRequest } from './public-read-contract.js'
 import { handleProductionProbe, PROBE_SERVICE } from './public-read-production-probe.js'
 import { productionConfigDigest, PRODUCTION_RESOURCES, validateProductionManifest, assertProbeOwnership, assertProductionReadback } from './scripts/public-read-production-manifest.mjs'
-import { verifyCanonicalRun } from './scripts/public-read-production-predecessor.mjs'
+import { verifyCanonicalRun, verifyAdapterStagingEvidence } from './scripts/public-read-production-predecessor.mjs'
 import { createSchedulePublicReadCoreOptInEvidence, verifySchedulePublicReadCoreOptInEvidence } from './scripts/public-read-core-opt-in-evidence.mjs'
 import { createSchedulePublicReadAdapterBootstrapEvidence, verifySchedulePublicReadAdapterBootstrapEvidence } from './scripts/public-read-bootstrap-evidence.mjs'
 
@@ -130,6 +130,15 @@ test('cleanup only admits this run exact probe at 100 percent', () => {
   assert.throws(() => assertProbeOwnership(deployment, { ...owner, runId: '1235' }), /ownership/)
   assert.throws(() => assertProbeOwnership({ ...deployment, versions: [{ percentage: 50 }] }, owner), /ownership/)
 })
+test('adapter staging artifact binds its successful canonical run and cannot substitute another stage or source', () => {
+  const document = { schemaVersion: 3, unit: 'schedule-public-read-adapter', target: 'staging', sourceSha,
+    runId: '1234', repository: 'jubenitogarcia/skincos' }
+  verifyAdapterStagingEvidence(document, { sourceSha, runId: '1234' })
+  for (const patch of [{ schemaVersion: 1 }, { target: 'preview' }, { unit: 'escala-api' }, { runId: '1235' },
+    { sourceSha: 'b'.repeat(40) }, { repository: 'fork/skincos' }]) {
+    assert.throws(() => verifyAdapterStagingEvidence({ ...document, ...patch }, { sourceSha, runId: '1234' }), /predecessor_invalid/)
+  }
+})
 test('production readback verifies active version, flag, source/run and private binding, not a successful upload alone', () => {
   const options = { sourceSha, runId: '1234', surface: 'adapter', mode: 'ready' }
   const deployment = { annotations: { 'workers/message': `schedule-public-read-adapter:production:${sourceSha}:1234` }, versions: [{ version_id: 'v1', percentage: 100 }] }
@@ -187,6 +196,7 @@ test('production mutations have exact-target mandatory lease checks, rollback an
   assert.match(production, /always\(\) && steps\.probe-cleanup-lease\.outcome == 'success'/)
   assert.match(production, /public-read-production-manifest\.mjs verify/)
   assert.match(production, /public-read-production-predecessor\.mjs adapter-bootstrap/)
+  assert.match(production, /public-read-production-predecessor\.mjs adapter-staging/)
   assert.match(production, /public-read-production-predecessor\.mjs core-production/)
   assert.match(production, /public-read-production-resources\.mjs predecessor core before/)
   assert.match(production, /public-read-production-resources\.mjs predecessor core after/)
