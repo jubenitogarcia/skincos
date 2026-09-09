@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from .auth import Credentials, configure_file_logging, log, login_and_select_unit
 from .booking import BOOKING_LOCK, BookingError, BookingRequest, BookingResult, execute_booking
+from .booking_executor import AUTH_HEADERS, DISPATCH_PATH, MAX_BODY_BYTES, configured_executor
 from .core import create_driver, load_config
 
 
@@ -150,6 +151,9 @@ class BookingRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == DISPATCH_PATH:
+            self._executor_dispatch()
+            return
         if parsed.path != "/api/agenda/book":
             self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
             return
@@ -187,7 +191,31 @@ class BookingRequestHandler(BaseHTTPRequestHandler):
         )
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
+        if urlparse(self.path).path == DISPATCH_PATH:
+            return
         log(f"booking-api {self.address_string()} - {format % args}")
+
+    def _executor_dispatch(self) -> None:
+        executor = getattr(self.server, "booking_executor", None)
+        self.close_connection = True
+        if executor is None:
+            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "booking_executor_not_configured"})
+            return
+        if self.path != DISPATCH_PATH or self.headers.get("transfer-encoding") is not None or any(len(self.headers.get_all(name, [])) != 1 for name in (*AUTH_HEADERS, "content-length")):
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "booking_executor_request_invalid"})
+            return
+        try:
+            length = int(self.headers.get("content-length", "0"))
+            if not 0 < length <= MAX_BODY_BYTES or self.headers.get_content_type() != "application/json":
+                raise ValueError()
+            self.connection.settimeout(5)
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError()
+            status, payload = executor.dispatch(raw, {name: self.headers.get(name, "") for name in AUTH_HEADERS})
+            self._write_json(HTTPStatus(status), payload)
+        except Exception:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "booking_executor_request_invalid"})
 
     def _authorized(self) -> bool:
         bearer_token = (os.getenv("EF_BOOKING_API_TOKEN") or "").strip()
@@ -210,11 +238,12 @@ class BookingRequestHandler(BaseHTTPRequestHandler):
 
 
 class BookingHTTPServer(ThreadingHTTPServer):
-    def __init__(self, server_address, RequestHandlerClass, *, cfg, job_store, worker):
+    def __init__(self, server_address, RequestHandlerClass, *, cfg, job_store, worker, booking_executor=None):
         super().__init__(server_address, RequestHandlerClass)
         self.cfg = cfg
         self.job_store = job_store
         self.worker = worker
+        self.booking_executor = booking_executor
 
 
 def run_booking_server() -> int:
@@ -227,7 +256,9 @@ def run_booking_server() -> int:
 
     store = BookingJobStore()
     worker = BookingWorker(store=store, debug_dir=debug_dir)
-    server = BookingHTTPServer((host, port), BookingRequestHandler, cfg=cfg, job_store=store, worker=worker)
+    executor = configured_executor(cfg=cfg, debug_dir=debug_dir)
+    server = BookingHTTPServer((host, port), BookingRequestHandler, cfg=cfg, job_store=store, worker=worker,
+                               booking_executor=executor)
 
     log(f"Booking API listening on http://{host}:{port}")
     if os.getenv("EF_BOOKING_API_TOKEN", "").strip():
@@ -242,4 +273,6 @@ def run_booking_server() -> int:
         log("Booking API interrupted; shutting down")
     finally:
         server.server_close()
+        if executor is not None:
+            executor.close()
     return 0
