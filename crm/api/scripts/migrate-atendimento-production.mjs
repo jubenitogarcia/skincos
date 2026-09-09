@@ -29,6 +29,10 @@ import {
     atendimentoCoreSchemaMigrationPlan,
     inspectAtendimentoCoreSchema,
 } from '../server/atendimento/coreSchemaMigration.js'
+import {
+    CRM_CORE_PROJECTION_DELTA_MIGRATION_ID,
+    CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS,
+} from '../server/atendimento/crmCoreProjectionDeltaMigration.js'
 
 export const ATENDIMENTO_PRODUCTION_MIGRATION_TARGET = ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION
 export const ATENDIMENTO_PRODUCTION_MIGRATIONS = ATENDIMENTO_STAGING_MIGRATIONS
@@ -41,6 +45,10 @@ const PRODUCTION_SOURCE_MIRROR_REASON = 'PRODUCTION_SOURCE_MIRROR_NOT_PROVISIONE
 // exist in the dedicated read-only database yet. A migration absent from this
 // map is never deferable, even if it happens to throw a prerequisite error.
 export const ATENDIMENTO_PRODUCTION_PREREQUISITE_DEFERRED_RULES = Object.freeze({
+    [CRM_CORE_PROJECTION_DELTA_MIGRATION_ID]: Object.freeze({
+        prerequisiteError: 'CRM_CORE_PROJECTION_DELTA_PREREQUISITES_MISSING',
+        prerequisiteRelations: CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS,
+    }),
     '20260805_client_identity_materialization_schema_v1': Object.freeze({
         prerequisiteError: 'CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_PREREQUISITES_MISSING',
         prerequisiteRelations: Object.freeze([

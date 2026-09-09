@@ -73,7 +73,7 @@ function sourceWithLeadingComment(prefix) {
   })
 }
 
-test('expresses the proven four-channel unit membership without a global fallback or source PII', () => {
+test('exports only lifecycle-proven unit membership without a global fallback or source PII', () => {
   const { countSql, rowsSql, firstPageSql, nextPageSql } = ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE
   const queries = [countSql, rowsSql, firstPageSql, nextPageSql]
 
@@ -82,16 +82,24 @@ test('expresses the proven four-channel unit membership without a global fallbac
     assert.match(query, /crm_atendimento\.units/i)
     assert.doesNotMatch(query, /\b(?:canonical_name|phone_key|email_keys|cpf_keys|client_name|raw_service)\b/i)
   }
-  for (const sourceType of ['attendance_client', 'caixa_customer', 'app_registration', 'lead_profile']) {
+  for (const sourceType of ['attendance_client', 'caixa_customer']) {
     assert.match(rowsSql, new RegExp(`source_type = '${sourceType}'`))
   }
+  for (const deferredSourceType of ['app_registration', 'lead_profile']) {
+    assert.doesNotMatch(rowsSql, new RegExp(`source_type = '${deferredSourceType}'`))
+  }
   assert.match(rowsSql, /attendance\.deleted_at IS NULL/)
+  assert.doesNotMatch(rowsSql, /(?:member|attendance_link|attendance|sale)\.updated_at/i)
+  assert.match(rowsSql, /attendance_link\.created_at/i)
+  assert.match(rowsSql, /attendance\.created_at/i)
+  assert.match(rowsSql, /sale\.created_at/i)
   assert.match(rowsSql, /GROUP BY identity_id, unit_slug/)
   assert.match(nextPageSql, /projection_rows AS \(\s*SELECT identity_id,\s*observed_at,/)
   assert.match(rowsSql, /SELECT id, updated_at, unit_slug/)
   assert.match(nextPageSql, /WHERE \(observed_at, identity_id, unit_slug\) > \(\$1::timestamptz, \$2::uuid, \$3::text\)/)
   assert.doesNotMatch(nextPageSql, /\bOFFSET\b/i)
   assert.equal(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.missingEvidence, 'no projection row; there is no global or wildcard fallback')
+  assert.match(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.deferredSources, /complete-snapshot retirement evidence/i)
 })
 
 test('emits one opaque event per canonical unit for an identity with multi-unit evidence', async () => {

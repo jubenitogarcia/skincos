@@ -50,6 +50,12 @@ const OPAQUE_PART_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
 const UNIT_SLUG_PATTERN = /^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const SOURCE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{1,6})Z$/
 const SOURCE_QUERY_FORBIDDEN = /\b(?:alter|call|copy|create|delete|drop|grant|insert|merge|offset|revoke|truncate|update|vacuum)\b/i
+const REQUIRED_SOURCE_ALIAS_PATTERNS = Object.freeze({
+  id: /\bas\s+(?:"id"|id)\b/i,
+  updated_at: /\bas\s+(?:"updated_at"|updated_at)\b/i,
+  unit_slug: /\bas\s+(?:"unit_slug"|unit_slug)\b/i,
+  row_count: /\bas\s+(?:"row_count"|row_count)\b/i,
+})
 
 function fail(code) {
   throw new Error(code)
@@ -161,8 +167,8 @@ function sourceQuery(value, code, requiredAliases = []) {
     || !startsReadOnlyQuery(sql)
   ) fail(code)
   for (const alias of requiredAliases) {
-    const expression = new RegExp(`\\bas\\s+(?:"${alias}"|${alias})\\b`, 'i')
-    if (!expression.test(sql)) fail(code)
+    const pattern = REQUIRED_SOURCE_ALIAS_PATTERNS[alias]
+    if (!pattern || !pattern.test(sql)) fail(code)
   }
   return sql
 }

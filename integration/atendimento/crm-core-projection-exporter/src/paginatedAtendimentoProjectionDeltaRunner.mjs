@@ -21,7 +21,7 @@ import {
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUNNER_VERSION = 'atendimento/crm-core/projection-delta-runner/v1'
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT = 'atendimento/crm-core/staging-projection-delta/v1'
 
-const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-delta-checkpoint/v2'
+const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-delta-checkpoint/v3'
 const REQUEST_ID_PREFIX = 'crm-atendimento-delta-'
 
 function fail(code) { throw new Error(code) }
@@ -100,6 +100,17 @@ function canonicalize(value) {
 function digest(value) {
   return `sha256:${createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')}`
 }
+function hmacKeyFingerprint(value) {
+  const key = String(value ?? '').trim()
+  if (!key) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_HMAC_KEY_REQUIRED')
+  if (Buffer.byteLength(key, 'utf8') < 32) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_HMAC_KEY_UNSAFE')
+  return `sha256:${createHash('sha256').update(key, 'utf8').digest('hex')}`
+}
+function storedHmacKeyFingerprint(value, code) {
+  const fingerprint = String(value ?? '').trim().toLowerCase()
+  if (!/^sha256:[a-f0-9]{64}$/.test(fingerprint)) fail(code)
+  return fingerprint
+}
 function checkpointStore(value) {
   const store = object(value, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_STORE_REQUIRED')
   exactKeys(store, ['read', 'write', 'complete'], 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_STORE_REQUIRED')
@@ -152,10 +163,11 @@ function storedPending(value, { target, baseline, code }) {
 }
 function storedCheckpoint(value) {
   const checkpoint = object(value, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
-  exactKeys(checkpoint, ['contractVersion', 'state', 'target', 'baseline', 'sourceSnapshot', 'progress', 'revisionWatermarks', 'pending'], 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
-  if (checkpoint.contractVersion !== CHECKPOINT_VERSION || checkpoint.state !== 'running') fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
+  exactKeys(checkpoint, ['contractVersion', 'state', 'target', 'baseline', 'hmacKeyFingerprint', 'sourceSnapshot', 'progress', 'revisionWatermarks', 'pending'], 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
+  if (checkpoint.contractVersion !== CHECKPOINT_VERSION || !['running', 'completed'].includes(checkpoint.state)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const target = assertAtendimentoProjectionExportTarget(checkpoint.target)
   const baseline = assertBaselinePin(checkpoint.baseline, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
+  const keyFingerprint = storedHmacKeyFingerprint(checkpoint.hmacKeyFingerprint, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const snapshot = object(checkpoint.sourceSnapshot, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const progress = object(checkpoint.progress, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   exactKeys(snapshot, ['capturedAt', 'watermark'], 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
@@ -167,15 +179,20 @@ function storedCheckpoint(value) {
   const idempotentCount = nonNegativeInteger(progress.idempotentCount, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   if (acceptedCount + idempotentCount !== batchCount || !/^sha256:[a-f0-9]{64}$/.test(String(progress.reconciliationDigest || ''))) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   const pending = storedPending(checkpoint.pending, { target, baseline, code: 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID' })
-  if (pending && pending.batch.sourceDelta.fromExclusive !== fromExclusive) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
-  return Object.freeze({ target, baseline, capturedAt: timestamp(snapshot.capturedAt, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), watermark: nonNegativeInteger(snapshot.watermark, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest: progress.reconciliationDigest, revisionWatermarks: revisionWatermarks(checkpoint.revisionWatermarks, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), pending })
+  const watermark = nonNegativeInteger(snapshot.watermark, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
+  if (fromExclusive > watermark || (pending && pending.batch.sourceDelta.fromExclusive !== fromExclusive)
+    || (checkpoint.state === 'completed' && (pending || fromExclusive !== watermark))) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
+  return Object.freeze({ checkpointState: checkpoint.state, target, baseline, hmacKeyFingerprint: keyFingerprint, capturedAt: timestamp(snapshot.capturedAt, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), watermark, fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest: progress.reconciliationDigest, revisionWatermarks: revisionWatermarks(checkpoint.revisionWatermarks, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'), pending })
 }
-function makeCheckpoint({ target, baseline, capturedAt, watermark, fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest, revisionWatermarks: watermarks, pending }) {
+function makeCheckpoint({ checkpointState = 'running', target, baseline, hmacKeyFingerprint: suppliedHmacKeyFingerprint, capturedAt, watermark, fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest, revisionWatermarks: watermarks, pending }) {
+  if (!['running', 'completed'].includes(checkpointState) || fromExclusive > watermark
+    || (checkpointState === 'completed' && (pending || fromExclusive !== watermark))) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID')
   return Object.freeze({
     contractVersion: CHECKPOINT_VERSION,
-    state: 'running',
+    state: checkpointState,
     target: Object.freeze({ ...target }),
     baseline: assertBaselinePin(baseline, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'),
+    hmacKeyFingerprint: storedHmacKeyFingerprint(suppliedHmacKeyFingerprint, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'),
     sourceSnapshot: Object.freeze({ capturedAt, watermark }),
     progress: Object.freeze({ fromExclusive, deliveredCount, batchCount, acceptedCount, idempotentCount, reconciliationDigest }),
     revisionWatermarks: revisionWatermarks(watermarks, 'ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_INVALID'),
@@ -211,6 +228,8 @@ function knownError(error) {
 export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source = ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE, hmacKey, keyId, target, signer: suppliedSigner, transport: suppliedTransport, checkpointStore: suppliedCheckpointStore, batchSize: suppliedBatchSize } = {}) {
   if (!pool || typeof pool.connect !== 'function') fail('ATENDIMENTO_CRM_PROJECTION_DELTA_POOL_REQUIRED')
   const pageSize = batchSize(suppliedBatchSize)
+  const hmacKeyValue = String(hmacKey ?? '').trim()
+  const hmacKeyValueFingerprint = hmacKeyFingerprint(hmacKeyValue)
   const sourceDefinition = assertAtendimentoProjectionDeltaSource(source)
   const targetValue = assertAtendimentoProjectionExportTarget(target)
   if (targetValue.environment !== 'staging') fail('ATENDIMENTO_CRM_PROJECTION_DELTA_RUNNER_STAGING_ONLY')
@@ -231,8 +250,9 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
       }
       if (restored && !sameTarget(restored.target, targetValue)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_TARGET_MISMATCH')
       if (restored && !sameBaselinePin(restored.baseline, baselineValuePin)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_BASELINE_MISMATCH')
+      if (restored && restored.hmacKeyFingerprint !== hmacKeyValueFingerprint) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_HMAC_KEY_MISMATCH')
       if (restored && restored.fromExclusive < baselineValue.snapshot.watermark) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_CURSOR_REGRESSION')
-      let state = restored || Object.freeze({ target: targetValue, baseline: baselineValuePin, capturedAt: null, watermark: baselineValue.snapshot.watermark, fromExclusive: baselineValue.snapshot.watermark, deliveredCount: 0, batchCount: 0, acceptedCount: 0, idempotentCount: 0, reconciliationDigest: digest([]), revisionWatermarks: Object.freeze([]), pending: null })
+      let state = restored || Object.freeze({ checkpointState: 'new', target: targetValue, baseline: baselineValuePin, hmacKeyFingerprint: hmacKeyValueFingerprint, capturedAt: null, watermark: baselineValue.snapshot.watermark, fromExclusive: baselineValue.snapshot.watermark, deliveredCount: 0, batchCount: 0, acceptedCount: 0, idempotentCount: 0, reconciliationDigest: digest([]), revisionWatermarks: Object.freeze([]), pending: null })
       try {
         if (state.pending) {
           const receipt = await deliveryTransport.deliver({ batch: state.pending.batch, delivery: state.pending.delivery, requestId: state.pending.requestId })
@@ -245,16 +265,23 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
           await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
           transactionOpen = true
           const snapshot = await preflightAtendimentoProjectionDeltaSource(client, { source: sourceDefinition })
-          if (state.fromExclusive > snapshot.watermark) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE_REGRESSED')
-          state = Object.freeze({ ...state, capturedAt: snapshot.capturedAt, watermark: snapshot.watermark })
-          if (!restored) await writeCheckpoint(privateCheckpointStore, makeCheckpoint(state))
+          if (state.checkpointState === 'running') {
+            // A recovered run must finish the source snapshot it had already
+            // pinned. Advancing its watermark would allow rows which were not
+            // part of that snapshot to cross the same checkpoint boundary.
+            if (state.fromExclusive > state.watermark || snapshot.watermark < state.watermark) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE_REGRESSED')
+          } else {
+            if (state.fromExclusive > snapshot.watermark) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE_REGRESSED')
+            state = Object.freeze({ ...state, checkpointState: 'running', capturedAt: snapshot.capturedAt, watermark: snapshot.watermark })
+            await writeCheckpoint(privateCheckpointStore, makeCheckpoint(state))
+          }
           const revisions = new Map(state.revisionWatermarks.map((entry) => [`${entry.unitSlug}:${entry.projectionReference}`, entry.revision]))
-          while (state.fromExclusive < snapshot.watermark) {
-            const remaining = snapshot.watermark - state.fromExclusive
+          while (state.fromExclusive < state.watermark) {
+            const remaining = state.watermark - state.fromExclusive
             const limit = Math.min(pageSize, remaining)
-            const rows = await readAtendimentoProjectionDeltaPage(client, { source: sourceDefinition, fromExclusive: state.fromExclusive, toInclusive: snapshot.watermark, limit })
+            const rows = await readAtendimentoProjectionDeltaPage(client, { source: sourceDefinition, fromExclusive: state.fromExclusive, toInclusive: state.watermark, limit })
             if (rows.length < 1 || rows.length > limit) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE_GAP')
-            const batch = assertAtendimentoProjectionDeltaBatch(createAtendimentoProjectionDeltaBatch({ rows, fromExclusive: state.fromExclusive, toInclusive: rows.at(-1).eventOrder, hmacKey, keyId, target: targetValue }))
+            const batch = assertAtendimentoProjectionDeltaBatch(createAtendimentoProjectionDeltaBatch({ rows, fromExclusive: state.fromExclusive, toInclusive: rows.at(-1).eventOrder, hmacKey: hmacKeyValue, keyId, target: targetValue }))
             for (const event of batch.events) {
               const revisionKey = `${event.unitScope.unitSlug}:${event.projection.reference}`
               const previousRevision = revisions.get(revisionKey)
@@ -273,8 +300,9 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
             state = confirmedState(state, pending, receipt)
             await writeCheckpoint(privateCheckpointStore, makeCheckpoint(state))
           }
-          const summary = completedSummary({ target: targetValue, baseline: baselineValuePin, capturedAt: snapshot.capturedAt, watermark: snapshot.watermark, fromExclusive: state.fromExclusive, deliveredCount: state.deliveredCount, batchCount: state.batchCount, acceptedCount: state.acceptedCount, idempotentCount: state.idempotentCount, reconciliationDigest: state.reconciliationDigest })
-          await completeCheckpoint(privateCheckpointStore, summary)
+          const completed = makeCheckpoint({ ...state, checkpointState: 'completed', pending: null })
+          const summary = completedSummary({ target: targetValue, baseline: baselineValuePin, capturedAt: completed.sourceSnapshot?.capturedAt || state.capturedAt, watermark: state.watermark, fromExclusive: state.fromExclusive, deliveredCount: state.deliveredCount, batchCount: state.batchCount, acceptedCount: state.acceptedCount, idempotentCount: state.idempotentCount, reconciliationDigest: state.reconciliationDigest })
+          await completeCheckpoint(privateCheckpointStore, completed)
           await client.query('ROLLBACK')
           transactionOpen = false
           return summary
@@ -290,4 +318,4 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
   })
 }
 
-export const __testables = Object.freeze({ sameTarget, digest, revisionWatermarks, storedCheckpoint, makeCheckpoint })
+export const __testables = Object.freeze({ sameTarget, digest, hmacKeyFingerprint, revisionWatermarks, storedCheckpoint, makeCheckpoint })

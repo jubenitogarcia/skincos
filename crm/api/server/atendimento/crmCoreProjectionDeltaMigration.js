@@ -20,6 +20,10 @@ import {
     markAtendimentoProjectionDeltaReady,
     digestAtendimentoProjectionDeltaBaseline,
 } from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
+import {
+    ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS,
+    createAtendimentoProjectionBackfillBatch,
+} from '../../../../integration/atendimento/crm-core-projection-exporter/src/atendimentoProjectionExporter.mjs'
 
 export const CRM_CORE_PROJECTION_DELTA_MIGRATION_ID = '20260908_crm_core_projection_delta_v1'
 export const CRM_CORE_PROJECTION_MEMBERSHIP_RELATION = 'crm_atendimento.crm_core_projection_memberships'
@@ -33,15 +37,13 @@ const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'crm_core_projection_exporter',
 })
 
-const PREREQUISITE_RELATIONS = Object.freeze([
+export const CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS = Object.freeze([
     'crm_atendimento.global_client_identities',
     'crm_atendimento.global_client_identity_members',
     'crm_atendimento.units',
     'crm_atendimento.attendances',
     'crm_atendimento.attendance_client_links',
     'crm_caixa.sales',
-    'crm_atendimento.app_client_registrations',
-    'crm_atendimento.supplemental_lead_profiles',
 ])
 
 const UNIT_SLUG_SQL_PATTERN = "^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
@@ -51,6 +53,11 @@ const OPAQUE_EVENT_ID_PATTERN = /^event:[A-Za-z0-9_-]{8,160}$/
 const OPAQUE_PROJECTION_REFERENCE_PATTERN = /^projection:[A-Za-z0-9_-]{8,160}$/
 const OPAQUE_SOURCE_REFERENCE_PATTERN = /^source:[A-Za-z0-9_-]{8,160}$/
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/
+const REQUIRED_SOURCE_ALIAS_PATTERNS = Object.freeze({
+    identity_id: /\bas\s+(?:"identity_id"|identity_id)\b/i,
+    unit_slug: /\bas\s+(?:"unit_slug"|unit_slug)\b/i,
+    observed_at: /\bas\s+(?:"observed_at"|observed_at)\b/i,
+})
 
 function canonicalize(value) {
     if (Array.isArray(value)) return value.map(canonicalize)
@@ -76,9 +83,8 @@ export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL = `WITH unit_membershi
     SELECT member.identity_id AS identity_id,
         unit.slug AS unit_slug,
         GREATEST(
-            member.updated_at,
-            COALESCE(attendance_link.updated_at, attendance_link.created_at, member.updated_at),
-            COALESCE(attendance.updated_at, attendance.created_at, member.updated_at)
+            attendance_link.created_at,
+            attendance.created_at
         ) AS observed_at
       FROM crm_atendimento.global_client_identity_members member
       JOIN crm_atendimento.attendance_client_links attendance_link
@@ -97,7 +103,7 @@ export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL = `WITH unit_membershi
 
     SELECT member.identity_id AS identity_id,
         unit.slug AS unit_slug,
-        GREATEST(member.updated_at, COALESCE(sale.updated_at, sale.created_at, member.updated_at)) AS observed_at
+        sale.created_at AS observed_at
       FROM crm_atendimento.global_client_identity_members member
       JOIN crm_caixa.sales sale ON sale.customer_id = CASE
           WHEN member.source_id ~ '${UUID_TEXT_PATTERN}' THEN member.source_id::uuid
@@ -107,31 +113,6 @@ export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL = `WITH unit_membershi
      WHERE member.source_type = 'caixa_customer'
        AND member.source_id ~ '${UUID_TEXT_PATTERN}'
 
-    UNION ALL
-
-    SELECT member.identity_id AS identity_id,
-        unit.slug AS unit_slug,
-        GREATEST(member.updated_at, registration.updated_at, member.updated_at) AS observed_at
-      FROM crm_atendimento.global_client_identity_members member
-      JOIN crm_atendimento.app_client_registrations registration
-        ON registration.source_client_id = member.source_id
-      JOIN LATERAL jsonb_array_elements_text(COALESCE(registration.unit_slugs, '[]'::jsonb)) scope(slug)
-        ON TRUE
-      JOIN crm_atendimento.units unit ON unit.slug = scope.slug
-     WHERE member.source_type = 'app_registration'
-
-    UNION ALL
-
-    SELECT member.identity_id AS identity_id,
-        unit.slug AS unit_slug,
-        GREATEST(member.updated_at, lead.updated_at, member.updated_at) AS observed_at
-      FROM crm_atendimento.global_client_identity_members member
-      JOIN crm_atendimento.supplemental_lead_profiles lead
-        ON lead.source_profile_id = member.source_id
-      JOIN LATERAL jsonb_array_elements_text(COALESCE(lead.unit_slugs, '[]'::jsonb)) scope(slug)
-        ON TRUE
-      JOIN crm_atendimento.units unit ON unit.slug = scope.slug
-     WHERE member.source_type = 'lead_profile'
 ), canonical_memberships AS (
     SELECT identity_id AS identity_id, unit_slug AS unit_slug, max(observed_at) AS observed_at
       FROM unit_membership_evidence
@@ -218,7 +199,7 @@ function migrationError(code) {
     return error
 }
 
-function assertBackfillFactoryBatches({ batches, manifest, source, snapshot, target }) {
+function assertDerivedBackfillBatches({ batches, manifest, source, snapshot, target }) {
     if (!Array.isArray(batches) || batches.length !== manifest.batches.length) {
         throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_BACKFILL_DERIVATION_FAILED')
     }
@@ -297,6 +278,51 @@ function assertBackfillFactoryBatches({ batches, manifest, source, snapshot, tar
     }
 }
 
+/**
+ * Derives the exact v2 delivery batches from the snapshot rows while the
+ * repeatable-read source transaction remains open.  In particular, callers
+ * cannot inject opaque references or a precomputed manifest whose rows came
+ * from another snapshot.
+ */
+function deriveAtendimentoProjectionDeltaBaselineBackfill({ rows, snapshot, source, target, backfillHmacKey }) {
+    const canonicalRows = [...rows].sort((left, right) => (
+        left.observedAt.localeCompare(right.observedAt)
+        || left.identityId.localeCompare(right.identityId)
+        || left.unitSlug.localeCompare(right.unitSlug)
+    ))
+    const batches = []
+    const descriptors = []
+    for (let offset = 0; offset < canonicalRows.length; offset += ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS) {
+        const page = canonicalRows.slice(offset, offset + ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS).map((row) => ({
+            id: row.identityId,
+            updated_at: row.observedAt,
+            unit_slug: row.unitSlug,
+        }))
+        const batch = createAtendimentoProjectionBackfillBatch({
+            rows: page,
+            capturedAt: snapshot.capturedAt,
+            hmacKey: backfillHmacKey,
+            keyId: source.backfillKeyId,
+            target,
+        })
+        batches.push(batch)
+        descriptors.push({
+            batchId: batch.batchId,
+            batchDigest: digestOpaqueBackfillBatch(batch),
+            capturedAt: batch.sourceSnapshot.capturedAt,
+            cursorDigest: batch.sourceSnapshot.cursorDigest,
+            fromOrdinal: offset + 1,
+            toOrdinal: offset + batch.events.length,
+            rowCount: batch.events.length,
+            unitSlugs: batch.sourceSnapshot.unitSlugs,
+            eventCount: batch.events.length,
+        })
+    }
+    const backfill = createAtendimentoProjectionDeltaBaselineBackfill({ batches: descriptors, rowCount: canonicalRows.length })
+    assertDerivedBackfillBatches({ batches, manifest: backfill, source, snapshot, target })
+    return Object.freeze({ backfill, batches: Object.freeze(batches) })
+}
+
 function sameTargetDescriptor(left, right) {
     return left && right && left.environment === right.environment
         && left.release === right.release && left.artifactDigest === right.artifactDigest
@@ -308,7 +334,8 @@ function readOnlySourceSql(value) {
         throw migrationError('CRM_CORE_PROJECTION_DELTA_SOURCE_SQL_UNSAFE')
     }
     for (const alias of ['identity_id', 'unit_slug', 'observed_at']) {
-        if (!new RegExp(`\\bas\\s+(?:"${alias}"|${alias})\\b`, 'i').test(sql)) {
+        const pattern = REQUIRED_SOURCE_ALIAS_PATTERNS[alias]
+        if (!pattern || !pattern.test(sql)) {
             throw migrationError('CRM_CORE_PROJECTION_DELTA_SOURCE_SQL_UNSAFE')
         }
     }
@@ -324,7 +351,7 @@ async function ensureRegistry(client) {
 }
 
 async function assertPrerequisites(client) {
-    const projection = PREREQUISITE_RELATIONS
+    const projection = CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS
         .map((relation, index) => `to_regclass('${relation}') is not null as relation_${index}`)
         .join(', ')
     const result = await client.query(`select ${projection}`)
@@ -460,7 +487,9 @@ export async function rollbackCrmCoreProjectionDeltaMigration({
 }
 
 async function readCanonicalMemberships(client, sourceSql) {
-    const result = await client.query(`select identity_id, unit_slug, observed_at from (${sourceSql}) canonical_delta_source`)
+    const result = await client.query(`select identity_id, unit_slug, observed_at
+        from (${sourceSql}) canonical_delta_source
+        order by observed_at asc, identity_id asc, unit_slug asc`)
     return (result.rows || []).map(assertAtendimentoProjectionMembershipRow)
 }
 
@@ -563,9 +592,10 @@ function baselineRowValues(baseline) {
 
 /**
  * Captures one canonical source snapshot and seeds revision-1 membership rows
- * in the same repeatable-read transaction. The injected backfillFactory must
- * derive the sanitized manifest and real v2 batches from those exact rows;
- * cross-page opaque identities are checked before the handoff is committed.
+ * in the same repeatable-read transaction. The producer derives the sanitized
+ * manifest and real v2 batches from those exact rows with its injected HMAC
+ * key; cross-page opaque identities are checked before the handoff is
+ * committed.
  * The handoff row is persisted as baseline-prepared before commit; the
  * reconciler refuses to run until a separately verified Core receipt and
  * readback advance it to delta-ready.
@@ -577,12 +607,17 @@ export async function prepareAtendimentoProjectionDeltaBaseline({
     sourceSql = ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL,
     targetDescriptor,
     source: sourceDescriptor,
-    backfillFactory,
+    backfillHmacKey,
     now = new Date(),
 } = {}) {
     if (!pool) throw migrationError('CRM_CORE_PROJECTION_DELTA_POOL_REQUIRED')
-    if (target === ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION) throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STAGING_ONLY')
-    if (!targetDescriptor || !sourceDescriptor || typeof backfillFactory !== 'function') throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_INPUT_REQUIRED')
+    if (!targetDescriptor || !sourceDescriptor || typeof backfillHmacKey !== 'string' || !backfillHmacKey.trim()) {
+        throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_INPUT_REQUIRED')
+    }
+    // `target` identifies the owner database whose canonical rows are being
+    // captured. That can be production. The receiving CRM Core artifact stays
+    // staging-only until the independent cutover proof exists.
+    if (targetDescriptor.environment !== 'staging') throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STAGING_ONLY')
     const normalizedSourceSql = readOnlySourceSql(sourceSql)
     if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('CRM_CORE_PROJECTION_DELTA_DESTINATION_UNSAFE')
     const client = await pool.connect()
@@ -605,20 +640,14 @@ export async function prepareAtendimentoProjectionDeltaBaseline({
         const { snapshot, seed } = createAtendimentoProjectionDeltaBaselineSnapshot({ rows: current, capturedAt, watermark })
         let derivedBackfill
         try {
-            const derived = await backfillFactory({
-                rows: Object.freeze([...current]),
+            const derived = deriveAtendimentoProjectionDeltaBaselineBackfill({
+                rows: current,
                 snapshot,
-                seed,
-                capturedAt,
-                watermark,
+                source: sourceDescriptor,
+                target: targetDescriptor,
+                backfillHmacKey,
             })
-            if (!derived || typeof derived !== 'object' || Array.isArray(derived)
-                || Object.keys(derived).length !== 2
-                || !Object.hasOwn(derived, 'backfill') || !Object.hasOwn(derived, 'batches')) {
-                throw new Error('factory output')
-            }
-            derivedBackfill = createAtendimentoProjectionDeltaBaselineBackfill(derived.backfill)
-            assertBackfillFactoryBatches({ batches: derived.batches, manifest: derivedBackfill, source: sourceDescriptor, snapshot, target: targetDescriptor })
+            derivedBackfill = derived.backfill
         } catch {
             throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_BACKFILL_DERIVATION_FAILED')
         }
@@ -795,13 +824,14 @@ export async function reconcileAtendimentoProjectionDelta({
 
 export const __testables = Object.freeze({
     STATEMENTS,
-    PREREQUISITE_RELATIONS,
+    PREREQUISITE_RELATIONS: CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS,
     RUNTIME_ROLES,
     runtimeGrantStatements,
     readOnlySourceSql,
     baselineRowValues,
     assertStoredHandoffMatches,
-    assertBackfillFactoryBatches,
+    assertDerivedBackfillBatches,
+    deriveAtendimentoProjectionDeltaBaselineBackfill,
     digestOpaqueBackfillBatch,
     digestOpaqueBackfillEvents,
 })

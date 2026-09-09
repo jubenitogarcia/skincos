@@ -3,15 +3,19 @@ import {
   createAtendimentoUnitScopedProjectionSource,
 } from './atendimentoProjectionExporter.mjs'
 
-export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION = 'atendimento/crm-core/confirmed-unit-membership-source/v1'
+export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION = 'atendimento/crm-core/confirmed-unit-membership-source/v2'
 
-// This is the same four-channel membership rule already enforced by Atendimento
-// commercial operations. A unit only becomes exportable after it resolves to a
-// canonical `crm_atendimento.units` row; an identity without such evidence has
-// no output row and can never fall back to a global/wildcard scope.
+// This source is limited to evidence whose lifecycle is owned and observable in
+// the Atendimento database. App registration and supplemental lead imports are
+// intentionally not included: their source contract says absence is not
+// retirement evidence, so exporting them here could retain a revoked unit.
+// A unit only becomes exportable after it resolves to a canonical
+// `crm_atendimento.units` row; an identity without such evidence has no output
+// row and can never fall back to a global/wildcard scope.
 export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS = Object.freeze({
   version: ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION,
-  membership: 'union of active attendance, Caixa sale, app registration, and supplemental lead evidence resolved through canonical units',
+  membership: 'union of active attendance and Caixa sale evidence resolved through canonical units',
+  deferredSources: 'app registration and supplemental lead remain excluded until their owner provides complete-snapshot retirement evidence or explicit tombstones',
   duplicateEvidence: 'one identity/unit row, with the latest observed source timestamp',
   divergentUnits: 'valid multi-unit membership; emit one row for each canonical unit slug',
   missingEvidence: 'no projection row; there is no global or wildcard fallback',
@@ -27,13 +31,14 @@ const UUID_TEXT_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-f
 // Keep every source branch data-minimal. The final projection only selects the
 // opaque identity UUID, a timestamp, and the canonical unit slug; names,
 // phones, email, and sale/attendance payloads never cross this boundary.
+// Mutable importer/materializer timestamps are deliberately excluded: their
+// idempotent upserts happen on every refresh and are not membership evidence.
 const MEMBERSHIP_CTE = `WITH unit_membership_evidence AS (
   SELECT member.identity_id,
     unit.slug AS unit_slug,
     GREATEST(
-      member.updated_at,
-      COALESCE(attendance_link.updated_at, attendance_link.created_at, member.updated_at),
-      COALESCE(attendance.updated_at, attendance.created_at, member.updated_at)
+      attendance_link.created_at,
+      attendance.created_at
     ) AS observed_at
   FROM crm_atendimento.global_client_identity_members member
   JOIN crm_atendimento.attendance_client_links attendance_link
@@ -52,7 +57,7 @@ const MEMBERSHIP_CTE = `WITH unit_membership_evidence AS (
 
   SELECT member.identity_id,
     unit.slug AS unit_slug,
-    GREATEST(member.updated_at, COALESCE(sale.updated_at, sale.created_at, member.updated_at)) AS observed_at
+    sale.created_at AS observed_at
   FROM crm_atendimento.global_client_identity_members member
   JOIN crm_caixa.sales sale ON sale.customer_id = CASE
     WHEN member.source_id ~ '${UUID_TEXT_PATTERN}' THEN member.source_id::uuid
@@ -62,31 +67,6 @@ const MEMBERSHIP_CTE = `WITH unit_membership_evidence AS (
   WHERE member.source_type = 'caixa_customer'
     AND member.source_id ~ '${UUID_TEXT_PATTERN}'
 
-  UNION ALL
-
-  SELECT member.identity_id,
-    unit.slug AS unit_slug,
-    GREATEST(member.updated_at, registration.updated_at) AS observed_at
-  FROM crm_atendimento.global_client_identity_members member
-  JOIN crm_atendimento.app_client_registrations registration
-    ON registration.source_client_id = member.source_id
-  JOIN LATERAL jsonb_array_elements_text(COALESCE(registration.unit_slugs, '[]'::jsonb)) scope(slug)
-    ON TRUE
-  JOIN crm_atendimento.units unit ON unit.slug = scope.slug
-  WHERE member.source_type = 'app_registration'
-
-  UNION ALL
-
-  SELECT member.identity_id,
-    unit.slug AS unit_slug,
-    GREATEST(member.updated_at, lead.updated_at) AS observed_at
-  FROM crm_atendimento.global_client_identity_members member
-  JOIN crm_atendimento.supplemental_lead_profiles lead
-    ON lead.source_profile_id = member.source_id
-  JOIN LATERAL jsonb_array_elements_text(COALESCE(lead.unit_slugs, '[]'::jsonb)) scope(slug)
-    ON TRUE
-  JOIN crm_atendimento.units unit ON unit.slug = scope.slug
-  WHERE member.source_type = 'lead_profile'
 ), unit_memberships AS (
   SELECT identity_id, unit_slug, max(observed_at) AS observed_at
   FROM unit_membership_evidence

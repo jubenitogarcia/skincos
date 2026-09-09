@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import {
+    ATENDIMENTO_PRODUCTION_PREREQUISITE_DEFERRED_RULES,
+} from './migrate-atendimento-production.mjs'
+import {
+    CRM_CORE_PROJECTION_DELTA_MIGRATION_ID,
+    CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS,
+} from '../server/atendimento/crmCoreProjectionDeltaMigration.js'
 
 const root = new URL('../../../', import.meta.url)
 const read = (relative) => readFile(new URL(relative, root), 'utf8')
@@ -18,6 +25,16 @@ test('production migration runner defers only the fixed source-mirror set and us
     assert.match(source, /productionDeferralReport/)
     assert.match(source, /PRODUCTION_MIGRATION_ROLLBACK_STATE_UNKNOWN/)
     assert.doesNotMatch(source, /inspectAndPersistStagingDeferral/)
+})
+
+test('production defers the CRM Core delta schema only when its exact source mirror relations are absent', () => {
+    const rule = ATENDIMENTO_PRODUCTION_PREREQUISITE_DEFERRED_RULES[CRM_CORE_PROJECTION_DELTA_MIGRATION_ID]
+    assert.deepEqual(rule, {
+        prerequisiteError: 'CRM_CORE_PROJECTION_DELTA_PREREQUISITES_MISSING',
+        prerequisiteRelations: CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS,
+    })
+    assert.equal(Object.isFrozen(rule), true)
+    assert.equal(Object.isFrozen(rule.prerequisiteRelations), true)
 })
 
 test('production migration wrapper binds immutable release, maintenance, backup, and lockdown', async () => {

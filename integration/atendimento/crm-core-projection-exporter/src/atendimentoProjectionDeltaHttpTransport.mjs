@@ -35,7 +35,8 @@ function endpoint(value) {
   const normalized = text(value, 'ATENDIMENTO_CRM_PROJECTION_DELTA_ENDPOINT_INVALID')
   let parsed
   try { parsed = new URL(normalized) } catch { fail('ATENDIMENTO_CRM_PROJECTION_DELTA_ENDPOINT_INVALID') }
-  if (parsed.protocol !== 'https:' || parsed.pathname !== '/crm/_internal/delta/atendimento' || parsed.search || parsed.hash) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_ENDPOINT_INVALID')
+  if (parsed.protocol !== 'https:' || parsed.pathname !== '/crm/_internal/delta/atendimento'
+    || parsed.search || parsed.hash || parsed.username || parsed.password) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_ENDPOINT_INVALID')
   return parsed.toString()
 }
 function sameTarget(left, right) {
@@ -106,7 +107,15 @@ export function createAtendimentoProjectionDeltaHttpTransport({ endpoint: suppli
         }
         if (!response || response.status !== 200 || typeof response.json !== 'function') fail('ATENDIMENTO_CRM_PROJECTION_DELTA_REJECTED')
         let payload
-        try { payload = await response.json() } catch { fail('ATENDIMENTO_CRM_PROJECTION_DELTA_RESPONSE_INVALID') }
+        try {
+          // Fetch may resolve once headers arrive while a malicious or broken
+          // peer keeps the JSON body open forever. Keep the one transport
+          // deadline around the body read as well as the connection.
+          payload = await withAbortDeadline(response.json(), controller.signal)
+        } catch (error) {
+          if (error === TRANSPORT_TIMEOUT) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_TIMEOUT')
+          fail('ATENDIMENTO_CRM_PROJECTION_DELTA_RESPONSE_INVALID')
+        }
         return receipt(payload, { batch, requestId: id })
       } finally { clearTimeout(deadline) }
     },

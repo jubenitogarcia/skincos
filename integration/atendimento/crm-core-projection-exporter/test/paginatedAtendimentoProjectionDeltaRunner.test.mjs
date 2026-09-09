@@ -18,6 +18,7 @@ import {
 
 const TARGET = { environment: 'staging', release: 'a'.repeat(40), artifactDigest: `sha256:${'b'.repeat(64)}` }
 const HMAC_KEY = `delta-runner-test-${'x'.repeat(40)}`
+const ROTATED_HMAC_KEY = `delta-runner-rotated-test-${'y'.repeat(40)}`
 const A = '11111111-1111-4111-8111-111111111111'
 const B = '22222222-2222-4222-8222-222222222222'
 const BASELINE_ROWS = [
@@ -87,7 +88,7 @@ function makeClient(rows = validRows()) {
     async query(sql, params = []) {
       if (/current_database/i.test(sql)) return { rows: [{ database_name: 'skincos_clientes_production', current_user: 'crm_core_projection_exporter', session_user: 'crm_core_projection_exporter', transaction_read_only: 'on' }] }
       if (/captured_at/i.test(sql)) return { rows: [{ captured_at: '2026-09-08T12:05:00.000Z' }] }
-      if (/MAX\(event_order\)/i.test(sql)) return { rows: [{ watermark: 3 }] }
+      if (/MAX\(event_order\)/i.test(sql)) return { rows: [{ watermark: Math.max(0, ...rows.map((row) => row.event_order)) }] }
       if (/event_order <= \$1/i.test(sql)) return { rows: rows.filter((row) => row.event_order <= params[0]).slice(0, params[1]) }
       if (/event_order > \$1/i.test(sql)) return { rows: rows.filter((row) => row.event_order > params[0] && row.event_order <= params[1]).slice(0, params[2]) }
       return { rows: [] }
@@ -108,7 +109,7 @@ test('runs bounded outbox pages, accepts receipts, resumes through an opaque che
     target: TARGET,
     signer,
     transport: { async deliver({ batch, requestId }) { delivered.push({ batch, requestId }); return { ok: true, contractVersion: 'crm-core/projection-delta-receipt/v1', status: 'accepted', batchId: batch.batchId, eventCount: batch.events.length, target: TARGET, requestId, fromExclusive: batch.sourceDelta.fromExclusive, toInclusive: batch.sourceDelta.toInclusive } } },
-    checkpointStore: { async read() { return checkpoint.value }, async write(value) { checkpoint.value = value }, async complete(value) { checkpoint.completed = value; checkpoint.value = null } },
+    checkpointStore: { async read() { return checkpoint.value }, async write(value) { checkpoint.value = value }, async complete(value) { checkpoint.completed = value; checkpoint.value = value } },
     batchSize: 2,
   })
   const summary = await runner.run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE })
@@ -116,12 +117,117 @@ test('runs bounded outbox pages, accepts receipts, resumes through an opaque che
   assert.equal(summary.deliveredCount, 3)
   assert.equal(summary.batchCount, 2)
   assert.equal(delivered.length, 2)
-  assert.equal(checkpoint.completed.fromExclusive, 3)
-  assert.equal(checkpoint.value, null)
+  assert.equal(checkpoint.completed.state, 'completed')
+  assert.equal(checkpoint.completed.progress.fromExclusive, 3)
+  assert.equal(checkpoint.value.state, 'completed')
   assert.equal(checkpoint.completed.baseline.owner, 'atendimento')
   assert.equal(checkpoint.completed.baseline.scope, 'global-client-identities/v1')
   assert.match(checkpoint.completed.baseline.digest, /^sha256:[a-f0-9]{64}$/)
   assert.ok(delivered.every(({ batch }) => batch.events.every((event) => ['upsert', 'revoke'].includes(event.operation))))
+})
+
+test('keeps a completed high-watermark and drains only rows appended after it on the next run', async () => {
+  const checkpoint = { value: null, completed: null }
+  const delivered = []
+  let rows = validRows()
+  const runner = createPaginatedAtendimentoProjectionDeltaRunner({
+    pool: { connect: async () => makeClient(rows) },
+    source: ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE,
+    hmacKey: HMAC_KEY,
+    keyId: 'crm-staging-atendimento-delta-v1',
+    target: TARGET,
+    signer: createAtendimentoProjectionDeltaDeliverySigner({ target: TARGET, keyId: 'crm-staging-atendimento-delta-v1', sign: async () => Buffer.alloc(64, 7) }),
+    transport: { async deliver({ batch, requestId }) { delivered.push({ batch, requestId }); return { ok: true, contractVersion: 'crm-core/projection-delta-receipt/v1', status: 'accepted', batchId: batch.batchId, eventCount: batch.events.length, target: TARGET, requestId, fromExclusive: batch.sourceDelta.fromExclusive, toInclusive: batch.sourceDelta.toInclusive } } },
+    checkpointStore: { async read() { return checkpoint.value }, async write(value) { checkpoint.value = value }, async complete(value) { checkpoint.completed = value; checkpoint.value = value } },
+    batchSize: 2,
+  })
+
+  const first = await runner.run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE })
+  assert.equal(first.fromExclusive, 3)
+  rows = [...rows, {
+    event_order: 4,
+    event_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    identity_id: A,
+    unit_slug: 'jardins',
+    revision: 4,
+    operation: 'upsert',
+    occurred_at: '2026-09-08T12:03:00.000000Z',
+  }]
+  const second = await runner.run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE })
+
+  assert.equal(second.fromExclusive, 4)
+  assert.equal(delivered.length, 3)
+  assert.equal(delivered.at(-1).batch.sourceDelta.fromExclusive, 3)
+  assert.equal(delivered.at(-1).batch.sourceDelta.toInclusive, 4)
+  assert.equal(checkpoint.completed.state, 'completed')
+  assert.equal(checkpoint.completed.progress.fromExclusive, 4)
+})
+
+test('does not widen a recovered running snapshot when newer source rows appear', async () => {
+  const checkpoint = { value: null, completed: null }
+  let rows = validRows()
+  let deliveries = 0
+  const delivery = ({ batch, requestId }) => ({ ok: true, contractVersion: 'crm-core/projection-delta-receipt/v1', status: 'accepted', batchId: batch.batchId, eventCount: batch.events.length, target: TARGET, requestId, fromExclusive: batch.sourceDelta.fromExclusive, toInclusive: batch.sourceDelta.toInclusive })
+  const options = () => ({
+    pool: { connect: async () => makeClient(rows) }, source: ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE, hmacKey: HMAC_KEY,
+    keyId: 'crm-staging-atendimento-delta-v1', target: TARGET,
+    signer: createAtendimentoProjectionDeltaDeliverySigner({ target: TARGET, keyId: 'crm-staging-atendimento-delta-v1', sign: async () => Buffer.alloc(64, 7) }),
+    transport: { async deliver(value) { deliveries += 1; if (deliveries === 2) throw new Error('transient transport failure'); return delivery(value) } },
+    checkpointStore: { async read() { return checkpoint.value }, async write(value) { checkpoint.value = value }, async complete(value) { checkpoint.completed = value; checkpoint.value = value } }, batchSize: 2,
+  })
+  await assert.rejects(
+    () => createPaginatedAtendimentoProjectionDeltaRunner(options()).run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE }),
+    /ATENDIMENTO_CRM_PROJECTION_DELTA_UNAVAILABLE/,
+  )
+  assert.equal(checkpoint.value.state, 'running')
+  assert.equal(checkpoint.value.sourceSnapshot.watermark, 3)
+
+  rows = [...rows, {
+    event_order: 4,
+    event_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    identity_id: A,
+    unit_slug: 'jardins',
+    revision: 4,
+    operation: 'upsert',
+    occurred_at: '2026-09-08T12:03:00.000000Z',
+  }]
+  deliveries = 0
+  const resumed = await createPaginatedAtendimentoProjectionDeltaRunner(options()).run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE })
+  assert.equal(resumed.fromExclusive, 3)
+  assert.equal(checkpoint.completed.sourceSnapshot.watermark, 3)
+})
+
+test('rejects a checkpoint before replay when its HMAC identity material changed under the same key id', async () => {
+  const checkpoint = { value: null }
+  let connected = false
+  let deliveries = 0
+  const options = (hmacKey) => ({
+    pool: { connect: async () => { connected = true; return makeClient() } },
+    source: ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE,
+    hmacKey,
+    keyId: 'crm-staging-atendimento-delta-v1',
+    target: TARGET,
+    signer: createAtendimentoProjectionDeltaDeliverySigner({ target: TARGET, keyId: 'crm-staging-atendimento-delta-v1', sign: async () => Buffer.alloc(64, 7) }),
+    transport: { async deliver() { deliveries += 1; throw new Error('transient transport failure') } },
+    checkpointStore: { async read() { return checkpoint.value }, async write(value) { checkpoint.value = value }, async complete(value) { checkpoint.value = value } },
+    batchSize: 2,
+  })
+  await assert.rejects(
+    () => createPaginatedAtendimentoProjectionDeltaRunner(options(HMAC_KEY)).run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE }),
+    /ATENDIMENTO_CRM_PROJECTION_DELTA_UNAVAILABLE/,
+  )
+  assert.equal(checkpoint.value.state, 'running')
+  assert.match(checkpoint.value.hmacKeyFingerprint, /^sha256:[a-f0-9]{64}$/)
+  assert.equal(JSON.stringify(checkpoint.value).includes(HMAC_KEY), false)
+
+  connected = false
+  deliveries = 0
+  await assert.rejects(
+    () => createPaginatedAtendimentoProjectionDeltaRunner(options(ROTATED_HMAC_KEY)).run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE }),
+    /ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_HMAC_KEY_MISMATCH/,
+  )
+  assert.equal(connected, false)
+  assert.equal(deliveries, 0)
 })
 
 test('rejects revision regression before signing or delivery', async () => {

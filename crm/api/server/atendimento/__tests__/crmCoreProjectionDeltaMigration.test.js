@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
     CRM_CORE_PROJECTION_DELTA_MIGRATION_ID,
+    ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL,
     applyCrmCoreProjectionDeltaMigration,
     crmCoreProjectionDeltaMigrationPlan,
     prepareAtendimentoProjectionDeltaBaseline,
@@ -18,8 +19,10 @@ import {
 } from '../../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
 const LOCAL_SOCKET_URL = 'postgresql:///skincos_crm_local?host=/var/run/postgresql'
+const PRODUCTION_SOURCE_URL = 'postgresql://skincos_clientes_migrator_login:test-only-password@127.0.0.1:5432/skincos_clientes_production?sslmode=require&uselibpqcompat=true'
 const BASELINE_TARGET = { environment: 'staging', release: 'a'.repeat(40), artifactDigest: `sha256:${'b'.repeat(64)}` }
 const BASELINE_SOURCE = { owner: 'atendimento', scope: 'global-client-identities/v1', backfillKeyId: 'atendimento-projection-key-v2', deltaKeyId: 'crm-staging-atendimento-delta-v1' }
+const BASELINE_HMAC_KEY = `synthetic-baseline-derivation-${'x'.repeat(40)}`
 const BASELINE_ROWS = [
     { identity_id: '11111111-1111-4111-8111-111111111111', unit_slug: 'jardins', observed_at: '2026-09-08T12:00:00.000Z' },
     { identity_id: '22222222-2222-4222-8222-222222222222', unit_slug: 'pinheiros', observed_at: '2026-09-08T12:00:00.000Z' },
@@ -148,6 +151,16 @@ test('defines additive membership and append-only outbox ownership', () => {
     assert.match(plan.rollback, /non-destructive/)
 })
 
+test('uses immutable lifecycle evidence without importer or identity-materializer refresh revisions', () => {
+    for (const mutableTimestamp of ['member.updated_at', 'attendance_link.updated_at', 'attendance.updated_at', 'sale.updated_at']) {
+        assert.doesNotMatch(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, new RegExp(mutableTimestamp.replace('.', '\\.')))
+    }
+    for (const evidenceTimestamp of ['attendance_link.created_at', 'attendance.created_at', 'sale.created_at']) {
+        assert.match(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, new RegExp(evidenceTimestamp.replace('.', '\\.')))
+    }
+    assert.doesNotMatch(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, /(?:app_client_registrations|supplemental_lead_profiles|app_registration|lead_profile)/i)
+})
+
 test('applies the migration in a guarded transaction and grants read-only exporter columns', async () => {
     const calls = []
     let released = false
@@ -194,7 +207,6 @@ test('rejects a non-socket destination before opening a connection', async () =>
 test('captures the source snapshot and revision-1 seed atomically before permitting delta', async () => {
     const calls = []
     let released = false
-    let factoryRows = null
     const client = {
         async query(sql, params = []) {
             calls.push({ sql, params })
@@ -214,22 +226,112 @@ test('captures the source snapshot and revision-1 seed atomically before permitt
         target: 'local',
         targetDescriptor: BASELINE_TARGET,
         source: BASELINE_SOURCE,
-        backfillFactory: ({ rows, snapshot, seed }) => {
-            factoryRows = rows
-            assert.equal(rows.length, BASELINE_ROWS.length)
-            assert.equal(snapshot.rowCount, seed.rowCount)
-            return { backfill: BASELINE_BACKFILL, batches: [BASELINE_REAL_BATCH] }
-        },
+        backfillHmacKey: BASELINE_HMAC_KEY,
     })
     assert.equal(report.baseline.state, 'baseline-prepared')
     assert.equal(report.seededMemberships, 2)
     assert.equal(report.atomic, true)
     assert.equal(released, true)
-    assert.equal(factoryRows.length, BASELINE_ROWS.length)
+    assert.equal(report.baseline.backfill.eventCount, BASELINE_ROWS.length)
+    assert.equal(report.baseline.backfill.batches.length, 1)
+    assert.equal(JSON.stringify(report.baseline).includes(BASELINE_ROWS[0].identity_id), false)
+    assert.ok(calls.some(({ sql }) => /canonical_delta_source[\s\S]*order by observed_at asc, identity_id asc, unit_slug asc/i.test(sql)))
     assert.ok(calls.findIndex(({ sql }) => /canonical_delta_source/i.test(sql)) < calls.findIndex(({ sql }) => /insert into crm_atendimento\.crm_core_projection_memberships/i.test(sql)))
     assert.equal(calls.filter(({ sql }) => /insert into crm_atendimento\.crm_core_projection_memberships/i.test(sql)).length, 2)
     assert.equal(calls.some(({ sql }) => /insert into crm_atendimento\.crm_core_projection_outbox/i.test(sql)), false)
     assert.ok(calls.some(({ sql }) => /^commit$/i.test(sql)))
+})
+
+test('derives the backfill from an explicit production source while the CRM Core target remains staging-only', async () => {
+    const calls = []
+    let ownerRoleActive = false
+    let released = false
+    const client = {
+        async query(sql, params = []) {
+            calls.push({ sql, params })
+            if (/set role skincos_clientes_owner/i.test(sql)) {
+                ownerRoleActive = true
+                return { rows: [] }
+            }
+            if (/current_database\(\)/i.test(sql)) {
+                return { rows: [{
+                    database_name: 'skincos_clientes_production',
+                    database_user: ownerRoleActive ? 'skincos_clientes_owner' : 'skincos_clientes_migrator_login',
+                    session_user: 'skincos_clientes_migrator_login',
+                    read_only: 'off',
+                }] }
+            }
+            if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [] }
+            if (/from crm_atendimento\.crm_core_projection_memberships/i.test(sql)) return { rows: [] }
+            if (/max\(event_order\)/i.test(sql)) return { rows: [{ watermark: 0 }] }
+            if (/canonical_delta_source/i.test(sql)) return { rows: BASELINE_ROWS }
+            if (/transaction_timestamp\(\)/i.test(sql)) return { rows: [{ captured_at: BASELINE_SNAPSHOT.snapshot.capturedAt }] }
+            return { rows: [], rowCount: 0 }
+        },
+        release() { released = true },
+    }
+    const report = await prepareAtendimentoProjectionDeltaBaseline({
+        pool: { connect: async () => client },
+        databaseUrl: PRODUCTION_SOURCE_URL,
+        target: 'production',
+        targetDescriptor: BASELINE_TARGET,
+        source: BASELINE_SOURCE,
+        backfillHmacKey: BASELINE_HMAC_KEY,
+    })
+    assert.equal(report.baseline.target.environment, 'staging')
+    assert.equal(report.baseline.backfill.eventCount, BASELINE_ROWS.length)
+    assert.equal(ownerRoleActive, true)
+    assert.equal(released, true)
+
+    let connected = false
+    await assert.rejects(() => prepareAtendimentoProjectionDeltaBaseline({
+        pool: { connect: async () => { connected = true } },
+        databaseUrl: PRODUCTION_SOURCE_URL,
+        target: 'production',
+        targetDescriptor: { ...BASELINE_TARGET, environment: 'production' },
+        source: BASELINE_SOURCE,
+        backfillHmacKey: BASELINE_HMAC_KEY,
+    }), /BASELINE_STAGING_ONLY/)
+    assert.equal(connected, false)
+})
+
+test('does not accept an injected backfill factory in place of a producer HMAC key', async () => {
+    let connected = false
+    await assert.rejects(() => prepareAtendimentoProjectionDeltaBaseline({
+        pool: { connect: async () => { connected = true } },
+        databaseUrl: LOCAL_SOCKET_URL,
+        targetDescriptor: BASELINE_TARGET,
+        source: BASELINE_SOURCE,
+        backfillFactory: () => ({ backfill: BASELINE_BACKFILL, batches: [BASELINE_REAL_BATCH] }),
+    }), /BASELINE_INPUT_REQUIRED/)
+    assert.equal(connected, false)
+})
+
+test('derives deterministic bounded opaque pages directly from every captured membership row', () => {
+    const rows = Array.from({ length: 21 }, (_, index) => ({
+        identityId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        unitSlug: index % 2 ? 'pinheiros' : 'jardins',
+        observedAt: `2026-09-08T12:00:${String(index % 60).padStart(2, '0')}.000Z`,
+    }))
+    const { snapshot } = createAtendimentoProjectionDeltaBaselineSnapshot({ rows, capturedAt: '2026-09-08T12:05:00.000Z', watermark: 0 })
+    const first = migrationTestables.deriveAtendimentoProjectionDeltaBaselineBackfill({
+        rows,
+        snapshot,
+        source: BASELINE_SOURCE,
+        target: BASELINE_TARGET,
+        backfillHmacKey: BASELINE_HMAC_KEY,
+    })
+    const replay = migrationTestables.deriveAtendimentoProjectionDeltaBaselineBackfill({
+        rows: [...rows].reverse(),
+        snapshot,
+        source: BASELINE_SOURCE,
+        target: BASELINE_TARGET,
+        backfillHmacKey: BASELINE_HMAC_KEY,
+    })
+    assert.deepEqual(first.backfill, replay.backfill)
+    assert.deepEqual(first.backfill.batches.map((batch) => batch.eventCount), [20, 1])
+    assert.equal(first.backfill.eventCount, rows.length)
+    assert.equal(JSON.stringify(first.batches).includes(rows[0].identityId), false)
 })
 
 test('rejects duplicate opaque event identities across paginated baseline batches', () => {
@@ -242,7 +344,7 @@ test('rejects duplicate opaque event identities across paginated baseline batche
         ],
         rowCount: 2,
     })
-    assert.throws(() => migrationTestables.assertBackfillFactoryBatches({ batches: [first, second], manifest, source: BASELINE_SOURCE, snapshot: { ...BASELINE_SNAPSHOT.snapshot, rowCount: 2, unitSlugs: ['jardins'] }, target: BASELINE_TARGET }), /DUPLICATE|DERIVATION_FAILED/)
+    assert.throws(() => migrationTestables.assertDerivedBackfillBatches({ batches: [first, second], manifest, source: BASELINE_SOURCE, snapshot: { ...BASELINE_SNAPSHOT.snapshot, rowCount: 2, unitSlugs: ['jardins'] }, target: BASELINE_TARGET }), /DUPLICATE|DERIVATION_FAILED/)
 })
 
 test('recomputes each page events digest before allowing the baseline seed', () => {
@@ -264,7 +366,7 @@ test('recomputes each page events digest before allowing the baseline seed', () 
         }],
         rowCount: tampered.events.length,
     })
-    assert.throws(() => migrationTestables.assertBackfillFactoryBatches({
+    assert.throws(() => migrationTestables.assertDerivedBackfillBatches({
         batches: [tampered], manifest, source: BASELINE_SOURCE, snapshot: BASELINE_SNAPSHOT.snapshot, target: BASELINE_TARGET,
     }), /DERIVATION_FAILED/)
 })
@@ -295,7 +397,7 @@ test('requires the page unit union to equal the event unit union', () => {
         }],
         rowCount: tampered.events.length,
     })
-    assert.throws(() => migrationTestables.assertBackfillFactoryBatches({
+    assert.throws(() => migrationTestables.assertDerivedBackfillBatches({
         batches: [tampered], manifest, source: BASELINE_SOURCE, snapshot: BASELINE_SNAPSHOT.snapshot, target: BASELINE_TARGET,
     }), /DUPLICATE|DERIVATION_FAILED/)
 })

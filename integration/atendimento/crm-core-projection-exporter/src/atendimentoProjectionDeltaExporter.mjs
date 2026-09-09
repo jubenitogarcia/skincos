@@ -68,6 +68,21 @@ const OPAQUE_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
 const SOURCE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{1,6})Z$/
 const UNIT_SLUG_PATTERN = /^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const FORBIDDEN_SQL = /\b(?:alter|call|copy|create|delete|drop|grant|insert|merge|offset|revoke|truncate|update|vacuum)\b/i
+const REQUIRED_SOURCE_ALIAS_PATTERNS = Object.freeze({
+  database_name: /\bas\s+(?:"database_name"|database_name)\b/i,
+  current_user: /\bas\s+(?:"current_user"|current_user)\b/i,
+  session_user: /\bas\s+(?:"session_user"|session_user)\b/i,
+  transaction_read_only: /\bas\s+(?:"transaction_read_only"|transaction_read_only)\b/i,
+  captured_at: /\bas\s+(?:"captured_at"|captured_at)\b/i,
+  watermark: /\bas\s+(?:"watermark"|watermark)\b/i,
+  event_order: /\bas\s+(?:"event_order"|event_order)\b/i,
+  event_id: /\bas\s+(?:"event_id"|event_id)\b/i,
+  identity_id: /\bas\s+(?:"identity_id"|identity_id)\b/i,
+  unit_slug: /\bas\s+(?:"unit_slug"|unit_slug)\b/i,
+  revision: /\bas\s+(?:"revision"|revision)\b/i,
+  operation: /\bas\s+(?:"operation"|operation)\b/i,
+  occurred_at: /\bas\s+(?:"occurred_at"|occurred_at)\b/i,
+})
 
 function fail(code) {
   throw new Error(code)
@@ -162,7 +177,8 @@ function sourceSql(value, code, aliases = []) {
   const sql = text(value, code)
   if (sql.length > 32_768 || sql.includes(';') || FORBIDDEN_SQL.test(sql) || !/^(?:select|with)\b/i.test(sql)) fail(code)
   for (const alias of aliases) {
-    if (!new RegExp(`\\bas\\s+(?:"${alias}"|${alias})\\b`, 'i').test(sql)) fail(code)
+    const pattern = REQUIRED_SOURCE_ALIAS_PATTERNS[alias]
+    if (!pattern || !pattern.test(sql)) fail(code)
   }
   return sql
 }

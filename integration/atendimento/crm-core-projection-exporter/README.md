@@ -83,16 +83,20 @@ carga exceder isso, ele não cria um backfill parcial.
 `src/atendimentoConfirmedUnitScopedProjectionSource.mjs` fornece o descritor
 canônico `ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE`. Ele reproduz a
 mesma regra já usada pelo runtime comercial de Atendimento: uma identidade tem
-escopo em cada unidade comprovada por um dos quatro canais abaixo, e o slug só
+escopo em cada unidade comprovada pelos canais com ciclo de vida verificável
+abaixo, e o slug só
 é aceito após resolver contra `crm_atendimento.units`.
 
 - atendimento ativo: `global_client_identity_members` →
   `attendance_client_links` → `attendances` não deletado;
-- venda Caixa: `global_client_identity_members` → `crm_caixa.sales`;
-- cadastro de app: `global_client_identity_members` →
-  `app_client_registrations.unit_slugs`;
-- lead suplementar: `global_client_identity_members` →
-  `supplemental_lead_profiles.unit_slugs`.
+- venda Caixa: `global_client_identity_members` → `crm_caixa.sales`.
+
+`app_client_registrations` e `supplemental_lead_profiles` ficam explicitamente
+fora desta fonte. Os importadores atuais retêm linhas de snapshots antigos e o
+contrato de cobertura declara `snapshotComplete: false` e
+`absenceIsRetirementEvidence: false`; incluí-los poderia manter uma associação
+que a origem já revogou. Eles só entram depois que o owner disponibilizar um
+snapshot completo com prova de aposentadoria ou tombstones explícitos.
 
 Evidências repetidas para a mesma identidade/unidade são reduzidas a uma única
 linha; evidências em unidades diferentes constituem uma associação multiunidade
@@ -106,6 +110,11 @@ snapshot/cursor; não é uma revisão monotônica do CRM Core. O evento emitido 
 o replay exato do mesmo pacote. Remoções de vínculo ou sincronização incremental
 exigem um contrato posterior com tombstone e revisão monotônica; não devem ser
 simuladas reenviando esta fonte com revisão 1.
+
+Esse carimbo vem de campos imutáveis de criação da evidência, não de
+`updated_at` de importadores ou materializadores. Uma troca real de identidade
+ou unidade altera o conjunto de memberships e gera o `revoke`/`upsert` próprio
+do reconciliador; um refresh idempotente não deve aumentar revisões do outbox.
 
 Ainda é necessário que o operador provisione externamente o principal
 `crm_core_projection_exporter` com `SELECT` somente nas relações e colunas que
@@ -147,6 +156,11 @@ segredo, banco ou deploy. O transporte HTTPS separado usa a rota futura
 desativadas até que o owner do CRM Core publique o consumidor correspondente e
 prove o mesmo ciclo de artefato, smoke e rollback em staging.
 
+O checkpoint delta v3 também armazena somente o fingerprint SHA-256 não secreto
+da chave HMAC efetivamente usada. Uma retomada com outro material de chave,
+mesmo que alguém reutilize o mesmo `keyId`, falha antes de replay ou leitura de
+fonte; a chave em si não é serializada, registrada ou devolvida.
+
 O runner só aceita um handoff
 `atendimento/crm-core/projection-delta-baseline/v2` em estado `delta-ready`.
 Esse handoff é uma máquina de estados explícita, persistida pelo owner da
@@ -156,15 +170,19 @@ acrescenta um recibo Core v2 para cada lote; e `delta-ready` exige um readback
 verificado que vincule o manifesto, a seed, as contagens e o watermark.
 
 Na preparação transacional do owner, `prepareAtendimentoProjectionDeltaBaseline`
-exige uma `backfillFactory` injetada. Ela é chamada somente depois da consulta
-canônica, ainda dentro da mesma transação `REPEATABLE READ`, recebendo as linhas
-opacas lidas, o snapshot, a seed e o watermark. A factory devolve
-`{ backfill, batches }`: o manifesto sanitizado e os lotes v2 reais sob custódia
-privada. O preparador confere a correspondência de cada página e rejeita
+recebe apenas a chave HMAC de backfill por injeção. Depois da consulta canônica,
+ainda dentro da mesma transação `REPEATABLE READ`, o próprio preparador deriva
+os lotes v2 e o manifesto sanitizado das linhas opacas lidas, do snapshot e da
+chave. Não há factory nem manifesto pré-calculado que possa trocar referências
+opacas por linhas de outro snapshot. O preparador confere cada página e rejeita
 duplicação global de `event.id` ou do par `(unitSlug, projection.reference)`
-antes de semear ou confirmar a transação. Um manifesto pronto calculado fora
-dessa transação não é aceito como atalho; a factory deve ser determinística,
-sem nova leitura de banco, rede, segredo ou persistência de linhas.
+antes de semear ou confirmar a transação.
+
+`target` nessa operação identifica o banco de origem que contém as linhas
+canônicas e pode ser `production`; o `targetDescriptor` identifica o artefato
+CRM Core receptor e continua obrigatoriamente em `staging`. Assim, o backfill
+de origem real pode ser preparado para staging sem transformar esse caminho em
+autorização de produção.
 
 O backfill é um manifesto de 1 a 500 lotes, cada um com no máximo 20 eventos.
 Os intervalos `fromOrdinal`/`toOrdinal` precisam cobrir exatamente a sequência
@@ -178,6 +196,14 @@ repete `manifestDigest`, `membershipDigest`, `watermark`,
 é liberado. Assim, o cursor inicial não é inferido de `0` e a primeira revisão
 de uma projeção já presente no backfill pode ser `2`, enquanto uma identidade
 nova continua podendo começar em `1`.
+
+Um baseline inicial vazio continua recusado por desenho. Embora um runner possa
+terminar uma paginação sem linhas, o CRM Core exige uma allowlist não vazia de
+unidades para custódia do primeiro delta. Aceitar `[]` sem uma scope externa
+atestada deixaria o primeiro evento futuro impossível de autorizar ou abriria
+uma exceção implícita. Para suportar esse cenário, o owner precisa fornecer a
+lista explícita de unidades autorizadas e o Core precisa persistir a mesma lista
+no checkpoint; isso não pode ser inferido de uma fonte vazia.
 
 O comando `prepare-atendimento-crm-core-projection-delta-baseline.mjs` apenas
 transforma envelopes JSON fornecidos pelo operador (`--prepare`, `--accept` ou

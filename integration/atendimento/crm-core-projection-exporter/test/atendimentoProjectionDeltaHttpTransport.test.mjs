@@ -92,7 +92,26 @@ test('enforces an actual deadline even if an injected fetch ignores AbortSignal'
   )
 })
 
+test('enforces the same deadline while the response body is stalled', async () => {
+  const { batch, delivery } = await signedInput()
+  let aborted = false
+  const transport = createAtendimentoProjectionDeltaHttpTransport({
+    endpoint: 'https://crm-core-staging.skincos.com.br/crm/_internal/delta/atendimento',
+    timeoutMs: 10,
+    fetch: async (_url, options) => {
+      options.signal.addEventListener('abort', () => { aborted = true }, { once: true })
+      return { status: 200, json: async () => new Promise(() => {}) }
+    },
+  })
+  await assert.rejects(
+    () => transport.deliver({ batch, delivery, requestId: 'crm-atendimento-delta-000001' }),
+    /ATENDIMENTO_CRM_PROJECTION_DELTA_TIMEOUT/,
+  )
+  assert.equal(aborted, true)
+})
+
 test('rejects non-HTTPS or non-private route endpoints before fetch', () => {
   assert.throws(() => createAtendimentoProjectionDeltaHttpTransport({ endpoint: 'http://crm-core.example/crm/_internal/delta/atendimento', fetch() {} }), /ENDPOINT_INVALID/)
   assert.throws(() => createAtendimentoProjectionDeltaHttpTransport({ endpoint: 'https://crm-core.example/crm/delta/atendimento', fetch() {} }), /ENDPOINT_INVALID/)
+  assert.throws(() => createAtendimentoProjectionDeltaHttpTransport({ endpoint: 'https://user:password@crm-core.example/crm/_internal/delta/atendimento', fetch() {} }), /ENDPOINT_INVALID/)
 })
