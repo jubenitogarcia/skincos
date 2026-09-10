@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "templateOnly": true,
+  "valuesMustNotBeCommitted": true,
+  "repositorySecretFallbackAllowed": false,
+  "targets": {
+    "staging": {
+      "githubEnvironment": "ponto-pages-staging",
+      "variables": [
+        "PONTO_PAGES_PROJECT",
+        "PONTO_PAGES_CORE_SERVICE",
+        "PONTO_PAGES_IDENTITY_SERVICE",
+        "PONTO_PAGES_MODULE_CONTROL_KV_ID",
+        "PONTO_PAGES_CORE_VERSION_ID",
+        "PONTO_PAGES_IDENTITY_VERSION_ID",
+        "PONTO_PAGES_PUBLISH_ENABLED",
+        "SKINCOS_GLOBAL_COORDINATION_REQUIRED",
+        "SKINCOS_GLOBAL_COORDINATOR_URL",
+        "SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL"
+      ],
+      "secrets": [
+        "PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID",
+        "PONTO_PAGES_CLOUDFLARE_API_TOKEN",
+        "PONTO_PAGES_PONTO_API_TARGET",
+        "PONTO_PAGES_AUTH_API_TARGET",
+        "PONTO_PAGES_INSUMOS_API_TARGET",
+        "PONTO_PAGES_ACTOR_HMAC_KEY",
+        "PONTO_PAGES_NETWORK_CONTEXT_KEY",
+        "PONTO_PAGES_RELEASE_PROBE_HMAC_KEY",
+        "PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET"
+      ]
+    },
+    "production": {
+      "githubEnvironment": "ponto-pages-production",
+      "variables": [
+        "PONTO_PAGES_PROJECT",
+        "PONTO_PAGES_CORE_SERVICE",
+        "PONTO_PAGES_IDENTITY_SERVICE",
+        "PONTO_PAGES_MODULE_CONTROL_KV_ID",
+        "PONTO_PAGES_CORE_VERSION_ID",
+        "PONTO_PAGES_IDENTITY_VERSION_ID",
+        "PONTO_PAGES_PUBLISH_ENABLED",
+        "SKINCOS_GLOBAL_COORDINATION_REQUIRED",
+        "SKINCOS_GLOBAL_COORDINATOR_URL",
+        "SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL"
+      ],
+      "secrets": [
+        "PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID",
+        "PONTO_PAGES_CLOUDFLARE_API_TOKEN",
+        "PONTO_PAGES_PONTO_API_TARGET",
+        "PONTO_PAGES_AUTH_API_TARGET",
+        "PONTO_PAGES_INSUMOS_API_TARGET",
+        "PONTO_PAGES_ACTOR_HMAC_KEY",
+        "PONTO_PAGES_NETWORK_CONTEXT_KEY",
+        "PONTO_PAGES_RELEASE_PROBE_HMAC_KEY",
+        "PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET"
+      ]
+    }
+  }
+}

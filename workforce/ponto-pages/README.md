@@ -34,6 +34,21 @@ the standalone client boots, but it does not emulate Pages Functions or grant
 authentication. Use `npm run publisher:assert-disabled` only to verify the
 intentional no-publisher guard; it exits non-zero by design.
 
+## Phase 2 guarded publisher
+
+The source-only `wrangler.toml` remains unchanged. A separate Phase 2 contract
+records only the two dedicated Ponto Pages targets and their protected
+GitHub-environment boundary. Run `npm run publisher:validate` to check that
+contract locally. The manual GitHub workflow defaults `publish` to `false`
+and performs a credential-free plan only. Its opt-in branch requires immutable
+promotion evidence, literal project identity, protected custody, remote
+readback and a dedicated lease before it can configure or publish.
+
+See [docs/governed-publisher-phase2.md](docs/governed-publisher-phase2.md) for
+the inventory, target mapping and release evidence required before the
+publisher can be used. No Pages project, domain, secret or deployment is
+configured by this source package itself.
+
 On the shared Windows workspace, invoke Node commands through
 `scripts/invoke-skincos-wsl.ps1` from the repository root, with
 `-WorkingDirectory workforce/ponto-pages`.
