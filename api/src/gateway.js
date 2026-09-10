@@ -5,6 +5,7 @@ import { createSignedDomainContext } from '../../shared/service-adapters/signed-
 import {
     authorizeCrmCoreProductionRoute,
     crmCoreVersionOverride,
+    crmIdentityIssuerVersionOverride,
     isAuthorizedCrmCoreProductionReceipt,
     isCrmCoreStagingEnvironment,
 } from './crm-core-production-receipt.js';
@@ -339,9 +340,16 @@ export function createApiGateway({
                 if (auth?.unavailable) return crmSessionError(request, env, 503, 'IDENTITY_UNAVAILABLE');
                 if (!auth?.actor) return crmSessionError(request, env, 401, 'CRM_IDENTITY_REQUIRED');
                 try {
+                    // Production envelope issuance must be pinned to the
+                    // Identity Worker version carried by the same externally
+                    // signed receipt that already pinned CRM Core. Staging has
+                    // no production receipt and stays on its isolated binding.
+                    const identityVersionOverride = staging
+                        ? null
+                        : crmIdentityIssuerVersionOverride(productionReceipt, env);
                     const identityDelivery = sessionPath
-                        ? await issueCrmSessionIdentityDelivery(request, env, auth.actor)
-                        : await issueCrmProjectionIdentityDelivery(request, env, auth.actor);
+                        ? await issueCrmSessionIdentityDelivery(request, env, auth.actor, identityVersionOverride)
+                        : await issueCrmProjectionIdentityDelivery(request, env, auth.actor, identityVersionOverride);
                     const upstream = await crmCoreHandler(
                         request,
                         env,

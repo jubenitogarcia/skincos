@@ -63,15 +63,18 @@ service = "skincos-timekeeping"
 binding = "FINANCE"
 service = "skincos-finance"
 
-# The public gateway is the sole production caller. Neither binding creates a
-# public route, and no receipt, key ring or HMAC value is stored in Git.
+# The public gateway is the sole production Core caller. This binding creates
+# no public route, and no receipt, key ring or HMAC value is stored in Git.
 [[services]]
 binding = "CRM_CORE"
 service = "skincos-crm-core"
 
-[[services]]
-binding = "IDENTITY_CRM_ISSUER"
-service = "skincos-identity-crm-delivery-production"
+# Do not add a production IDENTITY_CRM_ISSUER binding here yet. Wrangler
+# resolves service targets at upload even with CRM flags disabled, so normal
+# API releases would fail before the isolated Identity Worker has an immutable
+# deployed version. A source-pinned cutover candidate may add this binding only
+# after the private production Identity target and rollback version are proved;
+# its individual requests must still use the receipt-bound version override.
 
 [[r2_buckets]]
 binding = "BACKUP_BUCKET"
