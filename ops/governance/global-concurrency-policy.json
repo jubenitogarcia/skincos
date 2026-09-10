@@ -239,6 +239,25 @@
       ],
       "sharedInputs": true
     },
+    "crm-native": {
+      "patterns": [
+        "crm/api/**",
+        "crm/console/**",
+        "shared/crm-auth/**",
+        "backend/capabilities.json",
+        "backend/scripts/env.sh",
+        "scripts/crm/run-api-linux.sh",
+        "scripts/runtime/crm-native-*.mjs",
+        "scripts/runtime/install-crm-native-publisher-custody.sh",
+        "scripts/runtime/test-crm-native-publisher.sh",
+        "scripts/tests/crm-native-publisher-*.test.mjs",
+        "ops/runtime/units/crm.service.native.template",
+        "ops/runtime/units/skincos-native-custody-runner.service",
+        "ops/runtime/github-actions-runner/skincos-native-custody.sudoers",
+        ".github/workflows/publish-crm-native-release.yml"
+      ],
+      "sharedInputs": true
+    },
     "default": {
       "patterns": [],
       "sharedInputs": true,

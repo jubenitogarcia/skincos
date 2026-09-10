@@ -44,6 +44,29 @@ export CRM_API_PORT="$PORT"
 export PORT="$PORT"
 
 ensure_dependencies() {
+  # A native release is an immutable, custody-verified bundle.  Falling back
+  # to npm here would turn a restart into an unpinned network mutation and
+  # could make a rollback execute different code.  Local development retains
+  # the existing install-on-demand convenience.
+  if [[ -n "${CRM_NATIVE_RELEASE_ROOT:-}" ]]; then
+    mapfile -t native_dependencies < <(
+      node -e '
+        const fs = require("node:fs");
+        const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        for (const dependency of Object.keys(manifest.dependencies || {}).sort()) console.log(dependency);
+      ' "$APP_DIR/package.json"
+    )
+    missing_dependencies=()
+    for dependency in "${native_dependencies[@]}"; do
+      [[ -d "$APP_DIR/node_modules/$dependency" ]] || missing_dependencies+=("$dependency")
+    done
+    if [[ ${#missing_dependencies[@]} -eq 0 ]]; then
+      return 0
+    fi
+    echo "[crm-api] Native CRM release is missing locked production dependencies (${missing_dependencies[*]}); refusing npm install" >&2
+    exit 78
+  fi
+
   if [[ "${CRM_API_SKIP_DEP_INSTALL:-false}" == "true" ]]; then
     return 0
   fi
@@ -59,6 +82,11 @@ ensure_dependencies() {
 case "$cmd" in
   start)
     ensure_dependencies
+    # `backend/scripts/env.sh` may load an optional local workspace file.
+    # Native custody deliberately wins over every mutable environment layer.
+    if [[ -n "${CRM_NATIVE_RELEASE_ROOT:-}" ]]; then
+      export PONTO_LEGACY_RUNTIME_MODE='disabled'
+    fi
     exec node server.js
     ;;
   watch)

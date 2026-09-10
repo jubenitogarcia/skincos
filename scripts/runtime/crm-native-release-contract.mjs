@@ -5,7 +5,8 @@
  * This file intentionally knows nothing about systemd, credentials, or an
  * application route.  It validates immutable, local release material and the
  * narrow `crm-service` pointers that a separately-custodied host publisher
- * may change.  The contract deliberately has no production layout.
+ * may change.  Production is recognized only for the root-owned publisher;
+ * the source-level prepare/rollback scripts remain unable to mutate it.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -18,8 +19,14 @@ const RELEASE_METADATA = ".skincos-crm-native-release.json";
 const REQUIRED_ARTIFACTS = Object.freeze({
   apiEntrypoint: "scripts/crm/run-api-linux.sh",
   apiPackageLock: "crm/api/package-lock.json",
+  backendEnvironment: "backend/scripts/env.sh",
+  capabilitiesCatalog: "backend/capabilities.json",
   consoleRoot: "crm/console",
+  productionDependencies: "crm/api/node_modules",
+  sharedAuthRoot: "shared/crm-auth",
 });
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 
 export class ContractError extends Error {
   constructor(message, exitCode = 78) {
@@ -126,6 +133,8 @@ function assertNoSymbolicLinks(root) {
         stack.push(entryPath);
       } else if (!entry.isFile()) {
         fail(`Release source must not contain special files: ${entry.name}.`);
+      } else if (fs.lstatSync(entryPath).nlink !== 1) {
+        fail(`Release source must not contain hard-linked files: ${entry.name}.`);
       }
     }
   }
@@ -141,8 +150,8 @@ function readJson(file, label) {
 }
 
 export function assertTargetLayout({ target, releaseBase, currentLink, previousLink }) {
-  if (target !== "test" && target !== "staging") {
-    fail("CRM native publisher accepts only test or staging targets.", 64);
+  if (target !== "test" && target !== "staging" && target !== "production") {
+    fail("CRM native publisher accepts only test, staging, or production targets.", 64);
   }
   const base = nativeAbsolutePath(releaseBase, "Release base");
   const current = nativeAbsolutePath(currentLink, "Current CRM pointer");
@@ -157,15 +166,19 @@ export function assertTargetLayout({ target, releaseBase, currentLink, previousL
       || previous !== `${root}/current/${RELEASE_NAME}.previous`) {
       fail("Test CRM pointers must stay in the matching isolated test root.");
     }
-  } else if (base !== "/opt/skincos/staging/releases"
+  } else if (target === "staging" && (base !== "/opt/skincos/staging/releases"
     || current !== "/opt/skincos/staging/current/crm-service"
-    || previous !== "/opt/skincos/staging/current/crm-service.previous") {
+    || previous !== "/opt/skincos/staging/current/crm-service.previous")) {
     fail("Staging CRM pointers must use the fixed isolated /opt/skincos/staging layout.");
+  } else if (target === "production" && (base !== "/opt/skincos/releases"
+    || current !== "/opt/skincos/current/crm-service"
+    || previous !== "/opt/skincos/current/crm-service.previous")) {
+    fail("Production CRM pointers must use the fixed isolated /opt/skincos layout.");
   }
   return { target, releaseBase: base, currentLink: current, previousLink: previous };
 }
 
-function assertCustody(custody, releaseSha, sourceArchiveSha256) {
+function assertCustody(custody, releaseSha, sourceArchiveSha256, sourceArchiveBytes) {
   const value = assertObject(custody, "Release custody");
   assertExactKeys(value, [
     "schemaVersion",
@@ -176,6 +189,7 @@ function assertCustody(custody, releaseSha, sourceArchiveSha256) {
     "artifactName",
     "sourceSha",
     "sourceArchiveSha256",
+    "sourceArchiveBytes",
   ], "Release custody");
   if (value.schemaVersion !== 1
     || value.issuer !== "github-actions"
@@ -184,10 +198,55 @@ function assertCustody(custody, releaseSha, sourceArchiveSha256) {
     || !/^[1-9][0-9]*$/.test(String(value.runId))
     || value.artifactName !== `release-source-${releaseSha}`
     || assertReleaseSha(value.sourceSha, "Custody source SHA") !== releaseSha
-    || assertDigest(value.sourceArchiveSha256, "Custody source archive digest") !== sourceArchiveSha256) {
+    || assertDigest(value.sourceArchiveSha256, "Custody source archive digest") !== sourceArchiveSha256
+    || value.sourceArchiveBytes !== sourceArchiveBytes) {
     fail("Release custody does not bind the exact source artifact.");
   }
   return value;
+}
+
+function assertArchiveBytes(value, label) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_ARCHIVE_BYTES) {
+    fail(`${label} must be a bounded positive size.`);
+  }
+  return value;
+}
+
+function assertRuntimeCustody(value) {
+  const custody = assertObject(value, "Native runtime custody");
+  assertExactKeys(custody, [
+    "schemaVersion",
+    "dependencyArchiveSha256",
+    "dependencyArchiveBytes",
+    "policySha256",
+    "stagingProofSha256",
+    "runtimeAttestationSha256",
+    "authorizationId",
+    "unitTemplateSha256",
+    "coordinationProofSha256",
+    "coordinationLeaseId",
+    "coordinationFencingToken",
+    "coordinationIntentDigest",
+  ], "Native runtime custody");
+  if (custody.schemaVersion !== 1) fail("Native runtime custody schema is unsupported.");
+  assertDigest(custody.dependencyArchiveSha256, "Dependency archive digest");
+  assertArchiveBytes(custody.dependencyArchiveBytes, "Dependency archive size");
+  assertDigest(custody.policySha256, "Native publisher policy digest");
+  assertDigest(custody.stagingProofSha256, "Native publisher staging proof digest");
+  assertDigest(custody.runtimeAttestationSha256, "Native publisher runtime attestation digest");
+  if (typeof custody.authorizationId !== "string" || !UUID.test(custody.authorizationId)) {
+    fail("Native publisher authorization id is invalid.");
+  }
+  assertDigest(custody.unitTemplateSha256, "Native publisher unit template digest");
+  assertDigest(custody.coordinationProofSha256, "Native publisher coordination proof digest");
+  if (typeof custody.coordinationLeaseId !== "string" || !UUID.test(custody.coordinationLeaseId)) {
+    fail("Native publisher coordination lease id is invalid.");
+  }
+  if (!Number.isSafeInteger(custody.coordinationFencingToken) || custody.coordinationFencingToken < 1) {
+    fail("Native publisher coordination fencing token is invalid.");
+  }
+  assertDigest(custody.coordinationIntentDigest, "Native publisher coordination intent digest");
+  return custody;
 }
 
 function assertArtifacts(artifacts) {
@@ -204,8 +263,8 @@ function assertArtifacts(artifacts) {
 export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
   const root = nativeAbsolutePath(releaseRoot, "Release root");
   const expectedSha = assertReleaseSha(releaseSha);
-  if (target !== "test" && target !== "staging") {
-    fail("Release target must be test or staging.", 64);
+  if (target !== "test" && target !== "staging" && target !== "production") {
+    fail("Release target must be test, staging, or production.", 64);
   }
   assertNoSymbolicLinks(root);
   const metadata = readJson(path.join(root, RELEASE_METADATA), "CRM release identity");
@@ -215,8 +274,10 @@ export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
     "releaseSha",
     "sourceTree",
     "sourceArchiveSha256",
+    "sourceArchiveBytes",
     "target",
     "custody",
+    "runtimeCustody",
     "artifacts",
     "predecessor",
   ], "CRM release identity");
@@ -229,7 +290,9 @@ export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
     fail("CRM release identity does not match the requested source or target.");
   }
   const sourceArchiveSha256 = assertDigest(metadata.sourceArchiveSha256, "Identity source archive digest");
-  assertCustody(metadata.custody, expectedSha, sourceArchiveSha256);
+  const sourceArchiveBytes = assertArchiveBytes(metadata.sourceArchiveBytes, "Identity source archive size");
+  assertCustody(metadata.custody, expectedSha, sourceArchiveSha256, sourceArchiveBytes);
+  assertRuntimeCustody(metadata.runtimeCustody);
   assertArtifacts(metadata.artifacts);
   let predecessor = null;
   if (metadata.predecessor !== null) {
@@ -244,11 +307,16 @@ export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
   }
   assertRegularFile(path.join(root, REQUIRED_ARTIFACTS.apiEntrypoint), "CRM API entrypoint");
   assertRegularFile(path.join(root, REQUIRED_ARTIFACTS.apiPackageLock), "CRM API lockfile");
+  assertRegularFile(path.join(root, REQUIRED_ARTIFACTS.backendEnvironment), "CRM backend environment helper");
+  assertRegularFile(path.join(root, REQUIRED_ARTIFACTS.capabilitiesCatalog), "CRM capabilities catalog");
   assertDirectory(path.join(root, REQUIRED_ARTIFACTS.consoleRoot), "CRM console root");
+  assertDirectory(path.join(root, REQUIRED_ARTIFACTS.productionDependencies), "CRM locked production dependencies");
+  assertDirectory(path.join(root, REQUIRED_ARTIFACTS.sharedAuthRoot), "CRM shared authorization source");
   return {
     releaseSha: expectedSha,
     sourceTree: metadata.sourceTree,
     sourceArchiveSha256,
+    sourceArchiveBytes,
     target,
     releaseRoot: root,
     predecessor,
