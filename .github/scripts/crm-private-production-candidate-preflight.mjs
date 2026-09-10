@@ -57,8 +57,9 @@ function boundedCount(value) {
 }
 
 function hasExactLine(source, line) {
-  const escaped = line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escaped}$`, 'm').test(source);
+  return String(source)
+    .split(/\r?\n/)
+    .some((candidate) => candidate.trim() === line);
 }
 
 function productionSection(source) {
@@ -66,22 +67,54 @@ function productionSection(source) {
   return boundary === -1 ? source : source.slice(0, boundary);
 }
 
+function tomlAssignments(source, section = null) {
+  const assignments = new Map();
+  let active = section === null;
+  for (const rawLine of String(source).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('[') && line.endsWith(']')) {
+      active = section !== null && line === `[${section}]`;
+      continue;
+    }
+    if (!active) continue;
+    const delimiter = line.indexOf('=');
+    if (delimiter <= 0) continue;
+    const key = line.slice(0, delimiter).trim();
+    const value = line.slice(delimiter + 1).trim();
+    if (/^[A-Za-z0-9_.-]+$/.test(key)) assignments.set(key, value);
+  }
+  return assignments;
+}
+
+function effectiveTomlValue(source, { key, baseSection = null, overrideSection }) {
+  const base = tomlAssignments(source, baseSection);
+  const override = tomlAssignments(source, overrideSection);
+  return override.has(key) ? override.get(key) : base.get(key);
+}
+
+function hasExpectedEffectiveTomlValue(source, options) {
+  return effectiveTomlValue(source, options) === options.expected;
+}
+
 function manifestContract({ identityManifest = '', apiManifest = '', workflowSource = '' } = {}) {
   const blockers = [];
   const identity = String(identityManifest || '');
   const api = String(apiManifest || '');
   const workflow = String(workflowSource || '');
-  const identityRequiredLines = [
-    'name = "skincos-identity-crm-delivery-production"',
-    'workers_dev = false',
-    'preview_urls = false',
-    'IDENTITY_CRM_DELIVERY_ENABLED = "false"',
-    'IDENTITY_CRM_DELIVERY_ENVIRONMENT = "production"',
-    'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED = "false"',
-    'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED = "false"',
+  const identityRequiredValues = [
+    { key: 'name', expected: '"skincos-identity-crm-delivery-production"', overrideSection: 'env.production' },
+    { key: 'workers_dev', expected: 'false', overrideSection: 'env.production' },
+    { key: 'preview_urls', expected: 'false', overrideSection: 'env.production' },
+    { key: 'IDENTITY_CRM_DELIVERY_ENABLED', expected: '"false"', baseSection: 'vars', overrideSection: 'env.production.vars' },
+    { key: 'IDENTITY_CRM_DELIVERY_ENVIRONMENT', expected: '"production"', baseSection: 'vars', overrideSection: 'env.production.vars' },
+    { key: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED', expected: '"false"', baseSection: 'vars', overrideSection: 'env.production.vars' },
+    { key: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED', expected: '"false"', baseSection: 'vars', overrideSection: 'env.production.vars' },
   ];
-  for (const line of identityRequiredLines) {
-    if (!hasExactLine(identity, line)) blockers.push(`Identity production manifest is missing its inert contract: ${line}`);
+  for (const requirement of identityRequiredValues) {
+    if (!hasExpectedEffectiveTomlValue(identity, requirement)) {
+      blockers.push(`Identity production manifest has an unsafe effective value for ${requirement.key}`);
+    }
   }
   if (/^\s*routes\s*=/m.test(identity) || /^\s*route\s*=/m.test(identity)) {
     blockers.push('Identity production candidate manifest declares a route');

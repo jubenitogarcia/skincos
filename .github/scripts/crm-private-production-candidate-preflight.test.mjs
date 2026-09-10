@@ -241,6 +241,21 @@ test('manifest safety rejects enabled routes, credential material and a general 
   assert.ok(report.blockers.some((blocker) => blocker.includes('general publisher')));
 });
 
+test('manifest safety rejects an enabled effective production override', () => {
+  const report = evaluateCrmPrivateProductionCandidatePreflight({
+    env: environment(),
+    identityReadiness: identityReadback(),
+    identityManifest: `${identityManifest}
+[env.production.vars]
+IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED = "true"
+`,
+    apiManifest,
+    workflowSource,
+  });
+  assert.equal(report.result, 'blocked');
+  assert.ok(report.blockers.includes('Identity production manifest has an unsafe effective value for IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED'));
+});
+
 test('the checked-in workflow is manual, dedicated-environment-gated and has no mutation command', async () => {
   const workflow = await readFile(path.join(root, '.github/workflows/crm-private-production-candidate-preflight.yml'), 'utf8');
   assert.match(workflow, /workflow_dispatch:/);
