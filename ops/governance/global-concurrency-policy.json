@@ -42,6 +42,9 @@
     "ponto": {
       "patterns": [
         "workforce/timekeeping/**",
+        "workforce/ponto-pages/scripts/verify-ponto-core-staging-candidate.mjs",
+        "workforce/ponto-pages/scripts/verify-ponto-pages-same-artifact-rollback.mjs",
+        "workforce/ponto-pages/scripts/verify-ponto-pages-remote-project.mjs",
         "crm/console/**",
         "api/**",
         "inventory/**",
@@ -58,6 +61,20 @@
         ".github/scripts/ponto-*.sh",
         ".github/scripts/validate-progressive-release.mjs",
         ".github/scripts/workers_smoke.py"
+      ],
+      "sharedInputs": true
+    },
+    "ponto-pages": {
+      "patterns": [
+        "workforce/ponto-pages/**",
+        "platform/deploy/operational-units.json",
+        ".github/governance/cloudflare-single-writer-policy.json",
+        ".github/workflows/ponto-pages-candidate-preflight.yml",
+        ".github/workflows/ponto-pages-governed-publisher.yml",
+        ".github/actions/global-coordination-acquire/**",
+        ".github/actions/global-coordination-check/**",
+        ".github/actions/global-coordination-release/**",
+        ".github/scripts/promotion-*.mjs"
       ],
       "sharedInputs": true
     },

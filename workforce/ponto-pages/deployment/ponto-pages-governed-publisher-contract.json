@@ -102,6 +102,22 @@
       "sanitised-receipt-without-values-credentials-or-pii"
     ]
   },
+  "stagingPagesRollbackReceipt": {
+    "workflowName": "Ponto Pages staging same-artifact rollback",
+    "workflowPath": ".github/workflows/ponto-pages-staging-same-artifact-rollback.yml",
+    "workflowInput": "staging_rollback_run_id",
+    "stagingPublishRunInput": "staging_run_id",
+    "artifactName": "ponto-pages-staging-same-artifact-rollback-<source_sha>-<project>",
+    "receiptFile": "ponto-pages-staging-same-artifact-rollback.json",
+    "contractId": "skincos/ponto-pages-staging-same-artifact-rollback/v1",
+    "requiredEvidence": [
+      "same-main-source-sha-and-tree",
+      "exact-dedicated-staging-pages-project-and-source-identity",
+      "staging-publish-run-and-original-deployment-identity",
+      "same-deployment-source-rollback-and-restore-with-distinct-deployment-identities",
+      "sanitised-receipt-without-values-credentials-or-pii"
+    ]
+  },
   "futureGates": [
     "protected-target-github-environment",
     "exact-remote-project-identity-readback",

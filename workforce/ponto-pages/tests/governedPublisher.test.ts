@@ -13,6 +13,13 @@ const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/ponto-p
 const candidateWorkflow = readFileSync(resolve(repositoryRoot, '.github/workflows/ponto-pages-candidate-preflight.yml'), 'utf8')
 const promotionGate = readFileSync(resolve(repositoryRoot, '.github/workflows/promotion-gate.yml'), 'utf8')
 
+function workflowStep(name: string) {
+  const marker = `      - name: ${name}\n`
+  const start = workflow.indexOf(marker)
+  const end = workflow.indexOf('\n      - ', start + marker.length)
+  return start < 0 ? '' : workflow.slice(start, end < 0 ? workflow.length : end)
+}
+
 describe('Ponto Pages governed publisher', () => {
   it('reserves only the two dedicated Pages projects and separate GitHub environments', () => {
     expect(contract.status).toBe('guarded-manual-publisher')
@@ -33,6 +40,21 @@ describe('Ponto Pages governed publisher', () => {
       receiptFile: 'ponto-core-staging-candidate.json',
       contractId: 'skincos/ponto-core-staging-candidate/v1',
     })
+    expect(contract.stagingPagesRollbackReceipt).toMatchObject({
+      workflowName: 'Ponto Pages staging same-artifact rollback',
+      workflowPath: '.github/workflows/ponto-pages-staging-same-artifact-rollback.yml',
+      workflowInput: 'staging_rollback_run_id',
+      stagingPublishRunInput: 'staging_run_id',
+      artifactName: 'ponto-pages-staging-same-artifact-rollback-<source_sha>-<project>',
+      receiptFile: 'ponto-pages-staging-same-artifact-rollback.json',
+      contractId: 'skincos/ponto-pages-staging-same-artifact-rollback/v1',
+    })
+    for (const target of Object.values(environmentTemplate.targets) as Array<{ secrets: string[] }>) {
+      expect(target.secrets).toContain('PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID')
+      expect(target.secrets).toContain('PONTO_PAGES_CLOUDFLARE_API_TOKEN')
+      expect(target.secrets).not.toContain('CLOUDFLARE_ACCOUNT_ID')
+      expect(target.secrets).not.toContain('CLOUDFLARE_API_TOKEN')
+    }
   })
 
   it('keeps only Ponto runtime roles and runner-only placeholders in the template', () => {
@@ -62,9 +84,18 @@ describe('Ponto Pages governed publisher', () => {
     expect(workflow).toContain('PONTO_PAGES_PUBLISH_DISABLED')
     expect(workflow).toContain('PONTO_PAGES_LEGACY_PROJECT_FORBIDDEN')
     expect(workflow).toContain('PONTO_PAGES_STAGING_CORE_CANDIDATE_RUN_REQUIRED')
-    expect(workflow).toContain('--json conclusion,headBranch,headSha,workflowName')
+    expect(workflow).toContain('PONTO_PAGES_STAGING_ROLLBACK_RECEIPT_FORBIDDEN')
+    expect(workflow).toContain('actions/workflows/ponto-core-staging-candidate.yml')
+    expect(workflow).toContain('actions/runs/$CORE_CANDIDATE_RUN_ID')
+    expect(workflow).toContain("workflow?.path !== '.github/workflows/ponto-core-staging-candidate.yml'")
+    expect(workflow).toContain('Number(run?.run_attempt) !== 1')
+    expect(workflow).toContain('run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY')
     expect(workflow).toContain('ponto-core-staging-candidate-$RELEASE_SHA')
     expect(workflow).toContain('verify-ponto-core-staging-candidate.mjs')
+    expect(workflow).toContain('staging_rollback_run_id')
+    expect(workflow).toContain('PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RECEIPT_REQUIRED')
+    expect(workflow).toContain('ponto-pages-staging-same-artifact-rollback-$RELEASE_SHA-$staging_project')
+    expect(workflow).toContain('verify-ponto-pages-same-artifact-rollback.mjs')
     expect(workflow).toContain('PONTO_PAGES_REMOTE_SECRET_')
     expect(workflow).toContain("envVars[name]?.type !== 'secret_text'")
     expect(workflow).toContain("promotion_environment: ${{ inputs.target == 'staging' && 'ponto-pages-staging' || 'ponto-pages-production' }}")
@@ -76,6 +107,48 @@ describe('Ponto Pages governed publisher', () => {
     expect((workflow.match(/global-coordination-check/g) || []).length).toBeGreaterThanOrEqual(2)
     expect(workflow).toContain('wrangler@4.114.0 pages secret bulk')
     expect(workflow).toContain('wrangler@4.114.0 pages deploy')
+    expect(workflow).toContain('secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID')
+    expect(workflow).toContain('secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN')
+    expect(workflow).not.toContain('secrets.CLOUDFLARE_ACCOUNT_ID')
+    expect(workflow).not.toContain('secrets.CLOUDFLARE_API_TOKEN')
+    expect((workflow.match(/curl --disable --fail --silent --show-error/g) || []).length).toBe(3)
+    expect((workflow.match(/--header @-/g) || []).length).toBe(3)
+    expect(workflow).not.toMatch(/-H\s+"Authorization: Bearer \$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/)
+
+    const coreCandidate = workflowStep('Verify exact Ponto Core staging candidate receipt')
+    for (const marker of [
+      'actions/workflows/ponto-core-staging-candidate.yml',
+      'actions/runs/$CORE_CANDIDATE_RUN_ID',
+      "workflow?.path !== '.github/workflows/ponto-core-staging-candidate.yml'",
+      "workflow?.name !== 'Ponto Core staging candidate'",
+      'Number(run?.workflow_id) !== Number(workflow?.id)',
+      "run?.event !== 'workflow_dispatch'",
+      'Number(run?.run_attempt) !== 1',
+      "run?.head_branch !== 'main'",
+      'run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY',
+      'Number(run?.repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)',
+      'Number(run?.head_repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)',
+    ]) expect(coreCandidate).toContain(marker)
+    expect(coreCandidate).not.toContain('gh run view')
+    expect(coreCandidate.indexOf("fail('PROVENANCE')")).toBeLessThan(coreCandidate.indexOf('gh run download'))
+
+    const rollback = workflowStep('Verify exact Ponto Pages staging same-artifact rollback receipt')
+    for (const marker of [
+      "if: ${{ inputs.target == 'production' }}",
+      'actions/workflows/ponto-pages-staging-same-artifact-rollback.yml',
+      'actions/runs/$STAGING_ROLLBACK_RUN_ID',
+      "workflow?.path !== '.github/workflows/ponto-pages-staging-same-artifact-rollback.yml'",
+      "workflow?.name !== 'Ponto Pages staging same-artifact rollback'",
+      'Number(run?.workflow_id) !== Number(workflow?.id)',
+      "run?.event !== 'workflow_dispatch'",
+      'Number(run?.run_attempt) !== 1',
+      'run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY',
+      'Number(run?.repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)',
+      'Number(run?.head_repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)',
+      'PONTO_EXPECTED_STAGING_PUBLISH_RUN_ID="$STAGING_PUBLISH_RUN_ID"',
+      'verify-ponto-pages-same-artifact-rollback.mjs',
+    ]) expect(rollback).toContain(marker)
+    expect(rollback.indexOf("fail('PROVENANCE')")).toBeLessThan(rollback.indexOf('gh run download'))
   })
 
   it('emits a sanitised plan that cannot authorize publication locally', () => {

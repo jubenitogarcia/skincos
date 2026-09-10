@@ -53,6 +53,13 @@ custody, API origins and Ponto keys only from the selected target environment,
 writes the secret payload in runner temporary storage without echoing it, and
 removes that material at the end of the job.
 
+Cloudflare custody must be named PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID and
+PONTO_PAGES_CLOUDFLARE_API_TOKEN in each protected environment. Generic
+repository secrets named CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN are not
+referenced by this publisher. The dedicated token is passed to Wrangler only
+for that subprocess and to Cloudflare readback through curl configuration on
+stdin headers, never as a curl command argument.
+
 The runtime template permits only:
 
 - PONTO_CORE and PONTO_IDENTITY service bindings;
@@ -84,15 +91,19 @@ If publish is explicitly true, the workflow requires:
 1. Candidate evidence for staging, and exact staging evidence for production.
 2. For staging, a successful Ponto Core staging-candidate run and its exact
    immutable receipt, selected by core_candidate_run_id.
-3. The exact protected target environment and PONTO_PAGES_PUBLISH_ENABLED set
+3. For production only, a successful staging Pages same-deployment-source
+   rollback receipt, selected by staging_rollback_run_id and tied to the exact
+   staging_run_id, source SHA, source tree and skincos-ponto-staging project.
+4. The exact protected target environment and PONTO_PAGES_PUBLISH_ENABLED set
    to true.
-4. Literal project, Ponto service, API-origin, version and source-SHA checks.
-5. Fresh silent Cloudflare readback of project name, branch, subdomain, absence
-   of custom domains and disabled automatic Git publication, followed by
-   secret-name/type readback after the guarded secret configuration.
-6. A dedicated deploy:ponto-pages target lease, revalidated immediately before
+5. Literal project, Ponto service, API-origin, version and source-SHA checks.
+6. Fresh silent Cloudflare readback of project name, branch, subdomain, no
+   custom domains other than the Pages-owned *.pages.dev subdomain, and disabled
+   automatic Git publication, followed by secret-name/type readback after the
+   guarded secret configuration.
+7. A dedicated deploy:ponto-pages target lease, revalidated immediately before
    secret configuration and again immediately before deployment.
-7. Same-SHA Pages deployment readback and a sanitised receipt.
+8. Same-SHA Pages deployment readback and a sanitised receipt.
 
 An absent Git source is a valid direct-upload state. If a Git source is later
 connected, all automatic production and preview deployment controls must be
@@ -115,8 +126,9 @@ pointing at a legacy Core SHA or an unrelated Worker version.
 The future successful main workflow must be named Ponto Core staging candidate
 and live at .github/workflows/ponto-core-staging-candidate.yml. The person
 starting a guarded staging Pages publication supplies that run identifier as
-core_candidate_run_id. The publisher silently verifies that run's success,
-main branch and exact release SHA before it downloads precisely one artifact:
+core_candidate_run_id. The publisher verifies that run's workflow identity and
+path, manual event, first attempt, same-repository head, main branch and exact
+release SHA before it downloads precisely one artifact:
 
     ponto-core-staging-candidate-<source_sha>
 
@@ -134,6 +146,28 @@ The production Pages path does not accept candidate-version overrides. It is
 instead chained to the immutable successful staging Pages evidence for the
 same source SHA, whose staging step has already verified this Core receipt.
 
+The staging Pages same-deployment-source rollback receipt is a separate future
+producer contract; this Phase 2 change does not create that producer or run a
+rollback. Its future workflow must be named Ponto Pages staging same-artifact
+rollback and live at
+.github/workflows/ponto-pages-staging-same-artifact-rollback.yml. It must
+publish ponto-pages-staging-same-artifact-rollback-<source_sha>-<project>,
+containing ponto-pages-staging-same-artifact-rollback.json with contract id
+skincos/ponto-pages-staging-same-artifact-rollback/v1. The receipt must prove
+the same main source SHA and tree; project skincos-ponto-staging; the exact
+successful staging publisher run and original deployment identity; distinct
+reverted and restored deployment identities; restoration to that same source
+SHA; and no values, credentials or PII. It must use the
+deploy:ponto-pages:staging lease and be added deliberately to the Ponto Pages
+single-writer policy before it can mutate the dedicated staging project.
+
+Staging publication does not require this receipt: the first isolated staging
+deployment must exist before it can be rolled back. Production requires it and
+fails before any Cloudflare read or change when the future producer, its run or
+its receipt is absent, stale or mismatched. This is source/deployment identity
+evidence, not a claim that a future build's byte-level bundle digest was
+already proven equal.
+
 ## Required evidence before the guarded publisher is used
 
 1. Keep ponto-pages-staging and ponto-pages-production protected, with
@@ -147,6 +181,7 @@ same source SHA, whose staging step has already verified this Core receipt.
 4. Read back each exact Pages project at release time and reject shared state,
    automatic Git publication, a domain or identity mismatch.
 5. Complete synthetic staging login, CSRF, Ponto read/write, terminal pairing
-   and same-artifact rollback tests before a production staging run is used.
+   and staging Pages same-deployment-source rollback tests before a production
+   staging run is used.
 6. Approve host, cookie and terminal re-pairing plans before any domain or
    redirect change. The current CRM host remains untouched.

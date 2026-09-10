@@ -12,6 +12,7 @@ const phase1ConfigPath = resolve(packageRoot, 'wrangler.toml')
 const workflowPath = resolve(repositoryRoot, '.github/workflows/ponto-pages-governed-publisher.yml')
 const candidateWorkflowPath = resolve(repositoryRoot, '.github/workflows/ponto-pages-candidate-preflight.yml')
 const singleWriterPolicyPath = resolve(repositoryRoot, '.github/governance/cloudflare-single-writer-policy.json')
+const remoteProjectVerifierPath = resolve(packageRoot, 'scripts/verify-ponto-pages-remote-project.mjs')
 
 const expected = {
   targets: {
@@ -64,8 +65,8 @@ const expected = {
     'SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL',
   ],
   environmentSecrets: [
-    'CLOUDFLARE_ACCOUNT_ID',
-    'CLOUDFLARE_API_TOKEN',
+    'PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID',
+    'PONTO_PAGES_CLOUDFLARE_API_TOKEN',
     'PONTO_API_TARGET',
     'AUTH_API_TARGET',
     'INSUMOS_API_TARGET',
@@ -86,6 +87,22 @@ const expected = {
       'exact-ponto-core-and-identity-service-version-identities',
       'staging-readiness-and-rollback',
       'private-no-domain-no-workers-dev-exposure',
+      'sanitised-receipt-without-values-credentials-or-pii',
+    ],
+  },
+  stagingPagesRollbackReceipt: {
+    workflowName: 'Ponto Pages staging same-artifact rollback',
+    workflowPath: '.github/workflows/ponto-pages-staging-same-artifact-rollback.yml',
+    workflowInput: 'staging_rollback_run_id',
+    stagingPublishRunInput: 'staging_run_id',
+    artifactName: 'ponto-pages-staging-same-artifact-rollback-<source_sha>-<project>',
+    receiptFile: 'ponto-pages-staging-same-artifact-rollback.json',
+    contractId: 'skincos/ponto-pages-staging-same-artifact-rollback/v1',
+    requiredEvidence: [
+      'same-main-source-sha-and-tree',
+      'exact-dedicated-staging-pages-project-and-source-identity',
+      'staging-publish-run-and-original-deployment-identity',
+      'same-deployment-source-rollback-and-restore-with-distinct-deployment-identities',
       'sanitised-receipt-without-values-credentials-or-pii',
     ],
   },
@@ -114,7 +131,7 @@ function assertNoLegacyProject(value, label) {
 }
 
 export async function validateGovernedPublisher({ target, releaseSha } = {}) {
-  const [contractSource, environmentSource, runtimeTemplate, phase1Config, workflow, candidateWorkflow, policySource] = await Promise.all([
+  const [contractSource, environmentSource, runtimeTemplate, phase1Config, workflow, candidateWorkflow, policySource, remoteProjectVerifier] = await Promise.all([
     readFile(contractPath, 'utf8'),
     readFile(environmentTemplatePath, 'utf8'),
     readFile(runtimeTemplatePath, 'utf8'),
@@ -122,6 +139,7 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     readFile(workflowPath, 'utf8'),
     readFile(candidateWorkflowPath, 'utf8'),
     readFile(singleWriterPolicyPath, 'utf8'),
+    readFile(remoteProjectVerifierPath, 'utf8'),
   ])
   const contract = JSON.parse(contractSource)
   const environmentTemplate = JSON.parse(environmentSource)
@@ -137,6 +155,7 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
   }
   if (!sameList(contract.projectPolicy?.forbiddenProjects, ['skincos', 'skincos-staging'])) fail('FORBIDDEN_PROJECTS')
   if (JSON.stringify(contract.stagingCoreCandidateReceipt) !== JSON.stringify(expected.stagingCoreCandidateReceipt)
+    || JSON.stringify(contract.stagingPagesRollbackReceipt) !== JSON.stringify(expected.stagingPagesRollbackReceipt)
     || !sameList(contract.futureGates, [
       'protected-target-github-environment',
       'exact-remote-project-identity-readback',
@@ -219,7 +238,11 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || (workflow.match(/global-coordination-check/g) || []).length < 2
     || !workflow.includes('wrangler@4.114.0 pages secret bulk')
     || !workflow.includes('wrangler@4.114.0 pages deploy')
-    || !workflow.includes('api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${EXPECTED_PROJECT}')
+    || !workflow.includes('api.cloudflare.com/client/v4/accounts/${PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID}/pages/projects/${EXPECTED_PROJECT}')
+    || !workflow.includes('secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID')
+    || !workflow.includes('secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN')
+    || workflow.includes('secrets.CLOUDFLARE_ACCOUNT_ID')
+    || workflow.includes('secrets.CLOUDFLARE_API_TOKEN')
     || !workflow.includes('git rev-parse HEAD')
     || !workflow.includes('git merge-base --is-ancestor')
     || !workflow.includes('PONTO_PAGES_WORKFLOW_REF_NOT_MAIN')) {
@@ -230,14 +253,35 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || !workflow.includes('PONTO_PAGES_LEGACY_PROJECT_FORBIDDEN')
     || !workflow.includes('core_candidate_run_id')
     || !workflow.includes('PONTO_PAGES_STAGING_CORE_CANDIDATE_RUN_REQUIRED')
-    || !workflow.includes('--json conclusion,headBranch,headSha,workflowName')
-    || !workflow.includes("metadata?.workflowName !== 'Ponto Core staging candidate'")
+    || !workflow.includes('actions/workflows/ponto-core-staging-candidate.yml')
+    || !workflow.includes('actions/runs/$CORE_CANDIDATE_RUN_ID')
+    || !workflow.includes("workflow?.path !== '.github/workflows/ponto-core-staging-candidate.yml'")
+    || !workflow.includes("workflow?.name !== 'Ponto Core staging candidate'")
+    || !workflow.includes('Number(run?.workflow_id) !== Number(workflow?.id)')
     || !workflow.includes('ponto-core-staging-candidate-$RELEASE_SHA')
     || !workflow.includes('verify-ponto-core-staging-candidate.mjs')
+    || !workflow.includes('staging_rollback_run_id')
+    || !workflow.includes('PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RECEIPT_REQUIRED')
+    || !workflow.includes('ponto-pages-staging-same-artifact-rollback.yml')
+    || !workflow.includes('ponto-pages-staging-same-artifact-rollback-$RELEASE_SHA-$staging_project')
+    || !workflow.includes('verify-ponto-pages-same-artifact-rollback.mjs')
+    || !workflow.includes('run?.event !== \'workflow_dispatch\'')
+    || !workflow.includes('Number(run?.run_attempt) !== 1')
+    || !workflow.includes('run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY')
+    || !workflow.includes('Number(run?.repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)')
+    || !workflow.includes('Number(run?.head_repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)')
+    || (workflow.match(/curl --disable --fail --silent --show-error/g) || []).length !== 3
+    || (workflow.match(/--header @-/g) || []).length !== 3
+    || /-H\s+"Authorization: Bearer \$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/.test(workflow)
     || !workflow.includes('PONTO_PAGES_REMOTE_SECRET_')
     || !workflow.includes("envVars[name]?.type !== 'secret_text'")
     || !workflow.includes("promotion_environment: ${{ inputs.target == 'staging' && 'ponto-pages-staging' || 'ponto-pages-production' }}")) {
     fail('WORKFLOW_DEFAULT_FAIL_CLOSED')
+  }
+  if (!workflow.includes('verify-ponto-pages-remote-project.mjs')
+    || !remoteProjectVerifier.includes('project.domains.some((domain) => domain !== expectedSubdomain)')
+    || !remoteProjectVerifier.includes("fail('CUSTOM_DOMAIN_PRESENT')")) {
+    fail('REMOTE_PROJECT_READBACK_GUARD')
   }
   if (!/^\s*workflow_dispatch:/m.test(candidateWorkflow)
     || /^\s{2}(push|pull_request|schedule|workflow_run|repository_dispatch):/m.test(candidateWorkflow)
@@ -286,6 +330,7 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
       secrets: runtimeContract.runtimeSecrets,
     },
     stagingCoreCandidateReceipt: contract.stagingCoreCandidateReceipt,
+    stagingPagesRollbackReceipt: contract.stagingPagesRollbackReceipt,
     valuesIncluded: false,
     credentialsIncluded: false,
   }
