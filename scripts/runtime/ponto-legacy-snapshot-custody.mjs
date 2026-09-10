@@ -70,7 +70,18 @@ const RECEIPT_FIELDS = Object.freeze([
 const ARTIFACT_FIELDS = Object.freeze(["id", "sha256", "sizeBytes"]);
 const MAX_AUTHORIZATION_BYTES = 64 * 1024;
 const MAX_AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1000;
-const MAX_SOURCE_BYTES = 1024 * 1024 * 1024;
+// The root helper validates both artifacts in-process. Keep each accepted
+// policy limit deliberately below a size that could turn a signed, bounded
+// capture into a host-memory exhaustion primitive. A larger historical export
+// must be assessed and captured through a new reviewed custody contract.
+const MAX_PONTO_STORE_BYTES = 8 * 1024 * 1024;
+const MAX_PONTO_AUDIT_BYTES = 32 * 1024 * 1024;
+const MAX_PONTO_AUDIT_LINE_BYTES = 256 * 1024;
+const MAX_PONTO_AUDIT_EVENTS = 250 * 1000;
+const MAX_PONTO_AUDIT_JSON_DEPTH = 64;
+const MAX_PONTO_AUDIT_JSON_NODES = 10 * 1000;
+const PONTO_AUDIT_READ_CHUNK_BYTES = 64 * 1024;
+const MAX_SOURCE_BYTES = MAX_PONTO_AUDIT_BYTES;
 const SNAPSHOT_PAIR_CAPTURE_ATTEMPTS = 3;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -84,8 +95,16 @@ const KEY_ID = /^[a-z][a-z0-9-]{1,63}$/;
 const SOURCE_ID = /^[a-z][a-z0-9-]{1,63}$/;
 const BASE64URL_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 const LEGACY_PONTO_SOURCE_FILES = Object.freeze([
-  Object.freeze({ id: "ponto-store-v2", basename: "ponto_store.v2.json" }),
-  Object.freeze({ id: "ponto-audit-v1", basename: "ponto_audit.v1.jsonl" }),
+  Object.freeze({
+    id: "ponto-store-v2",
+    basename: "ponto_store.v2.json",
+    maxBytes: MAX_PONTO_STORE_BYTES,
+  }),
+  Object.freeze({
+    id: "ponto-audit-v1",
+    basename: "ponto_audit.v1.jsonl",
+    maxBytes: MAX_PONTO_AUDIT_BYTES,
+  }),
 ]);
 
 const fail = (message) => {
@@ -244,9 +263,12 @@ function writePrivateFile(file, value, { uid = 0, gid = 0, mode = 0o600 } = {}) 
   }
 }
 
-function readPrivateFile(file, { uid = 0, mode = 0o600 } = {}) {
+function openPrivateRegularFile(file, { uid = 0, mode = 0o600 } = {}) {
   const resolved = assertPrivateRegularFile(file, { uid, mode });
-  const descriptor = fs.openSync(resolved, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const descriptor = fs.openSync(
+    resolved,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
   try {
     const before = fs.lstatSync(resolved);
     const opened = fs.fstatSync(descriptor);
@@ -257,9 +279,19 @@ function readPrivateFile(file, { uid = 0, mode = 0o600 } = {}) {
       || opened.uid !== uid
       || (opened.mode & 0o777) !== mode
     ) fail("private file changed during read");
-    return fs.readFileSync(descriptor);
-  } finally {
+    return { descriptor, metadata: opened };
+  } catch (error) {
     fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function readPrivateFile(file, options = {}) {
+  const opened = openPrivateRegularFile(file, options);
+  try {
+    return fs.readFileSync(opened.descriptor);
+  } finally {
+    fs.closeSync(opened.descriptor);
   }
 }
 
@@ -293,6 +325,9 @@ function validateLegacyPontoSourcePair(sourceFiles) {
     const source = sourceFiles[index];
     if (source.id !== expected.id || path.basename(source.path) !== expected.basename) {
       fail("policy source files do not bind the fixed legacy Ponto pair");
+    }
+    if (source.maxBytes > expected.maxBytes) {
+      fail("policy source size limit exceeds fixed legacy Ponto custody cap");
     }
   }
 }
@@ -400,11 +435,15 @@ export function validateSnapshotAuthorization(value, {
   if (authorization.runAttempt !== 1) fail("authorization workflow attempt differs");
   const issuedAt = exactIsoDate(authorization.issuedAt, "authorization issued time");
   const expiresAt = exactIsoDate(authorization.expiresAt, "authorization expiry");
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) fail("authorization current time is invalid");
   if (
     expiresAt.getTime() <= issuedAt.getTime()
     || expiresAt.getTime() - issuedAt.getTime() > MAX_AUTHORIZATION_LIFETIME_MS
   ) fail("authorization lifetime is invalid");
-  if (!(now instanceof Date) || Number.isNaN(now.getTime()) || expiresAt.getTime() <= now.getTime()) {
+  if (issuedAt.getTime() > now.getTime()) {
+    fail("authorization issued time is in the future");
+  }
+  if (expiresAt.getTime() <= now.getTime()) {
     fail("authorization is expired");
   }
   if (authorization.singleUse !== true) fail("authorization single-use differs");
@@ -430,9 +469,27 @@ export function verifySnapshotAuthorization(value, options = {}) {
   }
 }
 
-function readSingleJsonInput() {
-  const raw = fs.readFileSync(0);
+export function readBoundedSingleJsonInput(descriptor = 0) {
+  if (!Number.isInteger(descriptor) || descriptor < 0) fail("stdin descriptor is invalid");
+  const chunks = [];
+  const buffer = Buffer.allocUnsafe(Math.min(8 * 1024, MAX_AUTHORIZATION_BYTES + 1));
+  let length = 0;
+  let raw = null;
   try {
+    while (length <= MAX_AUTHORIZATION_BYTES) {
+      const read = fs.readSync(
+        descriptor,
+        buffer,
+        0,
+        Math.min(buffer.length, MAX_AUTHORIZATION_BYTES + 1 - length),
+        null,
+      );
+      if (read === 0) break;
+      chunks.push(Buffer.from(buffer.subarray(0, read)));
+      length += read;
+    }
+    if (length > MAX_AUTHORIZATION_BYTES) fail("stdin contract length is invalid");
+    raw = Buffer.concat(chunks, length);
     if (raw.length < 3 || raw.length > MAX_AUTHORIZATION_BYTES) fail("stdin contract length is invalid");
     const source = raw.toString("utf8");
     if (!source.endsWith("\n") || source.includes("\r") || source.slice(0, -1).includes("\n")) {
@@ -443,7 +500,9 @@ function readSingleJsonInput() {
     if (error instanceof Error && error.message.startsWith("Ponto legacy snapshot custody:")) throw error;
     fail("stdin contract is not valid JSON");
   } finally {
-    raw.fill(0);
+    raw?.fill(0);
+    buffer.fill(0);
+    for (const chunk of chunks) chunk.fill(0);
   }
 }
 
@@ -606,11 +665,27 @@ function captureSourceFile(source, destination, { uid = 0, gid = 0, id, ordinal 
   }
 }
 
-function stableStringify(value) {
+function stableStringify(value, state = { depth: 0, nodes: 0 }) {
+  state.nodes += 1;
+  if (state.nodes > MAX_PONTO_AUDIT_JSON_NODES || state.depth >= MAX_PONTO_AUDIT_JSON_DEPTH) {
+    fail("legacy Ponto snapshot pair is not coherent");
+  }
   if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const keys = Object.keys(value).sort();
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+  state.depth += 1;
+  try {
+    if (Array.isArray(value)) {
+      const entries = [];
+      for (const entry of value) entries.push(stableStringify(entry, state));
+      return `[${entries.join(",")}]`;
+    }
+    const entries = [];
+    for (const key of Object.keys(value).sort()) {
+      entries.push(`${JSON.stringify(key)}:${stableStringify(value[key], state)}`);
+    }
+    return `{${entries.join(",")}}`;
+  } finally {
+    state.depth -= 1;
+  }
 }
 
 function auditHashOrNull(value, label) {
@@ -640,44 +715,99 @@ function parseCapturedPontoStore(file, { uid = 0 } = {}) {
   }
 }
 
-function validateCapturedPontoAudit(file, expectedLastHash, { uid = 0 } = {}) {
-  const raw = readPrivateFile(file, { uid, mode: 0o600 });
+function validatePontoAuditEvent(line, previousHash) {
+  let event;
   try {
-    const source = raw.toString("utf8");
-    if (source.includes("\r") || (source.length > 0 && !source.endsWith("\n"))) {
+    event = JSON.parse(line.toString("utf8"));
+  } catch {
+    fail("legacy Ponto snapshot pair is not coherent");
+  }
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    fail("legacy Ponto snapshot pair is not coherent");
+  }
+  if (!Object.hasOwn(event, "hash") || !Object.hasOwn(event, "hmac") || !Object.hasOwn(event, "prevHash")) {
+    fail("legacy Ponto snapshot pair is not coherent");
+  }
+  const { hash, hmac, ...payload } = event;
+  const suppliedPreviousHash = auditHashOrNull(payload.prevHash, "legacy Ponto audit previous hash");
+  if (suppliedPreviousHash !== previousHash || typeof hash !== "string" || !SHA256.test(hash)) {
+    fail("legacy Ponto snapshot pair is not coherent");
+  }
+  if (hmac !== null && (typeof hmac !== "string" || !SHA256.test(hmac))) {
+    fail("legacy Ponto snapshot pair is not coherent");
+  }
+  const expectedHash = digest((previousHash || "") + "\n" + stableStringify(payload));
+  if (hash !== expectedHash) fail("legacy Ponto snapshot pair is not coherent");
+  return expectedHash;
+}
+
+function validateCapturedPontoAudit(file, expectedLastHash, { uid = 0 } = {}) {
+  const opened = openPrivateRegularFile(file, { uid, mode: 0o600 });
+  const buffer = Buffer.allocUnsafe(PONTO_AUDIT_READ_CHUNK_BYTES);
+  let lineChunks = [];
+  let lineLength = 0;
+  let totalBytes = 0;
+  let lastByte = null;
+  let eventCount = 0;
+  let previousHash = null;
+  const appendLineFragment = (fragment) => {
+    if (fragment.indexOf(0x0d) >= 0 || lineLength + fragment.length > MAX_PONTO_AUDIT_LINE_BYTES) {
       fail("legacy Ponto snapshot pair is not coherent");
     }
-    const lines = source.length === 0 ? [] : source.slice(0, -1).split("\n");
-    if (lines.some((line) => line.length === 0)) fail("legacy Ponto snapshot pair is not coherent");
-    let previousHash = null;
-    for (const line of lines) {
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        fail("legacy Ponto snapshot pair is not coherent");
-      }
-      if (!event || typeof event !== "object" || Array.isArray(event)) {
-        fail("legacy Ponto snapshot pair is not coherent");
-      }
-      if (!Object.hasOwn(event, "hash") || !Object.hasOwn(event, "hmac") || !Object.hasOwn(event, "prevHash")) {
-        fail("legacy Ponto snapshot pair is not coherent");
-      }
-      const { hash, hmac, ...payload } = event;
-      const suppliedPreviousHash = auditHashOrNull(payload.prevHash, "legacy Ponto audit previous hash");
-      if (suppliedPreviousHash !== previousHash || typeof hash !== "string" || !SHA256.test(hash)) {
-        fail("legacy Ponto snapshot pair is not coherent");
-      }
-      if (hmac !== null && (typeof hmac !== "string" || !SHA256.test(hmac))) {
-        fail("legacy Ponto snapshot pair is not coherent");
-      }
-      const expectedHash = digest((previousHash || "") + "\n" + stableStringify(payload));
-      if (hash !== expectedHash) fail("legacy Ponto snapshot pair is not coherent");
-      previousHash = expectedHash;
+    if (fragment.length > 0) {
+      lineChunks.push(Buffer.from(fragment));
+      lineLength += fragment.length;
     }
+  };
+  const completeLine = () => {
+    if (lineLength === 0 || eventCount >= MAX_PONTO_AUDIT_EVENTS) {
+      fail("legacy Ponto snapshot pair is not coherent");
+    }
+    const line = Buffer.concat(lineChunks, lineLength);
+    try {
+      previousHash = validatePontoAuditEvent(line, previousHash);
+      eventCount += 1;
+    } finally {
+      line.fill(0);
+      for (const chunk of lineChunks) chunk.fill(0);
+      lineChunks = [];
+      lineLength = 0;
+    }
+  };
+  try {
+    if (opened.metadata.size > MAX_PONTO_AUDIT_BYTES) fail("legacy Ponto snapshot pair is not coherent");
+    while (true) {
+      const read = fs.readSync(opened.descriptor, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      totalBytes += read;
+      if (totalBytes > MAX_PONTO_AUDIT_BYTES) fail("legacy Ponto snapshot pair is not coherent");
+      let cursor = 0;
+      while (cursor < read) {
+        const newline = buffer.indexOf(0x0a, cursor);
+        if (newline < 0 || newline >= read) {
+          appendLineFragment(buffer.subarray(cursor, read));
+          break;
+        }
+        appendLineFragment(buffer.subarray(cursor, newline));
+        completeLine();
+        cursor = newline + 1;
+      }
+      lastByte = buffer[read - 1];
+    }
+    if (totalBytes > 0 && lastByte !== 0x0a) fail("legacy Ponto snapshot pair is not coherent");
+    const after = fs.fstatSync(opened.descriptor);
+    if (
+      after.dev !== opened.metadata.dev
+      || after.ino !== opened.metadata.ino
+      || after.size !== opened.metadata.size
+      || after.mtimeMs !== opened.metadata.mtimeMs
+      || after.ctimeMs !== opened.metadata.ctimeMs
+    ) fail("legacy Ponto snapshot pair is not coherent");
     if (previousHash !== expectedLastHash) fail("legacy Ponto snapshot pair is not coherent");
   } finally {
-    raw.fill(0);
+    buffer.fill(0);
+    for (const chunk of lineChunks) chunk.fill(0);
+    fs.closeSync(opened.descriptor);
   }
 }
 
@@ -898,11 +1028,11 @@ function loadPrivatePolicy() {
 
 function run(command) {
   assertRoot();
-  if (command === "bootstrap") return bootstrapPrivateRuntime(readSingleJsonInput());
+  if (command === "bootstrap") return bootstrapPrivateRuntime(readBoundedSingleJsonInput());
   if (command === "capture") {
     return captureLegacyPontoSnapshot({
       policy: loadPrivatePolicy(),
-      authorization: readSingleJsonInput(),
+      authorization: readBoundedSingleJsonInput(),
     });
   }
   fail("usage is bootstrap or capture");

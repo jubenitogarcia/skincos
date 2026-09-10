@@ -9,6 +9,7 @@ import {
   SNAPSHOT_AUTHORIZATION_FIELDS,
   canonicalSnapshotAuthorization,
   captureLegacyPontoSnapshot,
+  readBoundedSingleJsonInput,
   snapshotPolicySha256,
   validateSnapshotPolicy,
   verifySnapshotAuthorization,
@@ -49,6 +50,33 @@ function writeValidLegacyPontoPair(storeFile, auditFile) {
     audit: { lastHash: hash },
   }) + "\n", { mode: 0o600 });
   fs.writeFileSync(auditFile, JSON.stringify({ ...payload, hash, hmac: null }) + "\n", { mode: 0o600 });
+}
+
+function writeLargeValidLegacyPontoPair(storeFile, auditFile, { eventCount = 1024, noteLength = 512 } = {}) {
+  let previousHash = null;
+  const events = [];
+  for (let index = 0; index < eventCount; index += 1) {
+    const payload = {
+      v: 1,
+      id: `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`,
+      type: "PUNCH_CREATED",
+      at: "2026-09-10T11:58:00.000Z",
+      actor: { kind: "synthetic", id: "operator" },
+      data: { synthetic: true, note: "x".repeat(noteLength), sequence: index },
+      prevHash: previousHash,
+    };
+    const hash = crypto.createHash("sha256").update(`${previousHash || ""}\n${stableStringify(payload)}`).digest("hex");
+    events.push(JSON.stringify({ ...payload, hash, hmac: null }));
+    previousHash = hash;
+  }
+  fs.writeFileSync(storeFile, JSON.stringify({
+    version: 2,
+    employees: [{ id: "employee-1", name: "Pilot", loginEmail: "pilot@example.test" }],
+    devices: [],
+    records: [],
+    audit: { lastHash: previousHash },
+  }) + "\n", { mode: 0o600 });
+  fs.writeFileSync(auditFile, events.join("\n") + "\n", { mode: 0o600 });
 }
 
 function fixture() {
@@ -158,6 +186,14 @@ test("strict signed authorization binds the governed staging workflow identity",
       () => verifySnapshotAuthorization(expired, { policy: item.policy, now }),
       /authorization is expired/,
     );
+    const futureIssued = authorization(item.policy, item.signing, {
+      issuedAt: "2026-09-10T12:00:31.000Z",
+      expiresAt: "2026-09-10T12:05:31.000Z",
+    });
+    assert.throws(
+      () => verifySnapshotAuthorization(futureIssued, { policy: item.policy, now }),
+      /authorization issued time is in the future/,
+    );
   } finally {
     fs.rmSync(item.directory, { recursive: true, force: true });
   }
@@ -185,8 +221,32 @@ test("policy is fail-closed unless it contains exactly two distinct fixed source
     const renamed = structuredClone(item.policy);
     renamed.sourceFiles[0].path = path.join(item.directory, "not-ponto-store.json");
     assert.throws(() => validateSnapshotPolicy(renamed), /fixed legacy Ponto pair/);
+
+    const oversizedStore = structuredClone(item.policy);
+    oversizedStore.sourceFiles[0].maxBytes = 8 * 1024 * 1024 + 1;
+    assert.throws(() => validateSnapshotPolicy(oversizedStore), /fixed legacy Ponto custody cap/);
+
+    const oversizedAudit = structuredClone(item.policy);
+    oversizedAudit.sourceFiles[1].maxBytes = 32 * 1024 * 1024 + 1;
+    assert.throws(() => validateSnapshotPolicy(oversizedAudit), /policy source size limit is invalid/);
   } finally {
     fs.rmSync(item.directory, { recursive: true, force: true });
+  }
+});
+
+test("bounded stdin reader rejects oversized authorization input before parsing", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-legacy-snapshot-stdin-"));
+  const input = path.join(directory, "authorization.json");
+  try {
+    fs.writeFileSync(input, "x".repeat(64 * 1024 + 1));
+    const descriptor = fs.openSync(input, "r");
+    try {
+      assert.throws(() => readBoundedSingleJsonInput(descriptor), /stdin contract length is invalid/);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -307,6 +367,51 @@ test("refuses a broken audit chain or a tail that diverges from the V2 audit poi
   }
 });
 
+test("validates a large JSONL audit incrementally without retaining all lines", {
+  skip: !canExercisePrivateCapture,
+}, () => {
+  const item = fixture();
+  try {
+    item.policy.sourceFiles[1].maxBytes = 32 * 1024 * 1024;
+    writeLargeValidLegacyPontoPair(item.sourceOne, item.sourceTwo);
+    const result = captureLegacyPontoSnapshot({
+      policy: item.policy,
+      authorization: authorization(item.policy, item.signing),
+      now,
+      destinationDirectory: item.destination,
+      destinationUid: process.getuid(),
+      destinationGid: process.getgid(),
+    });
+    assert.equal(result.passed, true);
+    assert.equal(result.artifacts[1].sizeBytes > 64 * 1024, true);
+  } finally {
+    fs.rmSync(item.directory, { recursive: true, force: true });
+  }
+});
+
+test("refuses an audit event that exceeds the bounded streaming line limit", {
+  skip: !canExercisePrivateCapture,
+}, () => {
+  const item = fixture();
+  try {
+    item.policy.sourceFiles[1].maxBytes = 32 * 1024 * 1024;
+    writeLargeValidLegacyPontoPair(item.sourceOne, item.sourceTwo, { eventCount: 1, noteLength: 256 * 1024 });
+    assert.throws(
+      () => captureLegacyPontoSnapshot({
+        policy: item.policy,
+        authorization: authorization(item.policy, item.signing),
+        now,
+        destinationDirectory: item.destination,
+        destinationUid: process.getuid(),
+        destinationGid: process.getgid(),
+      }),
+      /snapshot pair is not coherent/,
+    );
+  } finally {
+    fs.rmSync(item.directory, { recursive: true, force: true });
+  }
+});
+
 test("refuses a symlinked source and does not materialize a capture directory", {
   skip: !canExercisePrivateCapture,
 }, () => {
@@ -339,6 +444,13 @@ test("fixed helper wrapper and installer expose no generic path or service surfa
   assert.match(helper, /policy must bind exactly two source files/);
   assert.match(helper, /O_NOFOLLOW/);
   assert.match(helper, /O_NONBLOCK/);
+  assert.match(helper, /readBoundedSingleJsonInput/);
+  assert.match(helper, /MAX_PONTO_STORE_BYTES/);
+  assert.match(helper, /MAX_PONTO_AUDIT_BYTES/);
+  assert.match(helper, /MAX_PONTO_AUDIT_LINE_BYTES/);
+  assert.match(helper, /MAX_PONTO_AUDIT_JSON_DEPTH/);
+  assert.doesNotMatch(helper, /fs\.readFileSync\(0\)/);
+  assert.doesNotMatch(helper, /source\.slice\(0, -1\)\.split\("\\n"\)/);
   assert.match(helper, /authorization was already consumed/);
   assert.match(helper, /ponto-store-v2/);
   assert.match(helper, /ponto_audit\.v1\.jsonl/);
@@ -348,6 +460,7 @@ test("fixed helper wrapper and installer expose no generic path or service surfa
   assert.match(helper, /piiIncluded: false/);
   assert.doesNotMatch(wrapper, /--source|--destination|"\$@"/);
   assert.match(wrapper, /bootstrap\|capture/);
+  assert.match(wrapper, /\/usr\/bin\/timeout --signal=KILL 120s/);
   assert.doesNotMatch(installer, /systemctl|cloudflare/i);
   assert.match(installer, /visudo -cf "\$SUDOERS_FILE"/);
   assert.match(installer, /id -nG "\$RUNNER_USER"/);

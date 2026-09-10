@@ -21,6 +21,16 @@ a cauda exportada; o recibo prova somente a identidade da captura e os hashes
 e tamanhos dos dois artefatos. Ele não valida HMAC da auditoria e não é
 autorização de import, deploy ou cutover.
 
+Por segurança de memória, a política privada também não pode autorizar mais de
+8 MiB para o store V2 nem mais de 32 MiB para a auditoria JSONL. Se a fonte
+legada exceder esses limites, a captura falha sem publicar dados; uma mudança de
+capacidade exige um novo contrato de custódia revisado, não uma cópia manual.
+O validador lê a auditoria em fluxo, com máximo de 256 KiB por evento, 250 mil
+eventos e profundidade JSON limitada; uma fonte fora desses limites também falha
+fechada e exige avaliação de capacidade antes de qualquer novo contrato.
+O wrapper root encerra qualquer captura que não termine em 120 segundos, para
+que uma entrada sem EOF não retenha um processo privilegiado indefinidamente.
+
 ```bash
 node workforce/timekeeping/scripts/ponto-backfill-preflight.mjs \
   --snapshot <diretorio-privado>/ponto_store.v2.json \

@@ -57,7 +57,7 @@ if [[ "$APPLY" -ne 1 ]]; then
 fi
 
 [[ "$(id -u)" == '0' ]] || { echo '--apply requires root' >&2; exit 78; }
-for command in grep id install node tr visudo; do
+for command in grep id install node timeout tr visudo; do
   command -v "$command" >/dev/null 2>&1 || { echo "$command is required" >&2; exit 78; }
 done
 id "$RUNNER_USER" >/dev/null 2>&1 || { echo 'capture runner account is unavailable' >&2; exit 78; }

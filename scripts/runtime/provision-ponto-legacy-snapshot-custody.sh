@@ -17,5 +17,5 @@ case "$1" in
     ;;
 esac
 
-exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root \
+exec /usr/bin/timeout --signal=KILL 120s /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root \
   /usr/bin/node /usr/local/lib/skincos/ponto-legacy-snapshot-custody.mjs "$1"
