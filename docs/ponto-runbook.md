@@ -220,8 +220,12 @@ diante, exige também o run bem-sucedido do predecessor para o mesmo SHA. Se
 
 Quando o Ponto Pages isolado precisar de um recibo de Core/Identity de staging,
 use o [runbook do candidato de staging](runbooks/ponto-core-staging-candidate.md).
-Esse workflow apenas exercita versões já publicadas pelo publisher canônico;
-ele não substitui o coordenador nem autoriza produção.
+O candidato apenas baixa e vincula os artefatos imutáveis dos publishers
+canônicos; ele não recebe ambiente/credencial Cloudflare nem exerce tráfego.
+O exercício same-artifact ocorre exclusivamente dentro de
+`.github/workflows/deploy-core-workers.yml`, logo após a publicação canônica de
+Core ou Identity em staging, sob maintenance e o lease existente. O atestador
+não substitui o coordenador nem autoriza produção.
 
 Toda mutation direta de Worker, Pages, secret de Pages, D1, KV ou
 module-control na cadeia Ponto usa o mutex global

@@ -5,18 +5,24 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  attestDrillState,
   attestRollbackIncumbents,
   attestRemoteCandidate,
   buildCandidateReceipt,
+  buildDrillProof,
+  preflightTimekeepingWorker,
   validateCandidateInput,
 } from "./ponto-core-staging-candidate.mjs";
 
 const sourceSha = "a".repeat(40);
 const sourceTree = "b".repeat(40);
 const workflow = fs.readFileSync(path.resolve(import.meta.dirname, "../workflows/ponto-core-staging-candidate.yml"), "utf8");
+const canonicalWorkflow = fs.readFileSync(path.resolve(import.meta.dirname, "../workflows/deploy-core-workers.yml"), "utf8");
 const ids = {
   timekeepingCandidate: "11111111-1111-4111-8111-111111111111",
   timekeepingIncumbent: "11111111-1111-4111-8111-111111111112",
+  timekeepingDeployment: "11111111-1111-4111-8111-111111111113",
+  timekeepingOtherDeployment: "11111111-1111-4111-8111-111111111114",
   coreCandidate: "22222222-2222-4222-8222-222222222221",
   coreIncumbent: "22222222-2222-4222-8222-222222222222",
   coreDeployment: "22222222-2222-4222-8222-222222222223",
@@ -56,7 +62,7 @@ function run(id, workflowPath) {
     conclusion: "success",
     runAttempt: 1,
     headSha: sourceSha,
-    headBranch: `skincos/release/ponto/${sourceSha}`,
+    headBranch: "main",
     repository: "jubenitogarcia/skincos",
     headRepository: "jubenitogarcia/skincos",
   };
@@ -189,6 +195,29 @@ function remote() {
   };
 }
 
+function timekeepingRemote() {
+  return {
+    worker: "skincos-timekeeping-staging",
+    activeVersionId: ids.timekeepingCandidate,
+    activeDeploymentId: ids.timekeepingDeployment,
+    versionMessage: `ponto:timekeeping:${sourceSha}`,
+    appVersion: sourceSha,
+    environment: "staging",
+    serviceBinding: "",
+    timekeepingVersionId: "",
+    routeOnly: false,
+    versionMetadata: true,
+    exposure: {
+      workerRouteCount: 0,
+      workerRoutes: [],
+      customDomainCount: 0,
+      customDomains: [],
+      workersDevEnabled: false,
+      previewUrlsEnabled: false,
+    },
+  };
+}
+
 function health() {
   return {
     passed: true,
@@ -199,39 +228,89 @@ function health() {
   };
 }
 
-function rollback() {
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function drillConfig(surface) {
+  const isCore = surface === "coreApi";
   return {
-    passed: true,
-    valuesIncluded: false,
-    credentialsIncluded: false,
-    piiIncluded: false,
-    core: {
-      rolledBackToIncumbent: true,
-      restoredCandidate: true,
-      incumbentVersionId: ids.coreIncumbent,
-      candidateVersionId: ids.coreCandidate,
-      incumbentReadback: {
-        worker: "skincos-ponto-core-staging",
-        activeVersionId: ids.coreIncumbent,
-        activeDeploymentId: ids.coreDeployment,
-      },
+    schemaVersion: 1,
+    source: {
+      repository: "jubenitogarcia/skincos",
+      sha: sourceSha,
+      tree: sourceTree,
+      runId: isCore ? "102" : "103",
+      branch: "main",
+      runAttempt: 1,
     },
-    identity: {
-      rolledBackToIncumbent: true,
-      restoredCandidate: true,
-      incumbentVersionId: ids.identityIncumbent,
-      candidateVersionId: ids.identityCandidate,
-      incumbentReadback: {
-        worker: "skincos-insumos-staging",
-        activeVersionId: ids.identityIncumbent,
-        activeDeploymentId: ids.identityDeployment,
-      },
+    subject: {
+      surface,
+      candidateVersionId: isCore ? ids.coreCandidate : ids.identityCandidate,
+      incumbentVersionId: isCore ? ids.coreIncumbent : ids.identityIncumbent,
+      timekeepingVersionId: ids.timekeepingCandidate,
     },
+    ...(isCore ? {} : { coreCandidateVersionId: ids.coreCandidate }),
   };
 }
 
+function stateFor(surface, phase) {
+  if (phase === "composite") {
+    return {
+      schemaVersion: 1,
+      phase,
+      core: remote().core,
+      identity: remote().identity,
+      timekeeping: timekeepingRemote(),
+    };
+  }
+  const subject = surface === "coreApi" ? remote().core : remote().identity;
+  if (phase === "incumbent") {
+    subject.activeVersionId = surface === "coreApi" ? ids.coreIncumbent : ids.identityIncumbent;
+  }
+  return { schemaVersion: 1, phase, subject, timekeeping: timekeepingRemote() };
+}
+
+function drillProof(surface) {
+  return buildDrillProof({
+    config: drillConfig(surface),
+    before: stateFor(surface, "candidate"),
+    rollback: stateFor(surface, "incumbent"),
+    restoration: stateFor(surface, "candidate"),
+    composite: surface === "identityWorkforce" ? stateFor(surface, "composite") : null,
+    readiness: surface === "identityWorkforce" ? health() : { passed: true, mode: "control-plane-only" },
+    context: {
+      maintenance: { passed: true, state: "maintenance" },
+      lease: {
+        resource: "global:ponto-workers-writer",
+        revalidatedBeforeRollback: true,
+        revalidatedBeforeRestore: true,
+      },
+      recovery: { attempted: false, disposition: "not-required" },
+      ...(surface === "identityWorkforce" ? { bindingBefore: stateFor(surface, "composite") } : {}),
+      timekeepingPreflight: {
+        schemaVersion: 1,
+        passed: true,
+        configuredPhysicalWorker: "skincos-timekeeping-staging",
+        expectedVersionId: ids.timekeepingCandidate,
+        expectedTag: `ponto:timekeeping:${sourceSha}`,
+        expectedSourceSha: sourceSha,
+        observed: {
+          state: "exact",
+          worker: "skincos-timekeeping-staging",
+          activeVersionId: ids.timekeepingCandidate,
+          activeDeploymentId: ids.timekeepingDeployment,
+        },
+        valuesIncluded: false,
+        credentialsIncluded: false,
+        piiIncluded: false,
+      },
+    },
+  });
+}
+
 test("builds only a source-bound, private, same-artifact candidate receipt", () => {
-  const receipt = buildCandidateReceipt({ input: input(), remote: remote(), identityHealth: health(), rollback: rollback() });
+  const receipt = buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: drillProof("identityWorkforce") });
   assert.equal(receipt.contractId, "skincos/ponto-core-staging-candidate/v1");
   assert.equal(receipt.sourceSha, sourceSha);
   assert.equal(receipt.core.versionId, ids.coreCandidate);
@@ -239,11 +318,14 @@ test("builds only a source-bound, private, same-artifact candidate receipt", () 
   assert.deepEqual(receipt.coreExposure.workerRoutes, []);
   assert.deepEqual(receipt.identityExposure.workerRoutes, ["api-staging.skincos.com.br/insumos/*"]);
   assert.equal(receipt.rollback.passed, true);
+  assert.equal(receipt.timekeeping.versionId, ids.timekeepingCandidate);
+  assert.equal(receipt.timekeeping.configuredPhysicalWorker, "skincos-timekeeping-staging");
+  assert.equal(receipt.timekeeping.observedPhysicalWorker, "skincos-timekeeping-staging");
   assert.equal(receipt.credentialsIncluded, false);
   assert.equal(receipt.piiIncluded, false);
 });
 
-test("rejects forged child provenance, public core exposure, and an unexercised rollback", () => {
+test("rejects forged child provenance, public exposure, and non-exact canonical drill evidence", () => {
   const forgedRun = input();
   forgedRun.upstream.core.run.workflowPath = ".github/workflows/deploy-crm-pages.yml";
   assert.throws(() => validateCandidateInput(forgedRun), /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_RUN_PROVENANCE/);
@@ -252,47 +334,68 @@ test("rejects forged child provenance, public core exposure, and an unexercised 
   foreignHead.upstream.identity.run.headRepository = "untrusted/fork";
   assert.throws(() => validateCandidateInput(foreignHead), /PONTO_CORE_STAGING_CANDIDATE_INVALID:IDENTITY_RUN_PROVENANCE/);
 
-  const publicCore = remote();
-  publicCore.core.exposure.workerRouteCount = 1;
-  publicCore.core.exposure.workerRoutes = ["api-staging.skincos.com.br/*"];
+  const publicCore = drillProof("identityWorkforce");
+  publicCore.restoration.composite.core.exposure.workerRouteCount = 1;
+  publicCore.restoration.composite.core.exposure.workerRoutes = ["api-staging.skincos.com.br/*"];
   assert.throws(
-    () => buildCandidateReceipt({ input: input(), remote: publicCore, identityHealth: health(), rollback: rollback() }),
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: publicCore }),
     /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_EXPOSURE/,
   );
 
-  const routableCore = remote();
-  routableCore.core.routeOnly = false;
+  const routableCore = drillProof("identityWorkforce");
+  routableCore.restoration.composite.core.routeOnly = false;
   assert.throws(
-    () => buildCandidateReceipt({ input: input(), remote: routableCore, identityHealth: health(), rollback: rollback() }),
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: routableCore }),
     /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_REMOTE_ROUTE_ONLY/,
   );
 
-  const wrongTimekeeping = remote();
-  wrongTimekeeping.identity.timekeepingVersionId = ids.timekeepingIncumbent;
+  const wrongTimekeeping = drillProof("identityWorkforce");
+  wrongTimekeeping.restoration.composite.timekeeping.activeVersionId = ids.timekeepingIncumbent;
   assert.throws(
-    () => buildCandidateReceipt({ input: input(), remote: wrongTimekeeping, identityHealth: health(), rollback: rollback() }),
-    /PONTO_CORE_STAGING_CANDIDATE_INVALID:IDENTITY_TIMEKEEPING_AFFINITY/,
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: wrongTimekeeping }),
+    /PONTO_CORE_STAGING_CANDIDATE_INVALID:TIMEKEEPING_REMOTE_IDENTITY/,
   );
 
-  const missingMetadata = remote();
-  missingMetadata.core.versionMetadata = false;
+  const missingMetadata = drillProof("identityWorkforce");
+  missingMetadata.restoration.composite.core.versionMetadata = false;
   assert.throws(
-    () => buildCandidateReceipt({ input: input(), remote: missingMetadata, identityHealth: health(), rollback: rollback() }),
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: missingMetadata }),
     /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_VERSION_METADATA/,
   );
 
-  const incompleteRollback = rollback();
-  incompleteRollback.identity.restoredCandidate = false;
+  const incompleteRollback = drillProof("identityWorkforce");
+  incompleteRollback.restoration.completed = false;
   assert.throws(
-    () => buildCandidateReceipt({ input: input(), remote: remote(), identityHealth: health(), rollback: incompleteRollback }),
-    /PONTO_CORE_STAGING_CANDIDATE_INVALID:IDENTITY_ROLLBACK/,
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: incompleteRollback }),
+    /PONTO_CORE_STAGING_CANDIDATE_INVALID:DRILL_RESTORATION_SHAPE/,
   );
 
-  const unobservedRollback = rollback();
-  unobservedRollback.core.incumbentReadback.activeVersionId = ids.coreCandidate;
+  const unobservedRollback = drillProof("coreApi");
+  unobservedRollback.rollback.state.subject.activeVersionId = ids.coreCandidate;
   assert.throws(
-    () => buildCandidateReceipt({ input: input(), remote: remote(), identityHealth: health(), rollback: unobservedRollback }),
-    /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_ROLLBACK/,
+    () => buildCandidateReceipt({ input: input(), coreDrill: unobservedRollback, identityDrill: drillProof("identityWorkforce") }),
+    /PONTO_CORE_STAGING_CANDIDATE_INVALID:DRILL_INCUMBENT_REMOTE_IDENTITY/,
+  );
+
+  const wrongCoreBinding = drillProof("identityWorkforce");
+  wrongCoreBinding.target.coreCandidateVersionId = ids.coreIncumbent;
+  assert.throws(
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: wrongCoreBinding }),
+    /PONTO_CORE_STAGING_CANDIDATE_INVALID:DRILL_PROOF_BINDING/,
+  );
+
+  const inactiveCoreBeforeIdentityRollback = drillProof("identityWorkforce");
+  inactiveCoreBeforeIdentityRollback.bindingBefore.core.activeVersionId = ids.coreIncumbent;
+  assert.throws(
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: inactiveCoreBeforeIdentityRollback }),
+    /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_REMOTE_IDENTITY/,
+  );
+
+  const changedTimekeepingDeployment = drillProof("identityWorkforce");
+  changedTimekeepingDeployment.restoration.composite.timekeeping.activeDeploymentId = ids.timekeepingOtherDeployment;
+  assert.throws(
+    () => buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: changedTimekeepingDeployment }),
+    /PONTO_CORE_STAGING_CANDIDATE_INVALID:TIMEKEEPING_CONTINUITY/,
   );
 });
 
@@ -301,16 +404,25 @@ test("collects a sanitized remote snapshot with exact candidate identities", asy
   const zoneId = "b".repeat(32);
   let coreActive = ids.coreCandidate;
   let identityActive = ids.identityCandidate;
+  let timekeepingActive = ids.timekeepingCandidate;
+  let timekeepingListed = true;
+  const requests = [];
   const payload = (result, resultInfo = null) => ({
     ok: true,
     status: 200,
     async json() { return { success: true, result, result_info: resultInfo }; },
   });
-  const fetchImpl = async (request) => {
+  const fetchImpl = async (request, options = {}) => {
     const url = new URL(request);
     const pathname = url.pathname.replace("/client/v4", "");
+    requests.push({ pathname, method: options.method || "GET" });
     if (pathname === `/accounts/${accountId}/workers/scripts`) {
-      return payload([{ id: "skincos-ponto-core-staging" }, { id: "skincos-insumos-staging" }]);
+      const scripts = [
+        { id: "skincos-ponto-core-staging" },
+        { id: "skincos-insumos-staging" },
+      ];
+      if (timekeepingListed) scripts.push({ id: "skincos-timekeeping-staging" });
+      return payload(scripts);
     }
     if (pathname === "/zones") {
       return payload([{ id: zoneId, name: "example", account: { id: accountId } }], { total_count: 1, total_pages: 1 });
@@ -325,6 +437,9 @@ test("collects a sanitized remote snapshot with exact candidate identities", asy
     }
     if (pathname.endsWith("skincos-insumos-staging/deployments")) {
       return payload({ deployments: [{ id: ids.identityDeployment, created_on: "2026-09-10T00:00:00Z", versions: [{ version_id: identityActive, percentage: 100 }] }] });
+    }
+    if (pathname.endsWith("skincos-timekeeping-staging/deployments")) {
+      return payload({ deployments: [{ id: ids.timekeepingDeployment, created_on: "2026-09-10T00:00:00Z", versions: [{ version_id: timekeepingActive, percentage: 100 }] }] });
     }
     if (pathname.endsWith(`/skincos-ponto-core-staging/versions/${coreActive}`)) {
       return payload({ id: coreActive, annotations: { "workers/message": `ponto:coreApi:${sourceSha}` }, resources: { bindings: [
@@ -345,6 +460,13 @@ test("collects a sanitized remote snapshot with exact candidate identities", asy
         { name: "WORKFORCE", type: "service", service: "skincos-timekeeping-staging" },
       ] } });
     }
+    if (pathname.endsWith(`/skincos-timekeeping-staging/versions/${timekeepingActive}`)) {
+      return payload({ id: timekeepingActive, annotations: { "workers/message": `ponto:timekeeping:${sourceSha}` }, resources: { bindings: [
+        { name: "APP_VERSION", type: "plain_text", text: sourceSha },
+        { name: "ENVIRONMENT", type: "plain_text", text: "staging" },
+        { name: "VERSION_METADATA", type: "version_metadata" },
+      ] } });
+    }
     throw new Error(`unexpected request: ${pathname}`);
   };
   const candidate = validateCandidateInput(input());
@@ -354,6 +476,55 @@ test("collects a sanitized remote snapshot with exact candidate identities", asy
   assert.equal(observed.credentialsIncluded, false);
   assert.equal(observed.piiIncluded, false);
 
+  const composite = await attestDrillState({
+    config: drillConfig("identityWorkforce"),
+    phase: "composite",
+    accountId,
+    apiToken: "synthetic-token",
+    fetchImpl,
+  });
+  assert.equal(composite.core.activeVersionId, ids.coreCandidate);
+  assert.equal(composite.identity.activeVersionId, ids.identityCandidate);
+  assert.equal(composite.timekeeping.activeVersionId, ids.timekeepingCandidate);
+  assert.equal(composite.timekeeping.versionMessage, `ponto:timekeeping:${sourceSha}`);
+
+  const exactMapping = await preflightTimekeepingWorker({
+    config: drillConfig("coreApi"),
+    accountId,
+    apiToken: "synthetic-token",
+    fetchImpl,
+  });
+  assert.equal(exactMapping.passed, true);
+  assert.equal(exactMapping.observed.state, "exact");
+  assert.equal(exactMapping.configuredPhysicalWorker, "skincos-timekeeping-staging");
+
+  requests.length = 0;
+  timekeepingListed = false;
+  const absentMapping = await preflightTimekeepingWorker({
+    config: drillConfig("coreApi"),
+    accountId,
+    apiToken: "synthetic-token",
+    fetchImpl,
+  });
+  assert.equal(absentMapping.passed, false);
+  assert.deepEqual(absentMapping.observed, { state: "absent", worker: null });
+  assert.deepEqual(requests, [{ pathname: `/accounts/${accountId}/workers/scripts`, method: "GET" }]);
+
+  requests.length = 0;
+  timekeepingListed = true;
+  timekeepingActive = ids.timekeepingIncumbent;
+  const mismatchedMapping = await preflightTimekeepingWorker({
+    config: drillConfig("coreApi"),
+    accountId,
+    apiToken: "synthetic-token",
+    fetchImpl,
+  });
+  assert.equal(mismatchedMapping.passed, false);
+  assert.equal(mismatchedMapping.observed.state, "mismatch");
+  assert.equal(mismatchedMapping.observed.worker, "skincos-timekeeping-staging");
+  assert.ok(requests.every(({ method }) => method === "GET"));
+  timekeepingActive = ids.timekeepingCandidate;
+
   coreActive = ids.coreIncumbent;
   identityActive = ids.identityIncumbent;
   const rollbackState = await attestRollbackIncumbents({ candidate, accountId, apiToken: "synthetic-token", fetchImpl });
@@ -362,23 +533,25 @@ test("collects a sanitized remote snapshot with exact candidate identities", asy
   assert.equal(rollbackState.valuesIncluded, false);
 });
 
-test("workflow is main-only, staging-only, and exercises only already-published artifacts", () => {
+test("candidate workflow is a main-only, secretless canonical-artifact attester", () => {
   for (const marker of [
     "workflow_dispatch:",
     "[[ \"$GITHUB_REF\" == refs/heads/main ]]",
-    "environment: staging",
-    "execute_same_artifact_rollback",
-    "group: ponto-surface-mutation",
-    "resource: global:ponto-workers-writer",
     "ponto-surface-timekeeping-staging-$RELEASE_SHA",
     "ponto-surface-core-api-staging-$RELEASE_SHA",
     "ponto-surface-identity-workforce-staging-$RELEASE_SHA",
-    "attest-rollback-incumbents",
-    "node --input-type=module - \"$CANDIDATE_ROOT/module-health.json\" <<'NODE'",
-    "steps.bind_candidate.outcome == 'success'",
-    "payload?.versions || payload?.latest?.versions || active?.versions || []",
+    "ponto-core-staging-rollback-drill-coreApi-$RELEASE_SHA",
+    "ponto-core-staging-rollback-drill-identityWorkforce-$RELEASE_SHA",
+    "Build the Pages-consumable candidate from canonical-only evidence",
+    "node .github/scripts/ponto-core-staging-candidate.mjs build-receipt",
   ]) assert.ok(workflow.includes(marker), marker);
   for (const forbidden of [
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "environment: staging",
+    "global-coordination",
+    "wrangler rollback",
+    "wrangler versions deploy",
     "versions upload",
     " d1 migrations ",
     " secret put ",
@@ -388,24 +561,39 @@ test("workflow is main-only, staging-only, and exercises only already-published 
   ]) assert.equal(workflow.includes(forbidden), false, forbidden);
 });
 
-test("every embedded workflow Bash block is syntactically valid", () => {
-  const blocks = bashBlocks(workflow);
-  assert.ok(blocks.length > 0);
-  for (const block of blocks) {
-    const syntax = spawnSync("bash", ["-n"], { input: block, encoding: "utf8" });
-    assert.equal(syntax.status, 0, syntax.stderr || "workflow Bash syntax failed");
-  }
+test("only the canonical deploy workflow owns optional same-artifact traffic drill commands", () => {
+  for (const marker of [
+    "same_artifact_rollback_drill:",
+    "core_candidate_version_id:",
+    "ponto-core-staging-rollback-drill-coreApi-",
+    "ponto-core-staging-rollback-drill-identityWorkforce-",
+    "Read exact Core and Timekeeping state before the drill",
+    "Read exact Identity and Timekeeping state before the drill",
+    "Bind exact Core Identity and Timekeeping candidates before the drill",
+    "attest-drill-state",
+    "preflight-timekeeping-worker",
+    "probe-drill-identity",
+    "needs: [coordination, promotion]",
+  ]) assert.ok(canonicalWorkflow.includes(marker), marker);
+  assert.equal(canonicalWorkflow.includes("ponto-core-staging-candidate.yml"), false);
+  assert.equal(workflow.includes("same_artifact_rollback_drill"), false);
+  assert.ok(
+    canonicalWorkflow.indexOf("preflight-timekeeping-worker")
+      < canonicalWorkflow.indexOf('inventory/node_modules/.bin/wrangler rollback "$incumbent"'),
+  );
+  assert.ok(
+    canonicalWorkflow.lastIndexOf("preflight-timekeeping-worker")
+      < canonicalWorkflow.indexOf('api/node_modules/.bin/wrangler rollback "$incumbent"'),
+  );
 });
 
-test("the module-maintenance probe is valid ESM before a mutation can begin", () => {
-  const block = bashBlocks(workflow).find((candidate) => candidate.includes("ponto_core_candidate_maintenance"));
-  assert.ok(block);
-  const marker = "node --input-type=module - \"$CANDIDATE_ROOT/module-health.json\" <<'NODE'\n";
-  const start = block.indexOf(marker);
-  assert.notEqual(start, -1);
-  const source = block.slice(start + marker.length).split("\nNODE\n")[0];
-  assert.match(source, /import fs from "node:fs";/);
-  assert.doesNotMatch(source, /\brequire\s*\(/);
-  const syntax = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: source, encoding: "utf8" });
-  assert.equal(syntax.status, 0, syntax.stderr || "module-maintenance probe is not valid ESM");
+test("every embedded workflow Bash block is syntactically valid", () => {
+  for (const [name, source] of [["candidate", workflow], ["canonical", canonicalWorkflow]]) {
+    const blocks = bashBlocks(source);
+    assert.ok(blocks.length > 0, `${name} should contain Bash blocks`);
+    for (const block of blocks) {
+      const syntax = spawnSync("bash", ["-n"], { input: block, encoding: "utf8" });
+      assert.equal(syntax.status, 0, syntax.stderr || `${name} workflow Bash syntax failed`);
+    }
+  }
 });

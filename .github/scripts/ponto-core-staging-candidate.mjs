@@ -7,6 +7,8 @@ const SHA = /^[0-9a-f]{40}$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RUN_ID = /^[1-9][0-9]*$/;
 const CANDIDATE_CONTRACT = "skincos/ponto-core-staging-candidate/v1";
+const DRILL_CONTRACT = "skincos/ponto-core-staging-rollback-drill/v1";
+const CANONICAL_CORE_WORKFLOW = ".github/workflows/deploy-core-workers.yml";
 const CORE_WORKER = "skincos-ponto-core-staging";
 const IDENTITY_WORKER = "skincos-insumos-staging";
 const TIMEKEEPING_WORKER = "skincos-timekeeping-staging";
@@ -73,7 +75,10 @@ function assertRun(run, { workflowPath, sourceSha, repository, code }) {
     || String(run.headRepository || run.head_repository || "") !== repository
   ) fail(`${code}_RUN_PROVENANCE`);
   const headBranch = String(run.headBranch ?? run.head_branch ?? "");
-  if (!["main", `skincos/release/ponto/${sourceSha}`].includes(headBranch)) fail(`${code}_RUN_BRANCH`);
+  // A Pages-consumable candidate is deliberately stricter than an ordinary
+  // Ponto release child: its source and every consumed canonical artifact
+  // must have been dispatched from the current protected main branch.
+  if (headBranch !== "main") fail(`${code}_RUN_BRANCH`);
   return { runId, headSha, headBranch };
 }
 
@@ -267,6 +272,487 @@ export function validateIdentityHealth(health, candidate) {
   return { passed: true };
 }
 
+const DRILL_SUBJECTS = Object.freeze({
+  coreApi: Object.freeze({
+    worker: CORE_WORKER,
+    tag: (sha) => `ponto:coreApi:${sha}`,
+    serviceBindingName: "TIMEKEEPING",
+    serviceBinding: TIMEKEEPING_WORKER,
+    routeOnly: true,
+    routes: [],
+  }),
+  identityWorkforce: Object.freeze({
+    worker: IDENTITY_WORKER,
+    tag: (sha) => `ponto:identityWorkforce:${sha}`,
+    serviceBindingName: "WORKFORCE",
+    serviceBinding: TIMEKEEPING_WORKER,
+    routeOnly: false,
+    routes: [IDENTITY_ROUTE],
+  }),
+});
+
+function requiredObject(value, code) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(code);
+  return value;
+}
+
+/**
+ * The canonical deploy workflow writes this compact input immediately before a
+ * drill.  It names only versions that the same workflow has just published or
+ * has explicitly attested as its incumbent; it never accepts a free-form
+ * traffic target from the candidate-attester workflow.
+ */
+export function validateDrillInput(input) {
+  requiredObject(input, "DRILL_INPUT_SHAPE");
+  if (input.schemaVersion !== 1) fail("DRILL_INPUT_SCHEMA");
+  const source = requiredObject(input.source, "DRILL_SOURCE_SHAPE");
+  const sourceRepository = asString(source.repository, "DRILL_SOURCE_REPOSITORY");
+  const sourceSha = exactSha(source.sha, "DRILL_SOURCE_SHA");
+  const sourceTree = exactSha(source.tree, "DRILL_SOURCE_TREE");
+  const runId = exactRunId(source.runId, "DRILL_RUN_ID");
+  if (source.branch !== "main" || Number(source.runAttempt) !== 1) fail("DRILL_SOURCE_MAIN");
+
+  const subject = requiredObject(input.subject, "DRILL_SUBJECT_SHAPE");
+  const surface = String(subject.surface || "");
+  const definition = DRILL_SUBJECTS[surface];
+  if (!definition) fail("DRILL_SUBJECT_SURFACE");
+  const candidateVersionId = exactUuid(subject.candidateVersionId, "DRILL_CANDIDATE_VERSION");
+  const incumbentVersionId = exactUuid(subject.incumbentVersionId, "DRILL_INCUMBENT_VERSION");
+  const timekeepingVersionId = exactUuid(subject.timekeepingVersionId, "DRILL_TIMEKEEPING_VERSION");
+  if (candidateVersionId === incumbentVersionId) fail("DRILL_VERSION_COLLISION");
+
+  const coreCandidateVersionId = surface === "identityWorkforce"
+    ? exactUuid(input.coreCandidateVersionId, "DRILL_CORE_CANDIDATE_VERSION")
+    : "";
+  return {
+    source: {
+      repository: sourceRepository,
+      sha: sourceSha,
+      tree: sourceTree,
+      runId,
+      branch: "main",
+      runAttempt: 1,
+    },
+    subject: {
+      surface,
+      worker: definition.worker,
+      candidateVersionId,
+      incumbentVersionId,
+      candidateTag: definition.tag(sourceSha),
+      timekeepingVersionId,
+      definition,
+    },
+    coreCandidateVersionId,
+  };
+}
+
+function timekeepingExpected(config) {
+  return {
+    code: "TIMEKEEPING",
+    worker: TIMEKEEPING_WORKER,
+    versionId: config.subject.timekeepingVersionId,
+    tag: `ponto:timekeeping:${config.source.sha}`,
+    sourceSha: config.source.sha,
+    versionMetadata: true,
+    versionMetadataBindingName: "VERSION_METADATA",
+    routes: [],
+  };
+}
+
+function subjectExpected(config, versionId, code, { candidate = false } = {}) {
+  const { subject } = config;
+  const expected = {
+    code,
+    worker: subject.worker,
+    versionId,
+    serviceBinding: subject.definition.serviceBinding,
+    serviceBindingName: subject.definition.serviceBindingName,
+    versionMetadata: true,
+    routes: subject.definition.routes,
+  };
+  if (candidate) {
+    expected.tag = subject.candidateTag;
+    expected.sourceSha = config.source.sha;
+    expected.timekeepingVersionId = subject.timekeepingVersionId;
+    if (subject.definition.routeOnly) expected.routeOnly = true;
+  }
+  return expected;
+}
+
+function validateTimekeepingSnapshot(snapshot, config) {
+  return exactRemoteSurface(snapshot, timekeepingExpected(config), "TIMEKEEPING");
+}
+
+function normalizeTimekeepingPreflight(preflight, config) {
+  requiredObject(preflight, "TIMEKEEPING_PREFLIGHT_SHAPE");
+  const observed = requiredObject(preflight.observed, "TIMEKEEPING_PREFLIGHT_OBSERVED");
+  if (
+    preflight.schemaVersion !== 1
+    || preflight.passed !== true
+    || String(preflight.configuredPhysicalWorker || "") !== TIMEKEEPING_WORKER
+    || exactUuid(preflight.expectedVersionId, "TIMEKEEPING_PREFLIGHT_EXPECTED_VERSION") !== config.subject.timekeepingVersionId
+    || String(preflight.expectedTag || "") !== `ponto:timekeeping:${config.source.sha}`
+    || String(preflight.expectedSourceSha || "").toLowerCase() !== config.source.sha
+    || observed.state !== "exact"
+    || String(observed.worker || "") !== TIMEKEEPING_WORKER
+    || exactUuid(observed.activeVersionId, "TIMEKEEPING_PREFLIGHT_ACTIVE_VERSION") !== config.subject.timekeepingVersionId
+    || !UUID.test(String(observed.activeDeploymentId || ""))
+  ) fail("TIMEKEEPING_PREFLIGHT");
+  return {
+    configuredPhysicalWorker: TIMEKEEPING_WORKER,
+    observedWorker: TIMEKEEPING_WORKER,
+    activeVersionId: config.subject.timekeepingVersionId,
+    activeDeploymentId: String(observed.activeDeploymentId).toLowerCase(),
+    state: "exact",
+  };
+}
+
+function validateDrillState(state, config, phase) {
+  requiredObject(state, "DRILL_STATE_SHAPE");
+  if (state.schemaVersion !== 1 || String(state.phase || "") !== phase) fail("DRILL_STATE_PHASE");
+  if (phase === "composite") {
+    if (config.subject.surface !== "identityWorkforce") fail("DRILL_COMPOSITE_SURFACE");
+    const core = exactRemoteSurface(state.core, {
+      ...subjectExpected({
+        ...config,
+        subject: {
+          ...config.subject,
+          surface: "coreApi",
+          worker: CORE_WORKER,
+          candidateTag: `ponto:coreApi:${config.source.sha}`,
+          definition: DRILL_SUBJECTS.coreApi,
+          candidateVersionId: config.coreCandidateVersionId,
+        },
+      }, config.coreCandidateVersionId, "CORE", { candidate: true }),
+    }, "CORE");
+    const identity = exactRemoteSurface(
+      state.identity,
+      subjectExpected(config, config.subject.candidateVersionId, "IDENTITY", { candidate: true }),
+      "IDENTITY",
+    );
+    const timekeeping = validateTimekeepingSnapshot(state.timekeeping, config);
+    return { core, identity, timekeeping };
+  }
+  const candidate = phase === "candidate";
+  const subject = exactRemoteSurface(
+    state.subject,
+    subjectExpected(
+      config,
+      candidate ? config.subject.candidateVersionId : config.subject.incumbentVersionId,
+      candidate ? "DRILL_CANDIDATE" : "DRILL_INCUMBENT",
+      { candidate },
+    ),
+    candidate ? "DRILL_CANDIDATE" : "DRILL_INCUMBENT",
+  );
+  const timekeeping = validateTimekeepingSnapshot(state.timekeeping, config);
+  return { subject, timekeeping };
+}
+
+function validateDrillReadiness(readiness, config) {
+  requiredObject(readiness, "DRILL_READINESS_SHAPE");
+  if (config.subject.surface === "coreApi") {
+    if (readiness.passed !== true || readiness.mode !== "control-plane-only") fail("DRILL_CORE_READINESS");
+    return { passed: true, mode: "control-plane-only" };
+  }
+  const candidate = {
+    source: { sha: config.source.sha },
+    identity: {
+      candidateVersionId: config.subject.candidateVersionId,
+      candidateTag: config.subject.candidateTag,
+    },
+  };
+  validateIdentityHealth(readiness, candidate);
+  return { passed: true, mode: "identity-health" };
+}
+
+function drillConfigFromProof(proof) {
+  const source = requiredObject(proof.source, "DRILL_PROOF_SOURCE_SHAPE");
+  const producer = requiredObject(proof.producer, "DRILL_PROOF_PRODUCER_SHAPE");
+  const target = requiredObject(proof.target, "DRILL_PROOF_TARGET_SHAPE");
+  return validateDrillInput({
+    schemaVersion: 1,
+    source: {
+      repository: source.repository,
+      sha: source.sha,
+      tree: source.tree,
+      runId: producer.runId,
+      branch: producer.branch,
+      runAttempt: producer.runAttempt,
+    },
+    subject: {
+      surface: target.surface,
+      candidateVersionId: target.candidateVersionId,
+      incumbentVersionId: target.incumbentVersionId,
+      timekeepingVersionId: target.timekeepingVersionId,
+    },
+    ...(target.coreCandidateVersionId ? { coreCandidateVersionId: target.coreCandidateVersionId } : {}),
+  });
+}
+
+/** Validates the sanitized proof emitted by one canonical Core/Identity run. */
+export function validateDrillProof(proof, candidate, surface) {
+  requiredObject(proof, "DRILL_PROOF_SHAPE");
+  if (
+    proof.schemaVersion !== 1
+    || proof.contractId !== DRILL_CONTRACT
+    || proof.passed !== true
+    || proof.stage !== "staging"
+    || proof.valuesIncluded !== false
+    || proof.credentialsIncluded !== false
+    || proof.piiIncluded !== false
+  ) fail("DRILL_PROOF_SHAPE");
+  const config = drillConfigFromProof(proof);
+  if (
+    String(proof.producer?.workflow || "") !== CANONICAL_CORE_WORKFLOW
+    || config.source.repository !== candidate.source.repository
+    || config.source.sha !== candidate.source.sha
+    || config.source.tree !== candidate.source.tree
+  ) fail("DRILL_PROOF_PROVENANCE");
+
+  const upstream = surface === "coreApi" ? candidate.core : candidate.identity;
+  if (
+    config.subject.surface !== surface
+    || config.source.runId !== upstream.runId
+    || config.subject.candidateVersionId !== upstream.candidateVersionId
+    || config.subject.incumbentVersionId !== upstream.incumbentVersionId
+    || config.subject.timekeepingVersionId !== candidate.timekeeping.candidateVersionId
+    || (surface === "identityWorkforce" && config.coreCandidateVersionId !== candidate.core.candidateVersionId)
+  ) fail("DRILL_PROOF_BINDING");
+
+  const maintenance = requiredObject(proof.maintenance, "DRILL_MAINTENANCE_SHAPE");
+  const lease = requiredObject(proof.lease, "DRILL_LEASE_SHAPE");
+  const recovery = requiredObject(proof.recovery, "DRILL_RECOVERY_SHAPE");
+  const timekeeping = normalizeTimekeepingPreflight(proof.timekeeping, config);
+  if (
+    maintenance.passed !== true
+    || maintenance.state !== "maintenance"
+    || lease.resource !== "global:ponto-workers-writer"
+    || lease.revalidatedBeforeRollback !== true
+    || lease.revalidatedBeforeRestore !== true
+    || recovery.attempted !== false
+    || recovery.disposition !== "not-required"
+  ) fail("DRILL_GUARDS");
+
+  const before = validateDrillState(proof.before, config, "candidate");
+  const rollback = requiredObject(proof.rollback, "DRILL_ROLLBACK_SHAPE");
+  if (rollback.performed !== true) fail("DRILL_ROLLBACK_SHAPE");
+  const rollbackState = validateDrillState(rollback.state, config, "incumbent");
+  const restoration = requiredObject(proof.restoration, "DRILL_RESTORATION_SHAPE");
+  if (restoration.completed !== true) fail("DRILL_RESTORATION_SHAPE");
+  const restorationState = validateDrillState(restoration.state, config, "candidate");
+  const readiness = validateDrillReadiness(proof.readiness, config);
+  let composite = null;
+  let bindingBefore = null;
+  if (surface === "identityWorkforce") {
+    bindingBefore = validateDrillState(proof.bindingBefore, config, "composite");
+    composite = validateDrillState(restoration.composite, config, "composite");
+  } else if (restoration.composite !== undefined || proof.bindingBefore !== undefined) {
+    fail("DRILL_CORE_COMPOSITE");
+  }
+  const timekeepingSnapshots = [before.timekeeping, rollbackState.timekeeping, restorationState.timekeeping];
+  if (bindingBefore) timekeepingSnapshots.push(bindingBefore.timekeeping);
+  if (composite) timekeepingSnapshots.push(composite.timekeeping);
+  if (timekeepingSnapshots.some((snapshot) => (
+    snapshot.versionId !== config.subject.timekeepingVersionId
+    || snapshot.deploymentId !== timekeeping.activeDeploymentId
+  ))) fail("TIMEKEEPING_CONTINUITY");
+  return { config, before, rollback: rollbackState, restoration: restorationState, readiness, bindingBefore, composite, timekeeping };
+}
+
+/**
+ * Captures a read-only Cloudflare state from the canonical publisher. The
+ * caller is the only workflow that can subsequently issue a traffic command;
+ * this collector itself performs GET requests only.
+ */
+export async function attestDrillState({ config, phase, accountId, apiToken, fetchImpl = fetch }) {
+  const validated = validateDrillInput(config);
+  const get = cloudflareClient({ accountId, apiToken, fetchImpl });
+  if (phase === "composite") {
+    if (validated.subject.surface !== "identityWorkforce") fail("DRILL_COMPOSITE_SURFACE");
+    const [core, identity, timekeeping] = await Promise.all([
+      inspectWorker({
+        get, accountId, worker: CORE_WORKER,
+        expected: subjectExpected({
+          ...validated,
+          subject: {
+            ...validated.subject,
+            surface: "coreApi",
+            worker: CORE_WORKER,
+            candidateVersionId: validated.coreCandidateVersionId,
+            candidateTag: `ponto:coreApi:${validated.source.sha}`,
+            definition: DRILL_SUBJECTS.coreApi,
+          },
+        }, validated.coreCandidateVersionId, "CORE", { candidate: true }),
+        fetchImpl,
+      }),
+      inspectWorker({
+        get, accountId, worker: validated.subject.worker,
+        expected: subjectExpected(validated, validated.subject.candidateVersionId, "IDENTITY", { candidate: true }),
+        fetchImpl,
+      }),
+      inspectWorker({ get, accountId, worker: TIMEKEEPING_WORKER, expected: timekeepingExpected(validated), fetchImpl }),
+    ]);
+    return { schemaVersion: 1, phase, core, identity, timekeeping, valuesIncluded: false, credentialsIncluded: false, piiIncluded: false };
+  }
+  if (!["candidate", "incumbent"].includes(phase)) fail("DRILL_STATE_PHASE");
+  const candidate = phase === "candidate";
+  const [subject, timekeeping] = await Promise.all([
+    inspectWorker({
+      get,
+      accountId,
+      worker: validated.subject.worker,
+      expected: subjectExpected(
+        validated,
+        candidate ? validated.subject.candidateVersionId : validated.subject.incumbentVersionId,
+        candidate ? "DRILL_CANDIDATE" : "DRILL_INCUMBENT",
+        { candidate },
+      ),
+      fetchImpl,
+    }),
+    inspectWorker({ get, accountId, worker: TIMEKEEPING_WORKER, expected: timekeepingExpected(validated), fetchImpl }),
+  ]);
+  return { schemaVersion: 1, phase, subject, timekeeping, valuesIncluded: false, credentialsIncluded: false, piiIncluded: false };
+}
+
+/**
+ * Reports, without a traffic change, whether the physical Timekeeping Worker
+ * configured by the Ponto Core/Identity bindings exists and is exactly the
+ * published Timekeeping candidate. This turns source/runtime naming drift into
+ * an artifact and a fail-closed precondition before any rollback command.
+ */
+export async function preflightTimekeepingWorker({ config, accountId, apiToken, fetchImpl = fetch }) {
+  const validated = validateDrillInput(config);
+  const get = cloudflareClient({ accountId, apiToken, fetchImpl });
+  const report = {
+    schemaVersion: 1,
+    passed: false,
+    configuredPhysicalWorker: TIMEKEEPING_WORKER,
+    expectedVersionId: validated.subject.timekeepingVersionId,
+    expectedTag: `ponto:timekeeping:${validated.source.sha}`,
+    expectedSourceSha: validated.source.sha,
+    observed: { state: "unavailable", worker: TIMEKEEPING_WORKER },
+    valuesIncluded: false,
+    credentialsIncluded: false,
+    piiIncluded: false,
+  };
+  const inventory = await get(`/accounts/${encodeURIComponent(accountId)}/workers/scripts`, "scripts");
+  if (!Array.isArray(inventory.result)) fail("TIMEKEEPING_PREFLIGHT_INVENTORY");
+  if (!inventory.result.some((script) => script?.id === TIMEKEEPING_WORKER)) {
+    report.observed = { state: "absent", worker: null };
+    return report;
+  }
+  try {
+    const snapshot = await inspectWorker({
+      get,
+      accountId,
+      worker: TIMEKEEPING_WORKER,
+      expected: timekeepingExpected(validated),
+      fetchImpl,
+    });
+    report.passed = true;
+    report.observed = {
+      state: "exact",
+      worker: TIMEKEEPING_WORKER,
+      activeVersionId: snapshot.activeVersionId,
+      activeDeploymentId: snapshot.activeDeploymentId,
+    };
+  } catch (error) {
+    const match = String(error?.message || error).match(/^PONTO_CORE_STAGING_CANDIDATE_INVALID:([A-Z0-9_]+)$/);
+    report.observed = {
+      state: "mismatch",
+      worker: TIMEKEEPING_WORKER,
+      reason: match?.[1] || "REMOTE_READ_FAILED",
+    };
+  }
+  return report;
+}
+
+export async function probeDrillIdentity({ config, fetchImpl = fetch }) {
+  const validated = validateDrillInput(config);
+  if (validated.subject.surface !== "identityWorkforce") fail("DRILL_IDENTITY_PROBE_SURFACE");
+  return probeIdentityHealth({
+    candidate: {
+      source: { sha: validated.source.sha },
+      identity: {
+        candidateVersionId: validated.subject.candidateVersionId,
+        candidateTag: validated.subject.candidateTag,
+      },
+    },
+    fetchImpl,
+  });
+}
+
+export function buildDrillProof({ config, before, rollback, restoration, composite = null, readiness, context }) {
+  const validated = validateDrillInput(config);
+  validateDrillState(before, validated, "candidate");
+  validateDrillState(rollback, validated, "incumbent");
+  validateDrillState(restoration, validated, "candidate");
+  if (validated.subject.surface === "identityWorkforce") {
+    validateDrillState(composite, validated, "composite");
+    validateDrillState(context?.bindingBefore, validated, "composite");
+  } else if (composite !== null || context?.bindingBefore !== undefined) fail("DRILL_CORE_COMPOSITE");
+  validateDrillReadiness(readiness, validated);
+  requiredObject(context, "DRILL_CONTEXT_SHAPE");
+  if (
+    context.maintenance?.passed !== true
+    || context.maintenance?.state !== "maintenance"
+    || context.lease?.resource !== "global:ponto-workers-writer"
+    || context.lease?.revalidatedBeforeRollback !== true
+    || context.lease?.revalidatedBeforeRestore !== true
+    || context.recovery?.attempted !== false
+    || context.recovery?.disposition !== "not-required"
+  ) fail("DRILL_CONTEXT_GUARDS");
+  normalizeTimekeepingPreflight(context.timekeepingPreflight, validated);
+  return {
+    schemaVersion: 1,
+    contractId: DRILL_CONTRACT,
+    passed: true,
+    stage: "staging",
+    producer: {
+      workflow: CANONICAL_CORE_WORKFLOW,
+      runId: validated.source.runId,
+      runAttempt: 1,
+      branch: "main",
+    },
+    source: {
+      repository: validated.source.repository,
+      sha: validated.source.sha,
+      tree: validated.source.tree,
+    },
+    target: {
+      surface: validated.subject.surface,
+      worker: validated.subject.worker,
+      candidateVersionId: validated.subject.candidateVersionId,
+      incumbentVersionId: validated.subject.incumbentVersionId,
+      candidateTag: validated.subject.candidateTag,
+      timekeepingVersionId: validated.subject.timekeepingVersionId,
+      ...(validated.coreCandidateVersionId ? { coreCandidateVersionId: validated.coreCandidateVersionId } : {}),
+    },
+    maintenance: { passed: true, state: "maintenance" },
+    // Preserve the sanitized preflight receipt so downstream attesters can
+    // validate the provider observation rather than trusting a lossy summary.
+    timekeeping: context.timekeepingPreflight,
+    lease: {
+      resource: "global:ponto-workers-writer",
+      revalidatedBeforeRollback: true,
+      revalidatedBeforeRestore: true,
+    },
+    before,
+    ...(validated.subject.surface === "identityWorkforce" ? { bindingBefore: context.bindingBefore } : {}),
+    rollback: { performed: true, state: rollback },
+    restoration: {
+      completed: true,
+      state: restoration,
+      ...(composite ? { composite } : {}),
+    },
+    readiness,
+    recovery: { attempted: false, disposition: "not-required" },
+    valuesIncluded: false,
+    credentialsIncluded: false,
+    piiIncluded: false,
+  };
+}
+
 export function validateRollbackProof(rollback, candidate) {
   if (
     !rollback || typeof rollback !== "object" || Array.isArray(rollback)
@@ -299,10 +785,50 @@ export function validateRollbackProof(rollback, candidate) {
  * This is intentionally a control-plane + exposed Identity health proof; the
  * later Pages synthetic smoke proves the private service-binding request path.
  */
-export function buildCandidateReceipt({ input, remote, identityHealth, rollback, expected = {} }) {
+export function buildCandidateReceipt({ input, coreDrill, identityDrill, expected = {} }) {
   const candidate = validateCandidateInput(input, expected);
+  const core = validateDrillProof(coreDrill, candidate, "coreApi");
+  const identity = validateDrillProof(identityDrill, candidate, "identityWorkforce");
+  // Keep the raw, already-validated control-plane observation for the
+  // existing remote-candidate validator. `validateDrillProof` also returns a
+  // normalized form for receipt fields, which intentionally omits provider
+  // field names such as `activeVersionId`.
+  const compositeState = identityDrill.restoration?.composite;
+  const remote = {
+    schemaVersion: 1,
+    core: compositeState?.core,
+    identity: compositeState?.identity,
+  };
   const remoteCandidate = validateRemoteCandidate(remote, candidate);
-  validateIdentityHealth(identityHealth, candidate);
+  validateTimekeepingSnapshot(compositeState?.timekeeping, identity.config);
+  const rollback = {
+    passed: true,
+    valuesIncluded: false,
+    credentialsIncluded: false,
+    piiIncluded: false,
+    core: {
+      rolledBackToIncumbent: true,
+      restoredCandidate: true,
+      incumbentVersionId: candidate.core.incumbentVersionId,
+      candidateVersionId: candidate.core.candidateVersionId,
+      incumbentReadback: {
+        worker: CORE_WORKER,
+        activeVersionId: core.rollback.subject.versionId,
+        activeDeploymentId: core.rollback.subject.deploymentId,
+      },
+    },
+    identity: {
+      rolledBackToIncumbent: true,
+      restoredCandidate: true,
+      incumbentVersionId: candidate.identity.incumbentVersionId,
+      candidateVersionId: candidate.identity.candidateVersionId,
+      incumbentReadback: {
+        worker: IDENTITY_WORKER,
+        activeVersionId: identity.rollback.subject.versionId,
+        activeDeploymentId: identity.rollback.subject.deploymentId,
+      },
+    },
+  };
   validateRollbackProof(rollback, candidate);
   return {
     schemaVersion: 1,
@@ -332,7 +858,7 @@ export function buildCandidateReceipt({ input, remote, identityHealth, rollback,
     },
     readiness: {
       passed: true,
-      mode: "control-plane-and-exposed-identity-health",
+      mode: "canonical-control-plane-and-exposed-identity-health",
     },
     rollback: {
       passed: true,
@@ -340,11 +866,21 @@ export function buildCandidateReceipt({ input, remote, identityHealth, rollback,
       core: {
         incumbentVersionId: candidate.core.incumbentVersionId,
         candidateVersionId: candidate.core.candidateVersionId,
+        canonicalRunId: candidate.core.runId,
       },
       identity: {
         incumbentVersionId: candidate.identity.incumbentVersionId,
         candidateVersionId: candidate.identity.candidateVersionId,
+        canonicalRunId: candidate.identity.runId,
       },
+    },
+    timekeeping: {
+      service: TIMEKEEPING_WORKER,
+      configuredPhysicalWorker: identity.timekeeping.configuredPhysicalWorker,
+      observedPhysicalWorker: identity.timekeeping.observedWorker,
+      versionId: candidate.timekeeping.candidateVersionId,
+      deploymentId: identity.composite.timekeeping.deploymentId,
+      candidateTag: candidate.timekeeping.candidateTag,
     },
     privateExposure: remoteCandidate.core.exposure,
     coreExposure: remoteCandidate.core.exposure,
@@ -466,10 +1002,10 @@ async function inspectWorker({ get, accountId, worker, expected, fetchImpl }) {
     versionMessage: String(version?.annotations?.["workers/message"] || ""),
     appVersion: String(plain("APP_VERSION") || ""),
     environment: String(plain("ENVIRONMENT") || ""),
-    serviceBinding: String(service(expected.serviceBindingName) || ""),
+    serviceBinding: expected.serviceBindingName ? String(service(expected.serviceBindingName) || "") : "",
     timekeepingVersionId: String(plain("TIMEKEEPING_VERSION_ID") || "").toLowerCase(),
     routeOnly: plain("PONTO_ROUTE_ONLY") === "true",
-    versionMetadata: bindings.get("CF_VERSION_METADATA")?.type === "version_metadata",
+    versionMetadata: bindings.get(expected.versionMetadataBindingName || "CF_VERSION_METADATA")?.type === "version_metadata",
     exposure: {
       ...exposure,
       workersDevEnabled: subdomainResponse.result?.enabled === true,
@@ -645,14 +1181,60 @@ async function main() {
     })));
     return;
   }
+  if (command === "attest-drill-state") {
+    const [inputFile, phase, outputFile] = args;
+    if (!inputFile || !phase || !outputFile) fail("USAGE");
+    writeJson(outputFile, await retryRemoteAttestation(() => attestDrillState({
+      config: readJson(inputFile, "DRILL_INPUT_JSON"),
+      phase,
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: process.env.CLOUDFLARE_API_TOKEN,
+    })));
+    return;
+  }
+  if (command === "preflight-timekeeping-worker") {
+    const [inputFile, outputFile] = args;
+    if (!inputFile || !outputFile) fail("USAGE");
+    const report = await retryRemoteAttestation(() => preflightTimekeepingWorker({
+      config: readJson(inputFile, "DRILL_INPUT_JSON"),
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: process.env.CLOUDFLARE_API_TOKEN,
+    }));
+    writeJson(outputFile, report);
+    if (!report.passed) {
+      fail(`TIMEKEEPING_PHYSICAL_${String(report.observed?.state || "unavailable").toUpperCase()}`);
+    }
+    return;
+  }
+  if (command === "build-drill-proof") {
+    const [inputFile, beforeFile, rollbackFile, restorationFile, compositeFile, readinessFile, contextFile, outputFile] = args;
+    if (!inputFile || !beforeFile || !rollbackFile || !restorationFile || !readinessFile || !contextFile || !outputFile) fail("USAGE");
+    writeJson(outputFile, buildDrillProof({
+      config: readJson(inputFile, "DRILL_INPUT_JSON"),
+      before: readJson(beforeFile, "DRILL_BEFORE_JSON"),
+      rollback: readJson(rollbackFile, "DRILL_ROLLBACK_JSON"),
+      restoration: readJson(restorationFile, "DRILL_RESTORATION_JSON"),
+      composite: compositeFile === "-" ? null : readJson(compositeFile, "DRILL_COMPOSITE_JSON"),
+      readiness: readJson(readinessFile, "DRILL_READINESS_JSON"),
+      context: readJson(contextFile, "DRILL_CONTEXT_JSON"),
+    }));
+    return;
+  }
+  if (command === "probe-drill-identity") {
+    const [inputFile, outputFile] = args;
+    if (!inputFile || !outputFile) fail("USAGE");
+    writeJson(outputFile, await retryRemoteAttestation(() => probeDrillIdentity({
+      config: readJson(inputFile, "DRILL_INPUT_JSON"),
+    })));
+    return;
+  }
   if (command === "build-receipt") {
-    const [inputFile, remoteFile, healthFile, rollbackFile, outputFile] = args;
-    if (!inputFile || !remoteFile || !healthFile || !rollbackFile || !outputFile) fail("USAGE");
+    const [inputFile, coreDrillFile, identityDrillFile, outputFile] = args;
+    if (!inputFile || !coreDrillFile || !identityDrillFile || !outputFile) fail("USAGE");
     writeJson(outputFile, buildCandidateReceipt({
       input: readJson(inputFile, "INPUT_JSON"),
-      remote: readJson(remoteFile, "REMOTE_JSON"),
-      identityHealth: readJson(healthFile, "HEALTH_JSON"),
-      rollback: readJson(rollbackFile, "ROLLBACK_JSON"),
+      coreDrill: readJson(coreDrillFile, "CORE_DRILL_JSON"),
+      identityDrill: readJson(identityDrillFile, "IDENTITY_DRILL_JSON"),
       expected: expectedFromEnv(),
     }));
     return;
