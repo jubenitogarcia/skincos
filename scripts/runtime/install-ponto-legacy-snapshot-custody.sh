@@ -1,24 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installs only the bounded root helper and its fixed wrapper. This installer
-# intentionally creates no service, timer, cloud resource, privilege rule, or
-# source/destination argument surface. A root-owned policy is armed later via
-# the helper's strict bootstrap input.
+# Installs only bounded root helpers and fixed wrappers. This installer
+# intentionally creates no service, timer, cloud resource, generic privilege
+# rule, or source/destination argument surface. Separate root-owned policies
+# are armed later through the helper's strict bootstrap inputs.
 
 readonly ROOT_DIR="$(cd -- "$(dirname -- "$BASH_SOURCE")/../.." && pwd -P)"
 readonly HELPER_SOURCE="$ROOT_DIR/scripts/runtime/ponto-legacy-snapshot-custody.mjs"
 readonly WRAPPER_SOURCE="$ROOT_DIR/scripts/runtime/provision-ponto-legacy-snapshot-custody.sh"
+readonly ABSENCE_WRAPPER_SOURCE="$ROOT_DIR/scripts/runtime/provision-ponto-legacy-absence-attestation.sh"
 readonly HELPER_LIBRARY_DIR='/usr/local/lib/skincos'
 readonly HELPER='/usr/local/sbin/skincos-capture-ponto-legacy-snapshot'
+readonly ABSENCE_HELPER='/usr/local/sbin/skincos-attest-ponto-legacy-absence'
 readonly RUNTIME_DIR='/etc/skincos/ponto-legacy-snapshot-custody'
 readonly DESTINATION_DIR='/var/lib/skincos/ponto-legacy-snapshot-custody'
+readonly ABSENCE_RUNTIME_DIR='/etc/skincos/ponto-legacy-absence-attestation'
+readonly ABSENCE_LEDGER_DIR='/var/lib/skincos/ponto-legacy-absence-attestation'
 readonly SUDOERS_SOURCE="$ROOT_DIR/ops/runtime/github-actions-runner/skincos-native-custody.sudoers"
 readonly SUDOERS_FILE='/etc/sudoers.d/skincos-native-custody'
 readonly RUNNER_USER='skincos-actions'
 readonly FORBIDDEN_GROUP='skincos'
 readonly SUDOERS_ALIAS='Cmnd_Alias SKINCOS_PONTO_LEGACY_SNAPSHOT_CUSTODY = /usr/local/sbin/skincos-capture-ponto-legacy-snapshot capture'
 readonly SUDOERS_GRANT='skincos-actions ALL=(root) NOPASSWD: SKINCOS_PONTO_LEGACY_SNAPSHOT_CUSTODY'
+readonly ABSENCE_SUDOERS_ALIAS='Cmnd_Alias SKINCOS_PONTO_LEGACY_ABSENCE_ATTESTATION = /usr/local/sbin/skincos-attest-ponto-legacy-absence attest-absence'
+readonly ABSENCE_SUDOERS_GRANT='skincos-actions ALL=(root) NOPASSWD: SKINCOS_PONTO_LEGACY_ABSENCE_ATTESTATION'
 
 APPLY=0
 
@@ -26,10 +32,50 @@ usage() {
   cat <<'EOF'
 Usage: scripts/runtime/install-ponto-legacy-snapshot-custody.sh [--apply]
 
-Without --apply, validates the fixed helper and wrapper. With --apply, root
+Without --apply, validates the fixed helpers and wrappers. With --apply, root
 installs those fixed files and prepares only root-private custody directories.
-The installer never accepts a source path, destination path, or service option.
+The installer never accepts a source path, destination path, service, or mode.
+
+For --apply, this script must itself be run from a root-owned, non-group- and
+non-world-writable immutable release tree. It intentionally refuses a runner
+checkout, so an untrusted CI workspace can never become root helper source.
 EOF
+}
+
+assert_root_owned_immutable_path() {
+  local candidate="$1"
+  local label="$2"
+  local owner mode
+
+  [[ -e "$candidate" && ! -L "$candidate" ]] || {
+    echo "$label must exist and must not be a symbolic link" >&2
+    exit 78
+  }
+  read -r owner mode < <(stat -c '%u %a' -- "$candidate") || {
+    echo "$label ownership cannot be inspected" >&2
+    exit 78
+  }
+  [[ "$owner" == '0' && "$mode" =~ ^[0-7]{3,4}$ ]] || {
+    echo "$label must be root-owned" >&2
+    exit 78
+  }
+  if (( (8#$mode & 8#022) != 0 )); then
+    echo "$label must not be group- or world-writable" >&2
+    exit 78
+  fi
+}
+
+assert_root_owned_immutable_source_tree() {
+  local current="$ROOT_DIR"
+  while :; do
+    assert_root_owned_immutable_path "$current" 'custody installer source tree'
+    [[ "$current" == '/' ]] && break
+    current="$(dirname -- "$current")"
+  done
+  assert_root_owned_immutable_path "$HELPER_SOURCE" 'bounded legacy snapshot helper source'
+  assert_root_owned_immutable_path "$WRAPPER_SOURCE" 'bounded legacy snapshot wrapper source'
+  assert_root_owned_immutable_path "$ABSENCE_WRAPPER_SOURCE" 'bounded legacy absence wrapper source'
+  assert_root_owned_immutable_path "$SUDOERS_SOURCE" 'native custody sudoers source'
 }
 
 while [[ "$#" -gt 0 ]]; do
@@ -47,17 +93,19 @@ done
 
 [[ -f "$HELPER_SOURCE" ]] || { echo 'bounded legacy snapshot helper is missing' >&2; exit 78; }
 [[ -f "$WRAPPER_SOURCE" ]] || { echo 'bounded legacy snapshot wrapper is missing' >&2; exit 78; }
+[[ -f "$ABSENCE_WRAPPER_SOURCE" ]] || { echo 'bounded legacy absence wrapper is missing' >&2; exit 78; }
 [[ -f "$SUDOERS_SOURCE" ]] || { echo 'native custody sudoers source is missing' >&2; exit 78; }
 node --check "$HELPER_SOURCE"
 bash -n "$WRAPPER_SOURCE"
+bash -n "$ABSENCE_WRAPPER_SOURCE"
 
 if [[ "$APPLY" -ne 1 ]]; then
-  echo 'ponto_legacy_snapshot_custody_contract=valid service_changes=false cloud_changes=false'
+  echo 'ponto_legacy_snapshot_custody_contract=valid ponto_legacy_absence_attestation_contract=valid service_changes=false cloud_changes=false'
   exit 0
 fi
 
 [[ "$(id -u)" == '0' ]] || { echo '--apply requires root' >&2; exit 78; }
-for command in grep id install node timeout tr visudo; do
+for command in grep id install node stat timeout tr visudo; do
   command -v "$command" >/dev/null 2>&1 || { echo "$command is required" >&2; exit 78; }
 done
 id "$RUNNER_USER" >/dev/null 2>&1 || { echo 'capture runner account is unavailable' >&2; exit 78; }
@@ -73,14 +121,28 @@ grep -Fqx "$SUDOERS_GRANT" "$SUDOERS_SOURCE" || {
   echo 'native custody source lacks the exact legacy snapshot capture grant' >&2
   exit 78
 }
+grep -Fqx "$ABSENCE_SUDOERS_ALIAS" "$SUDOERS_SOURCE" || {
+  echo 'native custody source lacks the exact legacy absence attestation alias' >&2
+  exit 78
+}
+grep -Fqx "$ABSENCE_SUDOERS_GRANT" "$SUDOERS_SOURCE" || {
+  echo 'native custody source lacks the exact legacy absence attestation grant' >&2
+  exit 78
+}
+assert_root_owned_immutable_source_tree
 
 install -d -o root -g root -m 0755 "$HELPER_LIBRARY_DIR"
 install -d -o root -g root -m 0700 "$RUNTIME_DIR"
 install -d -o root -g root -m 0700 "$DESTINATION_DIR"
 install -d -o root -g root -m 0700 "$DESTINATION_DIR/authorizations"
 install -d -o root -g root -m 0700 "$DESTINATION_DIR/captures"
+install -d -o root -g root -m 0700 "$ABSENCE_RUNTIME_DIR"
+install -d -o root -g root -m 0700 "$ABSENCE_LEDGER_DIR"
+install -d -o root -g root -m 0700 "$ABSENCE_LEDGER_DIR/authorizations"
+install -d -o root -g root -m 0700 "$ABSENCE_LEDGER_DIR/attestations"
 install -o root -g root -m 0755 "$HELPER_SOURCE" "$HELPER_LIBRARY_DIR/ponto-legacy-snapshot-custody.mjs"
 install -o root -g root -m 0755 "$WRAPPER_SOURCE" "$HELPER"
+install -o root -g root -m 0755 "$ABSENCE_WRAPPER_SOURCE" "$ABSENCE_HELPER"
 install -o root -g root -m 0440 "$SUDOERS_SOURCE" "$SUDOERS_FILE"
 visudo -cf "$SUDOERS_FILE" >/dev/null
 grep -Fqx "$SUDOERS_ALIAS" "$SUDOERS_FILE" || {
@@ -91,5 +153,13 @@ grep -Fqx "$SUDOERS_GRANT" "$SUDOERS_FILE" || {
   echo 'installed native custody file lacks the exact legacy snapshot capture grant' >&2
   exit 78
 }
+grep -Fqx "$ABSENCE_SUDOERS_ALIAS" "$SUDOERS_FILE" || {
+  echo 'installed native custody file lacks the exact legacy absence attestation alias' >&2
+  exit 78
+}
+grep -Fqx "$ABSENCE_SUDOERS_GRANT" "$SUDOERS_FILE" || {
+  echo 'installed native custody file lacks the exact legacy absence attestation grant' >&2
+  exit 78
+}
 
-echo 'ponto_legacy_snapshot_custody=installed service_changes=false cloud_changes=false'
+echo 'ponto_legacy_snapshot_custody=installed ponto_legacy_absence_attestation=installed service_changes=false cloud_changes=false'
