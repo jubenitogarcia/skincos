@@ -30,6 +30,16 @@ ReadWritePaths=/var/lib/skincos-runtime/github-actions-runner
 ReadWritePaths=/etc/skincos/global-coordination
 ReadWritePaths=/var/lib/skincos/ponto-jit
 ReadWritePaths=/var/lib/skincos-runtime/global-coordination
+# A fixed, root-owned helper inherits this mount namespace through sudo. These
+# are the only additional destinations it needs for the dedicated CRM
+# transaction: immutable releases/pointers, its private custody journal and
+# the explicit crm.service unit. The runner account itself still has no write
+# permission to them and no general sudo command.
+ReadWritePaths=/opt/skincos/releases
+ReadWritePaths=/opt/skincos/current
+ReadWritePaths=/etc/skincos/crm-native-publisher
+ReadWritePaths=/var/lib/skincos-runtime/crm-native-publisher
+ReadWritePaths=/etc/systemd/system
 UMask=0077
 
 [Install]

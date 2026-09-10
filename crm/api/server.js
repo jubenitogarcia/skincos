@@ -2648,6 +2648,12 @@ const JOBS_DIR = path.join(VAR_DIR, 'jobs')
 try { await fs.mkdir(JOBS_DIR, { recursive: true }) } catch { /* ignore */ }
 
 const jobs = new Map()
+const NATIVE_UNSUPPORTED_JOBS = new Set(
+    String(process.env.CRM_NATIVE_UNSUPPORTED_JOBS || '')
+        .split(',')
+        .map((job) => normalizeJobName(job))
+        .filter(Boolean)
+)
 
 function normalizeJobName(name) {
     return String(name || '').trim().toLowerCase()
@@ -2683,6 +2689,13 @@ function buildJobCommand(job, params = {}) {
 }
 
 function startJob(job, params = {}) {
+    const normalizedJob = normalizeJobName(job)
+    if (NATIVE_UNSUPPORTED_JOBS.has(normalizedJob)) {
+        const error = new Error('Este job permanece indisponível nesta release CRM isolada.')
+        error.statusCode = 503
+        error.code = 'CRM_NATIVE_JOB_UNAVAILABLE'
+        throw error
+    }
     const jobId = randomUUID()
     const startedAt = new Date().toISOString()
     const { cmd, args } = buildJobCommand(job, params)
@@ -2690,7 +2703,7 @@ function startJob(job, params = {}) {
     const logPath = path.join(JOBS_DIR, `${jobId}.log`)
     const meta = {
         id: jobId,
-        job: normalizeJobName(job),
+        job: normalizedJob,
         params,
         status: 'running',
         startedAt,
@@ -2763,7 +2776,7 @@ app.post('/api/jobs/run', async (req, res) => {
         const meta = startJob(job, params)
         res.json({ ok: true, job: meta })
     } catch (e) {
-        res.status(400).json({ ok: false, error: e?.message || String(e) })
+        res.status(e?.statusCode || 400).json({ ok: false, error: e?.message || String(e), code: e?.code })
     }
 })
 
@@ -2963,6 +2976,18 @@ const MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS = String(process.env.CRM_UNIT_MONITOR_WEB
     .filter(Boolean)
 const MEDIAMTX_PID_FILE = process.env.CRM_UNIT_MONITOR_MEDIAMTX_PID_FILE ||
     path.join(CORE_STATE_DIR, 'unit_monitor_mediamtx.pid')
+// A dedicated CRM release may not silently fall back to arbitrary host media
+// executables.  The custody publisher sets this to `disabled` until a
+// root-owned policy records the separate media-runtime attestation.
+const CRM_NATIVE_MEDIA_TOOLS_MODE = String(process.env.CRM_NATIVE_MEDIA_TOOLS_MODE || 'enabled').trim().toLowerCase()
+const CRM_NATIVE_MEDIA_TOOLS_DISABLED = CRM_NATIVE_MEDIA_TOOLS_MODE === 'disabled'
+
+function nativeMediaToolsUnavailable() {
+    const error = new Error('Os recursos de mídia não estão habilitados nesta release CRM isolada.')
+    error.statusCode = 503
+    error.code = 'CRM_NATIVE_MEDIA_UNAVAILABLE'
+    return error
+}
 
 // Unit Monitor server-side recording (RTSP -> segmented MP4) via ffmpeg
 const UNIT_MONITOR_RECORDINGS_DIR = process.env.CRM_UNIT_MONITOR_RECORDINGS_DIR ||
@@ -3366,6 +3391,7 @@ async function stopMediamtx() {
 }
 
 async function startMediamtx() {
+    if (CRM_NATIVE_MEDIA_TOOLS_DISABLED) throw nativeMediaToolsUnavailable()
     await stopMediamtx()
     // Guard: ensure no leftover process is still holding ports.
     const leftovers = []
@@ -3411,6 +3437,7 @@ function unitMonitorRecorderKey(unit, cameraId) {
 }
 
 async function startUnitMonitorRecorder({ unit, cameraId, segmentSeconds }) {
+    if (CRM_NATIVE_MEDIA_TOOLS_DISABLED) throw nativeMediaToolsUnavailable()
     const u = normalizeUnitKey(unit)
     const id = String(cameraId || '').trim()
     if (!u || !id) {
@@ -3920,7 +3947,13 @@ app.get('/api/unit-monitor/gateway/info', async (req, res) => {
             ffprobeVersion: getVer(FFPROBE_BIN, ['-version']),
             mediamtxVersion: getVer(MEDIAMTX_BIN, ['-version']),
         },
+        nativeMediaToolsMode: CRM_NATIVE_MEDIA_TOOLS_MODE,
     })
+})
+
+app.use(['/api/unit-monitor/hls', '/api/unit-monitor/webrtc'], (req, res, next) => {
+    if (!CRM_NATIVE_MEDIA_TOOLS_DISABLED) return next()
+    return res.status(503).json({ ok: false, error: 'Recursos de mídia indisponíveis nesta release CRM isolada.', code: 'CRM_NATIVE_MEDIA_UNAVAILABLE' })
 })
 
 app.get('/api/unit-monitor/state', async (req, res) => {
@@ -4034,6 +4067,7 @@ app.get('/api/unit-monitor/streaming/status', async (req, res) => {
     })
     res.json({
         ok: true,
+        mediaToolsMode: CRM_NATIVE_MEDIA_TOOLS_MODE,
         running: !!mediamtxRuntime.running,
         pid: mediamtxRuntime.pid,
         startedAt: mediamtxRuntime.startedAt,
@@ -4085,6 +4119,7 @@ app.get('/api/unit-monitor/diagnostics', async (req, res) => {
 
 app.post('/api/unit-monitor/rtsp/test', async (req, res) => {
     try {
+        if (CRM_NATIVE_MEDIA_TOOLS_DISABLED) throw nativeMediaToolsUnavailable()
         const body = req.body && typeof req.body === 'object' ? req.body : {}
         const inputRtspUrl = String(body.rtspUrl || '').trim()
         const rtspUrl = inputRtspUrl || buildRtspUrlFromParts({
@@ -4150,7 +4185,7 @@ app.post('/api/unit-monitor/rtsp/test', async (req, res) => {
             format: parsed?.format || null
         })
     } catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || String(e) })
+        res.status(e?.statusCode || 500).json({ ok: false, error: e?.message || String(e), code: e?.code || null })
     }
 })
 
@@ -4163,7 +4198,7 @@ app.post('/api/unit-monitor/streaming/start', async (req, res) => {
         mediamtxRuntime.running = false
         mediamtxRuntime.pid = null
         mediamtxRuntime.lastError = e?.message || String(e)
-        res.status(500).json({ ok: false, error: mediamtxRuntime.lastError })
+        res.status(e?.statusCode || 500).json({ ok: false, error: mediamtxRuntime.lastError, code: e?.code || null })
     }
 })
 
@@ -4197,7 +4232,7 @@ app.post('/api/unit-monitor/rtsp/recorders/start', async (req, res) => {
         const result = await startUnitMonitorRecorder({ unit, cameraId, segmentSeconds })
         res.json({ ok: true, ...result })
     } catch (e) {
-        res.status(400).json({ ok: false, error: e?.message || String(e), code: e?.code || null })
+        res.status(e?.statusCode || 400).json({ ok: false, error: e?.message || String(e), code: e?.code || null })
     }
 })
 
