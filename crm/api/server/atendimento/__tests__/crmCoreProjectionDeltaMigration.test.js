@@ -7,6 +7,7 @@ import {
     applyCrmCoreProjectionDeltaMigration,
     crmCoreProjectionDeltaMigrationPlan,
     prepareAtendimentoProjectionDeltaBaseline,
+    loadAtendimentoProjectionDeltaBaselineCustody,
     reconcileAtendimentoProjectionDelta,
     __testables as migrationTestables,
 } from '../crmCoreProjectionDeltaMigration.js'
@@ -14,15 +15,28 @@ import {
     acceptAtendimentoProjectionDeltaBaseline,
     createAtendimentoProjectionDeltaBaselineBackfill,
     createAtendimentoProjectionDeltaBaselineSnapshot,
+    createAtendimentoProjectionDeltaBaselineSource,
+    createAtendimentoProjectionDeltaBaselinePrepared,
     markAtendimentoProjectionDeltaReady,
+    CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT,
     __testables as baselineTestables,
 } from '../../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
 const LOCAL_SOCKET_URL = 'postgresql:///skincos_crm_local?host=/var/run/postgresql'
 const PRODUCTION_SOURCE_URL = 'postgresql://skincos_clientes_migrator_login:test-only-password@127.0.0.1:5432/skincos_clientes_production?sslmode=require&uselibpqcompat=true'
 const BASELINE_TARGET = { environment: 'staging', release: 'a'.repeat(40), artifactDigest: `sha256:${'b'.repeat(64)}` }
-const BASELINE_SOURCE = { owner: 'atendimento', scope: 'global-client-identities/v1', backfillKeyId: 'atendimento-projection-key-v2', deltaKeyId: 'crm-staging-atendimento-delta-v1' }
 const BASELINE_HMAC_KEY = `synthetic-baseline-derivation-${'x'.repeat(40)}`
+const BASELINE_SOURCE_DESCRIPTOR = {
+    owner: 'atendimento',
+    scope: 'global-client-identities/v1',
+    backfillKeyId: 'atendimento-projection-key-v2',
+    deltaKeyId: 'crm-staging-atendimento-delta-v1',
+    unitAllowlist: ['jardins', 'pinheiros'],
+}
+const BASELINE_SOURCE = createAtendimentoProjectionDeltaBaselineSource({
+    ...BASELINE_SOURCE_DESCRIPTOR,
+    identityHmacKey: BASELINE_HMAC_KEY,
+})
 const BASELINE_ROWS = [
     { identity_id: '11111111-1111-4111-8111-111111111111', unit_slug: 'jardins', observed_at: '2026-09-08T12:00:00.000Z' },
     { identity_id: '22222222-2222-4222-8222-222222222222', unit_slug: 'pinheiros', observed_at: '2026-09-08T12:00:00.000Z' },
@@ -109,7 +123,7 @@ const BASELINE_PROOF = (() => {
     return { ...proof, digests: { ...proof.digests, readback: baselineTestables.digest(proof) } }
 })()
 const BASELINE_READBACK = {
-    contract: 'atendimento/crm-core/projection-delta-baseline-readback/v2',
+    contract: CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT,
     status: 'verified',
     manifestDigest: BASELINE_BACKFILL.manifestDigest,
     membershipDigest: BASELINE_SNAPSHOT.seed.membershipDigest,
@@ -122,21 +136,39 @@ const BASELINE_READBACK = {
 }
 const BASELINE_READY = markAtendimentoProjectionDeltaReady(
     acceptAtendimentoProjectionDeltaBaseline(
-        {
-            contract: 'atendimento/crm-core/projection-delta-baseline/v2',
-            state: 'baseline-prepared',
+        createAtendimentoProjectionDeltaBaselinePrepared({
             target: BASELINE_TARGET,
             source: BASELINE_SOURCE,
             snapshot: BASELINE_SNAPSHOT.snapshot,
             backfill: BASELINE_BACKFILL,
             seed: BASELINE_SNAPSHOT.seed,
-            receipts: null,
-            readback: null,
-        },
+        }),
         BASELINE_RECEIPTS,
     ),
     BASELINE_READBACK,
 )
+const BASELINE_PREPARED = createAtendimentoProjectionDeltaBaselinePrepared({
+    target: BASELINE_TARGET,
+    source: BASELINE_SOURCE,
+    snapshot: BASELINE_SNAPSHOT.snapshot,
+    backfill: BASELINE_BACKFILL,
+    seed: BASELINE_SNAPSHOT.seed,
+})
+
+function storedHandoff({ baseline = BASELINE_READY, batches = [BASELINE_REAL_BATCH], ...overrides } = {}) {
+    return {
+        state: baseline.state,
+        handoff_key: 'initial',
+        baseline_digest: baselineTestables.digest(baseline),
+        baseline_json: JSON.stringify(baseline),
+        baseline_packets_json: JSON.stringify(batches),
+        identity_key_fingerprint: baseline.source.identityKeyFingerprint,
+        unit_allowlist: JSON.stringify(baseline.source.unitAllowlist),
+        readback_membership_digest: baseline.readback?.membershipDigest ?? null,
+        readback_watermark: baseline.readback?.watermark ?? null,
+        ...overrides,
+    }
+}
 
 test('defines additive membership and append-only outbox ownership', () => {
     const plan = crmCoreProjectionDeltaMigrationPlan()
@@ -148,6 +180,8 @@ test('defines additive membership and append-only outbox ownership', () => {
     ])
     assert.match(plan.eventPolicy, /upsert\/revoke/)
     assert.match(plan.reconciliation, /pg_advisory_xact_lock/)
+    assert.match(plan.baselineHandoff, /identity-key fingerprint/)
+    assert.match(plan.baselineHandoff, /packet custody/)
     assert.match(plan.rollback, /non-destructive/)
 })
 
@@ -195,6 +229,8 @@ test('applies the migration in a guarded transaction and grants read-only export
     assert.ok(handoff > immutable)
     assert.ok(registry > immutable)
     assert.ok(commit > registry)
+    assert.ok(calls.some(({ sql }) => /identity_key_fingerprint text not null/i.test(sql) && /baseline_packets_json jsonb not null/i.test(sql)))
+    assert.ok(calls.some(({ sql }) => /alter table crm_atendimento\.crm_core_projection_delta_handoffs[\s\S]*add column if not exists baseline_packets_json/i.test(sql)))
     assert.ok(calls.some(({ sql }) => /grant select \(event_order, event_id, identity_id, unit_slug, revision, operation, occurred_at, created_at\).*crm_core_projection_outbox to skincos/i.test(sql)))
 })
 
@@ -225,7 +261,7 @@ test('captures the source snapshot and revision-1 seed atomically before permitt
         databaseUrl: LOCAL_SOCKET_URL,
         target: 'local',
         targetDescriptor: BASELINE_TARGET,
-        source: BASELINE_SOURCE,
+        source: BASELINE_SOURCE_DESCRIPTOR,
         backfillHmacKey: BASELINE_HMAC_KEY,
     })
     assert.equal(report.baseline.state, 'baseline-prepared')
@@ -234,11 +270,18 @@ test('captures the source snapshot and revision-1 seed atomically before permitt
     assert.equal(released, true)
     assert.equal(report.baseline.backfill.eventCount, BASELINE_ROWS.length)
     assert.equal(report.baseline.backfill.batches.length, 1)
+    assert.deepEqual(report.batches.map((batch) => batch.batchId), report.baseline.backfill.batches.map((batch) => batch.batchId))
+    assert.match(report.baseline.source.identityKeyFingerprint, /^sha256:[a-f0-9]{64}$/)
     assert.equal(JSON.stringify(report.baseline).includes(BASELINE_ROWS[0].identity_id), false)
+    assert.equal(JSON.stringify(report).includes(BASELINE_HMAC_KEY), false)
     assert.ok(calls.some(({ sql }) => /canonical_delta_source[\s\S]*order by observed_at asc, identity_id asc, unit_slug asc/i.test(sql)))
     assert.ok(calls.findIndex(({ sql }) => /canonical_delta_source/i.test(sql)) < calls.findIndex(({ sql }) => /insert into crm_atendimento\.crm_core_projection_memberships/i.test(sql)))
     assert.equal(calls.filter(({ sql }) => /insert into crm_atendimento\.crm_core_projection_memberships/i.test(sql)).length, 2)
     assert.equal(calls.some(({ sql }) => /insert into crm_atendimento\.crm_core_projection_outbox/i.test(sql)), false)
+    const handoffInsert = calls.find(({ sql }) => /insert into crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql))
+    assert.equal(handoffInsert.params[14], report.baseline.source.identityKeyFingerprint)
+    assert.deepEqual(JSON.parse(handoffInsert.params[15]), report.baseline.source.unitAllowlist)
+    assert.deepEqual(JSON.parse(handoffInsert.params[20]), report.batches)
     assert.ok(calls.some(({ sql }) => /^commit$/i.test(sql)))
 })
 
@@ -275,7 +318,7 @@ test('derives the backfill from an explicit production source while the CRM Core
         databaseUrl: PRODUCTION_SOURCE_URL,
         target: 'production',
         targetDescriptor: BASELINE_TARGET,
-        source: BASELINE_SOURCE,
+        source: BASELINE_SOURCE_DESCRIPTOR,
         backfillHmacKey: BASELINE_HMAC_KEY,
     })
     assert.equal(report.baseline.target.environment, 'staging')
@@ -289,10 +332,95 @@ test('derives the backfill from an explicit production source while the CRM Core
         databaseUrl: PRODUCTION_SOURCE_URL,
         target: 'production',
         targetDescriptor: { ...BASELINE_TARGET, environment: 'production' },
-        source: BASELINE_SOURCE,
+        source: BASELINE_SOURCE_DESCRIPTOR,
         backfillHmacKey: BASELINE_HMAC_KEY,
     }), /BASELINE_STAGING_ONLY/)
     assert.equal(connected, false)
+})
+
+test('persists and returns the exact prepared packets through the custody read without re-derivation', async () => {
+    const calls = []
+    const client = {
+        async query(sql, params = []) {
+            calls.push({ sql, params })
+            if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
+            if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [storedHandoff({ baseline: BASELINE_PREPARED })] }
+            return { rows: [], rowCount: 0 }
+        },
+        release() {},
+    }
+    const custody = await loadAtendimentoProjectionDeltaBaselineCustody({
+        pool: { connect: async () => client },
+        databaseUrl: LOCAL_SOCKET_URL,
+        target: 'local',
+    })
+    assert.equal(custody.custody.durable, true)
+    assert.equal(custody.custody.state, 'baseline-prepared')
+    assert.deepEqual(custody.baseline, BASELINE_PREPARED)
+    assert.deepEqual(custody.batches, [BASELINE_REAL_BATCH])
+    assert.equal(Object.isFrozen(custody.batches), true)
+    assert.equal(Object.isFrozen(custody.batches[0].events[0]), true)
+    assert.equal(JSON.stringify(custody).includes(BASELINE_HMAC_KEY), false)
+    assert.equal(calls.some(({ sql }) => /canonical_delta_source/i.test(sql)), false)
+    assert.ok(calls.some(({ sql }) => /from crm_atendimento\.crm_core_projection_delta_handoffs[\s\S]*for update/i.test(sql)))
+})
+
+test('fails closed when persisted custody loses its identity-key pin or exact packet digest', async () => {
+    const tamperedBatch = JSON.parse(JSON.stringify(BASELINE_REAL_BATCH))
+    tamperedBatch.events[0].id = 'event:baseline-migration-tampered'
+    for (const handoff of [
+        storedHandoff({ baseline: BASELINE_PREPARED, identity_key_fingerprint: `sha256:${'f'.repeat(64)}` }),
+        storedHandoff({ baseline: BASELINE_PREPARED, batches: [tamperedBatch] }),
+    ]) {
+        let sourceRead = false
+        const client = {
+            async query(sql) {
+                if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
+                if (/canonical_delta_source/i.test(sql)) sourceRead = true
+                if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [handoff] }
+                return { rows: [], rowCount: 0 }
+            },
+            release() {},
+        }
+        await assert.rejects(
+            () => loadAtendimentoProjectionDeltaBaselineCustody({ pool: { connect: async () => client }, databaseUrl: LOCAL_SOCKET_URL, target: 'local' }),
+            /BASELINE_STATE_CONFLICT/,
+        )
+        assert.equal(sourceRead, false)
+    }
+})
+
+test('allows a zero-row initial snapshot only when a future unit allowlist is explicitly pinned', async () => {
+    const calls = []
+    const client = {
+        async query(sql, params = []) {
+            calls.push({ sql, params })
+            if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
+            if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [] }
+            if (/from crm_atendimento\.crm_core_projection_memberships/i.test(sql)) return { rows: [] }
+            if (/max\(event_order\)/i.test(sql)) return { rows: [{ watermark: 0 }] }
+            if (/canonical_delta_source/i.test(sql)) return { rows: [] }
+            if (/transaction_timestamp\(\)/i.test(sql)) return { rows: [{ captured_at: BASELINE_SNAPSHOT.snapshot.capturedAt }] }
+            return { rows: [], rowCount: 0 }
+        },
+        release() {},
+    }
+    const report = await prepareAtendimentoProjectionDeltaBaseline({
+        pool: { connect: async () => client },
+        databaseUrl: LOCAL_SOCKET_URL,
+        target: 'local',
+        targetDescriptor: BASELINE_TARGET,
+        source: { ...BASELINE_SOURCE_DESCRIPTOR, unitAllowlist: ['jardins'] },
+        backfillHmacKey: BASELINE_HMAC_KEY,
+    })
+    assert.equal(report.seededMemberships, 0)
+    assert.equal(report.baseline.snapshot.rowCount, 0)
+    assert.deepEqual(report.baseline.snapshot.unitSlugs, [])
+    assert.deepEqual(report.baseline.source.unitAllowlist, ['jardins'])
+    assert.deepEqual(report.batches, [])
+    assert.equal(calls.some(({ sql }) => /insert into crm_atendimento\.crm_core_projection_memberships/i.test(sql)), false)
+    const handoffInsert = calls.find(({ sql }) => /insert into crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql))
+    assert.deepEqual(JSON.parse(handoffInsert.params[20]), [])
 })
 
 test('does not accept an injected backfill factory in place of a producer HMAC key', async () => {
@@ -301,7 +429,7 @@ test('does not accept an injected backfill factory in place of a producer HMAC k
         pool: { connect: async () => { connected = true } },
         databaseUrl: LOCAL_SOCKET_URL,
         targetDescriptor: BASELINE_TARGET,
-        source: BASELINE_SOURCE,
+        source: BASELINE_SOURCE_DESCRIPTOR,
         backfillFactory: () => ({ backfill: BASELINE_BACKFILL, batches: [BASELINE_REAL_BATCH] }),
     }), /BASELINE_INPUT_REQUIRED/)
     assert.equal(connected, false)
@@ -441,14 +569,7 @@ test('reconciles new, changed and removed memberships under one advisory transac
         async query(sql, params = []) {
             calls.push({ sql, params })
             if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
-            if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [{
-                state: 'delta-ready',
-                handoff_key: 'initial',
-                baseline_digest: baselineTestables.digest(BASELINE_READY),
-                baseline_json: JSON.stringify(BASELINE_READY),
-                readback_membership_digest: BASELINE_READY.readback.membershipDigest,
-                readback_watermark: BASELINE_READY.readback.watermark,
-            }] }
+            if (/from crm_atendimento\.crm_core_projection_delta_handoffs/i.test(sql)) return { rows: [storedHandoff()] }
             if (/canonical_delta_source/i.test(sql)) return { rows: [{ identity_id: '11111111-1111-4111-8111-111111111111', unit_slug: 'jardins', observed_at: '2026-09-08T12:01:00.000Z' }] }
             if (/from crm_atendimento\.crm_core_projection_memberships/i.test(sql)) return { rows: [{ identity_id: '22222222-2222-4222-8222-222222222222', unit_slug: 'pinheiros', active: true, revision: 2, observed_at: '2026-09-08T12:00:00.000Z' }] }
             if (/returning event_order/i.test(sql)) return { rows: [{ event_order: nextEventOrder++ }] }

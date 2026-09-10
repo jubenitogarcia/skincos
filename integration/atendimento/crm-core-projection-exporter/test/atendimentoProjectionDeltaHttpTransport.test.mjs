@@ -43,6 +43,7 @@ async function signedInput() {
 
 test('posts only the signed opaque batch and validates the receipt binding', async () => {
   const { batch, delivery } = await signedInput()
+  const requestId = 'crm-atendimento-delta-1000000'
   let request
   const transport = createAtendimentoProjectionDeltaHttpTransport({
     endpoint: 'https://crm-core-staging.skincos.com.br/crm/_internal/delta/atendimento',
@@ -58,7 +59,7 @@ test('posts only the signed opaque batch and validates the receipt binding', asy
             batchId: batch.batchId,
             eventCount: batch.events.length,
             target: TARGET,
-            requestId: 'crm-atendimento-delta-000001',
+            requestId,
             fromExclusive: 0,
             toInclusive: 1,
           }
@@ -66,7 +67,7 @@ test('posts only the signed opaque batch and validates the receipt binding', asy
       }
     },
   })
-  const receipt = await transport.deliver({ batch, delivery, requestId: 'crm-atendimento-delta-000001' })
+  const receipt = await transport.deliver({ batch, delivery, requestId })
   assert.equal(receipt.status, 'accepted')
   assert.equal(request.url, 'https://crm-core-staging.skincos.com.br/crm/_internal/delta/atendimento')
   assert.equal(request.options.method, 'POST')

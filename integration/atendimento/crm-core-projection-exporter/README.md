@@ -156,18 +156,22 @@ segredo, banco ou deploy. O transporte HTTPS separado usa a rota futura
 desativadas até que o owner do CRM Core publique o consumidor correspondente e
 prove o mesmo ciclo de artefato, smoke e rollback em staging.
 
-O checkpoint delta v3 também armazena somente o fingerprint SHA-256 não secreto
+O checkpoint delta v4 também armazena somente o fingerprint SHA-256 não secreto
 da chave HMAC efetivamente usada. Uma retomada com outro material de chave,
 mesmo que alguém reutilize o mesmo `keyId`, falha antes de replay ou leitura de
 fonte; a chave em si não é serializada, registrada ou devolvida.
 
 O runner só aceita um handoff
-`atendimento/crm-core/projection-delta-baseline/v2` em estado `delta-ready`.
+`atendimento/crm-core/projection-delta-baseline/v3` em estado `delta-ready`.
 Esse handoff é uma máquina de estados explícita, persistida pelo owner da
 fonte: `baseline-prepared` é capturado e semeado em uma única transação
 `REPEATABLE READ`, com revisão 1 e watermark inicial; `baseline-accepted`
 acrescenta um recibo Core v2 para cada lote; e `delta-ready` exige um readback
 verificado que vincule o manifesto, a seed, as contagens e o watermark.
+Além dos `keyId`, o documento fixa o fingerprint não secreto da chave de
+identidade e uma allowlist explícita de unidades. O primeiro delta e todo
+checkpoint restaurado são recusados antes de assinatura ou entrega quando a
+chave ou o escopo não coincidem.
 
 Na preparação transacional do owner, `prepareAtendimentoProjectionDeltaBaseline`
 recebe apenas a chave HMAC de backfill por injeção. Depois da consulta canônica,
@@ -176,7 +180,10 @@ os lotes v2 e o manifesto sanitizado das linhas opacas lidas, do snapshot e da
 chave. Não há factory nem manifesto pré-calculado que possa trocar referências
 opacas por linhas de outro snapshot. O preparador confere cada página e rejeita
 duplicação global de `event.id` ou do par `(unitSlug, projection.reference)`
-antes de semear ou confirmar a transação.
+antes de semear ou confirmar a transação. Os pacotes opacos exatos também são
+gravados junto ao handoff e podem ser recuperados somente pela leitura de
+custódia do owner; essa leitura os verifica contra o manifesto persistido e não
+os deriva novamente.
 
 `target` nessa operação identifica o banco de origem que contém as linhas
 canônicas e pode ser `production`; o `targetDescriptor` identifica o artefato
@@ -190,20 +197,18 @@ Os intervalos `fromOrdinal`/`toOrdinal` precisam cobrir exatamente a sequência
 união de `unitSlugs` precisam coincidir com o snapshot. O recibo HTTP real do
 Core é exatamente `crm-core/projection-backfill-receipt/v2` com
 `contractVersion`, `status`, `batchId`, `eventCount` e `target`; o `batchDigest`
-fica no lote assinado e no manifesto, não é inventado no recibo. O readback v2
+fica no lote assinado e no manifesto, não é inventado no recibo. O readback v3
 repete `manifestDigest`, `membershipDigest`, `watermark`,
 `verifiedBatchCount`, `verifiedEventCount` e `target`, e só então o reconciliador
 é liberado. Assim, o cursor inicial não é inferido de `0` e a primeira revisão
 de uma projeção já presente no backfill pode ser `2`, enquanto uma identidade
 nova continua podendo começar em `1`.
 
-Um baseline inicial vazio continua recusado por desenho. Embora um runner possa
-terminar uma paginação sem linhas, o CRM Core exige uma allowlist não vazia de
-unidades para custódia do primeiro delta. Aceitar `[]` sem uma scope externa
-atestada deixaria o primeiro evento futuro impossível de autorizar ou abriria
-uma exceção implícita. Para suportar esse cenário, o owner precisa fornecer a
-lista explícita de unidades autorizadas e o Core precisa persistir a mesma lista
-no checkpoint; isso não pode ser inferido de uma fonte vazia.
+Um baseline inicial vazio é permitido somente quando o owner fornece uma
+allowlist não vazia de unidades futuras. Assim, a fonte vazia não cria uma
+exceção implícita: o primeiro evento continua sujeito à mesma allowlist antes
+de checkpoint, assinatura ou entrega. A lista é persistida no baseline e no
+checkpoint; ela nunca é inferida de uma fonte vazia.
 
 O comando `prepare-atendimento-crm-core-projection-delta-baseline.mjs` apenas
 transforma envelopes JSON fornecidos pelo operador (`--prepare`, `--accept` ou

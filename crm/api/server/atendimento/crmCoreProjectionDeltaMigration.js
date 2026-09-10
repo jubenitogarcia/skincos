@@ -15,6 +15,7 @@ import {
     assertAtendimentoProjectionDeltaBaseline,
     createAtendimentoProjectionDeltaBaselineSnapshot,
     createAtendimentoProjectionDeltaBaselineBackfill,
+    createAtendimentoProjectionDeltaBaselineSource,
     createAtendimentoProjectionDeltaBaselinePrepared,
     acceptAtendimentoProjectionDeltaBaseline,
     markAtendimentoProjectionDeltaReady,
@@ -171,18 +172,21 @@ const STATEMENTS = Object.freeze([
         captured_at timestamptz not null,
         cursor_digest text not null check (cursor_digest ~ '^sha256:[a-f0-9]{64}$'),
         membership_digest text not null check (membership_digest ~ '^sha256:[a-f0-9]{64}$'),
-        row_count bigint not null check (row_count >= 1),
+        row_count bigint not null check (row_count >= 0),
         unit_slugs jsonb not null,
         watermark bigint not null check (watermark >= 0),
         manifest_digest text not null check (manifest_digest ~ '^sha256:[a-f0-9]{64}$'),
-        batch_count bigint not null check (batch_count >= 1),
-        event_count bigint not null check (event_count >= 1),
+        batch_count bigint not null check (batch_count >= 0),
+        event_count bigint not null check (event_count >= 0),
         backfill_key_id text not null,
         delta_key_id text not null,
+        identity_key_fingerprint text not null check (identity_key_fingerprint ~ '^sha256:[a-f0-9]{64}$'),
+        unit_allowlist jsonb not null,
         target_environment text not null check (target_environment in ('staging', 'production')),
         target_release text not null check (target_release ~ '^[0-9a-f]{40}$'),
         target_artifact_digest text not null check (target_artifact_digest ~ '^sha256:[a-f0-9]{64}$'),
         baseline_json jsonb not null,
+        baseline_packets_json jsonb not null,
         receipt_status text,
         receipt_count bigint,
         accepted_at timestamptz,
@@ -191,6 +195,15 @@ const STATEMENTS = Object.freeze([
         ready_at timestamptz,
         updated_at timestamptz not null default now()
     )`,
+    // The source-only migration has no live handoff. These additive columns
+    // still let a previously created staging schema fail closed rather than
+    // silently re-deriving or accepting an unpinned baseline.
+    `alter table ${CRM_CORE_PROJECTION_BASELINE_HANDOFF_RELATION}
+        add column if not exists identity_key_fingerprint text`,
+    `alter table ${CRM_CORE_PROJECTION_BASELINE_HANDOFF_RELATION}
+        add column if not exists unit_allowlist jsonb`,
+    `alter table ${CRM_CORE_PROJECTION_BASELINE_HANDOFF_RELATION}
+        add column if not exists baseline_packets_json jsonb`,
 ])
 
 function migrationError(code) {
@@ -390,7 +403,7 @@ export function crmCoreProjectionDeltaMigrationPlan() {
         eventPolicy: 'append-only upsert/revoke events with monotonic revision and strictly increasing (possibly sparse after rollback) event_order',
         runtimeAccess: 'dedicated exporter receives SELECT on opaque membership and outbox columns only; no customer attributes, DML or DDL',
         reconciliation: 'repeatable-read transaction guarded by pg_advisory_xact_lock; changed/new memberships upsert, removed memberships revoke',
-        baselineHandoff: 'a repeatable-read source transaction derives the paginated manifest from its exact rows, rejects cross-page opaque duplicates, seeds revision 1 and records a durable sanitized baseline document before any reconciler can run; delta delivery remains disabled until every exact backfill receipt and ledger proof advance it to delta-ready',
+        baselineHandoff: 'a repeatable-read source transaction derives the paginated manifest and exact opaque packets from its rows, rejects cross-page duplicates, pins a non-secret identity-key fingerprint and explicit unit allowlist, seeds revision 1, and records the sanitized baseline plus packet custody before any reconciler can run; delta delivery remains disabled until every exact backfill receipt and ledger proof advance it to delta-ready',
         rollback: 'non-destructive; evidence and tombstones remain retained, only schema registry rollback state is recorded',
     }
 }
@@ -502,8 +515,8 @@ async function readPersistedMemberships(client) {
 async function readBaselineHandoff(client, { forUpdate = false } = {}) {
     const result = await client.query(`select handoff_key, state, baseline_digest, captured_at, cursor_digest,
         membership_digest, row_count, unit_slugs, watermark, manifest_digest, batch_count, event_count,
-        backfill_key_id, delta_key_id, target_environment, target_release,
-        target_artifact_digest, baseline_json, receipt_status, receipt_count, accepted_at,
+        backfill_key_id, delta_key_id, identity_key_fingerprint, unit_allowlist,
+        target_environment, target_release, target_artifact_digest, baseline_json, baseline_packets_json, receipt_status, receipt_count, accepted_at,
         readback_membership_digest, readback_watermark, ready_at
         from ${CRM_CORE_PROJECTION_BASELINE_HANDOFF_RELATION}
         where handoff_key = $1${forUpdate ? ' for update' : ''}`, [CRM_CORE_PROJECTION_BASELINE_HANDOFF_KEY])
@@ -527,20 +540,65 @@ async function readTransactionCapturedAt(client, fallback) {
     return capturedAt
 }
 
-function assertStoredHandoffMatches(row, baseline, expectedState) {
+function storedBaselineFromRow(row) {
     let storedBaseline = row?.baseline_json
     try {
         if (typeof storedBaseline === 'string') storedBaseline = JSON.parse(storedBaseline)
-        storedBaseline = assertAtendimentoProjectionDeltaBaseline(storedBaseline)
+        return assertAtendimentoProjectionDeltaBaseline(storedBaseline)
     } catch {
         throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
     }
+}
+
+function storedBaselinePackets(row, baseline) {
+    let packets = row?.baseline_packets_json
+    try {
+        if (typeof packets === 'string') packets = JSON.parse(packets)
+        assertDerivedBackfillBatches({
+            batches: packets,
+            manifest: baseline.backfill,
+            source: baseline.source,
+            snapshot: baseline.snapshot,
+            target: baseline.target,
+        })
+        return deepFreeze(packets)
+    } catch {
+        throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
+    }
+}
+
+function deepFreeze(value) {
+    if (!value || typeof value !== 'object') return value
+    if (Array.isArray(value)) {
+        for (const entry of value) deepFreeze(entry)
+    } else {
+        for (const entry of Object.values(value)) deepFreeze(entry)
+    }
+    return Object.freeze(value)
+}
+
+function storedUnitAllowlist(row) {
+    let allowlist = row?.unit_allowlist
+    try {
+        if (typeof allowlist === 'string') allowlist = JSON.parse(allowlist)
+        if (!Array.isArray(allowlist)) throw new Error('invalid allowlist')
+        return allowlist
+    } catch {
+        throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
+    }
+}
+
+function assertStoredHandoffMatches(row, baseline, expectedState) {
+    const storedBaseline = storedBaselineFromRow(row)
     if (!row || row.handoff_key !== CRM_CORE_PROJECTION_BASELINE_HANDOFF_KEY || row.state !== expectedState
         || String(row.baseline_digest || '').toLowerCase() !== digestAtendimentoProjectionDeltaBaseline(baseline)
         || digestAtendimentoProjectionDeltaBaseline(storedBaseline) !== digestAtendimentoProjectionDeltaBaseline(baseline)
-        || storedBaseline.state !== expectedState) {
+        || storedBaseline.state !== expectedState
+        || String(row.identity_key_fingerprint || '').toLowerCase() !== baseline.source.identityKeyFingerprint
+        || JSON.stringify(storedUnitAllowlist(row)) !== JSON.stringify(baseline.source.unitAllowlist)) {
         throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
     }
+    return Object.freeze({ baseline: storedBaseline, batches: storedBaselinePackets(row, storedBaseline) })
 }
 
 async function assertReconcileBaselineReady(client) {
@@ -552,9 +610,8 @@ async function assertReconcileBaselineReady(client) {
         throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STATE_CONFLICT')
     }
     try {
-        const storedBaseline = assertAtendimentoProjectionDeltaBaseline(typeof handoff.baseline_json === 'string'
-            ? JSON.parse(handoff.baseline_json)
-            : handoff.baseline_json)
+        const stored = assertStoredHandoffMatches(handoff, storedBaselineFromRow(handoff), CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY)
+        const storedBaseline = stored.baseline
         if (storedBaseline.state !== CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY
             || digestAtendimentoProjectionDeltaBaseline(storedBaseline) !== String(handoff.baseline_digest || '').toLowerCase()
             || storedBaseline.readback?.membershipDigest !== String(handoff.readback_membership_digest || '').toLowerCase()
@@ -567,7 +624,7 @@ async function assertReconcileBaselineReady(client) {
     return handoff
 }
 
-function baselineRowValues(baseline) {
+function baselineRowValues(baseline, batches) {
     return [
         CRM_CORE_PROJECTION_BASELINE_HANDOFF_KEY,
         baseline.state,
@@ -583,10 +640,13 @@ function baselineRowValues(baseline) {
         baseline.backfill.eventCount,
         baseline.source.backfillKeyId,
         baseline.source.deltaKeyId,
+        baseline.source.identityKeyFingerprint,
+        JSON.stringify(baseline.source.unitAllowlist),
         baseline.target.environment,
         baseline.target.release,
         baseline.target.artifactDigest,
         JSON.stringify(baseline),
+        JSON.stringify(batches),
     ]
 }
 
@@ -618,6 +678,12 @@ export async function prepareAtendimentoProjectionDeltaBaseline({
     // captured. That can be production. The receiving CRM Core artifact stays
     // staging-only until the independent cutover proof exists.
     if (targetDescriptor.environment !== 'staging') throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_STAGING_ONLY')
+    let preparedSource
+    try {
+        preparedSource = createAtendimentoProjectionDeltaBaselineSource({ ...sourceDescriptor, identityHmacKey: backfillHmacKey })
+    } catch {
+        throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_INPUT_REQUIRED')
+    }
     const normalizedSourceSql = readOnlySourceSql(sourceSql)
     if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('CRM_CORE_PROJECTION_DELTA_DESTINATION_UNSAFE')
     const client = await pool.connect()
@@ -639,21 +705,23 @@ export async function prepareAtendimentoProjectionDeltaBaseline({
         const capturedAt = await readTransactionCapturedAt(client, now)
         const { snapshot, seed } = createAtendimentoProjectionDeltaBaselineSnapshot({ rows: current, capturedAt, watermark })
         let derivedBackfill
+        let derivedBatches
         try {
             const derived = deriveAtendimentoProjectionDeltaBaselineBackfill({
                 rows: current,
                 snapshot,
-                source: sourceDescriptor,
+                source: preparedSource,
                 target: targetDescriptor,
                 backfillHmacKey,
             })
             derivedBackfill = derived.backfill
+            derivedBatches = derived.batches
         } catch {
             throw migrationError('CRM_CORE_PROJECTION_DELTA_BASELINE_BACKFILL_DERIVATION_FAILED')
         }
         const prepared = createAtendimentoProjectionDeltaBaselinePrepared({
             target: targetDescriptor,
-            source: sourceDescriptor,
+            source: preparedSource,
             snapshot,
             backfill: derivedBackfill,
             seed,
@@ -666,11 +734,47 @@ export async function prepareAtendimentoProjectionDeltaBaseline({
         await client.query(`insert into ${CRM_CORE_PROJECTION_BASELINE_HANDOFF_RELATION}
             (handoff_key, state, baseline_digest, captured_at, cursor_digest, membership_digest,
              row_count, unit_slugs, watermark, manifest_digest, batch_count, event_count, backfill_key_id,
-             delta_key_id, target_environment, target_release, target_artifact_digest, baseline_json)
-            values ($1, $2, $3, $4::timestamptz, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)`, baselineRowValues(prepared))
+             delta_key_id, identity_key_fingerprint, unit_allowlist, target_environment, target_release, target_artifact_digest, baseline_json, baseline_packets_json)
+            values ($1, $2, $3, $4::timestamptz, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18, $19, $20::jsonb, $21::jsonb)`, baselineRowValues(prepared, derivedBatches))
         await client.query('commit')
         transactionOpen = false
-        return Object.freeze({ baseline: prepared, seededMemberships: seed.rowCount, watermark, capturedAt, atomic: true, pii: false })
+        return Object.freeze({ baseline: prepared, batches: derivedBatches, seededMemberships: seed.rowCount, watermark, capturedAt, atomic: true, pii: false })
+    } catch (error) {
+        if (transactionOpen) { try { await client.query('rollback') } catch { /* preserve original */ } }
+        throw error
+    } finally { client.release() }
+}
+
+/**
+ * Returns the exact opaque packets committed with a prepared handoff. This is
+ * a custody read, not a derivation or delivery operation: callers must sign
+ * these packets and later advance the same stored baseline with their receipts.
+ */
+export async function loadAtendimentoProjectionDeltaBaselineCustody({
+    pool,
+    databaseUrl,
+    target = ATENDIMENTO_MIGRATION_TARGETS.STAGING,
+} = {}) {
+    if (!pool) throw migrationError('CRM_CORE_PROJECTION_DELTA_POOL_REQUIRED')
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('CRM_CORE_PROJECTION_DELTA_DESTINATION_UNSAFE')
+    const client = await pool.connect()
+    let transactionOpen = false
+    try {
+        await client.query('begin')
+        transactionOpen = true
+        await client.query(`set local lock_timeout = '3s'`)
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, ['crm-core-projection-delta:reconcile:v1'])
+        await assertDestination(client, databaseUrl, target)
+        const row = await readBaselineHandoff(client, { forUpdate: true })
+        const custody = assertStoredHandoffMatches(row, storedBaselineFromRow(row), CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.PREPARED)
+        await client.query('commit')
+        transactionOpen = false
+        return Object.freeze({
+            baseline: custody.baseline,
+            batches: custody.batches,
+            custody: Object.freeze({ handoffKey: CRM_CORE_PROJECTION_BASELINE_HANDOFF_KEY, state: custody.baseline.state, durable: true }),
+            pii: false,
+        })
     } catch (error) {
         if (transactionOpen) { try { await client.query('rollback') } catch { /* preserve original */ } }
         throw error

@@ -13,7 +13,7 @@ import {
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_HTTP_TRANSPORT_VERSION = 'atendimento/crm-core/projection-delta-http-transport/v1'
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_HTTP_MAX_BODY_BYTES = 64 * 1024
 const RECEIPT_VERSION = 'crm-core/projection-delta-receipt/v1'
-const REQUEST_ID_PATTERN = /^crm-atendimento-delta-\d{6}$/
+const REQUEST_ID_PATTERN = /^crm-atendimento-delta-\d{6,16}$/
 const TRANSPORT_TIMEOUT = Symbol('ATENDIMENTO_CRM_PROJECTION_DELTA_TRANSPORT_TIMEOUT')
 
 function fail(code) { throw new Error(code) }

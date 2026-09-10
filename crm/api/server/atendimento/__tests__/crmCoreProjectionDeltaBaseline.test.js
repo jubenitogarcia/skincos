@@ -7,6 +7,7 @@ import {
     acceptAtendimentoProjectionDeltaBaseline,
     assertAtendimentoProjectionDeltaBaseline,
     createAtendimentoProjectionDeltaBaselineBackfill,
+    createAtendimentoProjectionDeltaBaselineSource,
     createAtendimentoProjectionDeltaBaselinePrepared,
     createAtendimentoProjectionDeltaBaselineSeed,
     createAtendimentoProjectionDeltaBaselineSnapshot,
@@ -15,6 +16,7 @@ import {
 } from '../crmCoreProjectionDeltaBaseline.js'
 
 const TARGET = Object.freeze({ environment: 'staging', release: 'a'.repeat(40), artifactDigest: `sha256:${'b'.repeat(64)}` })
+const IDENTITY_HMAC_KEY = `baseline-test-${'x'.repeat(40)}`
 const ROWS = [
     { identity_id: '11111111-1111-4111-8111-111111111111', unit_slug: 'jardins', observed_at: '2026-09-08T12:00:00.000Z' },
     { identity_id: '22222222-2222-4222-8222-222222222222', unit_slug: 'pinheiros', observed_at: '2026-09-08T12:00:00.000Z' },
@@ -34,11 +36,13 @@ const BACKFILL = createAtendimentoProjectionDeltaBaselineBackfill({
     }],
     rowCount: SEED.rowCount,
 })
-const SOURCE = Object.freeze({
+const SOURCE = createAtendimentoProjectionDeltaBaselineSource({
     owner: 'atendimento',
     scope: 'global-client-identities/v1',
     backfillKeyId: 'atendimento-projection-key-v2',
     deltaKeyId: 'crm-staging-atendimento-delta-v1',
+    identityHmacKey: IDENTITY_HMAC_KEY,
+    unitAllowlist: ['jardins', 'pinheiros'],
 })
 const SNAPSHOT = Object.freeze({
     capturedAt: SEED.capturedAt,
@@ -188,4 +192,40 @@ test('requires contiguous paginated coverage and every Core receipt', () => {
         batches: [first, { ...first, fromOrdinal: 21, toOrdinal: 21, rowCount: 1, eventCount: 1 }],
         rowCount: 21,
     }), /BACKFILL_INVALID/)
+})
+
+test('permits an empty initial baseline only with an explicit future unit allowlist', () => {
+    const empty = createAtendimentoProjectionDeltaBaselineSnapshot({ rows: [], capturedAt: SEED.capturedAt, watermark: 0 })
+    const backfill = createAtendimentoProjectionDeltaBaselineBackfill({ batches: [], rowCount: 0, eventCount: 0, unitSlugs: [] })
+    const source = createAtendimentoProjectionDeltaBaselineSource({
+        owner: 'atendimento',
+        scope: 'global-client-identities/v1',
+        backfillKeyId: 'atendimento-projection-key-v2',
+        deltaKeyId: 'crm-staging-atendimento-delta-v1',
+        identityHmacKey: IDENTITY_HMAC_KEY,
+        unitAllowlist: ['jardins'],
+    })
+    const preparedEmpty = createAtendimentoProjectionDeltaBaselinePrepared({
+        target: TARGET,
+        source,
+        snapshot: empty.snapshot,
+        backfill,
+        seed: empty.seed,
+    })
+    const acceptedEmpty = acceptAtendimentoProjectionDeltaBaseline(preparedEmpty, [])
+    const readyEmpty = markAtendimentoProjectionDeltaReady(acceptedEmpty, {
+        contract: CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT,
+        status: 'verified',
+        manifestDigest: backfill.manifestDigest,
+        membershipDigest: empty.seed.membershipDigest,
+        watermark: 0,
+        verifiedBatchCount: 0,
+        verifiedEventCount: 0,
+        ledgerProofDigest: baselineTestables.digest([]),
+        proofs: [],
+        target: TARGET,
+    })
+    assert.equal(readyEmpty.state, CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY)
+    assert.deepEqual(readyEmpty.source.unitAllowlist, ['jardins'])
+    assert.deepEqual(readyEmpty.snapshot.unitSlugs, [])
 })

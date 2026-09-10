@@ -73,20 +73,23 @@ CREATE TABLE IF NOT EXISTS crm_atendimento.crm_core_projection_delta_handoffs (
   captured_at timestamptz NOT NULL,
   cursor_digest text NOT NULL CHECK (cursor_digest ~ '^sha256:[a-f0-9]{64}$'),
   membership_digest text NOT NULL CHECK (membership_digest ~ '^sha256:[a-f0-9]{64}$'),
-  row_count bigint NOT NULL CHECK (row_count >= 1),
+  row_count bigint NOT NULL CHECK (row_count >= 0),
   unit_slugs jsonb NOT NULL,
   watermark bigint NOT NULL CHECK (watermark >= 0),
   manifest_digest text NOT NULL CHECK (manifest_digest ~ '^sha256:[a-f0-9]{64}$'),
-  batch_count bigint NOT NULL CHECK (batch_count >= 1),
-  event_count bigint NOT NULL CHECK (event_count >= 1),
+  batch_count bigint NOT NULL CHECK (batch_count >= 0),
+  event_count bigint NOT NULL CHECK (event_count >= 0),
   backfill_key_id text NOT NULL,
   delta_key_id text NOT NULL,
+  identity_key_fingerprint text NOT NULL CHECK (identity_key_fingerprint ~ '^sha256:[a-f0-9]{64}$'),
+  unit_allowlist jsonb NOT NULL,
   target_environment text NOT NULL CHECK (target_environment IN ('staging', 'production')),
   target_release text NOT NULL CHECK (target_release ~ '^[0-9a-f]{40}$'),
   target_artifact_digest text NOT NULL CHECK (target_artifact_digest ~ '^sha256:[a-f0-9]{64}$'),
   -- Complete sanitized baseline/receipt/readback document for durable resume.
   -- The contract contains only opaque identifiers, digests and release pins.
   baseline_json jsonb NOT NULL,
+  baseline_packets_json jsonb NOT NULL,
   receipt_status text,
   receipt_count bigint,
   accepted_at timestamptz,
@@ -95,3 +98,13 @@ CREATE TABLE IF NOT EXISTS crm_atendimento.crm_core_projection_delta_handoffs (
   ready_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- A source-only staging schema created by an earlier candidate must fail
+-- closed until it has a fully pinned handoff; the runtime validates these
+-- fields before custody, state transition, or reconciliation.
+ALTER TABLE crm_atendimento.crm_core_projection_delta_handoffs
+  ADD COLUMN IF NOT EXISTS identity_key_fingerprint text;
+ALTER TABLE crm_atendimento.crm_core_projection_delta_handoffs
+  ADD COLUMN IF NOT EXISTS unit_allowlist jsonb;
+ALTER TABLE crm_atendimento.crm_core_projection_delta_handoffs
+  ADD COLUMN IF NOT EXISTS baseline_packets_json jsonb;

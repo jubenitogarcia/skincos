@@ -17,11 +17,12 @@ import {
   CRM_CORE_PROJECTION_DELTA_BASELINE_STATES,
   digestAtendimentoProjectionDeltaBaseline,
 } from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
+import { fingerprintAtendimentoProjectionIdentityKey } from '../../../../shared/crm-auth/atendimentoProjectionIdentityKey.js'
 
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUNNER_VERSION = 'atendimento/crm-core/projection-delta-runner/v1'
 export const ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT = 'atendimento/crm-core/staging-projection-delta/v1'
 
-const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-delta-checkpoint/v3'
+const CHECKPOINT_VERSION = 'atendimento/crm-core/projection-delta-checkpoint/v4'
 const REQUEST_ID_PREFIX = 'crm-atendimento-delta-'
 
 function fail(code) { throw new Error(code) }
@@ -63,33 +64,37 @@ function baselinePin(value) {
     scope: baseline.source.scope,
     backfillKeyId: baseline.source.backfillKeyId,
     deltaKeyId: baseline.source.deltaKeyId,
-    unitSlugs: Object.freeze([...baseline.snapshot.unitSlugs]),
+    identityKeyFingerprint: baseline.source.identityKeyFingerprint,
+    unitAllowlist: Object.freeze([...baseline.source.unitAllowlist]),
   })
 }
 function assertBaselinePin(value, code) {
   const pin = object(value, code)
-  exactKeys(pin, ['digest', 'owner', 'scope', 'backfillKeyId', 'deltaKeyId', 'unitSlugs'], code)
+  exactKeys(pin, ['digest', 'owner', 'scope', 'backfillKeyId', 'deltaKeyId', 'identityKeyFingerprint', 'unitAllowlist'], code)
   if (!/^sha256:[a-f0-9]{64}$/.test(String(pin.digest || '').toLowerCase())
     || pin.owner !== 'atendimento' || pin.scope !== 'global-client-identities/v1'
     || !/^[A-Za-z0-9._-]{3,96}$/.test(String(pin.backfillKeyId || ''))
-    || !/^[A-Za-z0-9._-]{3,96}$/.test(String(pin.deltaKeyId || ''))) fail(code)
-  const unitSlugs = pin.unitSlugs
-  if (!Array.isArray(unitSlugs) || unitSlugs.length < 1 || unitSlugs.some((slug) => !/^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(String(slug)))) fail(code)
-  const sorted = [...unitSlugs].sort()
-  if (JSON.stringify(sorted) !== JSON.stringify(unitSlugs) || new Set(unitSlugs).size !== unitSlugs.length) fail(code)
-  return Object.freeze({ digest: String(pin.digest).toLowerCase(), owner: pin.owner, scope: pin.scope, backfillKeyId: pin.backfillKeyId, deltaKeyId: pin.deltaKeyId, unitSlugs: Object.freeze([...unitSlugs]) })
+    || !/^[A-Za-z0-9._-]{3,96}$/.test(String(pin.deltaKeyId || ''))
+    || !/^sha256:[a-f0-9]{64}$/.test(String(pin.identityKeyFingerprint || '').toLowerCase())) fail(code)
+  const unitAllowlist = pin.unitAllowlist
+  if (!Array.isArray(unitAllowlist) || unitAllowlist.length < 1 || unitAllowlist.some((slug) => !/^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(String(slug)))) fail(code)
+  const sorted = [...unitAllowlist].sort()
+  if (JSON.stringify(sorted) !== JSON.stringify(unitAllowlist) || new Set(unitAllowlist).size !== unitAllowlist.length) fail(code)
+  return Object.freeze({ digest: String(pin.digest).toLowerCase(), owner: pin.owner, scope: pin.scope, backfillKeyId: pin.backfillKeyId, deltaKeyId: pin.deltaKeyId, identityKeyFingerprint: String(pin.identityKeyFingerprint).toLowerCase(), unitAllowlist: Object.freeze([...unitAllowlist]) })
 }
 function sameBaselinePin(left, right) {
   return left.digest === right.digest && left.owner === right.owner && left.scope === right.scope
     && left.backfillKeyId === right.backfillKeyId && left.deltaKeyId === right.deltaKeyId
-    && JSON.stringify(left.unitSlugs) === JSON.stringify(right.unitSlugs)
+    && left.identityKeyFingerprint === right.identityKeyFingerprint
+    && JSON.stringify(left.unitAllowlist) === JSON.stringify(right.unitAllowlist)
 }
-function readyBaseline(value, target, deltaKeyId) {
+function readyBaseline(value, target, deltaKeyId, identityKeyFingerprint) {
   if (value === undefined || value === null) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_REQUIRED')
   const baseline = assertAtendimentoProjectionDeltaBaseline(value)
   if (baseline.state !== CRM_CORE_PROJECTION_DELTA_BASELINE_STATES.READY) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_NOT_READY')
   if (!sameTarget(baseline.target, target)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_TARGET_MISMATCH')
   if (baseline.source.deltaKeyId !== String(deltaKeyId || '').trim()) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_KEY_MISMATCH')
+  if (baseline.source.identityKeyFingerprint !== identityKeyFingerprint) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_HMAC_KEY_MISMATCH')
   return baseline
 }
 function canonicalize(value) {
@@ -101,10 +106,10 @@ function digest(value) {
   return `sha256:${createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')}`
 }
 function hmacKeyFingerprint(value) {
-  const key = String(value ?? '').trim()
-  if (!key) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_HMAC_KEY_REQUIRED')
-  if (Buffer.byteLength(key, 'utf8') < 32) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_HMAC_KEY_UNSAFE')
-  return `sha256:${createHash('sha256').update(key, 'utf8').digest('hex')}`
+  return fingerprintAtendimentoProjectionIdentityKey(value, {
+    requiredCode: 'ATENDIMENTO_CRM_PROJECTION_DELTA_HMAC_KEY_REQUIRED',
+    unsafeCode: 'ATENDIMENTO_CRM_PROJECTION_DELTA_HMAC_KEY_UNSAFE',
+  })
 }
 function storedHmacKeyFingerprint(value, code) {
   const fingerprint = String(value ?? '').trim().toLowerCase()
@@ -129,8 +134,13 @@ function transport(value) {
 }
 function requestId(value, code) {
   const normalized = String(value ?? '').trim()
-  if (!/^crm-atendimento-delta-\d{6}$/.test(normalized)) fail(code)
+  if (!/^crm-atendimento-delta-\d{6,16}$/.test(normalized)) fail(code)
   return normalized
+}
+function nextRequestId(batchCount) {
+  const next = nonNegativeInteger(batchCount, 'ATENDIMENTO_CRM_PROJECTION_DELTA_REQUEST_ID_INVALID') + 1
+  if (!Number.isSafeInteger(next)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_REQUEST_ID_INVALID')
+  return requestId(`${REQUEST_ID_PREFIX}${String(next).padStart(6, '0')}`, 'ATENDIMENTO_CRM_PROJECTION_DELTA_REQUEST_ID_INVALID')
 }
 function revisionWatermarks(value, code) {
   if (!Array.isArray(value)) fail(code)
@@ -158,7 +168,7 @@ function storedPending(value, { target, baseline, code }) {
   const delivery = assertAtendimentoProjectionDeltaDelivery(pending.delivery)
   if (!sameTarget(batch.target, target) || delivery.batchDigest !== digestAtendimentoProjectionDeltaBatch(batch) || !sameTarget(target, batch.target)
     || batch.producer.owner !== baseline.owner || batch.producer.scope !== baseline.scope || batch.producer.keyId !== baseline.deltaKeyId
-    || batch.events.some((event) => !baseline.unitSlugs.includes(event.unitScope.unitSlug))) fail(code)
+    || batch.events.some((event) => !baseline.unitAllowlist.includes(event.unitScope.unitSlug))) fail(code)
   return Object.freeze({ batch, delivery, requestId: requestId(pending.requestId, code) })
 }
 function storedCheckpoint(value) {
@@ -241,7 +251,7 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
     target: targetValue,
     async run({ intent, baseline } = {}) {
       if (intent !== ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_INTENT_REQUIRED')
-      const baselineValue = readyBaseline(baseline, targetValue, keyId)
+      const baselineValue = readyBaseline(baseline, targetValue, keyId, hmacKeyValueFingerprint)
       const baselineValuePin = baselinePin(baselineValue)
       const existing = await readCheckpoint(privateCheckpointStore)
       let restored = null
@@ -282,6 +292,9 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
             const rows = await readAtendimentoProjectionDeltaPage(client, { source: sourceDefinition, fromExclusive: state.fromExclusive, toInclusive: state.watermark, limit })
             if (rows.length < 1 || rows.length > limit) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE_GAP')
             const batch = assertAtendimentoProjectionDeltaBatch(createAtendimentoProjectionDeltaBatch({ rows, fromExclusive: state.fromExclusive, toInclusive: rows.at(-1).eventOrder, hmacKey: hmacKeyValue, keyId, target: targetValue }))
+            if (batch.events.some((event) => !baselineValuePin.unitAllowlist.includes(event.unitScope.unitSlug))) {
+              fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_UNIT_SCOPE_MISMATCH')
+            }
             for (const event of batch.events) {
               const revisionKey = `${event.unitScope.unitSlug}:${event.projection.reference}`
               const previousRevision = revisions.get(revisionKey)
@@ -293,7 +306,7 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
             }
             const signed = assertAtendimentoProjectionDeltaDelivery(await deliverySigner.signBatch(batch))
             if (signed.batchDigest !== digestAtendimentoProjectionDeltaBatch(batch)) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_DELIVERY_MISMATCH')
-            const pending = Object.freeze({ batch, delivery: signed, requestId: `${REQUEST_ID_PREFIX}${String(state.batchCount + 1).padStart(6, '0')}` })
+            const pending = Object.freeze({ batch, delivery: signed, requestId: nextRequestId(state.batchCount) })
             state = Object.freeze({ ...state, revisionWatermarks: Object.freeze([...revisions].map(([key, revision]) => { const split = key.indexOf(':'); return { unitSlug: key.slice(0, split), projectionReference: key.slice(split + 1), revision } })), pending })
             await writeCheckpoint(privateCheckpointStore, makeCheckpoint(state))
             const receipt = await deliveryTransport.deliver({ batch, delivery: signed, requestId: pending.requestId })
@@ -318,4 +331,4 @@ export function createPaginatedAtendimentoProjectionDeltaRunner({ pool, source =
   })
 }
 
-export const __testables = Object.freeze({ sameTarget, digest, hmacKeyFingerprint, revisionWatermarks, storedCheckpoint, makeCheckpoint })
+export const __testables = Object.freeze({ sameTarget, digest, hmacKeyFingerprint, requestId, nextRequestId, revisionWatermarks, storedCheckpoint, makeCheckpoint })

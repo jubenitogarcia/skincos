@@ -5,6 +5,7 @@ import { createAtendimentoProjectionDeltaDeliverySigner } from '../src/atendimen
 import {
   ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT,
   createPaginatedAtendimentoProjectionDeltaRunner,
+  __testables as runnerTestables,
 } from '../src/paginatedAtendimentoProjectionDeltaRunner.mjs'
 import { ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE } from '../src/atendimentoProjectionDeltaExporter.mjs'
 import {
@@ -12,7 +13,10 @@ import {
   createAtendimentoProjectionDeltaBaselineBackfill,
   createAtendimentoProjectionDeltaBaselinePrepared,
   createAtendimentoProjectionDeltaBaselineSeed,
+  createAtendimentoProjectionDeltaBaselineSnapshot,
+  createAtendimentoProjectionDeltaBaselineSource,
   markAtendimentoProjectionDeltaReady,
+  CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT,
   __testables as baselineTestables,
 } from '../../../../shared/crm-auth/atendimentoProjectionDeltaBaseline.js'
 
@@ -26,6 +30,14 @@ const BASELINE_ROWS = [
   { identity_id: B, unit_slug: 'pinheiros', observed_at: '2026-09-08T12:00:00.000Z' },
 ]
 const BASELINE_SEED = createAtendimentoProjectionDeltaBaselineSeed({ rows: BASELINE_ROWS, capturedAt: '2026-09-08T12:05:00.000Z' })
+const BASELINE_SOURCE = createAtendimentoProjectionDeltaBaselineSource({
+  owner: 'atendimento',
+  scope: 'global-client-identities/v1',
+  backfillKeyId: 'atendimento-projection-key-v2',
+  deltaKeyId: 'crm-staging-atendimento-delta-v1',
+  identityHmacKey: HMAC_KEY,
+  unitAllowlist: ['jardins', 'pinheiros'],
+})
 const BASELINE_BACKFILL = createAtendimentoProjectionDeltaBaselineBackfill({
   batches: [{
     batchId: 'backfill:atendimento:delta-runner-test',
@@ -61,14 +73,14 @@ const BASELINE = markAtendimentoProjectionDeltaReady(
   acceptAtendimentoProjectionDeltaBaseline(
     createAtendimentoProjectionDeltaBaselinePrepared({
       target: TARGET,
-      source: { owner: 'atendimento', scope: 'global-client-identities/v1', backfillKeyId: 'atendimento-projection-key-v2', deltaKeyId: 'crm-staging-atendimento-delta-v1' },
+      source: BASELINE_SOURCE,
       snapshot: { capturedAt: BASELINE_SEED.capturedAt, cursorDigest: BASELINE_BACKFILL.batches[0].cursorDigest, rowCount: BASELINE_SEED.rowCount, unitSlugs: BASELINE_SEED.unitSlugs, watermark: 0 },
       backfill: BASELINE_BACKFILL,
       seed: BASELINE_SEED,
     }),
   [BASELINE_RECEIPT],
   ),
-  { contract: 'atendimento/crm-core/projection-delta-baseline-readback/v2', status: 'verified', manifestDigest: BASELINE_BACKFILL.manifestDigest, membershipDigest: BASELINE_SEED.membershipDigest, watermark: 0, verifiedBatchCount: BASELINE_BACKFILL.batches.length, verifiedEventCount: BASELINE_BACKFILL.eventCount, ledgerProofDigest: baselineTestables.digest([{ batchDigest: BASELINE_PROOF.digests.batch, readbackDigest: BASELINE_PROOF.digests.readback }]), proofs: [BASELINE_PROOF], target: TARGET },
+  { contract: CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT, status: 'verified', manifestDigest: BASELINE_BACKFILL.manifestDigest, membershipDigest: BASELINE_SEED.membershipDigest, watermark: 0, verifiedBatchCount: BASELINE_BACKFILL.batches.length, verifiedEventCount: BASELINE_BACKFILL.eventCount, ledgerProofDigest: baselineTestables.digest([{ batchDigest: BASELINE_PROOF.digests.batch, readbackDigest: BASELINE_PROOF.digests.readback }]), proofs: [BASELINE_PROOF], target: TARGET },
 )
 
 function row(eventOrder, identityId, revision, operation) {
@@ -81,6 +93,34 @@ function validRows() {
     { event_order: 2, event_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', identity_id: A, unit_slug: 'jardins', revision: 3, operation: 'revoke', occurred_at: '2026-09-08T12:01:00.000000Z' },
     { event_order: 3, event_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', identity_id: B, unit_slug: 'pinheiros', revision: 2, operation: 'upsert', occurred_at: '2026-09-08T12:02:00.000000Z' },
   ]
+}
+
+function emptyReadyBaseline(unitAllowlist) {
+  const snapshot = createAtendimentoProjectionDeltaBaselineSnapshot({ rows: [], capturedAt: '2026-09-08T12:05:00.000Z', watermark: 0 })
+  const backfill = createAtendimentoProjectionDeltaBaselineBackfill({ batches: [], rowCount: 0, eventCount: 0, unitSlugs: [] })
+  const source = createAtendimentoProjectionDeltaBaselineSource({
+    owner: 'atendimento',
+    scope: 'global-client-identities/v1',
+    backfillKeyId: 'atendimento-projection-key-v2',
+    deltaKeyId: 'crm-staging-atendimento-delta-v1',
+    identityHmacKey: HMAC_KEY,
+    unitAllowlist,
+  })
+  return markAtendimentoProjectionDeltaReady(
+    acceptAtendimentoProjectionDeltaBaseline(createAtendimentoProjectionDeltaBaselinePrepared({ target: TARGET, source, snapshot: snapshot.snapshot, backfill, seed: snapshot.seed }), []),
+    {
+      contract: CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT,
+      status: 'verified',
+      manifestDigest: backfill.manifestDigest,
+      membershipDigest: snapshot.seed.membershipDigest,
+      watermark: 0,
+      verifiedBatchCount: 0,
+      verifiedEventCount: 0,
+      ledgerProofDigest: baselineTestables.digest([]),
+      proofs: [],
+      target: TARGET,
+    },
+  )
 }
 
 function makeClient(rows = validRows()) {
@@ -197,7 +237,7 @@ test('does not widen a recovered running snapshot when newer source rows appear'
   assert.equal(checkpoint.completed.sourceSnapshot.watermark, 3)
 })
 
-test('rejects a checkpoint before replay when its HMAC identity material changed under the same key id', async () => {
+test('rejects a changed identity HMAC before replay when its key id is unchanged', async () => {
   const checkpoint = { value: null }
   let connected = false
   let deliveries = 0
@@ -224,10 +264,58 @@ test('rejects a checkpoint before replay when its HMAC identity material changed
   deliveries = 0
   await assert.rejects(
     () => createPaginatedAtendimentoProjectionDeltaRunner(options(ROTATED_HMAC_KEY)).run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE }),
-    /ATENDIMENTO_CRM_PROJECTION_DELTA_CHECKPOINT_HMAC_KEY_MISMATCH/,
+    /ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_HMAC_KEY_MISMATCH/,
   )
   assert.equal(connected, false)
   assert.equal(deliveries, 0)
+})
+
+test('refuses the first delta before opening the source pool when its identity HMAC differs from the baseline pin', async () => {
+  let connected = false
+  const runner = createPaginatedAtendimentoProjectionDeltaRunner({
+    pool: { connect: async () => { connected = true; return makeClient() } },
+    source: ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE,
+    hmacKey: ROTATED_HMAC_KEY,
+    keyId: 'crm-staging-atendimento-delta-v1',
+    target: TARGET,
+    signer: { async signBatch() { throw new Error('must not sign') } },
+    transport: { async deliver() { throw new Error('must not deliver') } },
+    checkpointStore: { async read() { return null }, async write() {}, async complete() {} },
+  })
+  await assert.rejects(
+    () => runner.run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: BASELINE }),
+    /ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_HMAC_KEY_MISMATCH/,
+  )
+  assert.equal(connected, false)
+})
+
+test('rejects an out-of-allowlist delta before signing, pending checkpoint, or delivery', async () => {
+  const writes = []
+  let signed = false
+  let delivered = false
+  const runner = createPaginatedAtendimentoProjectionDeltaRunner({
+    pool: { connect: async () => makeClient([validRows()[2]]) },
+    source: ATENDIMENTO_CRM_PROJECTION_DELTA_SOURCE,
+    hmacKey: HMAC_KEY,
+    keyId: 'crm-staging-atendimento-delta-v1',
+    target: TARGET,
+    signer: { async signBatch() { signed = true; throw new Error('must not sign') } },
+    transport: { async deliver() { delivered = true; throw new Error('must not deliver') } },
+    checkpointStore: { async read() { return null }, async write(value) { writes.push(value) }, async complete() {} },
+  })
+  await assert.rejects(
+    () => runner.run({ intent: ATENDIMENTO_CRM_PROJECTION_DELTA_RUN_INTENT, baseline: emptyReadyBaseline(['jardins']) }),
+    /ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_UNIT_SCOPE_MISMATCH/,
+  )
+  assert.equal(signed, false)
+  assert.equal(delivered, false)
+  assert.equal(writes.some((value) => value.pending !== null), false)
+})
+
+test('uses a checkpoint and transport-compatible request ID after one million batches', () => {
+  assert.equal(runnerTestables.nextRequestId(999_999), 'crm-atendimento-delta-1000000')
+  assert.equal(runnerTestables.requestId('crm-atendimento-delta-1000000', 'REQUEST_ID_INVALID'), 'crm-atendimento-delta-1000000')
+  assert.throws(() => runnerTestables.nextRequestId(Number.MAX_SAFE_INTEGER), /REQUEST_ID_INVALID/)
 })
 
 test('rejects revision regression before signing or delivery', async () => {

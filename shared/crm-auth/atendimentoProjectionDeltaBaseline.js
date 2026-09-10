@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
+import { fingerprintAtendimentoProjectionIdentityKey } from './atendimentoProjectionIdentityKey.js'
 
 // Neutral handoff contract shared by the Atendimento producer and CRM Core
 // consumer. This module has no dependency on either runtime; only opaque
 // identity UUIDs, unit slugs, digests and release descriptors cross the edge.
 
-export const CRM_CORE_PROJECTION_DELTA_BASELINE_CONTRACT = 'atendimento/crm-core/projection-delta-baseline/v2'
-export const CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT = 'atendimento/crm-core/projection-delta-baseline-readback/v2'
+export const CRM_CORE_PROJECTION_DELTA_BASELINE_CONTRACT = 'atendimento/crm-core/projection-delta-baseline/v3'
+export const CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT = 'atendimento/crm-core/projection-delta-baseline-readback/v3'
 export const CRM_CORE_PROJECTION_DELTA_BASELINE_STATES = Object.freeze({
     PREPARED: 'baseline-prepared',
     ACCEPTED: 'baseline-accepted',
@@ -62,9 +63,9 @@ function positiveInteger(value, code, maximum = CRM_CORE_PROJECTION_DELTA_BASELI
     return normalized
 }
 
-function nonNegativeInteger(value, code) {
+function nonNegativeInteger(value, code, maximum = Number.MAX_SAFE_INTEGER) {
     const normalized = Number(value)
-    if (!Number.isSafeInteger(normalized) || normalized < 0) fail(code)
+    if (!Number.isSafeInteger(normalized) || normalized < 0 || normalized > maximum) fail(code)
     return normalized
 }
 
@@ -80,8 +81,8 @@ function unitSlug(value, code) {
     return normalized
 }
 
-function unitSlugs(value, code) {
-    if (!Array.isArray(value) || value.length < 1 || value.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS) fail(code)
+function unitSlugs(value, code, { allowEmpty = false } = {}) {
+    if (!Array.isArray(value) || (!allowEmpty && value.length < 1) || value.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS) fail(code)
     const normalized = value.map((entry) => unitSlug(entry, code)).sort()
     if (new Set(normalized).size !== normalized.length) fail(code)
     return Object.freeze(normalized)
@@ -101,7 +102,7 @@ function membershipRow(value) {
 }
 
 function normalizedMembershipRows(rows) {
-    if (!Array.isArray(rows) || rows.length < 1 || rows.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_SEED_INVALID')
+    if (!Array.isArray(rows) || rows.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_SEED_INVALID')
     const normalizedRows = rows.map(membershipRow).sort((left, right) => (
         `${left.identityId}\u0000${left.unitSlug}`.localeCompare(`${right.identityId}\u0000${right.unitSlug}`)
     ))
@@ -127,7 +128,7 @@ function keyId(value, code) {
 
 function source(value, code) {
     const descriptor = object(value, code)
-    exactKeys(descriptor, ['owner', 'scope', 'backfillKeyId', 'deltaKeyId'], code)
+    exactKeys(descriptor, ['owner', 'scope', 'backfillKeyId', 'deltaKeyId', 'identityKeyFingerprint', 'unitAllowlist'], code)
     const owner = text(descriptor.owner, code)
     const scope = text(descriptor.scope, code)
     if (owner !== 'atendimento' || scope !== 'global-client-identities/v1') fail(code)
@@ -136,7 +137,31 @@ function source(value, code) {
         scope,
         backfillKeyId: keyId(descriptor.backfillKeyId, code),
         deltaKeyId: keyId(descriptor.deltaKeyId, code),
+        identityKeyFingerprint: sha256(descriptor.identityKeyFingerprint, code),
+        unitAllowlist: unitSlugs(descriptor.unitAllowlist, code),
     })
+}
+
+/**
+ * Builds the stored source pin from an operator-supplied identity HMAC. Only
+ * its non-secret fingerprint is retained in the baseline document.
+ */
+export function createAtendimentoProjectionDeltaBaselineSource({
+    owner,
+    scope,
+    backfillKeyId,
+    deltaKeyId,
+    identityHmacKey,
+    unitAllowlist,
+} = {}) {
+    return source({
+        owner,
+        scope,
+        backfillKeyId,
+        deltaKeyId,
+        identityKeyFingerprint: fingerprintAtendimentoProjectionIdentityKey(identityHmacKey),
+        unitAllowlist,
+    }, 'ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_SOURCE_INVALID')
 }
 
 function snapshot(value, code) {
@@ -145,8 +170,8 @@ function snapshot(value, code) {
     return Object.freeze({
         capturedAt: timestamp(descriptor.capturedAt, code),
         cursorDigest: sha256(descriptor.cursorDigest, code),
-        rowCount: positiveInteger(descriptor.rowCount, code),
-        unitSlugs: unitSlugs(descriptor.unitSlugs, code),
+        rowCount: nonNegativeInteger(descriptor.rowCount, code, CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS),
+        unitSlugs: unitSlugs(descriptor.unitSlugs, code, { allowEmpty: true }),
         watermark: nonNegativeInteger(descriptor.watermark, code),
     })
 }
@@ -187,10 +212,10 @@ function subset(subsetValues, supersetValues) {
 function backfill(value, code) {
     const descriptor = object(value, code)
     exactKeys(descriptor, ['manifestDigest', 'batches', 'rowCount', 'eventCount', 'unitSlugs'], code)
-    const rowCount = positiveInteger(descriptor.rowCount, code)
-    const eventCount = positiveInteger(descriptor.eventCount, code)
+    const rowCount = nonNegativeInteger(descriptor.rowCount, code, CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS)
+    const eventCount = nonNegativeInteger(descriptor.eventCount, code, CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS)
     if (eventCount !== rowCount || !Array.isArray(descriptor.batches)
-        || descriptor.batches.length < 1 || descriptor.batches.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES) fail(code)
+        || descriptor.batches.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES) fail(code)
     const batches = descriptor.batches.map((entry) => backfillBatch(entry, code))
     if (new Set(batches.map((batch) => batch.batchId)).size !== batches.length) fail(code)
     let expectedOrdinal = 1
@@ -199,7 +224,7 @@ function backfill(value, code) {
         expectedOrdinal = batch.toOrdinal + 1
     }
     if (expectedOrdinal - 1 !== rowCount || batches.reduce((sum, batch) => sum + batch.eventCount, 0) !== eventCount) fail(code)
-    const aggregateUnits = unitSlugs(descriptor.unitSlugs, code)
+    const aggregateUnits = unitSlugs(descriptor.unitSlugs, code, { allowEmpty: true })
     const batchUnits = [...new Set(batches.flatMap((batch) => batch.unitSlugs))].sort()
     if (!setEquals(batchUnits, aggregateUnits) || batches.some((batch) => !subset(batch.unitSlugs, aggregateUnits))) fail(code)
     const manifestDigest = sha256(descriptor.manifestDigest, code)
@@ -208,7 +233,7 @@ function backfill(value, code) {
 }
 
 export function createAtendimentoProjectionDeltaBaselineBackfill({ batches, rowCount, eventCount = rowCount, unitSlugs: suppliedUnitSlugs } = {}) {
-    if (!Array.isArray(batches) || batches.length < 1) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_BACKFILL_INVALID')
+    if (!Array.isArray(batches) || batches.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES) fail('ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_BACKFILL_INVALID')
     const normalizedBatches = batches.map((entry) => backfillBatch(entry, 'ATENDIMENTO_CRM_PROJECTION_DELTA_BASELINE_BACKFILL_INVALID'))
     const unitValues = suppliedUnitSlugs || [...new Set(normalizedBatches.flatMap((batch) => batch.unitSlugs))].sort()
     return backfill({
@@ -228,8 +253,8 @@ function seed(value, code) {
     return Object.freeze({
         membershipDigest: sha256(descriptor.membershipDigest, code),
         capturedAt: timestamp(descriptor.capturedAt, code),
-        rowCount: positiveInteger(descriptor.rowCount, code),
-        unitSlugs: unitSlugs(descriptor.unitSlugs, code),
+        rowCount: nonNegativeInteger(descriptor.rowCount, code, CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS),
+        unitSlugs: unitSlugs(descriptor.unitSlugs, code, { allowEmpty: true }),
         revision,
     })
 }
@@ -252,7 +277,7 @@ function receiptEntry(value, code) {
 
 function receipts(value, code) {
     if (value === null) return null
-    if (!Array.isArray(value) || value.length < 1 || value.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES) fail(code)
+    if (!Array.isArray(value) || value.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES) fail(code)
     const entries = value.map((entry) => receiptEntry(entry, code))
     if (new Set(entries.map((entry) => entry.batchId)).size !== entries.length) fail(code)
     return Object.freeze(entries)
@@ -306,8 +331,8 @@ function proof(value, code) {
     })
 }
 
-function proofEntries(value, code) {
-    if (!Array.isArray(value) || value.length < 1 || value.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES) fail(code)
+function proofEntries(value, code, { allowEmpty = false } = {}) {
+    if (!Array.isArray(value) || (!allowEmpty && value.length < 1) || value.length > CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES) fail(code)
     return Object.freeze(value.map((entry) => proof(entry, code)))
 }
 
@@ -317,7 +342,7 @@ function readback(value, code) {
     exactKeys(descriptor, ['contract', 'status', 'manifestDigest', 'membershipDigest', 'watermark', 'verifiedBatchCount', 'verifiedEventCount', 'ledgerProofDigest', 'proofs', 'target'], code)
     if (descriptor.contract !== CRM_CORE_PROJECTION_DELTA_BASELINE_READBACK_CONTRACT
         || text(descriptor.status, code) !== 'verified') fail(code)
-    const verifiedProofs = proofEntries(descriptor.proofs, code)
+    const verifiedProofs = proofEntries(descriptor.proofs, code, { allowEmpty: true })
     const ledgerProofDigest = sha256(descriptor.ledgerProofDigest, code)
     const expectedLedgerProofDigest = digest(verifiedProofs.map((entry) => ({ batchDigest: entry.digests.batch, readbackDigest: entry.digests.readback })))
     if (ledgerProofDigest !== expectedLedgerProofDigest) fail(code)
@@ -327,8 +352,8 @@ function readback(value, code) {
         manifestDigest: sha256(descriptor.manifestDigest, code),
         membershipDigest: sha256(descriptor.membershipDigest, code),
         watermark: nonNegativeInteger(descriptor.watermark, code),
-        verifiedBatchCount: positiveInteger(descriptor.verifiedBatchCount, code, CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES),
-        verifiedEventCount: positiveInteger(descriptor.verifiedEventCount, code),
+        verifiedBatchCount: nonNegativeInteger(descriptor.verifiedBatchCount, code, CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_BATCHES),
+        verifiedEventCount: nonNegativeInteger(descriptor.verifiedEventCount, code, CRM_CORE_PROJECTION_DELTA_BASELINE_MAX_ROWS),
         ledgerProofDigest,
         proofs: verifiedProofs,
         target: target(descriptor.target, code),
@@ -356,6 +381,7 @@ function assertRelationships({ targetValue, sourceValue, snapshotValue, backfill
         || seedValue.capturedAt !== snapshotValue.capturedAt
         || seedValue.rowCount !== snapshotValue.rowCount
         || !same(seedValue.unitSlugs, snapshotValue.unitSlugs)
+        || !subset(snapshotValue.unitSlugs, sourceValue.unitAllowlist)
         || backfillValue.batches.some((batch) => batch.capturedAt !== snapshotValue.capturedAt || !subset(batch.unitSlugs, snapshotValue.unitSlugs))) fail(code)
     if (receiptValue) {
         if (receiptValue.length !== backfillValue.batches.length) fail(code)
@@ -390,7 +416,7 @@ function assertRelationships({ targetValue, sourceValue, snapshotValue, backfill
                 || pageProof.counts.units !== batch.unitSlugs.length) fail(code)
         }
     }
-    if (!sourceValue.backfillKeyId || !sourceValue.deltaKeyId) fail(code)
+    if (!sourceValue.backfillKeyId || !sourceValue.deltaKeyId || !sourceValue.identityKeyFingerprint || sourceValue.unitAllowlist.length < 1) fail(code)
 }
 
 export function assertAtendimentoProjectionDeltaBaseline(value) {
