@@ -75,9 +75,10 @@ function identityReadback() {
       routeInventory: 'available',
       customDomains: 'available',
       workerSettings: {
-        workersDev: false,
+        workersDev: null,
         requiredRuntimeBindings: {},
       },
+      subdomainReadback: { enabled: false, previewsEnabled: false },
       routeReadback: { count: 0 },
       customDomainReadback: { count: 0 },
       secretInventory: {
@@ -257,6 +258,20 @@ IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED = "true"
   });
   assert.equal(report.result, 'blocked');
   assert.ok(report.blockers.includes('Identity production manifest has an unsafe effective value for IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED'));
+});
+
+test('manifest safety rejects an embedded route-receipt credential', () => {
+  const report = evaluateCrmPrivateProductionCandidatePreflight({
+    env: environment(),
+    identityReadiness: identityReadback(),
+    identityManifest: `${identityManifest}
+IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT = "forbidden"
+`,
+    apiManifest,
+    workflowSource,
+  });
+  assert.equal(report.result, 'blocked');
+  assert.ok(report.blockers.some((blocker) => blocker.includes('credential material')));
 });
 
 test('the checked-in workflow is manual, dedicated-environment-gated and has no mutation command', async () => {

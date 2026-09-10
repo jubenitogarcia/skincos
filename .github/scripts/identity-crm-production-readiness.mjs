@@ -605,6 +605,10 @@ export function evaluateIdentityCrmProductionReadiness({
       routeInventory: routes?.state || 'not-read',
       customDomains: domains?.state || 'not-read',
       workerSettings: sanitizedSettings,
+      subdomainReadback: {
+        enabled: typeof subdomain?.enabled === 'boolean' ? subdomain.enabled : null,
+        previewsEnabled: typeof subdomain?.previews_enabled === 'boolean' ? subdomain.previews_enabled : null,
+      },
       deploymentBaseline: deploymentReadback,
       secretInventory: secretReadback,
       routeReadback: routeReadback,

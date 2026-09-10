@@ -226,6 +226,7 @@ test('complete external readback is eligible only when all attestations are pres
   });
   assert.equal(report.result, 'eligible-for-approved-cutover');
   assert.deepEqual(report.blockers, []);
+  assert.deepEqual(report.cloudflare.subdomainReadback, { enabled: false, previewsEnabled: false });
   assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
   assert.deepEqual(report.cloudflare.routeReadback, { zonesInspected: 1, count: 0, patterns: [] });
   assert.deepEqual(report.cloudflare.customDomainReadback, { count: 0 });

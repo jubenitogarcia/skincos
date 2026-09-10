@@ -122,7 +122,7 @@ function manifestContract({ identityManifest = '', apiManifest = '', workflowSou
   if (/^\s*\[\[.*(?:d1_databases|kv_namespaces|r2_buckets|services).*\]\]/m.test(identity)) {
     blockers.push('Identity production candidate manifest declares a data or service binding');
   }
-  if (/IDENTITY_CRM_DELIVERY_PRODUCTION_(?:SIGNING_KEY|CALLER_HMAC|PUBLIC_JWK)\s*=\s*['"][^'"\s]+/m.test(identity)) {
+  if (/(?:IDENTITY_CRM_DELIVERY_PRODUCTION_(?:SIGNING_KEY|CALLER_HMAC|PUBLIC_JWK)|IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT)\s*=\s*['"][^'"\s]+/m.test(identity)) {
     blockers.push('Identity production manifest contains credential material');
   }
 
@@ -184,6 +184,9 @@ function summarizeIdentityReadback(report) {
     : {};
   const secretTypes = inventory.types && typeof inventory.types === 'object' ? inventory.types : {};
   const keyMetadata = inventory.keyMetadata && typeof inventory.keyMetadata === 'object' ? inventory.keyMetadata : {};
+  const subdomain = cloudflare.subdomainReadback && typeof cloudflare.subdomainReadback === 'object'
+    ? cloudflare.subdomainReadback
+    : {};
   const bindingStates = cloudflare.workerSettings?.requiredRuntimeBindings && typeof cloudflare.workerSettings.requiredRuntimeBindings === 'object'
     ? cloudflare.workerSettings.requiredRuntimeBindings
     : {};
@@ -210,7 +213,7 @@ function summarizeIdentityReadback(report) {
     subdomain: safeIdentifier(cloudflare.subdomain),
     routeInventory: safeIdentifier(cloudflare.routeInventory),
     customDomains: safeIdentifier(cloudflare.customDomains),
-    workersDevDisabled: cloudflare.workerSettings?.workersDev === false,
+    workersDevDisabled: subdomain.enabled === false,
     routes: boundedCount(cloudflare.routeReadback?.count),
     customDomainCount: boundedCount(cloudflare.customDomainReadback?.count),
     requiredSecrets,
