@@ -38,6 +38,10 @@ on:
       - 'scripts/runtime/install-ponto-jit-runner.sh'
       - 'scripts/runtime/ponto-jit-*.mjs'
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
+      - 'scripts/runtime/ponto-legacy-snapshot-custody.mjs'
+      - 'scripts/runtime/provision-ponto-legacy-snapshot-custody.sh'
+      - 'scripts/runtime/install-ponto-legacy-snapshot-custody.sh'
+      - 'scripts/tests/ponto-legacy-snapshot-custody.test.mjs'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
       - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
@@ -87,6 +91,10 @@ on:
       - 'scripts/runtime/install-ponto-jit-runner.sh'
       - 'scripts/runtime/ponto-jit-*.mjs'
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
+      - 'scripts/runtime/ponto-legacy-snapshot-custody.mjs'
+      - 'scripts/runtime/provision-ponto-legacy-snapshot-custody.sh'
+      - 'scripts/runtime/install-ponto-legacy-snapshot-custody.sh'
+      - 'scripts/tests/ponto-legacy-snapshot-custody.test.mjs'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
       - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
@@ -163,13 +171,16 @@ jobs:
           set -euo pipefail
           node --test \
             .github/scripts/ponto-*.test.mjs \
+            scripts/tests/ponto-legacy-snapshot-custody.test.mjs \
             scripts/tests/ponto-jit-custody-runner.test.mjs \
             workforce/timekeeping/scripts/ponto-staging-journey-fixtures.test.mjs \
             shared/identity-runtime/workforce-onboarding.test.mjs \
             inventory/tests/releaseHealth.test.mjs
-          for script in .github/scripts/ponto-*.mjs scripts/runtime/ponto-jit-*.mjs; do node --check "$script"; done
+          for script in .github/scripts/ponto-*.mjs scripts/runtime/ponto-jit-*.mjs scripts/runtime/ponto-legacy-snapshot-custody.mjs; do node --check "$script"; done
           bash -n scripts/runtime/install-ponto-jit-runner.sh
           bash -n scripts/runtime/provision-ponto-jit-custody.sh
+          bash -n scripts/runtime/install-ponto-legacy-snapshot-custody.sh
+          bash -n scripts/runtime/provision-ponto-legacy-snapshot-custody.sh
           bash -n ops/runtime/github-actions-runner/ponto-jit-before-job.sh
           bash -n ops/runtime/github-actions-runner/ponto-jit-after-job.sh
           node .github/scripts/validate-progressive-release.mjs

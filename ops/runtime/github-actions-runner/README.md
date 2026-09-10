@@ -20,6 +20,12 @@ from the `skincos` service account and is never used by pull-request workflows.
 - the helper accepts the coordinator URL, one coordination secret and a public
   key id only through stdin, validates the bounded contract, writes an atomic
   root-owned file, and never prints any secret value;
+- the separate `/usr/local/sbin/skincos-capture-ponto-legacy-snapshot capture`
+  command is available only to `skincos-actions`. It accepts one signed,
+  short-lived authorization on stdin, reads only the two fixed legacy Ponto
+  state files, writes the raw pair only into root-private backup storage, and
+  returns a sanitized receipt. It is not a general filesystem reader, importer,
+  service controller, or Ponto JIT capability;
 - the runner workspace and credentials stay on native Linux storage and are
   not copied to Windows, the repository, artifacts, or logs.
 
@@ -69,3 +75,13 @@ canonical-store access permit it; MFA/re-authentication, unavailable external
 credential issuance/rotation, or unavailable platform trust remain the only
 bootstrap boundaries. Routine rotation and reconciliation are automated through
 the same guarded workflow.
+
+## Legacy Ponto snapshot capture
+
+Use `.github/workflows/ponto-legacy-backfill-capture.yml` only after the
+root-installed capture helper and its public verifier policy are in place. The
+workflow is restricted to the exact current `main` SHA and its dedicated
+protected environment. It uploads only a receipt with hashes, byte counts and
+aggregate counts; the raw `ponto_store.v2.json` and `ponto_audit.v1.jsonl`
+remain `root:root` in the host backup directory and are never copied to the
+runner workspace, GitHub artifact, Git repository, or logs.
