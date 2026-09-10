@@ -1,5 +1,5 @@
 {
-  "contract": "skincos/crm-domain-backfill-admission/v2",
+  "contract": "skincos/crm-domain-backfill-admission/v3",
   "state": "staging-preparation-authorized",
   "target": {
     "repository": "jubenitogarcia/skincos-crm-core",
@@ -15,6 +15,14 @@
       "mode": "projection-candidate",
       "state": "staging-preparation-authorized",
       "sourceContract": "atendimento/crm-core/unit-scoped-projection-source/v1",
+      "sourceSemantics": "atendimento/crm-core/confirmed-unit-membership-source/v3",
+      "sourceRelationAllowlist": [
+        "crm_atendimento.global_client_identity_members",
+        "crm_atendimento.attendance_client_links",
+        "crm_atendimento.attendances",
+        "crm_atendimento.units"
+      ],
+      "excludedSourceDomains": ["finance"],
       "recordClass": "opaque-client-membership-projection",
       "targetEnvironment": "staging",
       "stagingSourceReadAllowed": true,
@@ -49,7 +57,7 @@
       "owner": "Finance",
       "mode": "excluded",
       "state": "owner-retained",
-      "reason": "Finance ledgers, grants and imports stay behind the independently governed Finance Worker and store.",
+      "reason": "Finance ledgers, grants, imports and CRM Caixa sales stay behind the independently governed Finance Worker and store; no Finance relation is admitted as Atendimento projection input.",
       "productionBackfillAllowed": false
     },
     {
@@ -80,7 +88,7 @@
   "prohibitions": [
     "No CRM Core delivery, route mutation or legacy runtime retirement is performed by this plan.",
     "Only the fixed Atendimento custody helper may take an owner-attested read-only production-source snapshot to prepare opaque staging packets; no source payload is uploaded to GitHub and no packet is delivered by this plan.",
-    "No customer attribute, raw identifier, identity, session, finance, messaging, inventory or timekeeping record is copied into CRM Core.",
+    "No customer attribute, raw identifier, identity, session, finance, messaging, inventory or timekeeping record is copied into CRM Core; the Atendimento source may query only its declared relation allowlist.",
     "No excluded domain may be reclassified without a dedicated source-owner contract and reviewed staging evidence."
   ]
 }

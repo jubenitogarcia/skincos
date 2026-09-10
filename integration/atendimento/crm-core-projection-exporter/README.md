@@ -3,7 +3,7 @@
 Este adaptador prepara lotes de backfill v2 para o CRM independente, em uma
 transação PostgreSQL `REPEATABLE READ ONLY`. A tabela de identidades globais não
 possui `unit_slug` por si só; a fonte padrão para dados reais é a associação
-confirmada de Atendimento em
+confirmada exclusivamente por relações de Atendimento em
 `src/atendimentoConfirmedUnitScopedProjectionSource.mjs`, que resolve o slug
 somente pelas evidências e unidades canônicas do owner.
 
@@ -81,22 +81,26 @@ carga exceder isso, ele não cria um backfill parcial.
 ## Fonte canônica confirmada pelo owner de Atendimento
 
 `src/atendimentoConfirmedUnitScopedProjectionSource.mjs` fornece o descritor
-canônico `ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE`. Ele reproduz a
-mesma regra já usada pelo runtime comercial de Atendimento: uma identidade tem
-escopo em cada unidade comprovada pelos canais com ciclo de vida verificável
-abaixo, e o slug só
-é aceito após resolver contra `crm_atendimento.units`.
+canônico `ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE` (semântica
+`v3`). Ele não reproduz todos os sinais do runtime comercial legado: a
+projeção CRM Core é limitada a relações cujo lifecycle pertence a Atendimento.
+Uma identidade tem escopo em cada unidade comprovada pelo canal abaixo, e o
+slug só é aceito após resolver contra `crm_atendimento.units`.
 
 - atendimento ativo: `global_client_identity_members` →
   `attendance_client_links` → `attendances` não deletado;
-- venda Caixa: `global_client_identity_members` → `crm_caixa.sales`.
+- Finance/Caixa: `crm_caixa.sales` não é lido, não recebe grant para este
+  exportador e permanece no domínio Finance explicitamente excluído. Uma
+  futura projeção de venda exigirá contrato, admissão e evidência próprios do
+  owner Finance.
 
-`app_client_registrations` e `supplemental_lead_profiles` ficam explicitamente
-fora desta fonte. Os importadores atuais retêm linhas de snapshots antigos e o
-contrato de cobertura declara `snapshotComplete: false` e
-`absenceIsRetirementEvidence: false`; incluí-los poderia manter uma associação
-que a origem já revogou. Eles só entram depois que o owner disponibilizar um
-snapshot completo com prova de aposentadoria ou tombstones explícitos.
+`app_client_registrations` e `supplemental_lead_profiles` também ficam
+explicitamente fora desta fonte. Os importadores atuais retêm linhas de
+snapshots antigos e o contrato de cobertura declara `snapshotComplete: false`
+e `absenceIsRetirementEvidence: false`; incluí-los poderia manter uma
+associação que a origem já revogou. Eles só entram depois que o owner
+disponibilizar um snapshot completo com prova de aposentadoria ou tombstones
+explícitos.
 
 Evidências repetidas para a mesma identidade/unidade são reduzidas a uma única
 linha; evidências em unidades diferentes constituem uma associação multiunidade
