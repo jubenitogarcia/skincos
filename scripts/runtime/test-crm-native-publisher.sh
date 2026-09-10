@@ -10,19 +10,30 @@ NATIVE_UNIT="$ROOT_DIR/ops/runtime/units/crm.service.native.template"
 LAUNCHER="$ROOT_DIR/scripts/crm/run-api-linux.sh"
 LIFECYCLE_INSTALLER="$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh"
 NATIVE_MANAGER="$ROOT_DIR/scripts/runtime/manage-native-runtime.sh"
+CUSTODY_HELPER="$ROOT_DIR/scripts/runtime/crm-native-publisher-custody.mjs"
+CUSTODY_INSTALLER="$ROOT_DIR/scripts/runtime/install-crm-native-publisher-custody.sh"
+CUSTODY_RUNNER_UNIT="$ROOT_DIR/ops/runtime/units/skincos-native-custody-runner.service"
+CUSTODY_SUDOERS="$ROOT_DIR/ops/runtime/github-actions-runner/skincos-native-custody.sudoers"
+CUSTODY_WORKFLOW="$ROOT_DIR/.github/workflows/publish-crm-native-release.yml"
 
 for file in "$PREPARE" "$ROLLBACK"; do
   bash -n "$file"
 done
 node --check "$CONTRACT"
+node --check "$CUSTODY_HELPER"
 bash -n "$LAUNCHER"
 bash -n "$LIFECYCLE_INSTALLER"
 bash -n "$NATIVE_MANAGER"
+bash -n "$CUSTODY_INSTALLER"
 
 grep -Fx 'WorkingDirectory=__REPO_ROOT__' "$UNIT" >/dev/null
 grep -Fx 'ExecStart=__REPO_ROOT__/scripts/crm/run-api-linux.sh' "$UNIT" >/dev/null
 grep -Fx 'WorkingDirectory=__CRM_NATIVE_RELEASE_ROOT__' "$NATIVE_UNIT" >/dev/null
 grep -Fx 'Environment=CRM_NATIVE_DEPLOYMENT_TARGET=__CRM_NATIVE_DEPLOYMENT_TARGET__' "$NATIVE_UNIT" >/dev/null
+grep -Fx 'Environment=PONTO_LEGACY_RUNTIME_MODE=disabled' "$NATIVE_UNIT" >/dev/null
+grep -Fx 'Environment=CRM_NATIVE_UNSUPPORTED_JOBS=sales-chart-messenger' "$NATIVE_UNIT" >/dev/null
+grep -Fx 'Environment=CRM_NATIVE_MEDIA_TOOLS_MODE=__CRM_NATIVE_MEDIA_TOOLS_MODE__' "$NATIVE_UNIT" >/dev/null
+grep -Fx 'Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "$NATIVE_UNIT" >/dev/null
 grep -Fx 'ExecStart=__CRM_NATIVE_RELEASE_ROOT__/scripts/crm/run-api-linux.sh' "$NATIVE_UNIT" >/dev/null
 ! grep -F 'systemctl' "$PREPARE" >/dev/null
 ! grep -F 'systemctl' "$ROLLBACK" >/dev/null
@@ -32,6 +43,18 @@ grep -F 'CRM_NATIVE_DEPLOYMENT_TARGET must be staging or production for a native
 grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable staging CRM-only release.' "$LAUNCHER" >/dev/null
 grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable production CRM-only release.' "$LAUNCHER" >/dev/null
 grep -F 'CRM launcher does not originate from CRM_NATIVE_RELEASE_ROOT.' "$LAUNCHER" >/dev/null
+grep -Fx "  export PONTO_LEGACY_RUNTIME_MODE='disabled'" "$LAUNCHER" >/dev/null
+grep -Fx "      export PONTO_LEGACY_RUNTIME_MODE='disabled'" "$ROOT_DIR/crm/api/scripts/run.sh" >/dev/null
+grep -F 'assertNoFileCapabilities' "$CUSTODY_HELPER" >/dev/null
+grep -F 'restoreDropIns(backup)' "$CUSTODY_HELPER" >/dev/null
+grep -F 'current/source' "$CUSTODY_HELPER" >/dev/null
+grep -Fx 'ReadWritePaths=/opt/skincos/releases' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -Fx 'ReadWritePaths=/opt/skincos/current' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -Fx 'ReadWritePaths=/var/lib/skincos-runtime/crm-native-publisher' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -Fx 'ReadWritePaths=/etc/systemd/system' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -F '/usr/local/sbin/skincos-publish-crm-native-release preflight' "$CUSTODY_SUDOERS" >/dev/null
+! grep -F '/usr/local/sbin/skincos-publish-crm-native-release rollback-last' "$CUSTODY_SUDOERS" >/dev/null
+grep -F 'release:crm-native' "$CUSTODY_WORKFLOW" >/dev/null
 sed -n '/^units=(/,/^)/p' "$LIFECYCLE_INSTALLER" | grep -Fx '  crm.service' >/dev/null
 ! grep -F 'crm.service.native.template' "$LIFECYCLE_INSTALLER" >/dev/null
 sed -n '/^units=(/,/^)/p' "$NATIVE_MANAGER" | grep -Fx '  crm.service' >/dev/null
@@ -55,6 +78,7 @@ chmod 0755 "$render_root/scripts/crm/run-api-linux.sh"
 sed \
   -e "s|__CRM_NATIVE_RELEASE_ROOT__|$render_root|g" \
   -e 's|__CRM_NATIVE_DEPLOYMENT_TARGET__|staging|g' \
+  -e 's|__CRM_NATIVE_MEDIA_TOOLS_MODE__|disabled|g' \
   -e "s|__STATE_ROOT__|$tmp_root/state|g" \
   -e "s|__CONFIG_ROOT__|$tmp_root/config|g" \
   -e "s|__LOG_ROOT__|$tmp_root/log|g" \
@@ -73,8 +97,14 @@ const makeRelease = (releaseSha, sourceTree, predecessor) => {
   fs.mkdirSync(path.join(releaseRoot, 'scripts', 'crm'), { recursive: true });
   fs.mkdirSync(path.join(releaseRoot, 'crm', 'api'), { recursive: true });
   fs.mkdirSync(path.join(releaseRoot, 'crm', 'console'), { recursive: true });
+  fs.mkdirSync(path.join(releaseRoot, 'backend', 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(releaseRoot, 'crm', 'api', 'node_modules', 'express'), { recursive: true });
+  fs.mkdirSync(path.join(releaseRoot, 'shared', 'crm-auth'), { recursive: true });
   fs.writeFileSync(path.join(releaseRoot, 'scripts', 'crm', 'run-api-linux.sh'), '#!/usr/bin/env bash\nexit 0\n');
   fs.writeFileSync(path.join(releaseRoot, 'crm', 'api', 'package-lock.json'), '{"lockfileVersion":3}\n');
+  fs.writeFileSync(path.join(releaseRoot, 'backend', 'scripts', 'env.sh'), '#!/usr/bin/env bash\n');
+  fs.writeFileSync(path.join(releaseRoot, 'backend', 'capabilities.json'), '{}\n');
+  fs.writeFileSync(path.join(releaseRoot, 'shared', 'crm-auth', '.keep'), 'fixture\n');
   fs.writeFileSync(path.join(releaseRoot, 'crm', 'console', '.keep'), 'fixture\n');
   const sourceArchiveSha256 = releaseSha === firstSha ? '1'.repeat(64) : '2'.repeat(64);
   fs.writeFileSync(path.join(releaseRoot, '.skincos-crm-native-release.json'), `${JSON.stringify({
@@ -83,6 +113,7 @@ const makeRelease = (releaseSha, sourceTree, predecessor) => {
     releaseSha,
     sourceTree,
     sourceArchiveSha256,
+    sourceArchiveBytes: 1048576,
     target: 'test',
     custody: {
       schemaVersion: 1,
@@ -93,11 +124,30 @@ const makeRelease = (releaseSha, sourceTree, predecessor) => {
       artifactName: `release-source-${releaseSha}`,
       sourceSha: releaseSha,
       sourceArchiveSha256,
+      sourceArchiveBytes: 1048576,
+    },
+    runtimeCustody: {
+      schemaVersion: 1,
+      dependencyArchiveSha256: '3'.repeat(64),
+      dependencyArchiveBytes: 1048576,
+      policySha256: '4'.repeat(64),
+      stagingProofSha256: '5'.repeat(64),
+      runtimeAttestationSha256: '7'.repeat(64),
+      authorizationId: 'b1f3c5d7-1111-4111-8111-123456789abc',
+      unitTemplateSha256: '6'.repeat(64),
+      coordinationProofSha256: '8'.repeat(64),
+      coordinationLeaseId: 'c1f3c5d7-1111-4111-8111-123456789abc',
+      coordinationFencingToken: 1,
+      coordinationIntentDigest: '9'.repeat(64),
     },
     artifacts: {
       apiEntrypoint: 'scripts/crm/run-api-linux.sh',
       apiPackageLock: 'crm/api/package-lock.json',
+      backendEnvironment: 'backend/scripts/env.sh',
+      capabilitiesCatalog: 'backend/capabilities.json',
       consoleRoot: 'crm/console',
+      productionDependencies: 'crm/api/node_modules',
+      sharedAuthRoot: 'shared/crm-auth',
     },
     predecessor,
   }, null, 2)}\n`);
@@ -179,12 +229,18 @@ if node "$CONTRACT" validate-release --release-root "$malicious" --release-sha "
   exit 1
 fi
 
+node "$CONTRACT" validate-layout \
+  --target production \
+  --release-base /opt/skincos/releases \
+  --current-link /opt/skincos/current/crm-service \
+  --previous-link /opt/skincos/current/crm-service.previous >/dev/null
+
 if node "$CONTRACT" validate-layout \
   --target production \
-  --release-base "$CRM_NATIVE_RELEASE_BASE" \
-  --current-link "$CRM_NATIVE_CURRENT_LINK" \
-  --previous-link "$CRM_NATIVE_PREVIOUS_LINK" >/dev/null 2>&1; then
-  echo 'Production layout unexpectedly passed the CRM-native contract.' >&2
+  --release-base /opt/skincos/releases \
+  --current-link /opt/skincos/current/source \
+  --previous-link /opt/skincos/current/crm-service.previous >/dev/null 2>&1; then
+  echo 'Production layout unexpectedly accepted the shared source pointer.' >&2
   exit 1
 fi
 
