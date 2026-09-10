@@ -4,6 +4,26 @@
 
 O arquivo legado `ponto_store.v2.json` é aceito apenas pelo importador em `workforce/timekeeping/scripts/import-ponto-json.mjs`. A fonte operacional definitiva é o D1 `skincos-timekeeping`; não existe dual-write nem fallback de escrita para JSON.
 
+Antes de qualquer importação, capture um snapshot privado preservando o nome
+exato `ponto_store.v2.json` e execute o preflight abaixo. Ele exige esse
+snapshot V2 explicitamente e aceita somente o D1 dedicado de **staging** que
+está na allowlist imutável do domínio:
+
+```bash
+node workforce/timekeeping/scripts/ponto-backfill-preflight.mjs \
+  --snapshot <diretorio-privado>/ponto_store.v2.json \
+  --target staging \
+  --database-id <PONTO_TIMEKEEPING_D1_STAGING_ID>
+```
+
+O relatório contém apenas checksum, tamanho e contagens agregadas; não imprime
+caminho, IDs de pessoas, PINs, templates, auditoria, credenciais ou o ID bruto
+do D1. Ele não abre conexão com Cloudflare/D1, não lê secrets, não cria backup,
+não aplica migration, não importa dados e não publica nada. Portanto, uma
+aprovação do preflight não prova a identidade live do D1, a linhagem do schema,
+o backup/restore ou a elegibilidade da importação: esses são gates separados de
+staging.
+
 As migrations reproduzíveis ficam em `workforce/timekeeping/migrations`:
 
 - `0001_timekeeping.sql`: identidade, vínculos temporais, regras, dispositivos, credenciais, biometria, eventos append-only, correções, fechamentos, auditoria e nonces;
