@@ -71,6 +71,7 @@ const ARTIFACT_FIELDS = Object.freeze(["id", "sha256", "sizeBytes"]);
 const MAX_AUTHORIZATION_BYTES = 64 * 1024;
 const MAX_AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1000;
 const MAX_SOURCE_BYTES = 1024 * 1024 * 1024;
+const SNAPSHOT_PAIR_CAPTURE_ATTEMPTS = 3;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const POSITIVE_ID = /^[1-9][0-9]{0,19}$/;
@@ -82,6 +83,10 @@ const JOB = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const KEY_ID = /^[a-z][a-z0-9-]{1,63}$/;
 const SOURCE_ID = /^[a-z][a-z0-9-]{1,63}$/;
 const BASE64URL_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
+const LEGACY_PONTO_SOURCE_FILES = Object.freeze([
+  Object.freeze({ id: "ponto-store-v2", basename: "ponto_store.v2.json" }),
+  Object.freeze({ id: "ponto-audit-v1", basename: "ponto_audit.v1.jsonl" }),
+]);
 
 const fail = (message) => {
   throw new Error("Ponto legacy snapshot custody: " + message);
@@ -283,6 +288,15 @@ function validateSourceFile(value) {
   return source;
 }
 
+function validateLegacyPontoSourcePair(sourceFiles) {
+  for (const [index, expected] of LEGACY_PONTO_SOURCE_FILES.entries()) {
+    const source = sourceFiles[index];
+    if (source.id !== expected.id || path.basename(source.path) !== expected.basename) {
+      fail("policy source files do not bind the fixed legacy Ponto pair");
+    }
+  }
+}
+
 export function validateSnapshotPolicy(value) {
   const policy = exactObject(value, POLICY_FIELDS, "policy");
   if (policy.schemaVersion !== 1) fail("policy schema is invalid");
@@ -308,6 +322,7 @@ export function validateSnapshotPolicy(value) {
     identifiers.add(source.id);
     paths.add(source.path);
   }
+  validateLegacyPontoSourcePair(policy.sourceFiles);
   return policy;
 }
 
@@ -591,6 +606,156 @@ function captureSourceFile(source, destination, { uid = 0, gid = 0, id, ordinal 
   }
 }
 
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+}
+
+function auditHashOrNull(value, label) {
+  if (value === null) return null;
+  return safeText(value, label, SHA256, { max: 64 });
+}
+
+function parseCapturedPontoStore(file, { uid = 0 } = {}) {
+  const raw = readPrivateFile(file, { uid, mode: 0o600 });
+  try {
+    const snapshot = JSON.parse(raw.toString("utf8"));
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) || snapshot.version !== 2) {
+      fail("legacy Ponto snapshot pair is not coherent");
+    }
+    for (const collection of ["employees", "devices", "records"]) {
+      if (!Array.isArray(snapshot[collection])) fail("legacy Ponto snapshot pair is not coherent");
+    }
+    if (!snapshot.audit || typeof snapshot.audit !== "object" || Array.isArray(snapshot.audit)) {
+      fail("legacy Ponto snapshot pair is not coherent");
+    }
+    return auditHashOrNull(snapshot.audit.lastHash, "legacy Ponto audit pointer");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Ponto legacy snapshot custody:")) throw error;
+    fail("legacy Ponto snapshot pair is not coherent");
+  } finally {
+    raw.fill(0);
+  }
+}
+
+function validateCapturedPontoAudit(file, expectedLastHash, { uid = 0 } = {}) {
+  const raw = readPrivateFile(file, { uid, mode: 0o600 });
+  try {
+    const source = raw.toString("utf8");
+    if (source.includes("\r") || (source.length > 0 && !source.endsWith("\n"))) {
+      fail("legacy Ponto snapshot pair is not coherent");
+    }
+    const lines = source.length === 0 ? [] : source.slice(0, -1).split("\n");
+    if (lines.some((line) => line.length === 0)) fail("legacy Ponto snapshot pair is not coherent");
+    let previousHash = null;
+    for (const line of lines) {
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        fail("legacy Ponto snapshot pair is not coherent");
+      }
+      if (!event || typeof event !== "object" || Array.isArray(event)) {
+        fail("legacy Ponto snapshot pair is not coherent");
+      }
+      if (!Object.hasOwn(event, "hash") || !Object.hasOwn(event, "hmac") || !Object.hasOwn(event, "prevHash")) {
+        fail("legacy Ponto snapshot pair is not coherent");
+      }
+      const { hash, hmac, ...payload } = event;
+      const suppliedPreviousHash = auditHashOrNull(payload.prevHash, "legacy Ponto audit previous hash");
+      if (suppliedPreviousHash !== previousHash || typeof hash !== "string" || !SHA256.test(hash)) {
+        fail("legacy Ponto snapshot pair is not coherent");
+      }
+      if (hmac !== null && (typeof hmac !== "string" || !SHA256.test(hmac))) {
+        fail("legacy Ponto snapshot pair is not coherent");
+      }
+      const expectedHash = digest((previousHash || "") + "\n" + stableStringify(payload));
+      if (hash !== expectedHash) fail("legacy Ponto snapshot pair is not coherent");
+      previousHash = expectedHash;
+    }
+    if (previousHash !== expectedLastHash) fail("legacy Ponto snapshot pair is not coherent");
+  } finally {
+    raw.fill(0);
+  }
+}
+
+function createCaptureAttempt(stage, attempt, { uid = 0, gid = 0 } = {}) {
+  const directory = exactChild(stage, ".attempt-" + attempt, "capture attempt");
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 });
+    fs.chownSync(directory, uid, gid);
+    fs.chmodSync(directory, 0o700);
+  } catch {
+    fail("private capture attempt cannot be created");
+  }
+  return assertPrivateDirectory(directory, { uid, mode: 0o700 });
+}
+
+function removeCaptureAttempt(directory, stage, { uid = 0 } = {}) {
+  if (path.dirname(directory) !== stage || !path.basename(directory).startsWith(".attempt-")) {
+    fail("private capture attempt path is invalid");
+  }
+  try {
+    assertPrivateDirectory(directory, { uid, mode: 0o700 });
+    fs.rmSync(directory, { recursive: true, force: true });
+  } catch {}
+}
+
+function finalizeCaptureAttempt(attemptDirectory, stage, artifacts, sourceFiles, { uid = 0 } = {}) {
+  try {
+    for (const [index, artifact] of artifacts.entries()) {
+      const filename = path.basename(sourceFiles[index].path);
+      fs.renameSync(
+        exactChild(attemptDirectory, filename, "capture artifact"),
+        exactChild(stage, filename, "capture artifact"),
+      );
+    }
+    const descriptor = fs.openSync(stage, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
+    removeCaptureAttempt(attemptDirectory, stage, { uid });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Ponto legacy snapshot custody:")) throw error;
+    fail("private capture attempt cannot be finalized");
+  }
+}
+
+function captureCoherentLegacyPontoPair(stage, sourceFiles, { uid = 0, gid = 0 } = {}) {
+  for (let attempt = 1; attempt <= SNAPSHOT_PAIR_CAPTURE_ATTEMPTS; attempt += 1) {
+    const attemptDirectory = createCaptureAttempt(stage, attempt, { uid, gid });
+    try {
+      const artifacts = sourceFiles.map((source, index) => captureSourceFile(
+        source,
+        exactChild(attemptDirectory, path.basename(source.path), "capture artifact"),
+        {
+          uid,
+          gid,
+          id: source.id,
+          ordinal: index + 1,
+        },
+      ));
+      const storePointer = parseCapturedPontoStore(
+        exactChild(attemptDirectory, LEGACY_PONTO_SOURCE_FILES[0].basename, "capture artifact"),
+        { uid },
+      );
+      validateCapturedPontoAudit(
+        exactChild(attemptDirectory, LEGACY_PONTO_SOURCE_FILES[1].basename, "capture artifact"),
+        storePointer,
+        { uid },
+      );
+      finalizeCaptureAttempt(attemptDirectory, stage, artifacts, sourceFiles, { uid });
+      return artifacts;
+    } catch (error) {
+      removeCaptureAttempt(attemptDirectory, stage, { uid });
+      const incoherent = error instanceof Error
+        && error.message === "Ponto legacy snapshot custody: legacy Ponto snapshot pair is not coherent";
+      if (!incoherent || attempt === SNAPSHOT_PAIR_CAPTURE_ATTEMPTS) throw error;
+    }
+  }
+  fail("legacy Ponto snapshot pair is not coherent");
+}
+
 function canonicalReceipt(value) {
   return JSON.stringify(Object.fromEntries(RECEIPT_FIELDS.map((field) => [field, value[field]])));
 }
@@ -684,16 +849,10 @@ export function captureLegacyPontoSnapshot({
     gid: destinationGid,
   });
   try {
-    const artifacts = expected.sourceFiles.map((source, index) => captureSourceFile(
-      source,
-      exactChild(stage, "artifact-" + String(index + 1).padStart(2, "0"), "capture artifact"),
-      {
-        uid: destinationUid,
-        gid: destinationGid,
-        id: "artifact-" + String(index + 1).padStart(2, "0"),
-        ordinal: index + 1,
-      },
-    ));
+    const artifacts = captureCoherentLegacyPontoPair(stage, expected.sourceFiles, {
+      uid: destinationUid,
+      gid: destinationGid,
+    });
     const receipt = buildReceipt({ authorization: authorized, artifacts, now });
     writeCaptureReceipt(stage, receipt, { uid: destinationUid, gid: destinationGid });
     finalizeCapture(stage, layout.captures, authorized.authorizationId, { uid: destinationUid });

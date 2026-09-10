@@ -9,6 +9,18 @@ exato `ponto_store.v2.json` e execute o preflight abaixo. Ele exige esse
 snapshot V2 explicitamente e aceita somente o D1 dedicado de **staging** que
 está na allowlist imutável do domínio:
 
+A captura operacional não deve ser feita por cópia manual, acesso shell amplo
+ou pelo runner JIT. Use exclusivamente
+`.github/workflows/ponto-legacy-backfill-capture.yml` após o helper root-owned
+estar instalado. Ele lê somente `ponto_store.v2.json` e
+`ponto_audit.v1.jsonl`, exige autorização Ed25519 de uso único vinculada ao
+SHA atual de `main`, grava os arquivos brutos apenas no armazenamento privado
+do host e publica um recibo sanitizado. O helper valida o formato V2, a cadeia
+SHA-256 da auditoria e a coerência entre o ponteiro `audit.lastHash` do store e
+a cauda exportada; o recibo prova somente a identidade da captura e os hashes
+e tamanhos dos dois artefatos. Ele não valida HMAC da auditoria e não é
+autorização de import, deploy ou cutover.
+
 ```bash
 node workforce/timekeeping/scripts/ponto-backfill-preflight.mjs \
   --snapshot <diretorio-privado>/ponto_store.v2.json \

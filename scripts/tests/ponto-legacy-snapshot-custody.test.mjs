@@ -13,6 +13,7 @@ import {
   validateSnapshotPolicy,
   verifySnapshotAuthorization,
 } from "../runtime/ponto-legacy-snapshot-custody.mjs";
+import { validateLegacySnapshotReceipt } from "../../.github/scripts/ponto-legacy-snapshot-receipt.mjs";
 
 const root = new URL("../..", import.meta.url);
 const read = (relative) => fs.readFileSync(new URL(relative, root), "utf8");
@@ -23,14 +24,40 @@ const canExercisePrivateCapture = process.platform === "linux"
   && typeof process.getuid === "function"
   && typeof process.getgid === "function";
 
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+}
+
+function writeValidLegacyPontoPair(storeFile, auditFile) {
+  const payload = {
+    v: 1,
+    id: "22222222-2222-4222-8222-222222222222",
+    type: "PUNCH_CREATED",
+    at: "2026-09-10T11:58:00.000Z",
+    actor: { kind: "synthetic", id: "operator" },
+    data: { synthetic: true },
+    prevHash: null,
+  };
+  const hash = crypto.createHash("sha256").update(`\n${stableStringify(payload)}`).digest("hex");
+  fs.writeFileSync(storeFile, JSON.stringify({
+    version: 2,
+    employees: [{ id: "employee-1", name: "Pilot", loginEmail: "pilot@example.test" }],
+    devices: [],
+    records: [],
+    audit: { lastHash: hash },
+  }) + "\n", { mode: 0o600 });
+  fs.writeFileSync(auditFile, JSON.stringify({ ...payload, hash, hmac: null }) + "\n", { mode: 0o600 });
+}
+
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-legacy-snapshot-custody-"));
-  const sourceOne = path.join(directory, "legacy-one");
-  const sourceTwo = path.join(directory, "legacy-two");
+  const sourceOne = path.join(directory, "ponto_store.v2.json");
+  const sourceTwo = path.join(directory, "ponto_audit.v1.jsonl");
   const destination = path.join(directory, "private-captures");
   const signing = crypto.generateKeyPairSync("ed25519");
-  fs.writeFileSync(sourceOne, "employee=pilot@example.test\nrecord=opaque-one\n", { mode: 0o600 });
-  fs.writeFileSync(sourceTwo, "employee=pilot@example.test\nrecord=opaque-two\n", { mode: 0o600 });
+  writeValidLegacyPontoPair(sourceOne, sourceTwo);
   fs.mkdirSync(destination, { mode: 0o700 });
   const policy = {
     schemaVersion: 1,
@@ -47,8 +74,8 @@ function fixture() {
       purpose: "ponto-legacy-snapshot-capture",
     },
     sourceFiles: [
-      { id: "legacy-ponto-source", path: sourceOne, maxBytes: 64 * 1024 },
-      { id: "legacy-timekeeping-source", path: sourceTwo, maxBytes: 64 * 1024 },
+      { id: "ponto-store-v2", path: sourceOne, maxBytes: 64 * 1024 },
+      { id: "ponto-audit-v1", path: sourceTwo, maxBytes: 64 * 1024 },
     ],
   };
   return { directory, sourceOne, sourceTwo, destination, signing, policy };
@@ -150,6 +177,14 @@ test("policy is fail-closed unless it contains exactly two distinct fixed source
     const traversal = structuredClone(item.policy);
     traversal.sourceFiles[1].path = "/tmp/../untrusted";
     assert.throws(() => validateSnapshotPolicy(traversal), /source path is invalid/);
+
+    const swapped = structuredClone(item.policy);
+    [swapped.sourceFiles[0], swapped.sourceFiles[1]] = [swapped.sourceFiles[1], swapped.sourceFiles[0]];
+    assert.throws(() => validateSnapshotPolicy(swapped), /fixed legacy Ponto pair/);
+
+    const renamed = structuredClone(item.policy);
+    renamed.sourceFiles[0].path = path.join(item.directory, "not-ponto-store.json");
+    assert.throws(() => validateSnapshotPolicy(renamed), /fixed legacy Ponto pair/);
   } finally {
     fs.rmSync(item.directory, { recursive: true, force: true });
   }
@@ -176,17 +211,18 @@ test("captures exactly two files once to a root-private destination and returns 
     assert.equal(result.sourceFileCount, 2);
     assert.deepEqual(
       result.artifacts.map((artifact) => artifact.id),
-      ["artifact-01", "artifact-02"],
+      ["ponto-store-v2", "ponto-audit-v1"],
     );
     assert.equal(result.credentialsIncluded, false);
     assert.equal(result.piiIncluded, false);
     assert.match(result.snapshotSha256, /^[0-9a-f]{64}$/);
+    assert.deepEqual(validateLegacySnapshotReceipt(result), result);
     assert.deepEqual(
-      fs.readFileSync(path.join(item.destination, "captures", captureId, "artifact-01")),
+      fs.readFileSync(path.join(item.destination, "captures", captureId, "ponto_store.v2.json")),
       fs.readFileSync(item.sourceOne),
     );
     assert.deepEqual(
-      fs.readFileSync(path.join(item.destination, "captures", captureId, "artifact-02")),
+      fs.readFileSync(path.join(item.destination, "captures", captureId, "ponto_audit.v1.jsonl")),
       fs.readFileSync(item.sourceTwo),
     );
     const receipt = JSON.stringify(result);
@@ -206,6 +242,68 @@ test("captures exactly two files once to a root-private destination and returns 
     );
   } finally {
     fs.rmSync(item.directory, { recursive: true, force: true });
+  }
+});
+
+test("refuses malformed V2 state and leaves no finalized private capture", {
+  skip: !canExercisePrivateCapture,
+}, () => {
+  const item = fixture();
+  try {
+    fs.writeFileSync(item.sourceOne, JSON.stringify({ version: 1 }) + "\n", { mode: 0o600 });
+    assert.throws(
+      () => captureLegacyPontoSnapshot({
+        policy: item.policy,
+        authorization: authorization(item.policy, item.signing),
+        now,
+        destinationDirectory: item.destination,
+        destinationUid: process.getuid(),
+        destinationGid: process.getgid(),
+      }),
+      /snapshot pair is not coherent/,
+    );
+    assert.equal(fs.existsSync(path.join(item.destination, "captures", captureId)), false);
+  } finally {
+    fs.rmSync(item.directory, { recursive: true, force: true });
+  }
+});
+
+test("refuses a broken audit chain or a tail that diverges from the V2 audit pointer", {
+  skip: !canExercisePrivateCapture,
+}, () => {
+  const malformed = fixture();
+  const divergent = fixture();
+  try {
+    fs.writeFileSync(malformed.sourceTwo, "{not-json}\n", { mode: 0o600 });
+    assert.throws(
+      () => captureLegacyPontoSnapshot({
+        policy: malformed.policy,
+        authorization: authorization(malformed.policy, malformed.signing),
+        now,
+        destinationDirectory: malformed.destination,
+        destinationUid: process.getuid(),
+        destinationGid: process.getgid(),
+      }),
+      /snapshot pair is not coherent/,
+    );
+
+    const snapshot = JSON.parse(fs.readFileSync(divergent.sourceOne, "utf8"));
+    snapshot.audit.lastHash = "f".repeat(64);
+    fs.writeFileSync(divergent.sourceOne, JSON.stringify(snapshot) + "\n", { mode: 0o600 });
+    assert.throws(
+      () => captureLegacyPontoSnapshot({
+        policy: divergent.policy,
+        authorization: authorization(divergent.policy, divergent.signing),
+        now,
+        destinationDirectory: divergent.destination,
+        destinationUid: process.getuid(),
+        destinationGid: process.getgid(),
+      }),
+      /snapshot pair is not coherent/,
+    );
+  } finally {
+    fs.rmSync(malformed.directory, { recursive: true, force: true });
+    fs.rmSync(divergent.directory, { recursive: true, force: true });
   }
 });
 
@@ -242,6 +340,10 @@ test("fixed helper wrapper and installer expose no generic path or service surfa
   assert.match(helper, /O_NOFOLLOW/);
   assert.match(helper, /O_NONBLOCK/);
   assert.match(helper, /authorization was already consumed/);
+  assert.match(helper, /ponto-store-v2/);
+  assert.match(helper, /ponto_audit\.v1\.jsonl/);
+  assert.match(helper, /SNAPSHOT_PAIR_CAPTURE_ATTEMPTS = 3/);
+  assert.match(helper, /stableStringify/);
   assert.match(helper, /credentialsIncluded: false/);
   assert.match(helper, /piiIncluded: false/);
   assert.doesNotMatch(wrapper, /--source|--destination|"\$@"/);
