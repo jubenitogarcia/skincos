@@ -111,6 +111,9 @@ const fail = (message) => {
   throw new Error("Ponto legacy snapshot custody: " + message);
 };
 
+// SHA-256 here produces integrity fingerprints for canonical policy, receipt,
+// and audit-chain data; this helper never stores or verifies passwords.
+// lgtm[js/insufficient-password-hash]
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
 const sameFields = (value, fields) => (
