@@ -128,6 +128,7 @@ jobs:
       - name: Validate legacy JSON importer
         run: |
           node workforce/timekeeping/scripts/import-ponto-json.mjs --source workforce/timekeeping/fixtures/ponto_store.synthetic.json --dry-run
+          node --test workforce/timekeeping/scripts/ponto-backfill-preflight.test.mjs
           node workforce/timekeeping/scripts/migration-local.test.mjs
       - name: Validate synthetic staging fixture contract
         run: |
