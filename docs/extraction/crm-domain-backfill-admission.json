@@ -1,0 +1,84 @@
+{
+  "contract": "skincos/crm-domain-backfill-admission/v1",
+  "state": "pre-cut",
+  "target": {
+    "repository": "jubenitogarcia/skincos-crm-core",
+    "environment": "staging",
+    "productionMutationAllowed": false,
+    "receiverScope": "opaque-projections-only",
+    "publicRouteMutationAllowed": false
+  },
+  "domains": [
+    {
+      "id": "atendimento-client-memberships",
+      "owner": "Atendimento",
+      "mode": "projection-candidate",
+      "state": "preflight-only",
+      "sourceContract": "atendimento/crm-core/unit-scoped-projection-source/v1",
+      "recordClass": "opaque-client-membership-projection",
+      "targetEnvironment": "staging",
+      "productionBackfillAllowed": false,
+      "requiredEvidence": [
+        "owner-attested-repeatable-read-snapshot",
+        "read-only-source-principal-and-grants",
+        "core-staging-receiver-release-and-digest",
+        "finite-signed-batch-allowlist",
+        "accepted-idempotent-receipts-and-d1-readback",
+        "same-artifact-rollback-without-data-deletion"
+      ]
+    },
+    {
+      "id": "identity-delivery",
+      "owner": "Identity",
+      "mode": "excluded",
+      "state": "owner-retained",
+      "reason": "Identity contributes authenticated opaque delivery only; users, sessions, roles and grants are not CRM Core backfill input.",
+      "productionBackfillAllowed": false
+    },
+    {
+      "id": "inventory",
+      "owner": "Inventory",
+      "mode": "excluded",
+      "state": "owner-retained",
+      "reason": "Inventory D1, stock and the legacy /api/crm/* proxy remain outside the CRM Core projection boundary.",
+      "productionBackfillAllowed": false
+    },
+    {
+      "id": "finance",
+      "owner": "Finance",
+      "mode": "excluded",
+      "state": "owner-retained",
+      "reason": "Finance ledgers, grants and imports stay behind the independently governed Finance Worker and store.",
+      "productionBackfillAllowed": false
+    },
+    {
+      "id": "messaging",
+      "owner": "Messaging",
+      "mode": "excluded",
+      "state": "owner-retained",
+      "reason": "Conversation, consent and channel delivery state remain Messaging-owned and need a dedicated owner contract before any projection is considered.",
+      "productionBackfillAllowed": false
+    },
+    {
+      "id": "timekeeping",
+      "owner": "Timekeeping",
+      "mode": "excluded",
+      "state": "owner-retained",
+      "reason": "Ponto and workforce records remain in their dedicated release and data boundary.",
+      "productionBackfillAllowed": false
+    },
+    {
+      "id": "booking",
+      "owner": "Booking",
+      "mode": "excluded",
+      "state": "owner-retained",
+      "reason": "Availability, booking requests and reservation audit state remain under the Booking owner.",
+      "productionBackfillAllowed": false
+    }
+  ],
+  "prohibitions": [
+    "No production source read, delivery, route mutation or legacy runtime retirement is performed by this plan.",
+    "No customer, identity, session, finance, messaging, inventory or timekeeping record is copied into CRM Core.",
+    "No excluded domain may be reclassified without a dedicated source-owner contract and reviewed staging evidence."
+  ]
+}
