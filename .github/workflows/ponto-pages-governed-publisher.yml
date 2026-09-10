@@ -1,0 +1,667 @@
+name: Governed Ponto Pages publisher
+run-name: Ponto Pages ${{ inputs.target }} ${{ inputs.release_sha }} publish=${{ inputs.publish }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Exact dedicated Ponto Pages target.
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      release_sha:
+        description: Full immutable main SHA to build and publish.
+        required: true
+        type: string
+      preview_run_id:
+        description: Successful immutable Ponto Pages candidate-preflight run required for staging publication.
+        required: false
+        type: string
+      staging_run_id:
+        description: Successful immutable governed staging publication run required for production publication.
+        required: false
+        type: string
+      staging_smoke_run_id:
+        description: Successful exact Ponto Pages staging synthetic-smoke run required for production publication.
+        required: false
+        type: string
+      core_candidate_run_id:
+        description: Successful exact Ponto Core staging-candidate run required for staging publication.
+        required: false
+        type: string
+      staging_rollback_run_id:
+        description: Successful exact Ponto Pages staging same-artifact rollback receipt run required for production publication.
+        required: false
+        type: string
+      publish:
+        description: Opt in to guarded configuration and publication. Defaults to false.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ponto-pages-governed-publisher-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
+      - name: Verify exact source provenance
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$WORKFLOW_REF" == 'refs/heads/main' ]] || { echo 'PONTO_PAGES_WORKFLOW_REF_NOT_MAIN'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checkout differs from release_sha'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+      - run: npm ci
+        working-directory: workforce/ponto-pages
+      - name: Validate dedicated target contract without credentials
+        env:
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: npm run publisher:validate -- --target "$TARGET" --release-sha "$RELEASE_SHA" --emit-plan "$RUNNER_TEMP/ponto-pages-publish-plan.json"
+        working-directory: workforce/ponto-pages
+      - name: Upload sanitised no-publish plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-pages-governed-preflight-${{ inputs.target }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-pages-publish-plan.json
+          retention-days: 30
+          if-no-files-found: error
+
+  promotion:
+    if: ${{ inputs.publish }}
+    needs: preflight
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: ponto-pages
+      target: ${{ inputs.target }}
+      promotion_environment: ${{ inputs.target == 'staging' && 'ponto-pages-staging' || 'ponto-pages-production' }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+      staging_supported: true
+      emit_preview_evidence: false
+
+  publish:
+    if: ${{ inputs.publish && needs.preflight.result == 'success' && needs.promotion.result == 'success' }}
+    needs: [preflight, promotion]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.target == 'staging' && 'ponto-pages-staging' || 'ponto-pages-production' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
+      - name: Fail closed on target, binding, secret or release mismatch
+        env:
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          PROJECT_CONFIGURED: ${{ vars.PONTO_PAGES_PROJECT }}
+          CORE_SERVICE_CONFIGURED: ${{ vars.PONTO_PAGES_CORE_SERVICE }}
+          IDENTITY_SERVICE_CONFIGURED: ${{ vars.PONTO_PAGES_IDENTITY_SERVICE }}
+          MODULE_CONTROL_KV_ID: ${{ vars.PONTO_PAGES_MODULE_CONTROL_KV_ID }}
+          CORE_VERSION_ID: ${{ vars.PONTO_PAGES_CORE_VERSION_ID }}
+          IDENTITY_VERSION_ID: ${{ vars.PONTO_PAGES_IDENTITY_VERSION_ID }}
+          CORE_CANDIDATE_RUN_ID: ${{ inputs.core_candidate_run_id }}
+          STAGING_SMOKE_RUN_ID: ${{ inputs.staging_smoke_run_id }}
+          STAGING_ROLLBACK_RUN_ID: ${{ inputs.staging_rollback_run_id }}
+          STAGING_PUBLISH_RUN_ID: ${{ inputs.staging_run_id }}
+          PUBLISH_ENABLED: ${{ vars.PONTO_PAGES_PUBLISH_ENABLED }}
+          PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_PAGES_CLOUDFLARE_API_TOKEN: ${{ secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN }}
+          PONTO_PAGES_PONTO_API_TARGET: ${{ secrets.PONTO_PAGES_PONTO_API_TARGET }}
+          PONTO_PAGES_AUTH_API_TARGET: ${{ secrets.PONTO_PAGES_AUTH_API_TARGET }}
+          PONTO_PAGES_INSUMOS_API_TARGET: ${{ secrets.PONTO_PAGES_INSUMOS_API_TARGET }}
+          PONTO_PAGES_ACTOR_HMAC_KEY: ${{ secrets.PONTO_PAGES_ACTOR_HMAC_KEY }}
+          PONTO_PAGES_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_PAGES_NETWORK_CONTEXT_KEY }}
+          PONTO_PAGES_RELEASE_PROBE_HMAC_KEY: ${{ secrets.PONTO_PAGES_RELEASE_PROBE_HMAC_KEY }}
+          PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging)
+              EXPECTED_PROJECT='skincos-ponto-staging'
+              EXPECTED_CORE_SERVICE='skincos-ponto-core-staging'
+              EXPECTED_IDENTITY_SERVICE='skincos-insumos-staging'
+              EXPECTED_API_TARGET='https://api-staging.skincos.com.br'
+              EXPECTED_ENVIRONMENT='staging'
+              EXPECTED_ROLLOUT_STAGE='staging'
+              ;;
+            production)
+              EXPECTED_PROJECT='skincos-ponto'
+              EXPECTED_CORE_SERVICE='skincos-ponto-core'
+              EXPECTED_IDENTITY_SERVICE='skincos-insumos'
+              EXPECTED_API_TARGET='https://api.skincos.com.br'
+              EXPECTED_ENVIRONMENT='production'
+              EXPECTED_ROLLOUT_STAGE='maintenance'
+              ;;
+            *) echo 'PONTO_PAGES_TARGET_UNSUPPORTED'; exit 1 ;;
+          esac
+          [[ "$PUBLISH_ENABLED" == 'true' ]] || { echo 'PONTO_PAGES_PUBLISH_DISABLED'; exit 1; }
+          [[ "$PROJECT_CONFIGURED" == "$EXPECTED_PROJECT" ]] || { echo 'PONTO_PAGES_PROJECT_LITERAL_MISMATCH'; exit 1; }
+          [[ "$PROJECT_CONFIGURED" != skincos && "$PROJECT_CONFIGURED" != skincos-staging ]] || { echo 'PONTO_PAGES_LEGACY_PROJECT_FORBIDDEN'; exit 1; }
+          [[ "$CORE_SERVICE_CONFIGURED" == "$EXPECTED_CORE_SERVICE" ]] || { echo 'PONTO_PAGES_CORE_SERVICE_LITERAL_MISMATCH'; exit 1; }
+          [[ "$IDENTITY_SERVICE_CONFIGURED" == "$EXPECTED_IDENTITY_SERVICE" ]] || { echo 'PONTO_PAGES_IDENTITY_SERVICE_LITERAL_MISMATCH'; exit 1; }
+          [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-f]{32}$ ]] || { echo 'PONTO_PAGES_MODULE_CONTROL_KV_INVALID'; exit 1; }
+          [[ "$PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID" =~ ^[0-9a-f]{32}$ ]] || { echo 'PONTO_PAGES_ACCOUNT_ID_INVALID'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'PONTO_PAGES_RELEASE_SHA_INVALID'; exit 1; }
+          [[ "$PONTO_PAGES_PONTO_API_TARGET" == "$EXPECTED_API_TARGET" && "$PONTO_PAGES_AUTH_API_TARGET" == "$EXPECTED_API_TARGET" && "$PONTO_PAGES_INSUMOS_API_TARGET" == "$EXPECTED_API_TARGET" ]] || { echo 'PONTO_PAGES_API_TARGET_LITERAL_MISMATCH'; exit 1; }
+          for name in PONTO_PAGES_CLOUDFLARE_API_TOKEN PONTO_PAGES_ACTOR_HMAC_KEY PONTO_PAGES_NETWORK_CONTEXT_KEY PONTO_PAGES_RELEASE_PROBE_HMAC_KEY PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET; do
+            [[ -n "${!name:-}" && "${!name}" != *$'\n'* && "${!name}" != *$'\r'* ]] || { echo "PONTO_PAGES_SECRET_INVALID:$name"; exit 1; }
+          done
+          if [[ "$TARGET" == staging ]]; then
+            [[ "$CORE_VERSION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo 'PONTO_PAGES_STAGING_CORE_VERSION_REQUIRED'; exit 1; }
+            [[ "$IDENTITY_VERSION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo 'PONTO_PAGES_STAGING_IDENTITY_VERSION_REQUIRED'; exit 1; }
+            [[ "$CORE_CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'PONTO_PAGES_STAGING_CORE_CANDIDATE_RUN_REQUIRED'; exit 1; }
+            [[ -z "$STAGING_ROLLBACK_RUN_ID" ]] || { echo 'PONTO_PAGES_STAGING_ROLLBACK_RECEIPT_FORBIDDEN'; exit 1; }
+          else
+            [[ -z "$CORE_VERSION_ID" && -z "$IDENTITY_VERSION_ID" ]] || { echo 'PONTO_PAGES_PRODUCTION_VERSION_OVERRIDE_FORBIDDEN'; exit 1; }
+            [[ "$STAGING_PUBLISH_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'PONTO_PAGES_STAGING_PUBLISH_RUN_REQUIRED'; exit 1; }
+            [[ "$STAGING_SMOKE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'PONTO_PAGES_STAGING_SMOKE_RECEIPT_REQUIRED'; exit 1; }
+            [[ "$STAGING_ROLLBACK_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RECEIPT_REQUIRED'; exit 1; }
+          fi
+          {
+            echo "EXPECTED_PROJECT=$EXPECTED_PROJECT"
+            echo "EXPECTED_CORE_SERVICE=$EXPECTED_CORE_SERVICE"
+            echo "EXPECTED_IDENTITY_SERVICE=$EXPECTED_IDENTITY_SERVICE"
+            echo "EXPECTED_MODULE_CONTROL_KV_ID=$MODULE_CONTROL_KV_ID"
+            echo "EXPECTED_RUNTIME_ENVIRONMENT=$EXPECTED_ENVIRONMENT"
+            echo "EXPECTED_ROLLOUT_STAGE=$EXPECTED_ROLLOUT_STAGE"
+          } >> "$GITHUB_ENV"
+      - name: Verify exact Ponto Core staging candidate receipt
+        if: ${{ inputs.target == 'staging' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY_ID: ${{ github.repository_id }}
+          CORE_CANDIDATE_RUN_ID: ${{ inputs.core_candidate_run_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CORE_VERSION_ID: ${{ vars.PONTO_PAGES_CORE_VERSION_ID }}
+          IDENTITY_VERSION_ID: ${{ vars.PONTO_PAGES_IDENTITY_VERSION_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$CORE_CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'PONTO_PAGES_STAGING_CORE_CANDIDATE_RUN_REQUIRED'; exit 1; }
+          candidate_dir="$RUNNER_TEMP/ponto-core-staging-candidate"
+          candidate_workflow="$candidate_dir/workflow.json"
+          candidate_run="$candidate_dir/run.json"
+          mkdir -p "$candidate_dir"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-core-staging-candidate.yml" > "$candidate_workflow" \
+            || { echo 'PONTO_PAGES_CORE_CANDIDATE_WORKFLOW_UNAVAILABLE'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CORE_CANDIDATE_RUN_ID" > "$candidate_run" \
+            || { echo 'PONTO_PAGES_CORE_CANDIDATE_RUN_UNAVAILABLE'; exit 1; }
+          PONTO_CORE_CANDIDATE_WORKFLOW="$candidate_workflow" \
+          PONTO_CORE_CANDIDATE_RUN="$candidate_run" \
+          PONTO_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          node <<'NODE'
+          const fs = require('fs');
+          const workflow = JSON.parse(fs.readFileSync(process.env.PONTO_CORE_CANDIDATE_WORKFLOW, 'utf8'));
+          const run = JSON.parse(fs.readFileSync(process.env.PONTO_CORE_CANDIDATE_RUN, 'utf8'));
+          const fail = (code) => { throw new Error('PONTO_PAGES_CORE_CANDIDATE_RUN_' + code); };
+          const acceptedPaths = [workflow.path, `${workflow.path}@refs/heads/main`];
+          if (
+            workflow?.state !== 'active'
+            || workflow?.path !== '.github/workflows/ponto-core-staging-candidate.yml'
+            || workflow?.name !== 'Ponto Core staging candidate'
+            || Number(run?.workflow_id) !== Number(workflow?.id)
+            || !acceptedPaths.includes(run?.path)
+            || run?.status !== 'completed'
+            || run?.conclusion !== 'success'
+            || run?.event !== 'workflow_dispatch'
+            || Number(run?.run_attempt) !== 1
+            || run?.head_branch !== 'main'
+            || String(run?.head_sha || '').toLowerCase() !== process.env.PONTO_EXPECTED_SOURCE_SHA
+            || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || Number(run?.repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)
+            || run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || Number(run?.head_repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)
+          ) fail('PROVENANCE');
+          NODE
+          gh run download "$CORE_CANDIDATE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-core-staging-candidate-$RELEASE_SHA" --dir "$candidate_dir"
+          PONTO_EXPECTED_SOURCE_REPOSITORY="$GITHUB_REPOSITORY" \
+          PONTO_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+          PONTO_EXPECTED_CORE_CANDIDATE_RUN_ID="$CORE_CANDIDATE_RUN_ID" \
+          PONTO_EXPECTED_CORE_SERVICE="$EXPECTED_CORE_SERVICE" \
+          PONTO_EXPECTED_CORE_VERSION_ID="$CORE_VERSION_ID" \
+          PONTO_EXPECTED_IDENTITY_SERVICE="$EXPECTED_IDENTITY_SERVICE" \
+          PONTO_EXPECTED_IDENTITY_VERSION_ID="$IDENTITY_VERSION_ID" \
+          node workforce/ponto-pages/scripts/verify-ponto-core-staging-candidate.mjs \
+            "$candidate_dir/ponto-core-staging-candidate.json"
+      - name: Verify exact Ponto Pages staging synthetic smoke receipt
+        if: ${{ inputs.target == 'production' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY_ID: ${{ github.repository_id }}
+          STAGING_PUBLISH_RUN_ID: ${{ inputs.staging_run_id }}
+          STAGING_SMOKE_RUN_ID: ${{ inputs.staging_smoke_run_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$STAGING_PUBLISH_RUN_ID" =~ ^[1-9][0-9]*$ && "$STAGING_SMOKE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'PONTO_PAGES_STAGING_SMOKE_RECEIPT_REQUIRED'; exit 1; }
+          staging_project='skincos-ponto-staging'
+          receipt_dir="$RUNNER_TEMP/ponto-pages-staging-synthetic-smoke"
+          mkdir -p "$receipt_dir/publish" "$receipt_dir/smoke"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-pages-governed-publisher.yml" > "$receipt_dir/publisher-workflow.json" \
+            || { echo 'PONTO_PAGES_STAGING_PUBLISHER_WORKFLOW_UNAVAILABLE'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_PUBLISH_RUN_ID" > "$receipt_dir/publisher-run.json" \
+            || { echo 'PONTO_PAGES_STAGING_PUBLISH_RUN_UNAVAILABLE'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-pages-staging-synthetic-smoke.yml" > "$receipt_dir/smoke-workflow.json" \
+            || { echo 'PONTO_PAGES_STAGING_SMOKE_WORKFLOW_UNAVAILABLE'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_SMOKE_RUN_ID" > "$receipt_dir/smoke-run.json" \
+            || { echo 'PONTO_PAGES_STAGING_SMOKE_RUN_UNAVAILABLE'; exit 1; }
+          PONTO_PAGES_STAGING_PUBLISHER_WORKFLOW="$receipt_dir/publisher-workflow.json" \
+          PONTO_PAGES_STAGING_PUBLISH_RUN="$receipt_dir/publisher-run.json" \
+          PONTO_PAGES_STAGING_SMOKE_WORKFLOW="$receipt_dir/smoke-workflow.json" \
+          PONTO_PAGES_STAGING_SMOKE_RUN="$receipt_dir/smoke-run.json" \
+          PONTO_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          node <<'NODE'
+          const fs = require('fs');
+          const expectedRepositoryId = Number(process.env.EXPECTED_REPOSITORY_ID);
+          const sourceSha = process.env.PONTO_EXPECTED_SOURCE_SHA;
+          const parse = (name) => JSON.parse(fs.readFileSync(process.env[name], 'utf8'));
+          const publisherWorkflow = parse('PONTO_PAGES_STAGING_PUBLISHER_WORKFLOW');
+          const publisherRun = parse('PONTO_PAGES_STAGING_PUBLISH_RUN');
+          const smokeWorkflow = parse('PONTO_PAGES_STAGING_SMOKE_WORKFLOW');
+          const smokeRun = parse('PONTO_PAGES_STAGING_SMOKE_RUN');
+          const fail = (code) => { throw new Error('PONTO_PAGES_STAGING_SMOKE_' + code); };
+          const validate = (workflow, run, path, name, runId, title) => {
+            const acceptedPaths = [workflow.path, `${workflow.path}@refs/heads/main`];
+            if (
+              workflow?.state !== 'active'
+              || workflow?.path !== path
+              || workflow?.name !== name
+              || Number(run?.id) !== Number(runId)
+              || Number(run?.workflow_id) !== Number(workflow?.id)
+              || !acceptedPaths.includes(run?.path)
+              || run?.status !== 'completed'
+              || run?.conclusion !== 'success'
+              || run?.event !== 'workflow_dispatch'
+              || Number(run?.run_attempt) !== 1
+              || run?.head_branch !== 'main'
+              || String(run?.head_sha || '').toLowerCase() !== sourceSha
+              || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY
+              || Number(run?.repository?.id) !== expectedRepositoryId
+              || run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+              || Number(run?.head_repository?.id) !== expectedRepositoryId
+              || (title && run?.display_title !== title)
+            ) fail('PROVENANCE');
+          };
+          validate(
+            publisherWorkflow,
+            publisherRun,
+            '.github/workflows/ponto-pages-governed-publisher.yml',
+            'Governed Ponto Pages publisher',
+            process.env.STAGING_PUBLISH_RUN_ID,
+            `Ponto Pages staging ${sourceSha} publish=true`,
+          );
+          validate(
+            smokeWorkflow,
+            smokeRun,
+            '.github/workflows/ponto-pages-staging-synthetic-smoke.yml',
+            'Ponto Pages staging synthetic smoke',
+            process.env.STAGING_SMOKE_RUN_ID,
+          );
+          NODE
+          gh run download "$STAGING_PUBLISH_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-pages-publish-receipt-staging-$RELEASE_SHA" --dir "$receipt_dir/publish"
+          gh run download "$STAGING_SMOKE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-pages-staging-synthetic-smoke-$RELEASE_SHA-$staging_project" --dir "$receipt_dir/smoke"
+          PONTO_EXPECTED_SOURCE_REPOSITORY="$GITHUB_REPOSITORY" \
+          PONTO_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+          PONTO_EXPECTED_STAGING_PROJECT="$staging_project" \
+          PONTO_EXPECTED_STAGING_PUBLISH_RUN_ID="$STAGING_PUBLISH_RUN_ID" \
+          PONTO_EXPECTED_STAGING_SMOKE_RUN_ID="$STAGING_SMOKE_RUN_ID" \
+          node workforce/ponto-pages/scripts/verify-ponto-pages-staging-smoke.mjs \
+            "$receipt_dir/publish/ponto-pages-publish-receipt.json" \
+            "$receipt_dir/smoke/ponto-pages-staging-synthetic-smoke.json"
+      - name: Verify exact Ponto Pages staging same-artifact rollback receipt
+        if: ${{ inputs.target == 'production' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY_ID: ${{ github.repository_id }}
+          STAGING_ROLLBACK_RUN_ID: ${{ inputs.staging_rollback_run_id }}
+          STAGING_PUBLISH_RUN_ID: ${{ inputs.staging_run_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          [[ "$STAGING_ROLLBACK_RUN_ID" =~ ^[1-9][0-9]*$ && "$STAGING_PUBLISH_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RECEIPT_REQUIRED'; exit 1; }
+          staging_project='skincos-ponto-staging'
+          rollback_dir="$RUNNER_TEMP/ponto-pages-staging-same-artifact-rollback"
+          rollback_workflow="$rollback_dir/workflow.json"
+          rollback_run="$rollback_dir/run.json"
+          mkdir -p "$rollback_dir"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-pages-staging-same-artifact-rollback.yml" > "$rollback_workflow" \
+            || { echo 'PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_WORKFLOW_UNAVAILABLE'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_ROLLBACK_RUN_ID" > "$rollback_run" \
+            || { echo 'PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RUN_UNAVAILABLE'; exit 1; }
+          PONTO_PAGES_ROLLBACK_WORKFLOW="$rollback_workflow" \
+          PONTO_PAGES_ROLLBACK_RUN="$rollback_run" \
+          PONTO_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          node <<'NODE'
+          const fs = require('fs');
+          const workflow = JSON.parse(fs.readFileSync(process.env.PONTO_PAGES_ROLLBACK_WORKFLOW, 'utf8'));
+          const run = JSON.parse(fs.readFileSync(process.env.PONTO_PAGES_ROLLBACK_RUN, 'utf8'));
+          const fail = (code) => { throw new Error('PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_' + code); };
+          const acceptedPaths = [workflow.path, `${workflow.path}@refs/heads/main`];
+          if (
+            workflow?.state !== 'active'
+            || workflow?.path !== '.github/workflows/ponto-pages-staging-same-artifact-rollback.yml'
+            || workflow?.name !== 'Ponto Pages staging same-artifact rollback'
+            || Number(run?.workflow_id) !== Number(workflow?.id)
+            || !acceptedPaths.includes(run?.path)
+            || run?.status !== 'completed'
+            || run?.conclusion !== 'success'
+            || run?.event !== 'workflow_dispatch'
+            || Number(run?.run_attempt) !== 1
+            || run?.head_branch !== 'main'
+            || String(run?.head_sha || '').toLowerCase() !== process.env.PONTO_EXPECTED_SOURCE_SHA
+            || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || Number(run?.repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)
+            || run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || Number(run?.head_repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)
+          ) fail('PROVENANCE');
+          NODE
+          gh run download "$STAGING_ROLLBACK_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-pages-staging-same-artifact-rollback-$RELEASE_SHA-$staging_project" --dir "$rollback_dir"
+          PONTO_EXPECTED_SOURCE_REPOSITORY="$GITHUB_REPOSITORY" \
+          PONTO_EXPECTED_SOURCE_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+          PONTO_EXPECTED_TARGET='staging' \
+          PONTO_EXPECTED_PROJECT="$staging_project" \
+          PONTO_EXPECTED_STAGING_PUBLISH_RUN_ID="$STAGING_PUBLISH_RUN_ID" \
+          PONTO_EXPECTED_STAGING_ROLLBACK_RUN_ID="$STAGING_ROLLBACK_RUN_ID" \
+          node workforce/ponto-pages/scripts/verify-ponto-pages-same-artifact-rollback.mjs \
+            "$rollback_dir/ponto-pages-staging-same-artifact-rollback.json"
+      - name: Read back exact empty Pages project and disabled Git publication
+        env:
+          PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_PAGES_CLOUDFLARE_API_TOKEN: ${{ secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          project_file="$RUNNER_TEMP/ponto-pages-project.json"
+          printf 'Authorization: Bearer %s\nAccept: application/json\n' "$PONTO_PAGES_CLOUDFLARE_API_TOKEN" | \
+            curl --disable --fail --silent --show-error \
+              --header @- \
+              --output "$project_file" \
+              "https://api.cloudflare.com/client/v4/accounts/${PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID}/pages/projects/${EXPECTED_PROJECT}"
+          node workforce/ponto-pages/scripts/verify-ponto-pages-remote-project.mjs \
+            "$project_file" "$EXPECTED_PROJECT" empty
+      - run: npm ci
+        working-directory: workforce/ponto-pages
+      - name: Build the exact source artifact
+        run: npm run build
+        working-directory: workforce/ponto-pages
+      - name: Render Ponto-only runtime configuration and secret payload in runner temp
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          PONTO_PAGES_CORE_SERVICE: ${{ vars.PONTO_PAGES_CORE_SERVICE }}
+          PONTO_PAGES_IDENTITY_SERVICE: ${{ vars.PONTO_PAGES_IDENTITY_SERVICE }}
+          PONTO_PAGES_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_PAGES_MODULE_CONTROL_KV_ID }}
+          PONTO_PAGES_CORE_VERSION_ID: ${{ vars.PONTO_PAGES_CORE_VERSION_ID }}
+          PONTO_PAGES_IDENTITY_VERSION_ID: ${{ vars.PONTO_PAGES_IDENTITY_VERSION_ID }}
+          PONTO_PAGES_PONTO_API_TARGET: ${{ secrets.PONTO_PAGES_PONTO_API_TARGET }}
+          PONTO_PAGES_AUTH_API_TARGET: ${{ secrets.PONTO_PAGES_AUTH_API_TARGET }}
+          PONTO_PAGES_INSUMOS_API_TARGET: ${{ secrets.PONTO_PAGES_INSUMOS_API_TARGET }}
+          PONTO_PAGES_ACTOR_HMAC_KEY: ${{ secrets.PONTO_PAGES_ACTOR_HMAC_KEY }}
+          PONTO_PAGES_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_PAGES_NETWORK_CONTEXT_KEY }}
+          PONTO_PAGES_RELEASE_PROBE_HMAC_KEY: ${{ secrets.PONTO_PAGES_RELEASE_PROBE_HMAC_KEY }}
+        working-directory: workforce/ponto-pages
+        run: |
+          set -euo pipefail
+          runtime_dir="$RUNNER_TEMP/ponto-pages-governed-runtime"
+          secret_file="$RUNNER_TEMP/ponto-pages-governed-secrets.json"
+          rm -rf "$runtime_dir"
+          mkdir -p "$runtime_dir"
+          cp -R dist "$runtime_dir/dist"
+          cp -R functions "$runtime_dir/functions"
+          PONTO_RUNTIME_TEMPLATE="$PWD/deployment/wrangler.runtime.template.toml" \
+          PONTO_RUNTIME_CONFIG="$runtime_dir/wrangler.toml" \
+          PONTO_SECRET_FILE="$secret_file" \
+          EXPECTED_PROJECT="$EXPECTED_PROJECT" \
+          EXPECTED_RUNTIME_ENVIRONMENT="$EXPECTED_RUNTIME_ENVIRONMENT" \
+          EXPECTED_ROLLOUT_STAGE="$EXPECTED_ROLLOUT_STAGE" \
+          node <<'NODE'
+          const fs = require('fs');
+          const template = fs.readFileSync(process.env.PONTO_RUNTIME_TEMPLATE, 'utf8');
+          const values = {
+            __PONTO_PAGES_PROJECT__: process.env.EXPECTED_PROJECT,
+            __PONTO_PAGES_CORE_SERVICE__: process.env.PONTO_PAGES_CORE_SERVICE,
+            __PONTO_PAGES_IDENTITY_SERVICE__: process.env.PONTO_PAGES_IDENTITY_SERVICE,
+            __PONTO_PAGES_MODULE_CONTROL_KV_ID__: process.env.PONTO_PAGES_MODULE_CONTROL_KV_ID,
+            __PONTO_PAGES_RUNTIME_ENV__: process.env.EXPECTED_RUNTIME_ENVIRONMENT,
+            __PONTO_RELEASE_SHA__: process.env.RELEASE_SHA,
+            __PONTO_ROLLOUT_STAGE__: process.env.EXPECTED_ROLLOUT_STAGE,
+            __PONTO_PAGES_CORE_VERSION_ID__: process.env.PONTO_PAGES_CORE_VERSION_ID || '',
+            __PONTO_PAGES_IDENTITY_VERSION_ID__: process.env.PONTO_PAGES_IDENTITY_VERSION_ID || '',
+          };
+          for (const [token, value] of Object.entries(values)) {
+            if (value === undefined || value === null) throw new Error('PONTO_PAGES_TEMPLATE_VALUE_MISSING:' + token);
+          }
+          let rendered = template;
+          for (const [token, value] of Object.entries(values)) rendered = rendered.replaceAll(token, value);
+          if (Object.keys(values).some((token) => rendered.includes(token))) throw new Error('PONTO_PAGES_TEMPLATE_TOKEN_UNRESOLVED');
+          fs.writeFileSync(process.env.PONTO_RUNTIME_CONFIG, rendered, { mode: 0o600 });
+          const secrets = {
+            PONTO_API_TARGET: process.env.PONTO_PAGES_PONTO_API_TARGET,
+            AUTH_API_TARGET: process.env.PONTO_PAGES_AUTH_API_TARGET,
+            INSUMOS_API_TARGET: process.env.PONTO_PAGES_INSUMOS_API_TARGET,
+            PONTO_ACTOR_HMAC_KEY: process.env.PONTO_PAGES_ACTOR_HMAC_KEY,
+            PONTO_NETWORK_CONTEXT_KEY: process.env.PONTO_PAGES_NETWORK_CONTEXT_KEY,
+            PONTO_RELEASE_PROBE_HMAC_KEY: process.env.PONTO_PAGES_RELEASE_PROBE_HMAC_KEY,
+          };
+          if (Object.values(secrets).some((value) => !value)) throw new Error('PONTO_PAGES_SECRET_PAYLOAD_INCOMPLETE');
+          fs.writeFileSync(process.env.PONTO_SECRET_FILE, JSON.stringify(secrets), { mode: 0o600 });
+          NODE
+      - name: Acquire dedicated Ponto Pages lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: deploy:ponto-pages:${{ inputs.target }}
+          module: ponto-pages
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-pages.json
+      - name: Revalidate lease immediately before secret configuration
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-pages.json
+          resource: deploy:ponto-pages:${{ inputs.target }}
+          module: ponto-pages
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET }}
+      - name: Configure Ponto-only Pages secrets without printing values
+        env:
+          PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_PAGES_CLOUDFLARE_API_TOKEN: ${{ secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/ponto-pages-governed-runtime"
+          CLOUDFLARE_API_TOKEN="$PONTO_PAGES_CLOUDFLARE_API_TOKEN" \
+          CLOUDFLARE_ACCOUNT_ID="$PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID" \
+          npx --yes wrangler@4.114.0 pages secret bulk "$RUNNER_TEMP/ponto-pages-governed-secrets.json" \
+            --project-name "$EXPECTED_PROJECT"
+      - name: Silently read back configured Ponto-only secret names
+        env:
+          PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_PAGES_CLOUDFLARE_API_TOKEN: ${{ secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          secret_readback_file="$RUNNER_TEMP/ponto-pages-secret-readback.json"
+          printf 'Authorization: Bearer %s\nAccept: application/json\n' "$PONTO_PAGES_CLOUDFLARE_API_TOKEN" | \
+            curl --disable --fail --silent --show-error \
+              --header @- \
+              --output "$secret_readback_file" \
+              "https://api.cloudflare.com/client/v4/accounts/${PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID}/pages/projects/${EXPECTED_PROJECT}"
+          node workforce/ponto-pages/scripts/verify-ponto-pages-remote-project.mjs \
+            "$secret_readback_file" "$EXPECTED_PROJECT" secrets \
+            PONTO_API_TARGET AUTH_API_TARGET INSUMOS_API_TARGET \
+            PONTO_ACTOR_HMAC_KEY PONTO_NETWORK_CONTEXT_KEY PONTO_RELEASE_PROBE_HMAC_KEY
+      - name: Revalidate lease immediately before Pages deployment
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-pages.json
+          resource: deploy:ponto-pages:${{ inputs.target }}
+          module: ponto-pages
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET }}
+      - name: Deploy only the exact dedicated Ponto Pages project
+        env:
+          PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_PAGES_CLOUDFLARE_API_TOKEN: ${{ secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/ponto-pages-governed-runtime"
+          CLOUDFLARE_API_TOKEN="$PONTO_PAGES_CLOUDFLARE_API_TOKEN" \
+          CLOUDFLARE_ACCOUNT_ID="$PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID" \
+          npx --yes wrangler@4.114.0 pages deploy dist \
+            --project-name "$EXPECTED_PROJECT" \
+            --branch main \
+            --commit-hash "$RELEASE_SHA"
+      - name: Read back exact deployed source identity
+        env:
+          PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_PAGES_CLOUDFLARE_API_TOKEN: ${{ secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.promotion.outputs.source_tree }}
+          TARGET: ${{ inputs.target }}
+          CORE_VERSION_ID: ${{ vars.PONTO_PAGES_CORE_VERSION_ID }}
+          IDENTITY_VERSION_ID: ${{ vars.PONTO_PAGES_IDENTITY_VERSION_ID }}
+        run: |
+          set -euo pipefail
+          deployment_file="$RUNNER_TEMP/ponto-pages-deployments.json"
+          runtime_readback_file="$RUNNER_TEMP/ponto-pages-runtime-readback.json"
+          receipt_file="$RUNNER_TEMP/ponto-pages-publish-receipt.json"
+          printf 'Authorization: Bearer %s\nAccept: application/json\n' "$PONTO_PAGES_CLOUDFLARE_API_TOKEN" | \
+            curl --disable --fail --silent --show-error \
+              --header @- \
+              --output "$deployment_file" \
+              "https://api.cloudflare.com/client/v4/accounts/${PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID}/pages/projects/${EXPECTED_PROJECT}/deployments?branch=main"
+          printf 'Authorization: Bearer %s\nAccept: application/json\n' "$PONTO_PAGES_CLOUDFLARE_API_TOKEN" | \
+            curl --disable --fail --silent --show-error \
+              --header @- \
+              --output "$runtime_readback_file" \
+              "https://api.cloudflare.com/client/v4/accounts/${PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID}/pages/projects/${EXPECTED_PROJECT}"
+          PONTO_PAGES_EXPECTED_RUNTIME_ENVIRONMENT="$EXPECTED_RUNTIME_ENVIRONMENT" \
+          PONTO_PAGES_EXPECTED_RELEASE_SHA="$RELEASE_SHA" \
+          PONTO_PAGES_EXPECTED_ROLLOUT_STAGE="$EXPECTED_ROLLOUT_STAGE" \
+          PONTO_PAGES_EXPECTED_CORE_VERSION_ID="$CORE_VERSION_ID" \
+          PONTO_PAGES_EXPECTED_IDENTITY_VERSION_ID="$IDENTITY_VERSION_ID" \
+          PONTO_PAGES_EXPECTED_CORE_SERVICE="$EXPECTED_CORE_SERVICE" \
+          PONTO_PAGES_EXPECTED_IDENTITY_SERVICE="$EXPECTED_IDENTITY_SERVICE" \
+          PONTO_PAGES_EXPECTED_MODULE_CONTROL_KV_ID="$EXPECTED_MODULE_CONTROL_KV_ID" \
+          node workforce/ponto-pages/scripts/verify-ponto-pages-remote-project.mjs \
+            "$runtime_readback_file" "$EXPECTED_PROJECT" runtime \
+            PONTO_API_TARGET AUTH_API_TARGET INSUMOS_API_TARGET \
+            PONTO_ACTOR_HMAC_KEY PONTO_NETWORK_CONTEXT_KEY PONTO_RELEASE_PROBE_HMAC_KEY
+          node - "$deployment_file" "$receipt_file" "$TARGET" "$EXPECTED_PROJECT" "$RELEASE_SHA" <<'NODE'
+          const fs = require('fs');
+          const [deploymentFile, receiptFile, target, project, sourceSha] = process.argv.slice(2);
+          const response = JSON.parse(fs.readFileSync(deploymentFile, 'utf8'));
+          const deployment = Array.isArray(response?.result)
+            ? response.result.find((entry) => entry?.commit_hash === sourceSha && entry?.environment === 'production')
+            : null;
+          if (response?.success !== true || !deployment) throw new Error('PONTO_PAGES_DEPLOYMENT_READBACK_MISMATCH');
+          const receipt = {
+            schemaVersion: 1,
+            contractId: 'skincos/ponto-pages-publication/v1',
+            target,
+            project,
+            sourceRepository: process.env.GITHUB_REPOSITORY,
+            sourceSha,
+            sourceTree: process.env.SOURCE_TREE,
+            producer: {
+              workflow: '.github/workflows/ponto-pages-governed-publisher.yml',
+              workflowName: 'Governed Ponto Pages publisher',
+              runId: process.env.GITHUB_RUN_ID,
+            },
+            deploymentId: String(deployment.id || ''),
+            deploymentEnvironment: String(deployment.environment || ''),
+            bindingNames: ['PONTO_CORE', 'PONTO_IDENTITY', 'MODULE_CONTROL'],
+            runtimeSecretNames: ['PONTO_API_TARGET', 'AUTH_API_TARGET', 'INSUMOS_API_TARGET', 'PONTO_ACTOR_HMAC_KEY', 'PONTO_NETWORK_CONTEXT_KEY', 'PONTO_RELEASE_PROBE_HMAC_KEY'],
+            valuesIncluded: false,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          };
+          if (!receipt.deploymentId) throw new Error('PONTO_PAGES_DEPLOYMENT_ID_MISSING');
+          fs.writeFileSync(receiptFile, JSON.stringify(receipt, null, 2) + '\n', { mode: 0o600 });
+          NODE
+      - name: Write immutable staging promotion evidence
+        if: ${{ inputs.target == 'staging' }}
+        env:
+          PROMOTION_UNIT: ponto-pages
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+      - name: Upload immutable staging promotion evidence
+        if: ${{ inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-ponto-pages
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Upload sanitised dedicated publication receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-pages-publish-receipt-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/ponto-pages-publish-receipt.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Remove runner-temporary Ponto material
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/ponto-pages-governed-runtime" \
+            "$RUNNER_TEMP/ponto-pages-governed-secrets.json" \
+            "$RUNNER_TEMP/ponto-pages-project.json" \
+            "$RUNNER_TEMP/ponto-pages-secret-readback.json" \
+            "$RUNNER_TEMP/ponto-pages-runtime-readback.json" \
+            "$RUNNER_TEMP/ponto-pages-deployments.json" \
+            "$RUNNER_TEMP/ponto-core-staging-candidate" \
+            "$RUNNER_TEMP/ponto-pages-staging-synthetic-smoke" \
+            "$RUNNER_TEMP/ponto-pages-staging-same-artifact-rollback"
+      - name: Release dedicated Ponto Pages lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-pages.json

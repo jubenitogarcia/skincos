@@ -38,6 +38,10 @@ const releaseSurfacesByUnit = {
   // contract or runtime change.
   "atendimento": ["timekeeping", "runtime", "github-governance"],
   "atendimento-availability": ["timekeeping", "runtime", "github-governance"],
+  // Ponto Pages is its own direct-uploaded Cloudflare Pages surface.  Its
+  // release identity must bind the app, dedicated publisher, single-writer
+  // policy and coordinator instead of inheriting the legacy CRM Pages scope.
+  "ponto-pages": ["ponto-pages", "global-coordination", "github-governance"],
 };
 
 function releaseInputDigest(unit, sourceSha) {
