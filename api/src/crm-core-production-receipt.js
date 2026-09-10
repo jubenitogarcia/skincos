@@ -1,5 +1,8 @@
+import { resolveCrmCoreProductionRouteReceipt } from './crm-identity-issuer-client.js';
+
 const RECEIPT_CONTRACT = 'skincos-crm/production-route-receipt/v1';
 const CRM_CORE_SERVICE = 'skincos-crm-core';
+const CRM_IDENTITY_ISSUER_SERVICE = 'skincos-identity-crm-delivery-production';
 const RECEIPT_KEY_PREFIX = 'crm-production-route-receipt-';
 const VERSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RELEASE_RE = /^[0-9a-f]{40}$/;
@@ -13,6 +16,7 @@ const RECEIPT_KEYS = Object.freeze([
     'gatewayVersionId',
     'service',
     'workerVersionId',
+    'identityWorkerVersionId',
     'release',
     'artifactDigest',
     'keyId',
@@ -50,6 +54,7 @@ function normalizeReceipt(value) {
     const receiptId = normalizedText(record.receiptId);
     const gatewayVersionId = normalizedText(record.gatewayVersionId).toLowerCase();
     const workerVersionId = normalizedText(record.workerVersionId).toLowerCase();
+    const identityWorkerVersionId = normalizedText(record.identityWorkerVersionId).toLowerCase();
     const release = normalizedText(record.release).toLowerCase();
     const artifactDigest = normalizedText(record.artifactDigest).toLowerCase();
     const keyId = normalizedText(record.keyId);
@@ -60,6 +65,7 @@ function normalizeReceipt(value) {
         || !/^[A-Za-z0-9._:-]{8,200}$/.test(receiptId)
         || !VERSION_ID_RE.test(gatewayVersionId)
         || !VERSION_ID_RE.test(workerVersionId)
+        || !VERSION_ID_RE.test(identityWorkerVersionId)
         || !RELEASE_RE.test(release)
         || !DIGEST_RE.test(artifactDigest)
         || !KEY_ID_RE.test(keyId)
@@ -74,6 +80,7 @@ function normalizeReceipt(value) {
         gatewayVersionId,
         service: CRM_CORE_SERVICE,
         workerVersionId,
+        identityWorkerVersionId,
         release,
         artifactDigest,
         keyId,
@@ -110,9 +117,9 @@ function signatureBytes(value) {
 }
 
 /**
- * The signed receipt binds the production gateway version, exact service
- * version and Core artifact identity. It is deliberately not a set of
- * independently switchable regex-shaped variables.
+ * The signed receipt binds the production gateway, Core, and private Identity
+ * issuer versions to the Core artifact identity. It is deliberately not a set
+ * of independently switchable regex-shaped variables.
  */
 export function createCrmCoreProductionReceiptSigningInput(receipt) {
     const normalized = normalizeReceipt(receipt);
@@ -124,6 +131,7 @@ export function createCrmCoreProductionReceiptSigningInput(receipt) {
         normalized.gatewayVersionId,
         normalized.service,
         normalized.workerVersionId,
+        normalized.identityWorkerVersionId,
         normalized.release,
         normalized.artifactDigest,
         normalized.keyId,
@@ -148,18 +156,28 @@ async function verifiesReceiptSignature(receipt, publicKeys) {
     }
 }
 
-function receiptFromEnvironment(env) {
+async function receiptFromEnvironment(env) {
     if (String(env?.ENVIRONMENT || '').trim().toLowerCase() !== 'production'
         || String(env?.CRM_CORE_PRODUCTION_ENABLED || '').trim() !== 'true') {
         return null;
     }
-    const receipt = normalizeReceipt(parseJson(env?.CRM_CORE_PRODUCTION_RECEIPT));
     const publicKeys = normalizePublicKeys(parseJson(env?.CRM_CORE_PRODUCTION_RECEIPT_PUBLIC_KEYS_JSON));
     const gatewayVersionId = normalizedText(env?.CF_VERSION_METADATA?.id).toLowerCase();
-    if (!receipt || !publicKeys || !VERSION_ID_RE.test(gatewayVersionId)
-        || receipt.gatewayVersionId !== gatewayVersionId) {
+    if (!publicKeys || !VERSION_ID_RE.test(gatewayVersionId)) {
         return null;
     }
+    let rawReceipt;
+    try {
+        // The receipt is deliberately read from the private Identity service,
+        // not from a value bound into the same API version it must authorize.
+        // Do not cache this response: withdrawing it is the immediate
+        // fail-closed rollback for the production CRM route.
+        rawReceipt = await resolveCrmCoreProductionRouteReceipt(env, gatewayVersionId);
+    } catch {
+        return null;
+    }
+    const receipt = normalizeReceipt(parseJson(rawReceipt));
+    if (!receipt || receipt.gatewayVersionId !== gatewayVersionId) return null;
     return { receipt, publicKeys };
 }
 
@@ -218,11 +236,12 @@ async function provesReceiptTarget(request, env, receipt) {
 }
 
 /**
- * Verifies a custody-signed receipt, pins the service fetch to its immutable
- * Cloudflare Worker version, and proves the pinned target's ready identity.
+ * Resolves a custody-signed receipt through private Identity, verifies it
+ * locally, pins the Core service fetch to its immutable Worker version, and
+ * proves the pinned target's ready identity.
  */
 export async function authorizeCrmCoreProductionRoute(request, env) {
-    const configured = receiptFromEnvironment(env);
+    const configured = await receiptFromEnvironment(env);
     if (!configured || !await verifiesReceiptSignature(configured.receipt, configured.publicKeys)) return null;
     if (!await provesReceiptTarget(request, env, configured.receipt)) return null;
     authorizedReceipts.set(configured.receipt, env);
@@ -244,4 +263,18 @@ export function crmCoreVersionOverride(receipt, env) {
         throw new TypeError('CRM_CORE_PRODUCTION_RECEIPT_INVALID');
     }
     return `${receipt.service}="${receipt.workerVersionId}"`;
+}
+
+/**
+ * The Identity receipt resolver is intentionally unpinned because it is only
+ * a delivery channel for an externally signed receipt. Every identity
+ * envelope issued after authorization is pinned to this exact receipt-bound
+ * Identity Worker version instead.
+ */
+export function crmIdentityIssuerVersionOverride(receipt, env) {
+    if (!isAuthorizedCrmCoreProductionReceipt(receipt, env)
+        || !VERSION_ID_RE.test(receipt.identityWorkerVersionId)) {
+        throw new TypeError('CRM_CORE_PRODUCTION_RECEIPT_INVALID');
+    }
+    return `${CRM_IDENTITY_ISSUER_SERVICE}="${receipt.identityWorkerVersionId}"`;
 }

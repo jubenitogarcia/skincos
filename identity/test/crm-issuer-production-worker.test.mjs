@@ -10,10 +10,25 @@ if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value: web
 
 const issueUrl = 'https://identity-crm-delivery-production.example/internal/identity-crm-delivery/v1/issue';
 const keysUrl = 'https://identity-crm-delivery-production.example/.well-known/identity-crm-delivery/v1/keys';
+const routeReceiptUrl = 'https://identity-crm-delivery-production.example/internal/crm-production-route-receipt/v1/resolve';
 const requestHmac = 'synthetic-production-request-hmac-secret-2026';
 const activeKid = 'crm-production-identity-2026-09';
 const overlapKid = 'crm-production-identity-2026-08';
 const callerId = 'crm-api-production-v1';
+const gatewayVersionId = '11111111-1111-4111-8111-111111111111';
+const routeReceipt = JSON.stringify({
+  contract: 'skincos-crm/production-route-receipt/v1',
+  receiptId: 'crm-production-route-receipt-test-20260909',
+  environment: 'production',
+  gatewayVersionId,
+  service: 'skincos-crm-core',
+  workerVersionId: '22222222-2222-4222-8222-222222222222',
+  identityWorkerVersionId: '33333333-3333-4333-8333-333333333333',
+  release: 'a'.repeat(40),
+  artifactDigest: `sha256:${'b'.repeat(64)}`,
+  keyId: 'crm-production-route-receipt-test',
+  signature: 'synthetic_externally_signed_route_receipt',
+});
 
 function encodeBase64Url(bytes) {
   let binary = '';
@@ -33,7 +48,15 @@ async function authHeader(body) {
   return encodeBase64Url(new Uint8Array(signature));
 }
 
-async function productionEnv({ activeKeyId = activeKid, overlap = true, revoked = [], enabled = true, environment = 'production' } = {}) {
+async function productionEnv({
+  activeKeyId = activeKid,
+  overlap = true,
+  revoked = [],
+  enabled = true,
+  environment = 'production',
+  issuerEnabled = true,
+  routeReceiptResolverEnabled = false,
+} = {}) {
   const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const oldPair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const privateJwk = await webcrypto.subtle.exportKey('jwk', pair.privateKey);
@@ -62,9 +85,26 @@ async function productionEnv({ activeKeyId = activeKid, overlap = true, revoked 
       IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: requestHmac,
       IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
       IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: callerId,
+      IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED: issuerEnabled ? 'true' : 'false',
+      IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED: routeReceiptResolverEnabled ? 'true' : 'false',
+      IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT: routeReceipt,
     },
     now,
   };
+}
+
+async function routeReceiptRequest(env, value = gatewayVersionId, headers = {}) {
+  const body = JSON.stringify({ gatewayVersionId: value });
+  return handleIdentityCrmIssuerProductionRequest(new Request(routeReceiptUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-skincos-identity-issuer-caller': callerId,
+      'x-skincos-identity-issuer-auth': await authHeader(body),
+      ...headers,
+    },
+    body,
+  }), env);
 }
 
 function issuePayload(jti = 'production_nonce_000001') {
@@ -170,12 +210,82 @@ test('production Worker requires the configured private caller and never falls b
   assert.match(await callerDisabledResponse.text(), /IDENTITY_PRODUCTION_CUSTODY_UNAVAILABLE/);
 });
 
+test('production route-receipt resolver returns only the external receipt for its exact private caller without loading a delivery signer', async () => {
+  const { env } = await productionEnv({ issuerEnabled: false, routeReceiptResolverEnabled: true });
+  // The resolver is not a signing path. It stays available to deliver the
+  // external receipt even when the delivery signing key is absent; API still
+  // verifies the separate Ed25519 signature before it accepts the route.
+  delete env.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY;
+  const issueResponse = await signedRequest(env);
+  assert.equal(issueResponse.status, 404);
+  const response = await routeReceiptRequest(env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    version: 'crm-production-route-receipt/v1',
+    receipt: routeReceipt,
+  });
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+
+test('production route-receipt resolver rejects browser-shaped, wrong-version and malformed-custody requests without disclosing the receipt', async () => {
+  const { env } = await productionEnv({ issuerEnabled: false, routeReceiptResolverEnabled: true });
+  const body = JSON.stringify({ gatewayVersionId });
+  const anonymous = await handleIdentityCrmIssuerProductionRequest(new Request(routeReceiptUrl, {
+    method: 'POST',
+    headers: {
+      cookie: 'browser-session-must-not-authorize',
+      authorization: 'Bearer browser-must-not-authorize',
+    },
+    body,
+  }), env);
+  assert.equal(anonymous.status, 401);
+  assert.doesNotMatch(await anonymous.text(), /crm-production-route-receipt-test-20260909/);
+
+  const mismatched = await routeReceiptRequest(env, '44444444-4444-4444-8444-444444444444');
+  assert.equal(mismatched.status, 404);
+  assert.doesNotMatch(await mismatched.text(), /crm-production-route-receipt-test-20260909/);
+
+  const malformed = { ...env, IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT: '{"not":"a receipt"}' };
+  const malformedResponse = await routeReceiptRequest(malformed);
+  assert.equal(malformedResponse.status, 503);
+  assert.doesNotMatch(await malformedResponse.text(), /crm-production-route-receipt-test-20260909/);
+
+  const get = await handleIdentityCrmIssuerProductionRequest(new Request(routeReceiptUrl), env);
+  assert.equal(get.status, 404);
+});
+
+test('production envelope issuer cannot resolve a route receipt, even if the resolver secret is mistakenly present', async () => {
+  const { env } = await productionEnv({ issuerEnabled: true, routeReceiptResolverEnabled: false });
+  const resolverResponse = await routeReceiptRequest(env);
+  assert.equal(resolverResponse.status, 404);
+  assert.doesNotMatch(await resolverResponse.text(), /crm-production-route-receipt-test-20260909/);
+
+  const issueResponse = await signedRequest(env, issuePayload('production_nonce_issuer_only_01'));
+  assert.equal(issueResponse.status, 200);
+});
+
+test('production refuses a dual-capability role configuration before signing or resolving', async () => {
+  const { env } = await productionEnv({ issuerEnabled: true, routeReceiptResolverEnabled: true });
+  const resolverResponse = await routeReceiptRequest(env);
+  assert.equal(resolverResponse.status, 404);
+  assert.doesNotMatch(await resolverResponse.text(), /crm-production-route-receipt-test-20260909/);
+
+  const issueResponse = await signedRequest(env, issuePayload('production_nonce_dual_role_01'));
+  assert.equal(issueResponse.status, 404);
+
+  const keysResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), env);
+  assert.equal(keysResponse.status, 404);
+});
+
 test('production manifest is disabled, route-free and data-binding-free', async () => {
   const manifest = await readFile(new URL('../wrangler.production.toml', import.meta.url), 'utf8');
   const worker = await readFile(new URL('../delivery/crm-issuer-production-worker.js', import.meta.url), 'utf8');
   assert.match(manifest, /^name\s*=\s*"skincos-identity-crm-delivery-production"/m);
   assert.match(manifest, /^main\s*=\s*"delivery\/crm-issuer-production-worker\.js"/m);
   assert.match(manifest, /IDENTITY_CRM_DELIVERY_ENABLED\s*=\s*"false"/);
+  assert.match(manifest, /IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED\s*=\s*"false"/);
+  assert.match(manifest, /IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED\s*=\s*"false"/);
   assert.match(manifest, /^workers_dev\s*=\s*false/m);
   assert.doesNotMatch(manifest, /^routes\s*=/m);
   assert.doesNotMatch(manifest, /^\[\[d1_databases\]\]/m);
@@ -183,6 +293,10 @@ test('production manifest is disabled, route-free and data-binding-free', async 
   assert.doesNotMatch(manifest, /^\[\[r2_buckets\]\]/m);
   assert.doesNotMatch(manifest, /^\[\[env\.production\.services\]\]/m);
   assert.match(worker, /IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY/);
+  assert.match(manifest, /IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT/);
+  assert.match(worker, /IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT/);
+  assert.match(worker, /IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED/);
+  assert.match(worker, /IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED/);
   assert.doesNotMatch(worker, /IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK|IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC/);
 });
 

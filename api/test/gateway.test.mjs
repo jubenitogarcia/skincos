@@ -15,6 +15,7 @@ if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value: web
 const calls = [];
 const crmProductionGatewayVersionId = '11111111-1111-4111-8111-111111111111';
 const crmProductionWorkerVersionId = '22222222-2222-4222-8222-222222222222';
+const crmProductionIdentityWorkerVersionId = '33333333-3333-4333-8333-333333333333';
 const crmProductionReceiptKeyId = 'crm-production-route-receipt-test';
 const crmProductionReceiptKeys = generateKeyPairSync('ed25519');
 const crmProductionReceiptPublicKey = crmProductionReceiptKeys.publicKey.export({ format: 'jwk' });
@@ -27,6 +28,7 @@ function signedCrmProductionReceipt(overrides = {}) {
         gatewayVersionId: crmProductionGatewayVersionId,
         service: 'skincos-crm-core',
         workerVersionId: crmProductionWorkerVersionId,
+        identityWorkerVersionId: crmProductionIdentityWorkerVersionId,
         release: 'a'.repeat(40),
         artifactDigest: `sha256:${'b'.repeat(64)}`,
         keyId: crmProductionReceiptKeyId,
@@ -41,16 +43,31 @@ function signedCrmProductionReceipt(overrides = {}) {
     return receipt;
 }
 
+function crmProductionReceiptResponse(receipt) {
+    return new Response(JSON.stringify({
+        ok: true,
+        version: 'crm-production-route-receipt/v1',
+        receipt: JSON.stringify(receipt),
+    }), { headers: { 'content-type': 'application/json' } });
+}
+
 function crmProductionEnvironment(receipt = signedCrmProductionReceipt(), overrides = {}) {
     return {
         ENVIRONMENT: 'production',
         APP_VERSION: 'c'.repeat(40),
         CF_VERSION_METADATA: { id: crmProductionGatewayVersionId },
         CRM_CORE_PRODUCTION_ENABLED: 'true',
-        CRM_CORE_PRODUCTION_RECEIPT: JSON.stringify(receipt),
         CRM_CORE_PRODUCTION_RECEIPT_PUBLIC_KEYS_JSON: JSON.stringify({
             [crmProductionReceiptKeyId]: crmProductionReceiptPublicKey,
         }),
+        CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
+        CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-production-v1',
+        CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-production-identity-caller-hmac-2026',
+        IDENTITY_CRM_ISSUER: {
+            fetch: async (request) => new URL(request.url).pathname === '/internal/crm-production-route-receipt/v1/resolve'
+                ? crmProductionReceiptResponse(receipt)
+                : new Response(JSON.stringify({ ok: false, error: 'must-not-issue' }), { status: 503 }),
+        },
         ...overrides,
     };
 }
@@ -1221,61 +1238,249 @@ test('CRM session supplies credentialed CORS only to its exact staging origin', 
   assert.equal(resolverCalls, 1);
 });
 
-test('CRM session remains staging-only even when a production Core route is receipt-authorized', async () => {
+test('CRM session reaches receipt-authorized production Core through its production-only Identity caller', async () => {
+  resetBoundServiceResilienceForTest();
   let resolverCalls = 0;
-  let issuerCalls = 0;
+  let receiptResolverRequest = null;
+  let issuerRequest = null;
+  let coreRequest = null;
   let receiptProbes = 0;
-  let coreForwards = 0;
   const receipt = signedCrmProductionReceipt();
-  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/session'), crmProductionEnvironment(receipt, {
+  const productionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => {
+      resolverCalls += 1;
+      return {
+        actor: {
+          identitySubject: 'idn:production_session_actor_0001',
+          role: 'GESTOR',
+          scopes: { units: ['novo-hamburgo'], modules: ['clients'], permissions: ['clients:read'] },
+        },
+        csrf: 'not-forwarded',
+      };
+    },
+  });
+  const response = await productionGateway(new Request('https://api.skincos.com.br/crm/session', {
+    headers: {
+      accept: 'application/json',
+      authorization: 'Bearer browser-credential',
+      cookie: 'session=browser-only',
+      origin: 'https://crm.skincos.com.br',
+      'x-csrf-token': 'browser-csrf-not-forwarded',
+      'x-identity-delivery': 'forged.browser.envelope',
+      'cloudflare-workers-version-overrides': 'skincos-identity-crm-delivery-production="browser-selected-version"',
+      'x-request-id': 'crm-production-session-1',
+    },
+  }), crmProductionEnvironment(receipt, {
     CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
-    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-identity-caller-hmac-secret-2026',
-    IDENTITY_CRM_ISSUER: { fetch: async () => { issuerCalls += 1; return new Response('must-not-run'); } },
+    CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-production-v1',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-production-identity-caller-hmac-2026',
+    IDENTITY_CRM_ISSUER: {
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === '/internal/crm-production-route-receipt/v1/resolve') {
+          receiptResolverRequest = request;
+          return crmProductionReceiptResponse(receipt);
+        }
+        issuerRequest = request;
+        return new Response(JSON.stringify({
+          ok: true,
+          version: 'identity-crm-delivery/v1',
+          keyId: 'crm-production-identity-2026-09',
+          compact: 'production.header.signature',
+        }), { headers: { 'content-type': 'application/json' } });
+      },
+    },
     CRM_CORE: {
       fetch: async (request) => {
         if (new URL(request.url).pathname === '/ready') {
           receiptProbes += 1;
           return new Response(JSON.stringify(crmCoreReceiptReadyBody(receipt)), { headers: { 'content-type': 'application/json' } });
         }
-        coreForwards += 1;
-        return new Response('must-not-run');
+        coreRequest = request;
+        return new Response(JSON.stringify({ ok: true, requestId: 'crm-production-session-1' }), {
+          headers: { 'content-type': 'application/json' },
+        });
       },
     },
   }), {});
-  assert.equal(response.status, 404);
-  assert.equal((await response.json()).error, 'CRM_CORE_STAGING_ONLY');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://crm.skincos.com.br');
+  assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
+  assert.equal(resolverCalls, 1);
   assert.equal(receiptProbes, 1);
-  assert.equal(issuerCalls, 0);
-  assert.equal(coreForwards, 0);
-  assert.equal(resolverCalls, 0);
+  assert.ok(receiptResolverRequest);
+  assert.ok(issuerRequest);
+  assert.ok(coreRequest);
+  assert.equal(new URL(receiptResolverRequest.url).pathname, '/internal/crm-production-route-receipt/v1/resolve');
+  assert.equal(receiptResolverRequest.headers.get('x-skincos-identity-issuer-caller'), 'crm-api-production-v1');
+  assert.equal(receiptResolverRequest.headers.get('cloudflare-workers-version-overrides'), null);
+  for (const name of ['cookie', 'authorization', 'x-csrf-token', 'x-identity-delivery']) assert.equal(receiptResolverRequest.headers.get(name), null, name);
+  const rawReceiptResolverBody = await receiptResolverRequest.text();
+  assert.deepEqual(JSON.parse(rawReceiptResolverBody), { gatewayVersionId: crmProductionGatewayVersionId });
+  assert.equal(issuerRequest.headers.get('x-skincos-identity-issuer-caller'), 'crm-api-production-v1');
+  assert.equal(
+    issuerRequest.headers.get('cloudflare-workers-version-overrides'),
+    `skincos-identity-crm-delivery-production="${receipt.identityWorkerVersionId}"`,
+  );
+  assert.equal(new URL(issuerRequest.url).pathname, '/internal/identity-crm-delivery/v1/issue');
+  const rawIssuerBody = await issuerRequest.text();
+  assert.deepEqual(JSON.parse(rawIssuerBody).request, { method: 'GET', target: '/api/crm/session', bodyBase64: '' });
+  const hmacKey = await webcrypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode('synthetic-crm-production-identity-caller-hmac-2026'),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+  assert.equal(await webcrypto.subtle.verify(
+    'HMAC',
+    hmacKey,
+    Buffer.from(receiptResolverRequest.headers.get('x-skincos-identity-issuer-auth'), 'base64url'),
+    new TextEncoder().encode(rawReceiptResolverBody),
+  ), true);
+  assert.equal(await webcrypto.subtle.verify(
+    'HMAC',
+    hmacKey,
+    Buffer.from(issuerRequest.headers.get('x-skincos-identity-issuer-auth'), 'base64url'),
+    new TextEncoder().encode(rawIssuerBody),
+  ), true);
+  assert.equal(new URL(coreRequest.url).pathname, '/crm/session');
+  assert.equal(coreRequest.headers.get('x-identity-delivery'), 'production.header.signature');
+  assert.equal(coreRequest.headers.get('cloudflare-workers-version-overrides'), `skincos-crm-core="${receipt.workerVersionId}"`);
+  for (const name of ['cookie', 'authorization', 'x-csrf-token']) assert.equal(coreRequest.headers.get(name), null, name);
+  resetBoundServiceResilienceForTest();
 });
 
-test('CRM projections remain staging-only even when a production Core route is receipt-authorized', async () => {
+test('CRM projections reach receipt-authorized production Core with the exact production CORS origin', async () => {
   resetBoundServiceResilienceForTest();
-  let issuerCalls = 0;
+  let issuerRequest = null;
+  let coreRequest = null;
   let receiptProbes = 0;
-  let coreForwards = 0;
   const receipt = signedCrmProductionReceipt();
-  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/projections?units=novo-hamburgo'), crmProductionEnvironment(receipt, {
+  const productionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => ({
+      actor: {
+        identitySubject: 'idn:production_projection_actor_0001',
+        role: 'GESTOR',
+        scopes: { units: ['novo-hamburgo'], modules: ['clients'], permissions: ['clients:read'] },
+      },
+      csrf: 'not-forwarded',
+    }),
+  });
+  const env = crmProductionEnvironment(receipt, {
     CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
-    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-identity-caller-hmac-secret-2026',
-    IDENTITY_CRM_ISSUER: { fetch: async () => { issuerCalls += 1; return new Response('must-not-run'); } },
+    CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-production-v1',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-production-identity-caller-hmac-2026',
+    IDENTITY_CRM_ISSUER: {
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === '/internal/crm-production-route-receipt/v1/resolve') {
+          return crmProductionReceiptResponse(receipt);
+        }
+        issuerRequest = request;
+        return new Response(JSON.stringify({
+          ok: true,
+          version: 'identity-crm-delivery/v1',
+          keyId: 'crm-production-identity-2026-09',
+          compact: 'production.header.signature',
+        }), { headers: { 'content-type': 'application/json' } });
+      },
+    },
     CRM_CORE: {
       fetch: async (request) => {
         if (new URL(request.url).pathname === '/ready') {
           receiptProbes += 1;
           return new Response(JSON.stringify(crmCoreReceiptReadyBody(receipt)), { headers: { 'content-type': 'application/json' } });
         }
-        coreForwards += 1;
-        return new Response('must-not-run');
+        coreRequest = request;
+        return new Response(JSON.stringify({
+          ok: true,
+          contractVersion: 'crm-core/projection-read/v2',
+          state: 'available',
+          scope: { mode: 'intersection', units: ['novo-hamburgo'] },
+          projections: [],
+          count: 0,
+          requestId: 'crm-production-projection-1',
+        }), { headers: { 'content-type': 'application/json' } });
       },
     },
-  }), {});
-  assert.equal(response.status, 404);
-  assert.equal((await response.json()).error, 'CRM_CORE_STAGING_ONLY');
+  });
+  const response = await productionGateway(new Request('https://api.skincos.com.br/crm/projections?units=novo-hamburgo', {
+    headers: {
+      accept: 'application/json',
+      cookie: 'session=browser-only',
+      origin: 'https://crm.skincos.com.br',
+      'x-identity-delivery': 'forged.browser.envelope',
+      'x-request-id': 'crm-production-projection-1',
+    },
+  }), env, {});
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://crm.skincos.com.br');
   assert.equal(receiptProbes, 1);
-  assert.equal(issuerCalls, 0);
-  assert.equal(coreForwards, 0);
+  assert.ok(issuerRequest);
+  assert.ok(coreRequest);
+  assert.equal(new URL(coreRequest.url).pathname, '/crm/projections');
+  assert.equal(new URL(coreRequest.url).search, '?units=novo-hamburgo');
+  assert.equal(coreRequest.headers.get('x-identity-delivery'), 'production.header.signature');
+  assert.equal(
+    issuerRequest.headers.get('cloudflare-workers-version-overrides'),
+    `skincos-identity-crm-delivery-production="${receipt.identityWorkerVersionId}"`,
+  );
+  assert.equal(coreRequest.headers.get('cloudflare-workers-version-overrides'), `skincos-crm-core="${receipt.workerVersionId}"`);
+  assert.equal(coreRequest.headers.get('cookie'), null);
+
+  const denied = await productionGateway(new Request('https://api.skincos.com.br/crm/projections?units=novo-hamburgo', {
+    headers: { origin: 'https://crm-staging.skincos.com.br' },
+  }), env, {});
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
+  assert.equal(denied.headers.get('access-control-allow-origin'), null);
+  assert.equal(issuerRequest.headers.get('x-skincos-identity-issuer-caller'), 'crm-api-production-v1');
+  resetBoundServiceResilienceForTest();
+});
+
+test('CRM production refuses a staging Identity key before forwarding the browser request', async () => {
+  resetBoundServiceResilienceForTest();
+  let forwards = 0;
+  const receipt = signedCrmProductionReceipt();
+  const productionGateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-not-used'),
+    resolveActor: async () => ({
+      actor: {
+        identitySubject: 'idn:production_key_scope_actor_0001',
+        role: 'GESTOR',
+        scopes: { units: ['novo-hamburgo'], modules: ['clients'], permissions: ['clients:read'] },
+      },
+      csrf: 'not-forwarded',
+    }),
+  });
+  const response = await productionGateway(new Request('https://api.skincos.com.br/crm/session', {
+    headers: { origin: 'https://crm.skincos.com.br' },
+  }), crmProductionEnvironment(receipt, {
+    CRM_IDENTITY_ISSUER_CALLER_ENABLED: 'true',
+    CRM_IDENTITY_ISSUER_CALLER_ID: 'crm-api-production-v1',
+    CRM_IDENTITY_ISSUER_CALLER_HMAC: 'synthetic-crm-production-identity-caller-hmac-2026',
+    IDENTITY_CRM_ISSUER: { fetch: async (request) => new URL(request.url).pathname === '/internal/crm-production-route-receipt/v1/resolve'
+      ? crmProductionReceiptResponse(receipt)
+      : new Response(JSON.stringify({
+        ok: true,
+        version: 'identity-crm-delivery/v1',
+        keyId: 'crm-staging-key-must-not-cross',
+        compact: 'staging.header.signature',
+      }), { headers: { 'content-type': 'application/json' } }) },
+    CRM_CORE: { fetch: async (request) => {
+      if (new URL(request.url).pathname === '/ready') {
+        return new Response(JSON.stringify(crmCoreReceiptReadyBody(receipt)), { headers: { 'content-type': 'application/json' } });
+      }
+      forwards += 1;
+      return new Response('must-not-run');
+    } },
+  }), {});
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).error, 'CRM_IDENTITY_DELIVERY_UNAVAILABLE');
+  assert.equal(forwards, 0);
   resetBoundServiceResilienceForTest();
 });
 
@@ -1381,6 +1586,50 @@ test('CRM Core production routing requires a signed receipt, pinned Worker versi
   resetBoundServiceResilienceForTest();
 });
 
+test('CRM Core production ignores a self-bound receipt and fails closed when private Identity cannot resolve one', async () => {
+  const receipt = signedCrmProductionReceipt();
+  let coreCalls = 0;
+  let identityCalls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), crmProductionEnvironment(receipt, {
+    // This is the retired self-referential shape. It must never authorize the
+    // API version that contains it, even if its contents are otherwise valid.
+    CRM_CORE_PRODUCTION_RECEIPT: JSON.stringify(receipt),
+    IDENTITY_CRM_ISSUER: { fetch: async () => {
+      identityCalls += 1;
+      return new Response(JSON.stringify({ ok: false, error: 'resolver-unavailable' }), { status: 503 });
+    } },
+    CRM_CORE: { fetch: async () => { coreCalls += 1; return new Response('must-not-run'); } },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(identityCalls, 1);
+  assert.equal(coreCalls, 0);
+});
+
+test('CRM Core production receipt must bind a valid immutable Identity Worker version before probing', async () => {
+  const receipt = signedCrmProductionReceipt();
+  delete receipt.identityWorkerVersionId;
+  let calls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), crmProductionEnvironment(receipt, {
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(calls, 0);
+});
+
+test('CRM Core production refuses a receipt when its Identity version pin is changed after signing', async () => {
+  const receipt = signedCrmProductionReceipt();
+  receipt.identityWorkerVersionId = '44444444-4444-4444-8444-444444444444';
+  let calls = 0;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/crm/health'), crmProductionEnvironment(receipt, {
+    CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
+  }), {});
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'crm_core_production_not_authorized');
+  assert.equal(calls, 0);
+});
+
 test('CRM Core production never probes or forwards for a format-valid but unsigned receipt', async () => {
   const receipt = signedCrmProductionReceipt();
   receipt.signature = 'a'.repeat(86);
@@ -1405,7 +1654,7 @@ test('CRM Core production receipt must pin the executing gateway version before 
   assert.equal(calls, 0);
 });
 
-test('direct CRM forwarding cannot trust a caller-supplied version-shaped receipt', async () => {
+test('direct CRM forwarding cannot trust a caller-supplied receipt or identity envelope', async () => {
   let calls = 0;
   const response = await forwardCrmCoreToService(
     new Request('https://api.skincos.com.br/crm/health'),
@@ -1414,7 +1663,10 @@ test('direct CRM forwarding cannot trust a caller-supplied version-shaped receip
       CRM_CORE: { fetch: async () => { calls += 1; return new Response('must-not-run'); } },
     },
     undefined,
-    { service: 'skincos-crm-core', workerVersionId: crmProductionWorkerVersionId },
+    {
+      productionReceipt: { service: 'skincos-crm-core', workerVersionId: crmProductionWorkerVersionId },
+      identityDelivery: 'forged.browser.envelope',
+    },
   );
   assert.equal(response.status, 404);
   assert.equal((await response.json()).error, 'CRM_CORE_PRODUCTION_NOT_AUTHORIZED');
@@ -1476,11 +1728,16 @@ test('CRM Core fails closed without its staging binding and never aliases legacy
   resetBoundServiceResilienceForTest();
 });
 
-test('general API Worker binds CRM Core only in the staging environment', async () => {
+test('general API Worker defers the production Identity target while preserving default-off CRM controls', async () => {
   const config = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
   const productionConfig = config.slice(0, config.indexOf('[env.staging]'));
-  assert.doesNotMatch(productionConfig, /binding\s*=\s*"CRM_CORE"/);
-  assert.doesNotMatch(productionConfig, /IDENTITY_CRM_ISSUER|CRM_IDENTITY_ISSUER_CALLER/);
+  assert.match(productionConfig, /CRM_CORE_PRODUCTION_ENABLED\s*=\s*"false"/);
+  assert.match(productionConfig, /CRM_IDENTITY_ISSUER_CALLER_ENABLED\s*=\s*"false"/);
+  assert.match(productionConfig, /CRM_IDENTITY_ISSUER_CALLER_ID\s*=\s*"crm-api-production-v1"/);
+  assert.match(productionConfig, /\[\[services\]\]\r?\nbinding = "CRM_CORE"\r?\nservice = "skincos-crm-core"/);
+  assert.doesNotMatch(productionConfig, /\[\[services\]\]\r?\nbinding = "IDENTITY_CRM_ISSUER"\r?\nservice = "skincos-identity-crm-delivery-production"/);
+  assert.match(productionConfig, /Do not add a production IDENTITY_CRM_ISSUER binding here yet/);
+  assert.doesNotMatch(productionConfig, /CRM_IDENTITY_ISSUER_CALLER_HMAC|CRM_CORE_PRODUCTION_RECEIPT/);
   assert.match(config, /\[\[env\.staging\.services\]\]\r?\nbinding = "CRM_CORE"\r?\nservice = "skincos-crm-core-staging"/);
   assert.match(config, /CRM_IDENTITY_ISSUER_CALLER_ENABLED\s*=\s*"false"/);
   assert.match(config, /\[\[env\.staging\.services\]\]\r?\nbinding = "IDENTITY_CRM_ISSUER"\r?\nservice = "skincos-identity-crm-delivery-staging"/);

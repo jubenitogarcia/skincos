@@ -6,14 +6,28 @@ import {
 
 export const IDENTITY_CRM_DELIVERY_ISSUE_PATH = '/internal/identity-crm-delivery/v1/issue';
 export const IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH = '/.well-known/identity-crm-delivery/v1/keys';
+export const IDENTITY_CRM_PRODUCTION_ROUTE_RECEIPT_PATH = '/internal/crm-production-route-receipt/v1/resolve';
 
 const MAX_REQUEST_BYTES = 1_048_576;
+const MAX_ROUTE_RECEIPT_BYTES = 16_384;
 const BASE64_URL_PATTERN = /^[A-Za-z0-9_-]*$/;
+const NON_EMPTY_BASE64_URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const TEXT_ENCODER = new TextEncoder();
 const ED25519_PUBLIC_KEY_BYTES = 32;
 const ED25519_PRIVATE_KEY_BYTES = 32;
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const JTI_PATTERN = /^[A-Za-z0-9_-]{16,160}$/;
+const VERSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RELEASE_PATTERN = /^[0-9a-f]{40}$/;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const ROUTE_RECEIPT_CONTRACT = 'skincos-crm/production-route-receipt/v1';
+const ROUTE_RECEIPT_RESPONSE_VERSION = 'crm-production-route-receipt/v1';
+const ROUTE_RECEIPT_KEY_PREFIX = 'crm-production-route-receipt-';
+const ROUTE_RECEIPT_KEYS = Object.freeze([
+  'contract', 'receiptId', 'environment', 'gatewayVersionId', 'service',
+  'workerVersionId', 'identityWorkerVersionId', 'release', 'artifactDigest',
+  'keyId', 'signature',
+]);
 const MAX_CACHED_CUSTODY_PROOFS = 16;
 // A custody proof signs a fixed challenge. Cache only the non-extractable
 // signer closure, keyed by the active public key, so arbitrary traffic cannot
@@ -172,6 +186,50 @@ function assertPayloadShape(payload) {
   return payload;
 }
 
+function normalizeRouteReceiptSecret(raw) {
+  if (typeof raw !== 'string' || raw.length === 0 || TEXT_ENCODER.encode(raw).byteLength > MAX_ROUTE_RECEIPT_BYTES) {
+    fail('IDENTITY_ROUTE_RECEIPT_INVALID');
+  }
+  const receipt = parseJson(raw, 'IDENTITY_ROUTE_RECEIPT_INVALID');
+  exactKeys(receipt, ROUTE_RECEIPT_KEYS, 'IDENTITY_ROUTE_RECEIPT_INVALID');
+  const receiptId = typeof receipt.receiptId === 'string' ? receipt.receiptId.trim() : '';
+  const gatewayVersionId = typeof receipt.gatewayVersionId === 'string' ? receipt.gatewayVersionId.trim().toLowerCase() : '';
+  const workerVersionId = typeof receipt.workerVersionId === 'string' ? receipt.workerVersionId.trim().toLowerCase() : '';
+  const identityWorkerVersionId = typeof receipt.identityWorkerVersionId === 'string' ? receipt.identityWorkerVersionId.trim().toLowerCase() : '';
+  const release = typeof receipt.release === 'string' ? receipt.release.trim().toLowerCase() : '';
+  const artifactDigest = typeof receipt.artifactDigest === 'string' ? receipt.artifactDigest.trim().toLowerCase() : '';
+  const keyId = typeof receipt.keyId === 'string' ? receipt.keyId.trim() : '';
+  const signature = typeof receipt.signature === 'string' ? receipt.signature.trim() : '';
+  if (receipt.contract !== ROUTE_RECEIPT_CONTRACT
+    || receipt.environment !== 'production'
+    || receipt.service !== 'skincos-crm-core'
+    || !/^[A-Za-z0-9._:-]{8,200}$/.test(receiptId)
+    || !VERSION_ID_PATTERN.test(gatewayVersionId)
+    || !VERSION_ID_PATTERN.test(workerVersionId)
+    || !VERSION_ID_PATTERN.test(identityWorkerVersionId)
+    || !RELEASE_PATTERN.test(release)
+    || !DIGEST_PATTERN.test(artifactDigest)
+    || !KEY_ID_PATTERN.test(keyId)
+    || !keyId.startsWith(ROUTE_RECEIPT_KEY_PREFIX)
+    || !NON_EMPTY_BASE64_URL_PATTERN.test(signature)) {
+    fail('IDENTITY_ROUTE_RECEIPT_INVALID');
+  }
+  // Identity deliberately does not sign or verify this receipt. It is an
+  // externally signed release artifact; API verifies its Ed25519 signature
+  // locally before any Core or pinned Identity request is forwarded.
+  return Object.freeze({ raw, gatewayVersionId });
+}
+
+function parseRouteReceiptRequest(raw) {
+  const payload = parseJson(raw, 'IDENTITY_ROUTE_RECEIPT_REQUEST_INVALID');
+  exactKeys(payload, ['gatewayVersionId'], 'IDENTITY_ROUTE_RECEIPT_REQUEST_INVALID');
+  const gatewayVersionId = typeof payload.gatewayVersionId === 'string'
+    ? payload.gatewayVersionId.trim().toLowerCase()
+    : '';
+  if (!VERSION_ID_PATTERN.test(gatewayVersionId)) fail('IDENTITY_ROUTE_RECEIPT_REQUEST_INVALID');
+  return gatewayVersionId;
+}
+
 function decodeRequestBody(value) {
   const bytes = decodeBase64Url(value, 'IDENTITY_REQUEST_BODY_INVALID');
   if (bytes.byteLength > MAX_REQUEST_BYTES) fail('IDENTITY_REQUEST_BODY_TOO_LARGE');
@@ -223,6 +281,32 @@ function assertCallerConfig(caller) {
     expectedId: caller.expectedId,
     header: caller.header,
     required: caller.required === true,
+  });
+}
+
+function assertRouteReceiptConfig(routeReceipt, callerConfig) {
+  if (routeReceipt === undefined || routeReceipt === null) return null;
+  if (!callerConfig?.required || !routeReceipt || typeof routeReceipt !== 'object'
+    || Array.isArray(routeReceipt) || Object.getPrototypeOf(routeReceipt) !== Object.prototype
+    || Reflect.ownKeys(routeReceipt).length !== 1 || typeof routeReceipt.secret !== 'string' || !routeReceipt.secret) {
+    throw new TypeError('IDENTITY_ROUTE_RECEIPT_CONFIG_INVALID');
+  }
+  return Object.freeze({ secret: routeReceipt.secret });
+}
+
+function assertRoleFlags(roleFlags, routeReceiptConfig) {
+  if (roleFlags === undefined || roleFlags === null) return null;
+  if (!routeReceiptConfig || !roleFlags || typeof roleFlags !== 'object'
+    || Array.isArray(roleFlags) || Object.getPrototypeOf(roleFlags) !== Object.prototype
+    || Reflect.ownKeys(roleFlags).length !== 2
+    || typeof roleFlags.issue !== 'string' || !roleFlags.issue
+    || typeof roleFlags.routeReceiptResolver !== 'string' || !roleFlags.routeReceiptResolver
+    || roleFlags.issue === roleFlags.routeReceiptResolver) {
+    throw new TypeError('IDENTITY_ROLE_FLAGS_CONFIG_INVALID');
+  }
+  return Object.freeze({
+    issue: roleFlags.issue,
+    routeReceiptResolver: roleFlags.routeReceiptResolver,
   });
 }
 
@@ -286,32 +370,45 @@ export function createIdentityCrmIssuerWorker({
     requestHmac: 'IDENTITY_CRM_DELIVERY_REQUEST_HMAC',
   },
   caller = null,
+  routeReceipt = null,
+  roleFlags = null,
 } = {}) {
   if (typeof environment !== 'string' || !environment) throw new TypeError('IDENTITY_WORKER_ENVIRONMENT_INVALID');
   if (typeof keyIdPrefix !== 'string' || !keyIdPrefix) throw new TypeError('IDENTITY_KEY_PREFIX_INVALID');
   if (!['single', 'production-ring'].includes(publicKeyMode)) throw new TypeError('IDENTITY_PUBLIC_KEY_MODE_INVALID');
   const names = assertSecretNames(secretNames);
   const callerConfig = assertCallerConfig(caller);
+  const routeReceiptConfig = assertRouteReceiptConfig(routeReceipt, callerConfig);
+  const configuredRoleFlags = assertRoleFlags(roleFlags, routeReceiptConfig);
 
   function enabled(env) {
     return env?.IDENTITY_CRM_DELIVERY_ENABLED === 'true'
       && env?.IDENTITY_CRM_DELIVERY_ENVIRONMENT === environment;
   }
 
-  async function loadMaterial(env, nowSeconds) {
-    if (!enabled(env)) return null;
-    const kid = assertKeyId(env[names.kid], keyIdPrefix);
-    if (typeof env[names.publicJwk] !== 'string'
-      || typeof env[names.requestHmac] !== 'string') {
-      fail(errorCodes.custody);
-    }
-    const publicKeyRing = publicKeyMode === 'production-ring'
-      ? parsePublicKeyRing(env[names.publicJwk], kid, keyIdPrefix, nowSeconds)
-      : (() => {
-        const activeJwk = parsePublicJwk(env[names.publicJwk]);
-        return Object.freeze({ activeJwk, keys: Object.freeze([{ ...activeJwk, kid }]) });
-      })();
-    if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
+  // Production uses separate immutable versions of the same private Worker:
+  // R resolves a custody-held external receipt and I issues envelopes. Making
+  // the capabilities mutually exclusive in runtime configuration prevents an
+  // accidental signing key on R from becoming an issuance path. Staging has
+  // no role flags and retains its existing single-worker behavior.
+  function issueEnabled(env) {
+    return enabled(env)
+      && (!configuredRoleFlags || (
+        env?.[configuredRoleFlags.issue] === 'true'
+        && env?.[configuredRoleFlags.routeReceiptResolver] !== 'true'
+      ));
+  }
+
+  function routeReceiptResolverEnabled(env) {
+    return enabled(env)
+      && Boolean(routeReceiptConfig)
+      && (!configuredRoleFlags || (
+        env?.[configuredRoleFlags.routeReceiptResolver] === 'true'
+        && env?.[configuredRoleFlags.issue] !== 'true'
+      ));
+  }
+
+  function loadCallerMaterial(env) {
     let callerMaterial = null;
     if (callerConfig && env[callerConfig.enabled] === 'true') {
       const callerId = String(env[callerConfig.id] || '').trim();
@@ -325,6 +422,24 @@ export function createIdentityCrmIssuerWorker({
       callerMaterial = Object.freeze({ id: callerId, hmac: callerHmac, header: callerConfig.header });
     }
     if (callerConfig?.required && !callerMaterial) fail(errorCodes.custody);
+    return callerMaterial;
+  }
+
+  async function loadMaterial(env, nowSeconds) {
+    if (!issueEnabled(env)) return null;
+    const kid = assertKeyId(env[names.kid], keyIdPrefix);
+    if (typeof env[names.publicJwk] !== 'string'
+      || typeof env[names.requestHmac] !== 'string') {
+      fail(errorCodes.custody);
+    }
+    const publicKeyRing = publicKeyMode === 'production-ring'
+      ? parsePublicKeyRing(env[names.publicJwk], kid, keyIdPrefix, nowSeconds)
+      : (() => {
+        const activeJwk = parsePublicJwk(env[names.publicJwk]);
+        return Object.freeze({ activeJwk, keys: Object.freeze([{ ...activeJwk, kid }]) });
+      })();
+    if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
+    const callerMaterial = loadCallerMaterial(env);
     return Object.freeze({
       kid,
       activePublicJwk: publicKeyRing.activeJwk,
@@ -364,17 +479,82 @@ export function createIdentityCrmIssuerWorker({
     }, 200, { 'cache-control': 'no-store' });
   }
 
+  function loadRouteReceiptMaterial(env) {
+    if (!routeReceiptResolverEnabled(env)) fail(errorCodes.custody);
+    const callerMaterial = loadCallerMaterial(env);
+    const receipt = normalizeRouteReceiptSecret(env[routeReceiptConfig.secret]);
+    return Object.freeze({ caller: callerMaterial, receipt });
+  }
+
+  async function readBoundedBody(request) {
+    const declaredLength = request.headers.get('content-length');
+    if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > MAX_REQUEST_BYTES) return null;
+    const rawBody = await request.text();
+    return TEXT_ENCODER.encode(rawBody).byteLength > MAX_REQUEST_BYTES ? null : rawBody;
+  }
+
+  async function authorizedCallerRequest(request, rawBody, material) {
+    const requestedCallerId = callerConfig ? request.headers.get(callerConfig.header) : null;
+    const requestHmac = callerConfig?.required
+      ? material.caller?.id === requestedCallerId
+        ? material.caller.hmac
+        : null
+      : requestedCallerId === null
+        ? material.requestHmac
+        : material.caller?.id === requestedCallerId
+          ? material.caller.hmac
+          : null;
+    return Boolean(requestHmac
+      && await isAuthorizedIssueRequest(request, rawBody, requestHmac, errorCodes.auth, errorCodes.crypto));
+  }
+
   return async function handleIdentityCrmIssuerRequest(request, env = {}) {
     if (!enabled(env)) {
       return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: 'IDENTITY_CRM_DELIVERY_DISABLED' }, 503);
     }
 
     const url = new URL(request.url);
-    const isPublicKeysRequest = url.pathname === IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH
+    const issueSurfaceEnabled = issueEnabled(env);
+    const routeReceiptSurfaceEnabled = routeReceiptResolverEnabled(env);
+    const isPublicKeysRequest = issueSurfaceEnabled
+      && url.pathname === IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH
       && (request.method === 'GET' || request.method === 'HEAD');
-    const isIssueRequest = url.pathname === IDENTITY_CRM_DELIVERY_ISSUE_PATH && request.method === 'POST';
-    if (!isPublicKeysRequest && !isIssueRequest) {
+    const isIssueRequest = issueSurfaceEnabled
+      && url.pathname === IDENTITY_CRM_DELIVERY_ISSUE_PATH && request.method === 'POST';
+    const isRouteReceiptRequest = routeReceiptSurfaceEnabled
+      && url.pathname === IDENTITY_CRM_PRODUCTION_ROUTE_RECEIPT_PATH && request.method === 'POST';
+    if (!isPublicKeysRequest && !isIssueRequest && !isRouteReceiptRequest) {
       return json({ ok: false, error: 'NOT_FOUND' }, 404);
+    }
+
+    if (isRouteReceiptRequest) {
+      const rawBody = await readBoundedBody(request);
+      if (rawBody === null) return json({ ok: false, error: 'REQUEST_TOO_LARGE' }, 413);
+      let routeMaterial;
+      try {
+        // The resolver needs only the private caller HMAC and its own opaque
+        // external receipt. It never loads or invokes the delivery signing key.
+        routeMaterial = loadRouteReceiptMaterial(env);
+      } catch {
+        return json({ ok: false, error: errorCodes.custody }, 503);
+      }
+      try {
+        if (!await authorizedCallerRequest(request, rawBody, routeMaterial)) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
+      } catch {
+        return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
+      }
+      try {
+        if (parseRouteReceiptRequest(rawBody) !== routeMaterial.receipt.gatewayVersionId) {
+          return json({ ok: false, error: 'NOT_FOUND' }, 404);
+        }
+        return json({
+          ok: true,
+          version: ROUTE_RECEIPT_RESPONSE_VERSION,
+          receipt: routeMaterial.receipt.raw,
+        }, 200, { 'cache-control': 'no-store' });
+      } catch {
+        return json({ ok: false, error: 'REQUEST_INVALID' }, 400);
+      }
     }
 
     let material;
@@ -397,24 +577,10 @@ export function createIdentityCrmIssuerWorker({
       return publicKeyResponse(material);
     }
 
-    const declaredLength = request.headers.get('content-length');
-    if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > MAX_REQUEST_BYTES) {
-      return json({ ok: false, error: 'REQUEST_TOO_LARGE' }, 413);
-    }
-    const rawBody = await request.text();
-    if (TEXT_ENCODER.encode(rawBody).byteLength > MAX_REQUEST_BYTES) return json({ ok: false, error: 'REQUEST_TOO_LARGE' }, 413);
+    const rawBody = await readBoundedBody(request);
+    if (rawBody === null) return json({ ok: false, error: 'REQUEST_TOO_LARGE' }, 413);
     try {
-      const requestedCallerId = callerConfig ? request.headers.get(callerConfig.header) : null;
-      const requestHmac = callerConfig?.required
-        ? material.caller?.id === requestedCallerId
-          ? material.caller.hmac
-          : null
-        : requestedCallerId === null
-          ? material.requestHmac
-          : material.caller?.id === requestedCallerId
-            ? material.caller.hmac
-            : null;
-      if (!requestHmac || !await isAuthorizedIssueRequest(request, rawBody, requestHmac, errorCodes.auth, errorCodes.crypto)) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
+      if (!await authorizedCallerRequest(request, rawBody, material)) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
     } catch {
       return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
     }

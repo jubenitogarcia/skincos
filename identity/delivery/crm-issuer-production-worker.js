@@ -33,6 +33,19 @@ export const handleIdentityCrmIssuerProductionRequest = createIdentityCrmIssuerW
     header: 'x-skincos-identity-issuer-caller',
     required: true,
   },
+  // This is an externally signed release receipt, not an Identity delivery
+  // envelope. The private resolver only returns it to the exact API caller;
+  // the API verifies the receipt with its separate route-receipt public key.
+  routeReceipt: {
+    secret: 'IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT',
+  },
+  // R (the receipt resolver) and I (the envelope issuer) are distinct,
+  // immutable versions of this private Worker. Exactly one of these flags is
+  // true in each deployed version: R cannot issue, and I cannot resolve.
+  roleFlags: {
+    issue: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED',
+    routeReceiptResolver: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED',
+  },
 });
 
 export default { fetch: handleIdentityCrmIssuerProductionRequest };
