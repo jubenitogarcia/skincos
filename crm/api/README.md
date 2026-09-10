@@ -97,10 +97,11 @@ Rotas: `/api/atendimento/*`
 - Importação inicial Google Sheets:
   - `ATENDIMENTO_GOOGLE_SHEET_ID` (default: planilha histórica do acompanhamento)
   - `ATENDIMENTO_GOOGLE_SA_FILE` (ou `HARMONIA_GOOGLE_SA_FILE`)
-  - Dry-run: `npm run import-atendimento-sheet`
-  - Gravação: `npm run import-atendimento-sheet -- --write`
-- Refresh operacional target-bound: `CRM_CLIENTES_SOURCE_REFRESH_TARGET=staging|production npm run refresh-atendimento-source -- --dry-run`.
-  Aplicações exigem `--apply`, `CRM_CLIENTES_SOURCE_REFRESH_APPLY_CONFIRMED=1`,
-  backup privado e identidade do banco correspondente; veja
-  `docs/runbooks/clientes-source-refresh.md`.
+  - O comando legado `npm run import-atendimento-sheet` está aposentado e
+    recusa inclusive `--write`.
+  - Use somente `npm run sync-atendimento-source -- --dry-run` no release
+    imutável e com a custódia privada descrita em
+    `docs/runbooks/atendimento-source-sync.md`. O apply requer o segundo gate,
+    backup privado e identidade estrita do banco; ele não é um comando de
+    desenvolvimento local.
 - Módulo CRM: `atendimento`; gestores/gerentes acessam tudo, usuários comuns precisam do módulo liberado e respeitam `allowedUnits`.
