@@ -56,6 +56,16 @@ the fixed root helpers impossible to execute. Its named writable mounts are
 created by the installer and remain POSIX-private from `skincos-actions`; the
 helpers still own every atomic write and metadata validation.
 
+When a trusted root operator updates
+`/etc/systemd/system/skincos-native-custody-runner.service`, they must install
+the reviewed canonical unit, run `systemctl daemon-reload`, restart only
+`skincos-native-custody-runner.service`, and confirm it is active. The unit
+explicitly permits the Ponto absence helper's root-private policy directory
+`/etc/skincos/ponto-legacy-absence-attestation` and its one-use
+ledger/receipt directory `/var/lib/skincos/ponto-legacy-absence-attestation`;
+neither path is writable by the runner account. This bootstrap does not
+restart `crm.service` or publish a release.
+
 ## Independent Orb custody
 
 Orb release, workflow export/parity, PostgreSQL backup/restore and n8n
