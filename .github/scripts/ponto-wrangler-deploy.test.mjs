@@ -13,6 +13,19 @@ function writeFakeWrangler(directory, body) {
   return file;
 }
 
+test('captures retry stderr synchronously before classifying it', () => {
+  const source = fs.readFileSync(helper, 'utf8');
+  assert.doesNotMatch(source, /2>\s*>\(tee\b/);
+  assert.match(
+    source,
+    /2>"\$error_file"; then\n\s+cat "\$error_file" >&2\n\s+rm -f "\$error_file"/,
+  );
+  assert.match(
+    source,
+    /fi\n\n\s+cat "\$error_file" >&2\n\n\s+if ! grep -Eq/,
+  );
+});
+
 test('retries only Cloudflare version propagation failures and preserves the deployment output', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ponto-wrangler-deploy-'));
   try {
