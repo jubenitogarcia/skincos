@@ -1,0 +1,105 @@
+name: CRM private production candidate preflight
+run-name: CRM private candidate preflight ${{ inputs.operation }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Read-only preflight, or a deliberately non-publishing future-candidate request
+        required: true
+        default: preflight
+        type: choice
+        options: [preflight, request-private-inert-candidates]
+      source_sha:
+        description: Exact current main SHA to inspect
+        required: true
+        type: string
+      core_source_sha:
+        description: Exact independent CRM Core source SHA (no code is fetched or published here)
+        required: true
+        type: string
+      core_artifact_digest:
+        description: Sanitized digest of the independent CRM Core candidate artifact
+        required: true
+        type: string
+      confirmation:
+        description: Required only for a future-candidate request; this workflow still cannot publish
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-private-production-candidate-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Verify immutable source and private-candidate custody
+    runs-on: ubuntu-latest
+    environment: crm-production-candidate-preflight
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.12.0'
+
+      - name: Observe the current canonical main source
+        id: source
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          observed_main_sha="$(git rev-parse refs/remotes/origin/main)"
+          checked_out_sha="$(git rev-parse HEAD)"
+          [[ "$observed_main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Observed main SHA is invalid'; exit 1; }
+          [[ "$checked_out_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Checked-out SHA is invalid'; exit 1; }
+          printf 'observed_main_sha=%s\n' "$observed_main_sha" >> "$GITHUB_OUTPUT"
+          printf 'checked_out_sha=%s\n' "$checked_out_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Read Identity production custody without mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IDENTITY_CRM_PRODUCTION_WORKER_NAME: ${{ vars.IDENTITY_CRM_PRODUCTION_WORKER_NAME }}
+          IDENTITY_CRM_STAGING_WORKER_NAME: ${{ vars.IDENTITY_CRM_STAGING_WORKER_NAME }}
+          IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_REF: ${{ vars.IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_REF }}
+          IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_ATTESTED: ${{ vars.IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_ATTESTED }}
+          IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ATTESTED: ${{ vars.IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ATTESTED }}
+          IDENTITY_CRM_DELIVERY_PRODUCTION_REPLAY_ATTESTED: ${{ vars.IDENTITY_CRM_DELIVERY_PRODUCTION_REPLAY_ATTESTED }}
+          IDENTITY_CRM_DELIVERY_PRODUCTION_ROTATION_ATTESTED: ${{ vars.IDENTITY_CRM_DELIVERY_PRODUCTION_ROTATION_ATTESTED }}
+          IDENTITY_CRM_PRODUCTION_READINESS_REPORT: ${{ runner.temp }}/crm-private-production-candidate/identity-readback.json
+        run: |
+          set -euo pipefail
+          node .github/scripts/identity-crm-production-readiness.mjs
+
+      - name: Evaluate the source-only candidate plan
+        env:
+          CRM_PRIVATE_CANDIDATE_OPERATION: ${{ inputs.operation }}
+          CRM_PRIVATE_CANDIDATE_SOURCE_SHA: ${{ inputs.source_sha }}
+          CRM_PRIVATE_CANDIDATE_CORE_SOURCE_SHA: ${{ inputs.core_source_sha }}
+          CRM_PRIVATE_CANDIDATE_CORE_ARTIFACT_DIGEST: ${{ inputs.core_artifact_digest }}
+          CRM_PRIVATE_CANDIDATE_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_PRIVATE_CANDIDATE_PREFLIGHT_REPORT: ${{ runner.temp }}/crm-private-production-candidate/report.json
+          CRM_PRIVATE_CANDIDATE_OBSERVED_MAIN_SHA: ${{ steps.source.outputs.observed_main_sha }}
+          CRM_PRIVATE_CANDIDATE_IDENTITY_CUSTODY_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_IDENTITY_CUSTODY_ATTESTED }}
+          CRM_PRIVATE_CANDIDATE_CORE_SOURCE_CUSTODY_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_CORE_SOURCE_CUSTODY_ATTESTED }}
+          CRM_PRIVATE_CANDIDATE_PONTO_SEPARATED_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_PONTO_SEPARATED_ATTESTED }}
+          CRM_PRIVATE_CANDIDATE_BACKFILL_RECONCILED_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_BACKFILL_RECONCILED_ATTESTED }}
+          CRM_PRIVATE_CANDIDATE_SINGLE_PUBLISHER_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_SINGLE_PUBLISHER_ATTESTED }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/crm-private-production-candidate-preflight.mjs
+
+      - name: Upload sanitized source-only preflight artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-private-production-candidate-preflight-${{ github.run_id }}
+          path: ${{ runner.temp }}/crm-private-production-candidate/report.json
+          if-no-files-found: error
+          retention-days: 30
