@@ -7,6 +7,25 @@
   "phase1SourceConfigSha256": "441175006adaaea277927a315008f533b02e847f5ba811340067864f613c0763",
   "runtimeTemplate": "deployment/wrangler.runtime.template.toml",
   "githubEnvironmentTemplate": "deployment/github-environment.template.json",
+  "githubEnvironmentSecretInputs": [
+    "PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID",
+    "PONTO_PAGES_CLOUDFLARE_API_TOKEN",
+    "PONTO_PAGES_PONTO_API_TARGET",
+    "PONTO_PAGES_AUTH_API_TARGET",
+    "PONTO_PAGES_INSUMOS_API_TARGET",
+    "PONTO_PAGES_ACTOR_HMAC_KEY",
+    "PONTO_PAGES_NETWORK_CONTEXT_KEY",
+    "PONTO_PAGES_RELEASE_PROBE_HMAC_KEY",
+    "PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET"
+  ],
+  "runtimeSecretSourceNames": {
+    "PONTO_API_TARGET": "PONTO_PAGES_PONTO_API_TARGET",
+    "AUTH_API_TARGET": "PONTO_PAGES_AUTH_API_TARGET",
+    "INSUMOS_API_TARGET": "PONTO_PAGES_INSUMOS_API_TARGET",
+    "PONTO_ACTOR_HMAC_KEY": "PONTO_PAGES_ACTOR_HMAC_KEY",
+    "PONTO_NETWORK_CONTEXT_KEY": "PONTO_PAGES_NETWORK_CONTEXT_KEY",
+    "PONTO_RELEASE_PROBE_HMAC_KEY": "PONTO_PAGES_RELEASE_PROBE_HMAC_KEY"
+  },
   "publication": {
     "manualOnly": true,
     "defaultPublish": false,

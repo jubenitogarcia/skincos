@@ -54,7 +54,28 @@ describe('Ponto Pages governed publisher', () => {
       expect(target.secrets).toContain('PONTO_PAGES_CLOUDFLARE_API_TOKEN')
       expect(target.secrets).not.toContain('CLOUDFLARE_ACCOUNT_ID')
       expect(target.secrets).not.toContain('CLOUDFLARE_API_TOKEN')
+      expect(target.secrets).toEqual(contract.githubEnvironmentSecretInputs)
+      for (const secretName of target.secrets) expect(secretName).toMatch(/^PONTO_PAGES_/)
     }
+    expect(contract.githubEnvironmentSecretInputs).toEqual([
+      'PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID',
+      'PONTO_PAGES_CLOUDFLARE_API_TOKEN',
+      'PONTO_PAGES_PONTO_API_TARGET',
+      'PONTO_PAGES_AUTH_API_TARGET',
+      'PONTO_PAGES_INSUMOS_API_TARGET',
+      'PONTO_PAGES_ACTOR_HMAC_KEY',
+      'PONTO_PAGES_NETWORK_CONTEXT_KEY',
+      'PONTO_PAGES_RELEASE_PROBE_HMAC_KEY',
+      'PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET',
+    ])
+    expect(contract.runtimeSecretSourceNames).toEqual({
+      PONTO_API_TARGET: 'PONTO_PAGES_PONTO_API_TARGET',
+      AUTH_API_TARGET: 'PONTO_PAGES_AUTH_API_TARGET',
+      INSUMOS_API_TARGET: 'PONTO_PAGES_INSUMOS_API_TARGET',
+      PONTO_ACTOR_HMAC_KEY: 'PONTO_PAGES_ACTOR_HMAC_KEY',
+      PONTO_NETWORK_CONTEXT_KEY: 'PONTO_PAGES_NETWORK_CONTEXT_KEY',
+      PONTO_RELEASE_PROBE_HMAC_KEY: 'PONTO_PAGES_RELEASE_PROBE_HMAC_KEY',
+    })
   })
 
   it('keeps only Ponto runtime roles and runner-only placeholders in the template', () => {
@@ -111,9 +132,31 @@ describe('Ponto Pages governed publisher', () => {
     expect(workflow).toContain('secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN')
     expect(workflow).not.toContain('secrets.CLOUDFLARE_ACCOUNT_ID')
     expect(workflow).not.toContain('secrets.CLOUDFLARE_API_TOKEN')
+    for (const [runtimeName, sourceName] of Object.entries(contract.runtimeSecretSourceNames)) {
+      expect(workflow).toContain('secrets.' + sourceName)
+      expect(workflow).toContain(runtimeName + ': process.env.' + sourceName)
+    }
+    expect(workflow).toContain('secrets.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET')
+    for (const genericName of [
+      'PONTO_API_TARGET',
+      'AUTH_API_TARGET',
+      'INSUMOS_API_TARGET',
+      'PONTO_ACTOR_HMAC_KEY',
+      'PONTO_NETWORK_CONTEXT_KEY',
+      'PONTO_RELEASE_PROBE_HMAC_KEY',
+      'SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET',
+    ]) expect(workflow).not.toContain('secrets.' + genericName)
     expect((workflow.match(/curl --disable --fail --silent --show-error/g) || []).length).toBe(3)
     expect((workflow.match(/--header @-/g) || []).length).toBe(3)
     expect(workflow).not.toMatch(/-H\s+"Authorization: Bearer \$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/)
+
+    for (const mutationStep of [
+      workflowStep('Configure Ponto-only Pages secrets without printing values'),
+      workflowStep('Deploy only the exact dedicated Ponto Pages project'),
+    ]) {
+      expect(mutationStep).toContain('CLOUDFLARE_API_TOKEN="$PONTO_PAGES_CLOUDFLARE_API_TOKEN"')
+      expect(mutationStep).toContain('CLOUDFLARE_ACCOUNT_ID="$PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID"')
+    }
 
     const coreCandidate = workflowStep('Verify exact Ponto Core staging candidate receipt')
     for (const marker of [

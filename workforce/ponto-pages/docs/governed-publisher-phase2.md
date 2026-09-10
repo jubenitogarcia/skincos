@@ -48,17 +48,30 @@ validated by format and is not committed.
 
 deployment/github-environment.template.json is a names-only checklist for
 ponto-pages-staging and ponto-pages-production. It contains no values and
-permits no repository-secret fallback. The guarded job receives Cloudflare
-custody, API origins and Ponto keys only from the selected target environment,
-writes the secret payload in runner temporary storage without echoing it, and
-removes that material at the end of the job.
+permits no repository-secret fallback. Every secret expression read by the
+guarded job has an exclusive PONTO_PAGES_* input name in the selected target
+environment; generic repository or environment secret expressions are not
+accepted. The job writes the secret payload in runner temporary storage without
+echoing it, and removes that material at the end of the job.
 
 Cloudflare custody must be named PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID and
-PONTO_PAGES_CLOUDFLARE_API_TOKEN in each protected environment. Generic
-repository secrets named CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN are not
-referenced by this publisher. The dedicated token is passed to Wrangler only
-for that subprocess and to Cloudflare readback through curl configuration on
-stdin headers, never as a curl command argument.
+PONTO_PAGES_CLOUDFLARE_API_TOKEN in each protected environment. The other
+exclusive inputs are PONTO_PAGES_PONTO_API_TARGET,
+PONTO_PAGES_AUTH_API_TARGET, PONTO_PAGES_INSUMOS_API_TARGET,
+PONTO_PAGES_ACTOR_HMAC_KEY, PONTO_PAGES_NETWORK_CONTEXT_KEY,
+PONTO_PAGES_RELEASE_PROBE_HMAC_KEY and
+PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET. The six runtime source inputs
+are mapped to their established runtime names only while serialising the JSON
+sent to Pages; PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET is used only by
+the coordination actions and is never included in that payload. Generic
+repository secrets named CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN,
+PONTO_API_TARGET, AUTH_API_TARGET, INSUMOS_API_TARGET,
+PONTO_ACTOR_HMAC_KEY, PONTO_NETWORK_CONTEXT_KEY,
+PONTO_RELEASE_PROBE_HMAC_KEY or SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET are
+not referenced by this publisher. Each mutating Wrangler subprocess receives
+the dedicated token and account ID only as its CLOUDFLARE_API_TOKEN and
+CLOUDFLARE_ACCOUNT_ID process environment. Cloudflare readback continues to
+use curl configuration through stdin headers, never a curl command argument.
 
 The runtime template permits only:
 

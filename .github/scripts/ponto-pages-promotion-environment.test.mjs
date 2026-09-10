@@ -8,6 +8,12 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const workflowDirectory = path.join(repositoryRoot, '.github/workflows')
 const readWorkflow = (name) => fs.readFileSync(path.join(workflowDirectory, name), 'utf8')
 const readJson = (name) => JSON.parse(fs.readFileSync(path.join(repositoryRoot, name), 'utf8'))
+const workflowStep = (workflow, name) => {
+  const marker = '      - name: ' + name + '\n'
+  const start = workflow.indexOf(marker)
+  const end = workflow.indexOf('\n      - ', start + marker.length)
+  return start < 0 ? '' : workflow.slice(start, end < 0 ? workflow.length : end)
+}
 
 test('only Ponto Pages overrides the reusable promotion environment', () => {
   const promotionGate = readWorkflow('promotion-gate.yml')
@@ -72,12 +78,43 @@ test('Ponto Pages staging guard accepts only five-group UUID version IDs', () =>
   assert.doesNotMatch('11111111-1111-4111-111111111111', uuid)
 })
 
-test('Ponto Pages accepts only dedicated Cloudflare custody and stdin curl headers', () => {
+test('Ponto Pages accepts only dedicated secret custody, account-scoped mutations, and stdin curl headers', () => {
   const publisher = readWorkflow('ponto-pages-governed-publisher.yml')
 
   assert.match(publisher, /secrets\.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID/)
   assert.match(publisher, /secrets\.PONTO_PAGES_CLOUDFLARE_API_TOKEN/)
   assert.doesNotMatch(publisher, /secrets\.CLOUDFLARE_(?:ACCOUNT_ID|API_TOKEN)/)
+  const runtimeSecretSources = {
+    PONTO_API_TARGET: 'PONTO_PAGES_PONTO_API_TARGET',
+    AUTH_API_TARGET: 'PONTO_PAGES_AUTH_API_TARGET',
+    INSUMOS_API_TARGET: 'PONTO_PAGES_INSUMOS_API_TARGET',
+    PONTO_ACTOR_HMAC_KEY: 'PONTO_PAGES_ACTOR_HMAC_KEY',
+    PONTO_NETWORK_CONTEXT_KEY: 'PONTO_PAGES_NETWORK_CONTEXT_KEY',
+    PONTO_RELEASE_PROBE_HMAC_KEY: 'PONTO_PAGES_RELEASE_PROBE_HMAC_KEY',
+  }
+  for (const [runtimeName, sourceName] of Object.entries(runtimeSecretSources)) {
+    assert.match(publisher, new RegExp('secrets\\.' + sourceName))
+    assert.match(publisher, new RegExp(runtimeName + ': process\\.env\\.' + sourceName))
+  }
+  assert.match(publisher, /secrets\.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET/)
+  for (const genericName of [
+    'PONTO_API_TARGET',
+    'AUTH_API_TARGET',
+    'INSUMOS_API_TARGET',
+    'PONTO_ACTOR_HMAC_KEY',
+    'PONTO_NETWORK_CONTEXT_KEY',
+    'PONTO_RELEASE_PROBE_HMAC_KEY',
+    'SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET',
+  ]) {
+    assert.doesNotMatch(publisher, new RegExp('secrets\\.' + genericName), 'generic secret expression must be rejected: ' + genericName)
+  }
+  for (const mutationStep of [
+    workflowStep(publisher, 'Configure Ponto-only Pages secrets without printing values'),
+    workflowStep(publisher, 'Deploy only the exact dedicated Ponto Pages project'),
+  ]) {
+    assert.match(mutationStep, /CLOUDFLARE_API_TOKEN="\$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/)
+    assert.match(mutationStep, /CLOUDFLARE_ACCOUNT_ID="\$PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID"/)
+  }
   assert.match(publisher, /PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RECEIPT_REQUIRED/)
   assert.match(publisher, /actions\/workflows\/ponto-core-staging-candidate\.yml/)
   assert.match(publisher, /Number\(run\?\.run_attempt\) !== 1/)

@@ -67,14 +67,22 @@ const expected = {
   environmentSecrets: [
     'PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID',
     'PONTO_PAGES_CLOUDFLARE_API_TOKEN',
-    'PONTO_API_TARGET',
-    'AUTH_API_TARGET',
-    'INSUMOS_API_TARGET',
-    'PONTO_ACTOR_HMAC_KEY',
-    'PONTO_NETWORK_CONTEXT_KEY',
-    'PONTO_RELEASE_PROBE_HMAC_KEY',
-    'SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET',
+    'PONTO_PAGES_PONTO_API_TARGET',
+    'PONTO_PAGES_AUTH_API_TARGET',
+    'PONTO_PAGES_INSUMOS_API_TARGET',
+    'PONTO_PAGES_ACTOR_HMAC_KEY',
+    'PONTO_PAGES_NETWORK_CONTEXT_KEY',
+    'PONTO_PAGES_RELEASE_PROBE_HMAC_KEY',
+    'PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET',
   ],
+  runtimeSecretSourceNames: {
+    PONTO_API_TARGET: 'PONTO_PAGES_PONTO_API_TARGET',
+    AUTH_API_TARGET: 'PONTO_PAGES_AUTH_API_TARGET',
+    INSUMOS_API_TARGET: 'PONTO_PAGES_INSUMOS_API_TARGET',
+    PONTO_ACTOR_HMAC_KEY: 'PONTO_PAGES_ACTOR_HMAC_KEY',
+    PONTO_NETWORK_CONTEXT_KEY: 'PONTO_PAGES_NETWORK_CONTEXT_KEY',
+    PONTO_RELEASE_PROBE_HMAC_KEY: 'PONTO_PAGES_RELEASE_PROBE_HMAC_KEY',
+  },
   stagingCoreCandidateReceipt: {
     workflowName: 'Ponto Core staging candidate',
     workflowPath: '.github/workflows/ponto-core-staging-candidate.yml',
@@ -107,6 +115,16 @@ const expected = {
     ],
   },
 }
+
+const genericWorkflowSecretNames = [
+  'PONTO_API_TARGET',
+  'AUTH_API_TARGET',
+  'INSUMOS_API_TARGET',
+  'PONTO_ACTOR_HMAC_KEY',
+  'PONTO_NETWORK_CONTEXT_KEY',
+  'PONTO_RELEASE_PROBE_HMAC_KEY',
+  'SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET',
+]
 
 function fail(code) {
   throw new Error(`PONTO_GOVERNED_PUBLISHER_INVALID:${code}`)
@@ -154,6 +172,12 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     fail('PUBLICATION_POSTURE')
   }
   if (!sameList(contract.projectPolicy?.forbiddenProjects, ['skincos', 'skincos-staging'])) fail('FORBIDDEN_PROJECTS')
+  if (!sameList(contract.githubEnvironmentSecretInputs, expected.environmentSecrets)
+    || JSON.stringify(contract.runtimeSecretSourceNames) !== JSON.stringify(expected.runtimeSecretSourceNames)
+    || contract.githubEnvironmentSecretInputs.some((name) => !name.startsWith('PONTO_PAGES_'))
+    || Object.values(contract.runtimeSecretSourceNames).some((name) => !name.startsWith('PONTO_PAGES_'))) {
+    fail('DEDICATED_SECRET_INPUT_CONTRACT')
+  }
   if (JSON.stringify(contract.stagingCoreCandidateReceipt) !== JSON.stringify(expected.stagingCoreCandidateReceipt)
     || JSON.stringify(contract.stagingPagesRollbackReceipt) !== JSON.stringify(expected.stagingPagesRollbackReceipt)
     || !sameList(contract.futureGates, [
@@ -227,6 +251,9 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     fail('PHASE1_SOURCE_CONTRACT_CHANGED')
   }
 
+  const wranglerSecretBulkHasDedicatedAccount = /CLOUDFLARE_API_TOKEN="\$PONTO_PAGES_CLOUDFLARE_API_TOKEN"\s*\\\s*\r?\n\s*CLOUDFLARE_ACCOUNT_ID="\$PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID"\s*\\\s*\r?\n\s*npx --yes wrangler@4\.114\.0 pages secret bulk/.test(workflow)
+  const wranglerDeployHasDedicatedAccount = /CLOUDFLARE_API_TOKEN="\$PONTO_PAGES_CLOUDFLARE_API_TOKEN"\s*\\\s*\r?\n\s*CLOUDFLARE_ACCOUNT_ID="\$PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID"\s*\\\s*\r?\n\s*npx --yes wrangler@4\.114\.0 pages deploy/.test(workflow)
+
   if (!/^\s*workflow_dispatch:/m.test(workflow)
     || /^\s{2}(push|pull_request|schedule|workflow_run|repository_dispatch):/m.test(workflow)
     || !workflow.includes('default: false')
@@ -241,6 +268,9 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || !workflow.includes('api.cloudflare.com/client/v4/accounts/${PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID}/pages/projects/${EXPECTED_PROJECT}')
     || !workflow.includes('secrets.PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID')
     || !workflow.includes('secrets.PONTO_PAGES_CLOUDFLARE_API_TOKEN')
+    || Object.values(expected.runtimeSecretSourceNames).some((name) => !workflow.includes(`secrets.${name}`))
+    || !workflow.includes('secrets.PONTO_PAGES_GLOBAL_COORDINATION_SHARED_SECRET')
+    || genericWorkflowSecretNames.some((name) => workflow.includes(`secrets.${name}`))
     || workflow.includes('secrets.CLOUDFLARE_ACCOUNT_ID')
     || workflow.includes('secrets.CLOUDFLARE_API_TOKEN')
     || !workflow.includes('git rev-parse HEAD')
@@ -248,6 +278,9 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || !workflow.includes('PONTO_PAGES_WORKFLOW_REF_NOT_MAIN')) {
     fail('WORKFLOW_GATES')
   }
+  if (!Object.entries(expected.runtimeSecretSourceNames).every(
+    ([runtimeName, sourceName]) => workflow.includes(`${runtimeName}: process.env.${sourceName}`),
+  )) fail('WORKFLOW_RUNTIME_SECRET_SOURCE_MAPPING')
   if (!workflow.includes('if: ${{ inputs.publish }}')
     || !workflow.includes('PONTO_PAGES_PUBLISH_DISABLED')
     || !workflow.includes('PONTO_PAGES_LEGACY_PROJECT_FORBIDDEN')
@@ -273,6 +306,8 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || (workflow.match(/curl --disable --fail --silent --show-error/g) || []).length !== 3
     || (workflow.match(/--header @-/g) || []).length !== 3
     || /-H\s+"Authorization: Bearer \$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/.test(workflow)
+    || !wranglerSecretBulkHasDedicatedAccount
+    || !wranglerDeployHasDedicatedAccount
     || !workflow.includes('PONTO_PAGES_REMOTE_SECRET_')
     || !workflow.includes("envVars[name]?.type !== 'secret_text'")
     || !workflow.includes("promotion_environment: ${{ inputs.target == 'staging' && 'ponto-pages-staging' || 'ponto-pages-production' }}")) {
