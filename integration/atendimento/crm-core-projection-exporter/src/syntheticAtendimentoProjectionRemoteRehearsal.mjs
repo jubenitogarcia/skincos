@@ -16,19 +16,21 @@ import {
   createPaginatedAtendimentoProjectionBackfillRunner,
 } from './paginatedAtendimentoProjectionBackfillRunner.mjs'
 import {
+  ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE,
   createSyntheticAtendimentoProjectionFixturePool,
 } from './syntheticStagingPreparationRunner.mjs'
 
-export const ATENDIMENTO_SYNTHETIC_REMOTE_REHEARSAL_VERSION = 'atendimento/crm-core/synthetic-remote-backfill-rehearsal/v1'
-export const ATENDIMENTO_SYNTHETIC_REMOTE_REHEARSAL_INTENT = 'atendimento/crm-core/synthetic-remote-backfill-rehearsal-delivery/v1'
+export const ATENDIMENTO_SYNTHETIC_REMOTE_REHEARSAL_VERSION = 'atendimento/crm-core/synthetic-remote-backfill-rehearsal/v2'
+export const ATENDIMENTO_SYNTHETIC_REMOTE_REHEARSAL_INTENT = 'atendimento/crm-core/synthetic-remote-backfill-rehearsal-delivery/v2'
 
 const SYNTHETIC_CAPTURED_AT = '2026-09-07T00:00:00.000Z'
 const SYNTHETIC_SOURCE_ROW = Object.freeze({
   id: '123e4567-e89b-42d3-a456-426614174001',
   updated_at: SYNTHETIC_CAPTURED_AT,
+  unit_slug: 'novo-hamburgo',
 })
 const DELIVERY_KEY_ID = 'crm-staging-atendimento-backfill-remote-rehearsal'
-const SOURCE_KEY_ID = 'atendimento-synthetic-remote-rehearsal-v1'
+const SOURCE_KEY_ID = 'atendimento-synthetic-remote-rehearsal-v2'
 const LEGACY_FIXTURE_BATCH_ID = 'backfill:atendimento:fixture-batch-0001'
 
 function fail(code) {
@@ -94,13 +96,14 @@ function expectedReconciliation(batch, batchDigest) {
     eventCount: batch.events.length,
     eventsDigest: batch.integrity.eventsDigest,
     cursorDigest: batch.sourceSnapshot.cursorDigest,
+    unitSlugs: batch.sourceSnapshot.unitSlugs,
     eventIds: Object.freeze(batch.events.map((event) => event.id)),
   })
 }
 
 function assertReconciliation(value, expected) {
   const reconciliation = object(value, 'ATENDIMENTO_CRM_SYNTHETIC_REMOTE_REHEARSAL_RECONCILIATION_INVALID')
-  exactKeys(reconciliation, ['batchId', 'target', 'eventCount', 'eventsDigest', 'cursorDigest', 'eventIds'], 'ATENDIMENTO_CRM_SYNTHETIC_REMOTE_REHEARSAL_RECONCILIATION_INVALID')
+  exactKeys(reconciliation, ['batchId', 'target', 'eventCount', 'eventsDigest', 'cursorDigest', 'unitSlugs', 'eventIds'], 'ATENDIMENTO_CRM_SYNTHETIC_REMOTE_REHEARSAL_RECONCILIATION_INVALID')
   const target = assertAtendimentoProjectionExportTarget(reconciliation.target)
   if (
     reconciliation.batchId !== expected.batchId
@@ -108,6 +111,8 @@ function assertReconciliation(value, expected) {
     || reconciliation.eventCount !== expected.eventCount
     || reconciliation.eventsDigest !== expected.eventsDigest
     || reconciliation.cursorDigest !== expected.cursorDigest
+    || !Array.isArray(reconciliation.unitSlugs)
+    || JSON.stringify(reconciliation.unitSlugs) !== JSON.stringify(expected.unitSlugs)
     || !Array.isArray(reconciliation.eventIds)
     || reconciliation.eventIds.length !== expected.eventIds.length
     || reconciliation.eventIds.some((eventId, index) => eventId !== expected.eventIds[index])
@@ -118,6 +123,7 @@ function assertReconciliation(value, expected) {
     eventCount: expected.eventCount,
     eventsDigest: expected.eventsDigest,
     cursorDigest: expected.cursorDigest,
+    unitSlugs: Object.freeze([...expected.unitSlugs]),
   })
 }
 
@@ -209,6 +215,7 @@ export function createSyntheticAtendimentoProjectionRemoteRehearsal(options = {}
         capturedAt: SYNTHETIC_CAPTURED_AT,
         rows: [SYNTHETIC_SOURCE_ROW],
       }),
+      source: ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE,
       hmacKey,
       keyId: SOURCE_KEY_ID,
       target,
@@ -246,7 +253,7 @@ export function createSyntheticAtendimentoProjectionRemoteRehearsal(options = {}
       }
       const verified = assertReconciliation(reconciliation, expected)
       return Object.freeze({
-        contractVersion: 'atendimento/crm-core/synthetic-remote-backfill-rehearsal-receipt/v1',
+        contractVersion: 'atendimento/crm-core/synthetic-remote-backfill-rehearsal-receipt/v2',
         status: 'reconciled',
         target: Object.freeze({ ...target }),
         batchId: batch.batchId,

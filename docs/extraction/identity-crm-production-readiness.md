@@ -62,20 +62,57 @@ The inventory names checked by the report are scoped to the future production
 Worker and are not provisioning instructions:
 
 - `IDENTITY_CRM_DELIVERY_PRODUCTION_KID`
-- `IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK`
+- `IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY`
 - `IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK`
-- `IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC`
+- `IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC`
+- `IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT`
 
-Private key material must remain in an approved Identity-owned custody adapter.
-It must never be placed in Git, the CRM repository, logs or the readback
-artifact. If production custody does not safely support the staging JWK shape,
-the production runtime must use the reviewed signer adapter instead of adding a
-secret merely to satisfy this inventory.
+The signing key must remain in the approved Identity-owned Cloudflare
+`secret_key` custody binding with the `Ed25519`/`sign` capability. The Worker
+receives it as a non-extractable `CryptoKey`, proves it matches the active
+public key internally, and never reads or publishes its JWK. It must never be
+placed in Git, the CRM repository, logs or the readback artifact. The caller
+HMAC is an internal symmetric secret shared only with the private production
+API caller; the issuer rejects a request without that caller identity.
+
+`IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT` is separate from the Identity
+delivery signing key. It holds an externally signed release receipt that binds
+the API gateway version, Core version/artifact and exact Identity Worker
+version. The private endpoint
+`/internal/crm-production-route-receipt/v1/resolve` accepts only the exact
+`crm-api-production-v1` HMAC caller and a single `gatewayVersionId` field; it
+returns the opaque receipt without re-signing it. The API verifies its
+Ed25519 signature against its distinct `crm-production-route-receipt-*`
+verification ring, then pins Identity envelope issuance to the receipt's
+Identity version. This Worker has no public route for the resolver.
+
+The private Worker must be published as two distinct immutable versions of the
+same service, never as one dual-capability version. The active binding target
+is resolver `R`, with
+`IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED=false` and
+`IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED=true`; `R`
+needs the caller HMAC and receipt secret, and returns `404` for the issue/key
+surfaces even if signing material is accidentally present. The receipt names
+issuer `I`, an already-uploaded version with the inverse flags, the
+non-extractable signing key, and no resolver capability. The API calls `R`
+only to retrieve the externally signed artifact and uses a private
+Cloudflare-version override for `I` only after local receipt verification.
+If both role flags are `true` (or both are `false` on an otherwise enabled
+version), the runtime exposes neither surface. Browser headers never select
+either version.
+
+No one version should be supplied every value in the inventory above: `R`
+does not need a signing key or public JWK ring, and `I` does not need
+`IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT`. The audit must report the role,
+exact immutable version id, secret-name presence and the inverse capability as
+part of the same-artifact readback.
 
 ## Gates before any production cutover
 
 1. A production Worker exists under the canonical Identity owner and has an
-   immutable deployment baseline with a tested rollback artifact.
+   immutable deployment baseline with a tested rollback artifact. It must be
+   deployed and read back before any API candidate adds its service binding;
+   Wrangler resolves that target at upload even while CRM flags are false.
 2. The Worker has no public `workers.dev` or preview access, public zone route,
    or custom domain. CRM access is private and authenticated; the staging public
    endpoint is not a production precedent.

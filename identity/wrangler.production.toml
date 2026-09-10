@@ -1,9 +1,10 @@
 # Identity-owned production candidate for CRM delivery.
 #
 # This manifest is intentionally disabled and has no route, D1, KV, R2 or
-# service binding. A protected deployment must first supply the four secrets
-# through the external secret manager and satisfy the production readiness
-# workflow. The private JWK is never stored in this file or in Git.
+# service binding. A protected deployment must first supply the custody
+# bindings through the external secret manager and satisfy the production
+# readiness workflow. The private signing key is a non-extractable
+# Cloudflare `secret_key`, never a JWK stored in this file or in Git.
 name = "skincos-identity-crm-delivery-production"
 main = "delivery/crm-issuer-production-worker.js"
 compatibility_date = "2026-03-02"
@@ -13,6 +14,8 @@ preview_urls = false
 [vars]
 IDENTITY_CRM_DELIVERY_ENABLED = "false"
 IDENTITY_CRM_DELIVERY_ENVIRONMENT = "production"
+IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED = "false"
 
 [env.production]
 name = "skincos-identity-crm-delivery-production"
@@ -22,9 +25,25 @@ preview_urls = false
 [env.production.vars]
 IDENTITY_CRM_DELIVERY_ENABLED = "false"
 IDENTITY_CRM_DELIVERY_ENVIRONMENT = "production"
+IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED = "false"
+IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED = "false"
 
 # Required only at a separately approved deployment step, never in source:
 #   IDENTITY_CRM_DELIVERY_PRODUCTION_KID
-#   IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY (secret_key / Ed25519 / sign)
 #   IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK
-#   IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED=true
+#   IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID=crm-api-production-v1
+#   IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT
+#
+# A protected deployment creates two immutable private versions of this same
+# Worker, never one dual-capability version:
+#   R: ...ISSUER_ENABLED=false and ...ROUTE_RECEIPT_RESOLVER_ENABLED=true
+#      with only the caller HMAC and route-receipt secret;
+#   I: ...ISSUER_ENABLED=true and ...ROUTE_RECEIPT_RESOLVER_ENABLED=false
+#      with the non-extractable signing key and no route-receipt secret.
+#
+# The final value is an externally signed route receipt, held only as an
+# Identity runtime secret. This Worker returns it to the private API caller;
+# it never signs that receipt with the Identity delivery key.

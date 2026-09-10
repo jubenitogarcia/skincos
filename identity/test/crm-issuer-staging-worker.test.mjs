@@ -51,6 +51,42 @@ async function stagingEnv() {
   };
 }
 
+async function withSigningCounter(run) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  let signCount = 0;
+  let privateKeyImportCount = 0;
+  const subtle = new Proxy(webcrypto.subtle, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property === 'sign') {
+        return async (...args) => {
+          signCount += 1;
+          return value.call(target, ...args);
+        };
+      }
+      if (property === 'importKey') {
+        return async (...args) => {
+          const [format, keyData] = args;
+          if (format === 'jwk' && keyData && typeof keyData === 'object' && Object.hasOwn(keyData, 'd')) {
+            privateKeyImportCount += 1;
+          }
+          return value.call(target, ...args);
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  Object.defineProperty(globalThis, 'crypto', {
+    value: { subtle },
+    configurable: true,
+  });
+  try {
+    return await run(() => signCount, () => privateKeyImportCount);
+  } finally {
+    Object.defineProperty(globalThis, 'crypto', descriptor);
+  }
+}
+
 function issuePayload() {
   return {
     identity: {
@@ -157,6 +193,45 @@ test('staging issue endpoint rejects unauthenticated callers and unknown routes'
 
   const unknown = await handleIdentityCrmIssuerStagingRequest(new Request('https://identity-crm-delivery-staging.example/internal/other', { method: 'POST' }), env);
   assert.equal(unknown.status, 404);
+});
+
+test('unknown and unauthenticated traffic does not load staging private material', { concurrency: false }, async () => {
+  const { env } = await stagingEnv();
+  const payload = JSON.stringify(issuePayload());
+  const auth = await authHeader(payload);
+  await withSigningCounter(async (signCount, privateKeyImportCount) => {
+    const unknown = await handleIdentityCrmIssuerStagingRequest(
+      new Request('https://identity-crm-delivery-staging.example/internal/other', { method: 'POST' }),
+      env,
+    );
+    assert.equal(unknown.status, 404);
+    assert.equal(signCount(), 0);
+    assert.equal(privateKeyImportCount(), 0);
+
+    const unauthenticated = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, { method: 'POST', body: payload }), env);
+    assert.equal(unauthenticated.status, 401);
+    assert.equal(signCount(), 0);
+    assert.equal(privateKeyImportCount(), 0);
+
+    const authenticated = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, {
+      method: 'POST',
+      headers: { 'x-skincos-identity-issuer-auth': auth },
+      body: payload,
+    }), env);
+    assert.equal(authenticated.status, 200);
+    assert.equal(signCount(), 2);
+    assert.equal(privateKeyImportCount(), 1);
+
+    const repeated = await handleIdentityCrmIssuerStagingRequest(new Request(issueUrl, { method: 'POST', body: payload }), env);
+    assert.equal(repeated.status, 401);
+    assert.equal(signCount(), 2);
+    assert.equal(privateKeyImportCount(), 1);
+
+    const keys = await handleIdentityCrmIssuerStagingRequest(new Request(keysUrl), env);
+    assert.equal(keys.status, 200);
+    assert.equal(signCount(), 2);
+    assert.equal(privateKeyImportCount(), 1);
+  });
 });
 
 test('staging issuer accepts the dedicated CRM API caller without rotating the existing smoke HMAC', async () => {

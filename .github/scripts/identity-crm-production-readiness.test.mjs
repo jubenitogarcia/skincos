@@ -5,6 +5,9 @@ import {
   IDENTITY_CRM_DELIVERY_PROTOCOL,
   PRODUCTION_WORKER_NAME,
   REQUIRED_PRODUCTION_SECRET_NAMES,
+  REQUIRED_PRODUCTION_SECRET_KEY_METADATA,
+  REQUIRED_PRODUCTION_RUNTIME_BINDINGS,
+  REQUIRED_PRODUCTION_SECRET_TYPES,
   runIdentityCrmProductionReadiness,
 } from './identity-crm-production-readiness.mjs';
 
@@ -21,6 +24,26 @@ const secondRoutesUrl = `https://api.cloudflare.com/client/v4/zones/${secondZone
 const domainsUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains?page=1&per_page=50`;
 const domainsSecondPageUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains?page=2&per_page=50`;
 const completeReadUrls = [...workerUrls, zonesUrl, domainsUrl, routesUrl];
+
+function requiredSecretInventory(overrides = {}) {
+  return REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({
+    name,
+    type: REQUIRED_PRODUCTION_SECRET_TYPES[name],
+    ...(name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+      ? { algorithm: { name: 'Ed25519' }, usages: ['sign'], format: 'jwk' }
+      : {}),
+    ...overrides,
+  }));
+}
+
+function requiredRuntimeBindings(overrides = {}) {
+  return Object.entries(REQUIRED_PRODUCTION_RUNTIME_BINDINGS).map(([name, text]) => ({
+    name,
+    type: 'plain_text',
+    text,
+    ...overrides,
+  }));
+}
 
 function assertReadCalls(calls, expectedUrls = completeReadUrls) {
   assert.deepEqual(calls.map(({ url }) => url), expectedUrls);
@@ -55,12 +78,12 @@ function cloudflareResponse(result, status = 200, resultInfo = null) {
 
 function completeWorkerResponse(url, { previewsEnabled = false } = {}) {
   if (url === `${workerUrl}/settings`) {
-    return cloudflareResponse({ compatibility_date: '2026-03-02', usage_model: 'standard', workers_dev: false, bindings: [] });
+    return cloudflareResponse({ compatibility_date: '2026-03-02', usage_model: 'standard', workers_dev: false, bindings: requiredRuntimeBindings() });
   }
   if (url === `${workerUrl}/deployments`) {
     return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
   }
-  if (url === `${workerUrl}/secrets`) return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name })));
+  if (url === `${workerUrl}/secrets`) return cloudflareResponse(requiredSecretInventory());
   if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: previewsEnabled });
   return null;
 }
@@ -79,10 +102,28 @@ test('production defaults are distinct from staging and protocol values are fixe
   });
   assert.deepEqual(REQUIRED_PRODUCTION_SECRET_NAMES, [
     'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
-    'IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
     'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
-    'IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC',
   ]);
+  assert.deepEqual(REQUIRED_PRODUCTION_SECRET_TYPES, {
+    IDENTITY_CRM_DELIVERY_PRODUCTION_KID: 'secret_text',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: 'secret_key',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK: 'secret_text',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+  });
+  assert.deepEqual(REQUIRED_PRODUCTION_SECRET_KEY_METADATA, {
+    IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: {
+      algorithm: 'Ed25519',
+      usages: ['sign'],
+    },
+  });
+  assert.deepEqual(REQUIRED_PRODUCTION_RUNTIME_BINDINGS, {
+    IDENTITY_CRM_DELIVERY_ENABLED: 'true',
+    IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'production',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: 'crm-api-production-v1',
+  });
 });
 
 test('missing external credentials produces a blocked, non-mutating report', async () => {
@@ -115,6 +156,7 @@ test('complete external readback is eligible only when all attestations are pres
           bindings: [
             { name: 'CRM_DELIVERY_SIGNER', type: 'service', service: 'identity-signer' },
             { name: 'SYNTHETIC_SECRET', type: 'secret_text', text: privateMarker },
+            ...requiredRuntimeBindings(),
           ],
         });
       }
@@ -122,7 +164,7 @@ test('complete external readback is eligible only when all attestations are pres
         return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
       }
       if (url === `${workerUrl}/secrets`) {
-        return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name, type: 'secret_text', value: privateMarker })));
+        return cloudflareResponse(requiredSecretInventory({ value: privateMarker }));
       }
       if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: false });
       if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
@@ -139,6 +181,104 @@ test('complete external readback is eligible only when all attestations are pres
   assertReadCalls(calls);
   assert.doesNotMatch(JSON.stringify(report), new RegExp(apiToken));
   assert.doesNotMatch(JSON.stringify(report), new RegExp(privateMarker));
+});
+
+test('production readiness requires exact private-caller runtime bindings without emitting their values', async () => {
+  for (const { expectedName, expectedStatus, mutate } of [
+    {
+      expectedName: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED',
+      expectedStatus: 'missing',
+      mutate: (bindings) => bindings.filter((binding) => binding.name !== 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED'),
+    },
+    {
+      expectedName: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID',
+      expectedStatus: 'incorrect',
+      mutate: (bindings) => bindings.map((binding) => binding.name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID'
+      ? { ...binding, text: 'incorrect-caller' }
+        : binding),
+    },
+    {
+      expectedName: 'IDENTITY_CRM_DELIVERY_ENABLED',
+      expectedStatus: 'incorrect',
+      mutate: (bindings) => bindings.map((binding) => binding.name === 'IDENTITY_CRM_DELIVERY_ENABLED'
+      ? { ...binding, text: 'false' }
+        : binding),
+    },
+  ]) {
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment(),
+      fetchImpl: async (url) => {
+        if (url === `${workerUrl}/settings`) {
+          return cloudflareResponse({
+            compatibility_date: '2026-03-02',
+            usage_model: 'standard',
+            workers_dev: false,
+            bindings: mutate(requiredRuntimeBindings()),
+          });
+        }
+        const workerResponse = completeWorkerResponse(url);
+        if (workerResponse) return workerResponse;
+        if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+        if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+        throw new Error(`unexpected URL ${url}`);
+      },
+    });
+    assert.equal(report.result, 'blocked');
+    assert.ok(report.blockers.some((blocker) => blocker.startsWith('production Worker has required runtime bindings that are missing or incorrect:')));
+    assert.doesNotMatch(JSON.stringify(report), /incorrect-caller/);
+    assert.equal(report.cloudflare.workerSettings.requiredRuntimeBindings[expectedName], expectedStatus);
+  }
+});
+
+test('production readiness rejects a textual signing binding before approving cutover', async () => {
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment(),
+    fetchImpl: async (url) => {
+      if (url === `${workerUrl}/secrets`) {
+        return cloudflareResponse(requiredSecretInventory().map((entry) => entry.name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+          ? { ...entry, type: 'secret_text' }
+          : entry));
+      }
+      const workerResponse = completeWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'blocked');
+  assert.ok(report.blockers.includes('production Worker has required secret bindings with incorrect types: IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY (expected secret_key)'));
+  assert.equal(report.cloudflare.secretInventory.types.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY, 'secret_text');
+  assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
+});
+
+test('production readiness rejects a signing key with a non-Ed25519 algorithm or unsafe usages', async () => {
+  for (const replacement of [
+    { algorithm: { name: 'HMAC' }, usages: ['sign'] },
+    { algorithm: { name: 'Ed25519' }, usages: ['verify'] },
+    { algorithm: { name: 'Ed25519' }, usages: ['sign', 'verify'] },
+  ]) {
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment(),
+      fetchImpl: async (url) => {
+        if (url === `${workerUrl}/secrets`) {
+          return cloudflareResponse(requiredSecretInventory().map((entry) => entry.name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+            ? { ...entry, ...replacement }
+            : entry));
+        }
+        const workerResponse = completeWorkerResponse(url);
+        if (workerResponse) return workerResponse;
+        if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+        if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+        throw new Error(`unexpected URL ${url}`);
+      },
+    });
+    assert.equal(report.result, 'blocked');
+    assert.ok(report.blockers.includes('production Worker has required secret-key metadata: IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY (expected Ed25519 with usages sign)'));
+    assert.deepEqual(report.cloudflare.secretInventory.keyMetadata.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY,
+      { algorithm: replacement.algorithm.name, usages: [...replacement.usages].sort() });
+    assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
+  }
 });
 
 test('route readback paginates every account zone and blocks a matching route in a later zone', async () => {
@@ -360,7 +500,7 @@ for (const configuredZone of ['', 'invalid-zone']) {
         if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
         if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
         if (url.endsWith('/subdomain')) return cloudflareResponse({ enabled: false, previews_enabled: false });
-        if (url.endsWith('/secrets')) return cloudflareResponse(REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({ name })));
+        if (url.endsWith('/secrets')) return cloudflareResponse(requiredSecretInventory());
         return cloudflareResponse([]);
       },
     });
@@ -394,7 +534,7 @@ test('workflow is dispatch-only, production-scoped and read-only', async () => {
   assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
   assert.doesNotMatch(workflow, /wrangler\s+(deploy|secret\s+put)|workers\/scripts.*(?:POST|PUT|PATCH|DELETE)/i);
   assert.doesNotMatch(workflow, /CLOUDFLARE_ZONE_ID/);
-  assert.doesNotMatch(workflow, /IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK:\s*[^$\n]/);
+  assert.doesNotMatch(workflow, /IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY:\s*[^$\n]/);
 });
 
 test('existing Identity issuer tests retain Ed25519, expiry, replay and key readback gates', async () => {
