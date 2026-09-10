@@ -128,10 +128,23 @@ fi
   echo '--candidate-root must be an absolute native Linux path.' >&2
   exit 78
 }
-node "$CONTRACT" validate-release \
-  --release-root "$CANDIDATE_ROOT" \
-  --release-sha "$RELEASE_SHA" \
-  --target "$TARGET" >/dev/null
+ACTIVE_RELEASE_ROOT=''
+ACTIVE_RELEASE_SHA=''
+if [[ -e "$CURRENT_LINK" || -L "$CURRENT_LINK" ]]; then
+  ACTIVE_RELEASE_SHA="$(node "$CONTRACT" pointer-release-sha --release-base "$RELEASE_BASE" --link "$CURRENT_LINK")"
+  ACTIVE_RELEASE_ROOT="$(readlink -f -- "$CURRENT_LINK")"
+  node "$CONTRACT" validate-successor \
+    --release-root "$CANDIDATE_ROOT" \
+    --release-sha "$RELEASE_SHA" \
+    --target "$TARGET" \
+    --active-release-root "$ACTIVE_RELEASE_ROOT" \
+    --active-release-sha "$ACTIVE_RELEASE_SHA" >/dev/null
+else
+  node "$CONTRACT" validate-successor \
+    --release-root "$CANDIDATE_ROOT" \
+    --release-sha "$RELEASE_SHA" \
+    --target "$TARGET" >/dev/null
+fi
 
 DESTINATION="$RELEASE_BASE/$RELEASE_SHA/crm-service"
 STAGING="$RELEASE_BASE/.crm-service-staging-$RELEASE_SHA-$$"
@@ -172,16 +185,36 @@ trap cleanup EXIT INT TERM
 mkdir -p -- "$RELEASE_BASE" "$(dirname -- "$CURRENT_LINK")"
 install -d -m 0750 -- "$STAGING" "$RELEASE_BASE/$RELEASE_SHA"
 cp -a -- "$CANDIDATE_ROOT/." "$STAGING/"
-node "$CONTRACT" validate-release \
-  --release-root "$STAGING" \
-  --release-sha "$RELEASE_SHA" \
-  --target "$TARGET" >/dev/null
+if [[ -n "$ACTIVE_RELEASE_ROOT" ]]; then
+  node "$CONTRACT" validate-successor \
+    --release-root "$STAGING" \
+    --release-sha "$RELEASE_SHA" \
+    --target "$TARGET" \
+    --active-release-root "$ACTIVE_RELEASE_ROOT" \
+    --active-release-sha "$ACTIVE_RELEASE_SHA" >/dev/null
+else
+  node "$CONTRACT" validate-successor \
+    --release-root "$STAGING" \
+    --release-sha "$RELEASE_SHA" \
+    --target "$TARGET" >/dev/null
+fi
+if [[ -n "$ACTIVE_RELEASE_ROOT" ]]; then
+  node "$CONTRACT" validate-pointer \
+    --release-base "$RELEASE_BASE" \
+    --link "$CURRENT_LINK" \
+    --expected-sha "$ACTIVE_RELEASE_SHA" >/dev/null
+  [[ "$(readlink -f -- "$CURRENT_LINK")" == "$ACTIVE_RELEASE_ROOT" ]] || {
+    echo 'Active CRM pointer changed while preparing its successor.' >&2
+    exit 78
+  }
+elif [[ -e "$CURRENT_LINK" || -L "$CURRENT_LINK" ]]; then
+  echo 'An active CRM pointer appeared while preparing an initial release.' >&2
+  exit 78
+fi
 mv -T -- "$STAGING" "$DESTINATION"
 
-if [[ -e "$CURRENT_LINK" || -L "$CURRENT_LINK" ]]; then
-  node "$CONTRACT" validate-pointer --release-base "$RELEASE_BASE" --link "$CURRENT_LINK" >/dev/null
-  previous_target="$(readlink -f -- "$CURRENT_LINK")"
-  ln -s -- "$previous_target" "$PREVIOUS_NEXT"
+if [[ -n "$ACTIVE_RELEASE_ROOT" ]]; then
+  ln -s -- "$ACTIVE_RELEASE_ROOT" "$PREVIOUS_NEXT"
   mv -T -- "$PREVIOUS_NEXT" "$PREVIOUS_LINK"
 fi
 ln -s -- "$DESTINATION" "$CURRENT_NEXT"

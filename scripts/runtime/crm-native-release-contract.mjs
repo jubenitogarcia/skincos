@@ -231,13 +231,16 @@ export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
   const sourceArchiveSha256 = assertDigest(metadata.sourceArchiveSha256, "Identity source archive digest");
   assertCustody(metadata.custody, expectedSha, sourceArchiveSha256);
   assertArtifacts(metadata.artifacts);
+  let predecessor = null;
   if (metadata.predecessor !== null) {
-    const predecessor = assertObject(metadata.predecessor, "Release predecessor");
-    assertExactKeys(predecessor, ["releaseSha", "sourceTree"], "Release predecessor");
-    if (assertReleaseSha(predecessor.releaseSha, "Predecessor SHA") === expectedSha
-      || !SHA.test(assertString(predecessor.sourceTree, "Predecessor source tree"))) {
+    const predecessorMetadata = assertObject(metadata.predecessor, "Release predecessor");
+    assertExactKeys(predecessorMetadata, ["releaseSha", "sourceTree"], "Release predecessor");
+    const predecessorSha = assertReleaseSha(predecessorMetadata.releaseSha, "Predecessor SHA");
+    const predecessorSourceTree = assertString(predecessorMetadata.sourceTree, "Predecessor source tree");
+    if (predecessorSha === expectedSha || !SHA.test(predecessorSourceTree)) {
       fail("Release predecessor is invalid.");
     }
+    predecessor = { releaseSha: predecessorSha, sourceTree: predecessorSourceTree };
   }
   assertRegularFile(path.join(root, REQUIRED_ARTIFACTS.apiEntrypoint), "CRM API entrypoint");
   assertRegularFile(path.join(root, REQUIRED_ARTIFACTS.apiPackageLock), "CRM API lockfile");
@@ -248,7 +251,38 @@ export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
     sourceArchiveSha256,
     target,
     releaseRoot: root,
+    predecessor,
   };
+}
+
+export function validateCrmNativeSuccessor({
+  releaseRoot,
+  releaseSha,
+  target,
+  activeReleaseRoot = null,
+  activeReleaseSha = null,
+}) {
+  const candidate = validateCrmNativeRelease({ releaseRoot, releaseSha, target });
+  if ((activeReleaseRoot === null) !== (activeReleaseSha === null)) {
+    fail("Active CRM release root and SHA must be supplied together.", 64);
+  }
+  if (activeReleaseRoot === null) {
+    if (candidate.predecessor !== null) {
+      fail("Initial CRM release must not claim an unavailable predecessor.");
+    }
+    return candidate;
+  }
+  const active = validateCrmNativeRelease({
+    releaseRoot: activeReleaseRoot,
+    releaseSha: activeReleaseSha,
+    target,
+  });
+  if (candidate.predecessor === null
+    || candidate.predecessor.releaseSha !== active.releaseSha
+    || candidate.predecessor.sourceTree !== active.sourceTree) {
+    fail("CRM release predecessor does not bind the active immutable release.");
+  }
+  return candidate;
 }
 
 function parsePointerTarget(releaseBase, targetPath) {
@@ -333,6 +367,17 @@ export function runCli(argv) {
       releaseRoot: args["release-root"],
       releaseSha: args["release-sha"],
       target: args.target,
+    }));
+    return;
+  }
+  if (command === "validate-successor") {
+    requireOnly(args, ["release-root", "release-sha", "target"], ["active-release-root", "active-release-sha"]);
+    output(validateCrmNativeSuccessor({
+      releaseRoot: args["release-root"],
+      releaseSha: args["release-sha"],
+      target: args.target,
+      activeReleaseRoot: args["active-release-root"] ?? null,
+      activeReleaseSha: args["active-release-sha"] ?? null,
     }));
     return;
   }

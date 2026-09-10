@@ -6,6 +6,7 @@ CONTRACT="$ROOT_DIR/scripts/runtime/crm-native-release-contract.mjs"
 PREPARE="$ROOT_DIR/scripts/runtime/prepare-crm-native-release.sh"
 ROLLBACK="$ROOT_DIR/scripts/runtime/rollback-crm-native-release.sh"
 UNIT="$ROOT_DIR/ops/runtime/units/crm.service"
+NATIVE_UNIT="$ROOT_DIR/ops/runtime/units/crm.service.native.template"
 LAUNCHER="$ROOT_DIR/scripts/crm/run-api-linux.sh"
 LIFECYCLE_INSTALLER="$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh"
 NATIVE_MANAGER="$ROOT_DIR/scripts/runtime/manage-native-runtime.sh"
@@ -18,21 +19,23 @@ bash -n "$LAUNCHER"
 bash -n "$LIFECYCLE_INSTALLER"
 bash -n "$NATIVE_MANAGER"
 
-grep -Fx 'WorkingDirectory=/opt/skincos/current/crm-service' "$UNIT" >/dev/null
-grep -Fx 'ExecStart=/opt/skincos/current/crm-service/scripts/crm/run-api-linux.sh' "$UNIT" >/dev/null
-! grep -F '/opt/skincos/current/source' "$UNIT" >/dev/null
+grep -Fx 'WorkingDirectory=__REPO_ROOT__' "$UNIT" >/dev/null
+grep -Fx 'ExecStart=__REPO_ROOT__/scripts/crm/run-api-linux.sh' "$UNIT" >/dev/null
+grep -Fx 'WorkingDirectory=__CRM_NATIVE_RELEASE_ROOT__' "$NATIVE_UNIT" >/dev/null
+grep -Fx 'Environment=CRM_NATIVE_DEPLOYMENT_TARGET=__CRM_NATIVE_DEPLOYMENT_TARGET__' "$NATIVE_UNIT" >/dev/null
+grep -Fx 'ExecStart=__CRM_NATIVE_RELEASE_ROOT__/scripts/crm/run-api-linux.sh' "$NATIVE_UNIT" >/dev/null
 ! grep -F 'systemctl' "$PREPARE" >/dev/null
 ! grep -F 'systemctl' "$ROLLBACK" >/dev/null
 ! grep -F '/opt/skincos/current/source' "$PREPARE" >/dev/null
 ! grep -F '/opt/skincos/current/source' "$ROLLBACK" >/dev/null
-grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable CRM-only release.' "$LAUNCHER" >/dev/null
+grep -F 'CRM_NATIVE_DEPLOYMENT_TARGET must be staging or production for a native CRM release.' "$LAUNCHER" >/dev/null
+grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable staging CRM-only release.' "$LAUNCHER" >/dev/null
+grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable production CRM-only release.' "$LAUNCHER" >/dev/null
 grep -F 'CRM launcher does not originate from CRM_NATIVE_RELEASE_ROOT.' "$LAUNCHER" >/dev/null
-grep -F 'crm.service is deliberately excluded:' "$LIFECYCLE_INSTALLER" >/dev/null
-! sed -n '/^units=(/,/^)/p' "$LIFECYCLE_INSTALLER" | grep -F 'crm.service' >/dev/null
-grep -F 'NOT_RESTARTED %s (dedicated CRM custody required)' "$NATIVE_MANAGER" >/dev/null
-grep -F 'NOT_VALIDATED %s (dedicated CRM custody and smoke required)' "$NATIVE_MANAGER" >/dev/null
-! sed -n '/^shared_units=(/,/^)/p' "$NATIVE_MANAGER" | grep -F 'crm.service' >/dev/null
-! grep -F 'backend/scripts/e2e.sh' "$NATIVE_MANAGER" >/dev/null
+sed -n '/^units=(/,/^)/p' "$LIFECYCLE_INSTALLER" | grep -Fx '  crm.service' >/dev/null
+! grep -F 'crm.service.native.template' "$LIFECYCLE_INSTALLER" >/dev/null
+sed -n '/^units=(/,/^)/p' "$NATIVE_MANAGER" | grep -Fx '  crm.service' >/dev/null
+grep -F 'backend/scripts/e2e.sh' "$NATIVE_MANAGER" >/dev/null
 
 tmp_root="$(mktemp -d -t skincos-crm-native-test-XXXXXXXX)"
 linked_root=''
@@ -42,27 +45,29 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Render the fixed CRM unit through the same placeholders used by the lifecycle
-# renderer, substituting only a disposable pointer so systemd-analyze can
-# validate syntax without requiring a live /opt release.
+# Render the future dedicated template only through a disposable pointer. The
+# generic lifecycle installer must continue to render the incumbent CRM unit
+# until the host custody bootstrap can perform the complete transfer.
 render_root="$tmp_root/rendered-crm-service"
 mkdir -p "$render_root/scripts/crm"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$render_root/scripts/crm/run-api-linux.sh"
 chmod 0755 "$render_root/scripts/crm/run-api-linux.sh"
 sed \
-  -e "s|/opt/skincos/current/crm-service|$render_root|g" \
+  -e "s|__CRM_NATIVE_RELEASE_ROOT__|$render_root|g" \
+  -e 's|__CRM_NATIVE_DEPLOYMENT_TARGET__|staging|g' \
   -e "s|__STATE_ROOT__|$tmp_root/state|g" \
   -e "s|__CONFIG_ROOT__|$tmp_root/config|g" \
   -e "s|__LOG_ROOT__|$tmp_root/log|g" \
-  "$UNIT" >"$tmp_root/crm.service"
+  "$NATIVE_UNIT" >"$tmp_root/crm.service"
 systemd-analyze verify "$tmp_root/crm.service"
 
 release_a='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 release_b='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-node - "$tmp_root" "$release_a" "$release_b" <<'NODE'
+release_c='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+node - "$tmp_root" "$release_a" "$release_b" "$release_c" <<'NODE'
 const fs = require('fs');
 const path = require('path');
-const [root, firstSha, secondSha] = process.argv.slice(2);
+const [root, firstSha, secondSha, invalidSha] = process.argv.slice(2);
 const makeRelease = (releaseSha, sourceTree, predecessor) => {
   const releaseRoot = path.join(root, `candidate-${releaseSha}`);
   fs.mkdirSync(path.join(releaseRoot, 'scripts', 'crm'), { recursive: true });
@@ -100,6 +105,7 @@ const makeRelease = (releaseSha, sourceTree, predecessor) => {
 };
 makeRelease(firstSha, 'c'.repeat(40), null);
 makeRelease(secondSha, 'd'.repeat(40), { releaseSha: firstSha, sourceTree: 'c'.repeat(40) });
+makeRelease(invalidSha, 'e'.repeat(40), null);
 NODE
 
 export CRM_NATIVE_RELEASE_BASE="$tmp_root/releases"
@@ -143,6 +149,14 @@ CRM_NATIVE_PUBLISHER_TEST_MODE=1 bash "$PREPARE" \
   --target test --release-sha "$release_a" --candidate-root "$tmp_root/candidate-$release_a" --apply >/dev/null
 [[ "$(node "$CONTRACT" pointer-release-sha --release-base "$CRM_NATIVE_RELEASE_BASE" --link "$CRM_NATIVE_CURRENT_LINK")" == "$release_a" ]]
 [[ ! -e "$CRM_NATIVE_PREVIOUS_LINK" && ! -L "$CRM_NATIVE_PREVIOUS_LINK" ]]
+
+if invalid_successor_output="$(CRM_NATIVE_PUBLISHER_TEST_MODE=1 bash "$PREPARE" \
+  --target test --release-sha "$release_c" --candidate-root "$tmp_root/candidate-$release_c" --apply 2>&1)"; then
+  echo 'A CRM candidate with no bound predecessor unexpectedly passed.' >&2
+  exit 1
+fi
+grep -F 'predecessor does not bind the active immutable release' <<<"$invalid_successor_output" >/dev/null
+[[ ! -e "$CRM_NATIVE_RELEASE_BASE/$release_c/crm-service" && ! -L "$CRM_NATIVE_RELEASE_BASE/$release_c/crm-service" ]]
 
 CRM_NATIVE_PUBLISHER_TEST_MODE=1 bash "$PREPARE" \
   --target test --release-sha "$release_b" --candidate-root "$tmp_root/candidate-$release_b" --apply >/dev/null

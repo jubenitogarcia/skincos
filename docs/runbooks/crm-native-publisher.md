@@ -23,7 +23,8 @@ modified by these scripts.
 
 | Component | Contract |
 | --- | --- |
-| `ops/runtime/units/crm.service` | Declares only `/opt/skincos/current/crm-service` for the CRM runtime code, console and backend paths. |
+| `ops/runtime/units/crm.service` | Remains the incumbent shared-source unit until the dedicated bootstrap succeeds; this avoids changing a live service before its isolated pointer exists. |
+| `ops/runtime/units/crm.service.native.template` | Is the non-installed template for the future dedicated unit. It takes an explicit native release root and deployment target; the generic lifecycle installer does not render it. |
 | `prepare-crm-native-release.sh` | Validates a CRM source snapshot, materializes it under `<release-base>/<sha>/crm-service`, and swaps only the dedicated pointer. |
 | `rollback-crm-native-release.sh` | Restores only the exact release named by `crm-service.previous`; it does not infer a checkout or mutate the shared source pointer. |
 | `crm-native-release-contract.mjs` | Strictly validates source identity metadata, custody fields, the fixed target layouts, no symbolic links in a candidate, and pointer confinement. |
@@ -79,6 +80,10 @@ The complete schema also fixes the API entrypoint, API lockfile and console
 root. The candidate is recursively rejected if it contains a symbolic link or
 special file. This keeps the native materialization boundary distinct from a
 checkout, worktree, Windows mount, `.env`, database dump or runtime state.
+When an active release exists, the candidate's `predecessor` must bind both its
+immutable release SHA and source tree. An initial release must declare no
+predecessor. The test harness verifies this chain before any copy or pointer
+mutation, so rollback cannot be attached to an unrelated incumbent.
 
 Before staging can execute, a root-owned, fixed-command custody helper must
 verify the real GitHub artifact and bind all of the following together:
@@ -110,21 +115,18 @@ After custody succeeds, the publisher will use the following confined sequence:
    CRM release.
 
 No command restarts a service. A later host rollout must separately snapshot the
-active CRM service, render/verify the unit, restart only `crm.service`, verify
-PID/cwd/release identity and synthetic health/readiness, and compensate by
-restoring the dedicated predecessor pointer if that smoke fails.
+active CRM service, render/verify `crm.service.native.template`, replace the
+incumbent unit and shared lifecycle ownership in the same custody-bound
+transaction, restart only `crm.service`, verify PID/cwd/release identity and
+synthetic health/readiness, and compensate by restoring the dedicated
+predecessor pointer if that smoke fails.
 
-`scripts/runtime/manage-native-runtime.sh restart` intentionally excludes
-`crm.service` (and the isolated Atendimento units). It may restart only the
-remaining shared services under their shared-source lease; it cannot become an
-accidental CRM cutover mechanism. Its `validate` command likewise reports only
-the shared units; it no longer runs a shared-source CRM smoke and pretends that
-it attested the dedicated release.
-
-For the same reason, `install-lifecycle-units.sh --apply` deliberately excludes
-`crm.service`. A future custody-bound CRM publisher must render and install that
-unit as part of its own verified transaction; the generic lifecycle installer
-must never install a dedicated CRM unit under a shared-source lease.
+Until that transaction succeeds, `scripts/runtime/manage-native-runtime.sh` and
+`install-lifecycle-units.sh --apply` keep managing the incumbent `crm.service`
+from the shared source. They must not be changed to assume a dedicated pointer
+merely because this source contract exists. The native template is deliberately
+outside the generic installer's unit list; the custody-bound CRM publisher must
+render, verify and install it as part of one transaction.
 
 ## Bootstrap still required for staging
 
@@ -140,6 +142,11 @@ The staging owner must provide a separate reviewed bootstrap before enabling
   post-rollback smoke;
 - confirmation that no shared CRM service, route, database or legacy writer is
   changed by the staging operation.
+
+The bootstrap must leave the incumbent unit and shared lifecycle behavior intact
+if any of those checks fail. Only after the native pointer, dedicated template,
+CRM-only restart and smoke have all succeeded may it transfer `crm.service`
+away from the shared-source publisher.
 
 Only after the complete staging proof can a separate production cutover proposal
 be evaluated. It still requires the existing route, data projection/backfill,

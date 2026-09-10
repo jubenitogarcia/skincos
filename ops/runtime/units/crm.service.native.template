@@ -1,0 +1,38 @@
+[Unit]
+Description=Skincos CRM runtime (dedicated immutable release)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__CRM_NATIVE_RELEASE_ROOT__
+EnvironmentFile=-__CONFIG_ROOT__/crm.env
+EnvironmentFile=-__CONFIG_ROOT__/crm-whatsapp.env
+UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_V8_COVERAGE NODE_REDIRECT_WARNINGS LD_PRELOAD LD_LIBRARY_PATH BASH_ENV ENV
+# These fixed paths follow EnvironmentFile deliberately. Private configuration
+# may provide credentials and ports, but it cannot redirect crm.service back to
+# a checkout, a shared source release, or a caller-controlled code path.
+Environment=CRM_NATIVE_RELEASE_ROOT=__CRM_NATIVE_RELEASE_ROOT__
+Environment=CRM_NATIVE_DEPLOYMENT_TARGET=__CRM_NATIVE_DEPLOYMENT_TARGET__
+Environment=CRM_RUNTIME_HOME=__STATE_ROOT__/crm
+Environment=SKINCOS_CRM_API_ENV_FILE=__CONFIG_ROOT__/crm.env
+Environment=VAR_DIR=__STATE_ROOT__/crm/var
+Environment=BACKEND_DIR=__CRM_NATIVE_RELEASE_ROOT__/backend
+Environment=FRONTEND_DIR=__CRM_NATIVE_RELEASE_ROOT__/crm/console
+Environment=CONFIG_DIR=__CRM_NATIVE_RELEASE_ROOT__/backend/config
+ExecStart=__CRM_NATIVE_RELEASE_ROOT__/scripts/crm/run-api-linux.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__STATE_ROOT__/crm __LOG_ROOT__/crm
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

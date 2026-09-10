@@ -4,15 +4,13 @@ set -euo pipefail
 SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
 
-shared_units=(
+units=(
   messaging-whatsapp.service
-  booking.service
-  cloudflare-runtime.service
-)
-readonly CRM_SERVICE='crm.service'
-readonly ISOLATED_CRM_UNITS=(
+  crm.service
   crm-atendimento-staging.service
   crm-atendimento-production.service
+  booking.service
+  cloudflare-runtime.service
 )
 
 usage() {
@@ -29,7 +27,7 @@ lines="${2:-200}"
 
 case "$action" in
   status)
-    systemctl --no-pager --full status "${shared_units[@]}" "$CRM_SERVICE" "${ISOLATED_CRM_UNITS[@]}"
+    systemctl --no-pager --full status "${units[@]}"
     ;;
   restart)
     current_source="$(readlink -f /opt/skincos/current/source)"
@@ -55,30 +53,25 @@ case "$action" in
     native_coordination_acquire "mini-pc:global:native-runtime:restart:$source_sha:$$" >/dev/null
     coordination_acquired=1
     native_coordination_check
-    # crm.service now has a dedicated immutable pointer and its own custody
-    # contract. Never restart it under a lease that was derived from the shared
-    # source release. The isolated Atendimento services are independently
-    # managed by their own runbooks as well.
-    for unit in "${shared_units[@]}"; do
+    for unit in "${units[@]}"; do
       native_coordination_check
       sudo -n systemctl restart "$unit"
     done
-    systemctl --quiet is-active "${shared_units[@]}"
-    printf 'ACTIVE %s\n' "${shared_units[@]}"
-    printf 'NOT_RESTARTED %s (dedicated CRM custody required)\n' "$CRM_SERVICE" "${ISOLATED_CRM_UNITS[@]}"
+    systemctl --quiet is-active "${units[@]}"
+    printf 'ACTIVE %s\n' "${units[@]}"
     ;;
   logs)
     [[ "$lines" =~ ^[1-9][0-9]*$ ]] || { echo 'lines must be a positive integer' >&2; exit 2; }
-    journalctl --no-pager -n "$lines" "${shared_units[@]}" "$CRM_SERVICE" "${ISOLATED_CRM_UNITS[@]}"
+    journalctl --no-pager -n "$lines" "${units[@]}"
     ;;
   validate)
-    # The old shared-source e2e entrypoint cannot attest the artifact used by
-    # crm.service after the pointer split. Retain only a read-only shared-unit
-    # check here; a dedicated CRM publisher must later supply release-identity,
-    # synthetic health/readiness and rollback readback as one custody-bound run.
-    systemctl --quiet is-active "${shared_units[@]}"
-    printf 'ACTIVE %s\n' "${shared_units[@]}"
-    printf 'NOT_VALIDATED %s (dedicated CRM custody and smoke required)\n' "$CRM_SERVICE" "${ISOLATED_CRM_UNITS[@]}"
+    source_root="$(readlink -f /opt/skincos/current/source)"
+    [[ "$source_root" == /opt/skincos/releases/*/source ]] || {
+      echo "Invalid native source release: $source_root" >&2
+      exit 1
+    }
+    "$source_root/backend/scripts/e2e.sh" health
+    "$source_root/backend/scripts/e2e.sh" smoke
     ;;
   -h|--help)
     usage

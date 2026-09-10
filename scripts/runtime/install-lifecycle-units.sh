@@ -29,11 +29,9 @@ installs, enables and daemon-reloads the final units.
 
 Default native roots are /var/lib/skincos-runtime, /etc/skincos,
 /var/log/skincos, /var/tmp/skincos and /var/backups/skincos. Runtime source is
-read from /opt/skincos/current/source. crm.service is deliberately excluded:
-its dedicated immutable /opt/skincos/current/crm-service pointer must be
-installed only by a future custody-bound CRM publisher. The native lifecycle
-contains only the remaining SKINCOS-owned shared services; the independent Orb
-repository owns its own runtime, backup and release units.
+read from /opt/skincos/current/source. The native lifecycle contains only
+SKINCOS-owned services; the independent Orb repository owns its own runtime,
+backup and release units.
 EOF
 }
 
@@ -96,6 +94,7 @@ backup_escaped="$(sed_escape "$BACKUP_ROOT")"
 
 units=(
   messaging-whatsapp.service
+  crm.service
   booking.service
   cloudflare-runtime.service
 )
