@@ -31,6 +31,19 @@ Não alterar produção apenas por este patch. A ordem operacional obrigatória 
 5. Após a reconciliação da produção e o período de observação aprovados, promover para `disabled`. Conservar o artefato, configuração e backups imutáveis necessários ao rollback; não apagar o estado legado nesta etapa.
 6. Para rollback, primeiro colocar o caminho moderno em manutenção, então restaurar uma release legada exatamente verificada no modo necessário. Nunca reativar dois writers simultaneamente.
 
+Depois de uma release real verificada em `disabled`, a atestação opcional
+`.github/workflows/ponto-legacy-absence-attestation.yml` pode registrar que os
+dois nomes de arquivo não existiam naquele instante. Ela é independente do
+publisher nativo: não publica, reinicia, remove, importa, consulta D1 nem muda
+o modo do serviço. O helper root-only exige política privada com `crm.service`,
+PID ativo, `PONTO_LEGACY_RUNTIME_MODE=disabled` e hashes de artefato da release;
+o sudo do runner aceita somente a operação literal de atestação. O artefato
+sanitizado inclui hashes, PID e modo, mas nunca caminhos, conteúdo ou ambiente.
+Falha da atestação é fail-closed e não deve ser reinterpretada como confirmação
+de ausência. Sucesso é prova limitada àquele instante: não substitui a
+reconciliação D1, snapshot privado, backup/restore, rollback ou decisão de
+retirada final.
+
 ## Saúde e 404
 
 ```bash

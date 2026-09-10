@@ -26,6 +26,14 @@ from the `skincos` service account and is never used by pull-request workflows.
   state files, writes the raw pair only into root-private backup storage, and
   returns a sanitized receipt. It is not a general filesystem reader, importer,
   service controller, or Ponto JIT capability;
+- the separate `/usr/local/sbin/skincos-attest-ponto-legacy-absence
+  attest-absence` command is available only to `skincos-actions`. It accepts a
+  distinct signed, short-lived authorization on stdin and is bound by a
+  separate root-owned policy to `crm.service`, `disabled`, two release hashes
+  and the fixed legacy pair. It only checks `MainPID`/mode and `lstat ENOENT`
+  for those names, writes a root-private one-use ledger, and returns a
+  sanitized point-in-time receipt. It cannot bootstrap policy, select a path,
+  read file content, restart a service, import data, or invoke a publisher;
 - the runner workspace and credentials stay on native Linux storage and are
   not copied to Windows, the repository, artifacts, or logs.
 
@@ -85,3 +93,28 @@ protected environment. It uploads only a receipt with hashes, byte counts and
 aggregate counts; the raw `ponto_store.v2.json` and `ponto_audit.v1.jsonl`
 remain `root:root` in the host backup directory and are never copied to the
 runner workspace, GitHub artifact, Git repository, or logs.
+
+## Legacy Ponto absence attestation
+
+Use `.github/workflows/ponto-legacy-absence-attestation.yml` only after a root
+operator has installed the helper and bootstrapped its separate private policy.
+The protected dispatch signs a new Ed25519 authorization bound to the current
+`main` SHA and consumes it once. The root helper verifies the fixed active
+service PID, its `PONTO_LEGACY_RUNTIME_MODE=disabled` marker, and the hashes of
+the policy-selected wrapper and Ponto route artifact before requiring `ENOENT`
+from `lstat` for each of the two fixed legacy names. The uploaded receipt has
+only authorization/policy/source IDs, PID, mode, artifact hashes and the two
+absence booleans; it excludes paths, process command lines, environment values,
+file content, credentials and PII.
+
+The protected `ponto-legacy-absence-attestation` environment must independently
+hold `PONTO_LEGACY_ABSENCE_ATTESTATION_PRIVATE_KEY` and expose only its key ID
+and the canonical private-policy SHA-256 as variables. The workflow fails if
+the policy digest, key ID, ref, current `main` SHA, run attempt, signature or
+one-use ledger does not match; it must not fall back to the snapshot policy, a
+publisher credential, or a manual shell command.
+
+This is an observation, not a release operation. It does not deploy, restart,
+delete, capture, import, query D1, reconcile D1, or establish that a file was
+absent outside the recorded instant. A missing verified private snapshot leaves
+D1 parity unproven and must not be filled with fabricated data.

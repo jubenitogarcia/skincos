@@ -31,6 +31,36 @@ fechada e exige avaliação de capacidade antes de qualquer novo contrato.
 O wrapper root encerra qualquer captura que não termine em 120 segundos, para
 que uma entrada sem EOF não retenha um processo privilegiado indefinidamente.
 
+## Atestação de ausência do par legado
+
+Ausência não é uma captura vazia e não autoriza reconstruir, inventar ou
+importar dados no D1. Quando o writer legado já estiver em `disabled` por uma
+release verificada, `.github/workflows/ponto-legacy-absence-attestation.yml`
+produz somente uma observação de ponto no tempo. Ele usa uma segunda política
+`root:root` privada, uma autorização Ed25519 de domínio próprio e um ledger de uso único; a
+permissão sudo do runner cobre literalmente apenas
+`skincos-attest-ponto-legacy-absence attest-absence`. O bootstrap da política
+continua sendo uma operação local de root, não uma capacidade do runner.
+
+A política fixa `crm.service`, o modo `disabled`, o diretório de estado e os
+dois hashes de artefato da release (wrapper e `pontoRoutes.js`). O helper não
+aceita caminho, serviço, modo ou argumento adicional do workflow: exige um
+`MainPID` ativo, extrai somente o marcador
+`PONTO_LEGACY_RUNTIME_MODE` do ambiente limitado desse PID, confere os hashes
+esperados e chama `lstat` nos dois nomes legados, aceitando somente `ENOENT`.
+Arquivo regular, link simbólico, erro de permissão, processo
+inativo, modo divergente ou hash divergente falham fechados. O recibo publicado
+contém somente IDs, SHA da política/source, PID, modo, hashes de release e os
+dois marcadores `absent=true`; ele não contém caminhos, comando systemd,
+ambiente completo, conteúdo, credencial ou PII.
+
+O recibo prova a observação vinculada à política naquele instante, não a
+ausência antes/depois da janela, a identidade Git da release em execução, a
+paridade D1, backup/restore, importação ou cutover. Sem um snapshot privado
+verificado, a reconciliação de D1 permanece explicitamente não comprovada; não
+substitua essa lacuna por dados sintéticos, reimportação ou uma alegação de
+paridade.
+
 ```bash
 node workforce/timekeeping/scripts/ponto-backfill-preflight.mjs \
   --snapshot <diretorio-privado>/ponto_store.v2.json \

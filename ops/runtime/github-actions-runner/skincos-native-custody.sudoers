@@ -15,3 +15,8 @@ skincos-actions ALL=(root) NOPASSWD: SKINCOS_PONTO_LEGACY_SNAPSHOT_CUSTODY
 # select a historical transaction, or invoke an arbitrary service command.
 Cmnd_Alias SKINCOS_CRM_NATIVE_PUBLISHER = /usr/local/sbin/skincos-publish-crm-native-release preflight, /usr/local/sbin/skincos-publish-crm-native-release publish
 skincos-actions ALL=(root) NOPASSWD: SKINCOS_CRM_NATIVE_PUBLISHER
+# This point-in-time absence check is a distinct literal action. It cannot
+# bootstrap policy, choose a path/service/mode, capture content, or control a
+# service; root alone can bootstrap the separate root-owned policy.
+Cmnd_Alias SKINCOS_PONTO_LEGACY_ABSENCE_ATTESTATION = /usr/local/sbin/skincos-attest-ponto-legacy-absence attest-absence
+skincos-actions ALL=(root) NOPASSWD: SKINCOS_PONTO_LEGACY_ABSENCE_ATTESTATION
