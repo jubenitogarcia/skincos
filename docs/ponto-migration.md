@@ -31,6 +31,43 @@ fechada e exige avaliação de capacidade antes de qualquer novo contrato.
 O wrapper root encerra qualquer captura que não termine em 120 segundos, para
 que uma entrada sem EOF não retenha um processo privilegiado indefinidamente.
 
+## Atestação de ausência do par legado
+
+Ausência não é uma captura vazia e não autoriza reconstruir, inventar ou
+importar dados no D1. Quando o writer legado já estiver em `disabled` por uma
+release verificada, `.github/workflows/ponto-legacy-absence-attestation.yml`
+produz somente uma observação de ponto no tempo. Ele usa uma segunda política
+`root:root` privada, uma autorização Ed25519 de domínio próprio e um ledger de uso único; a
+permissão sudo do runner cobre literalmente apenas
+`skincos-attest-ponto-legacy-absence attest-absence`. O bootstrap da política
+continua sendo uma operação local de root, não uma capacidade do runner.
+
+A política fixa `crm.service`, o modo `disabled`, o diretório de estado e uma
+release nativa imutável `root:root`: SHA da fonte, metadado de release, wrapper
+e `pontoRoutes.js`. O helper não aceita caminho, serviço, modo ou argumento
+adicional do workflow. Ele exige um `MainPID` ativo do cgroup de `crm.service`,
+o `cwd`, comando, início do processo e ambiente nativo esperados (incluindo
+`CRM_NATIVE_RELEASE_ROOT`, target `production` e
+`PONTO_LEGACY_RUNTIME_MODE=disabled`), recusa overrides de loader e confere os
+hashes. A identidade do processo e os dois `lstat` são lidos duas vezes; uma
+troca de PID, release ou estado consome a autorização e falha sem recibo.
+Arquivo regular, link simbólico, diretório ausente, erro de permissão, processo
+inativo, modo divergente ou hash divergente falham fechados.
+
+O recibo publicado contém somente IDs, SHA da política/fonte, ID e tentativa
+do workflow, PID, modo, hashes de release e os dois marcadores `absent=true`.
+Ele é assinado por uma chave Ed25519 privada somente no host root e a workflow
+valida assinatura, chave pública protegida e contexto do run antes de publicar.
+Não contém caminhos, comando systemd, ambiente completo, conteúdo, credencial
+ou PII. O bootstrap local root também instala essa chave privada em arquivo
+privado; a workflow recebe apenas sua chave pública e ID.
+
+O recibo prova uma observação vinculada ao SHA declarado no metadado da release
+naquele instante, não a ausência antes/depois da janela, a paridade D1,
+backup/restore, importação ou cutover. Sem um snapshot privado verificado, a
+reconciliação de D1 permanece explicitamente não comprovada; não substitua essa
+lacuna por dados sintéticos, reimportação ou uma alegação de paridade.
+
 ```bash
 node workforce/timekeeping/scripts/ponto-backfill-preflight.mjs \
   --snapshot <diretorio-privado>/ponto_store.v2.json \

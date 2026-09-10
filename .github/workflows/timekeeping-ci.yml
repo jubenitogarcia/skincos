@@ -40,8 +40,10 @@ on:
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
       - 'scripts/runtime/ponto-legacy-snapshot-custody.mjs'
       - 'scripts/runtime/provision-ponto-legacy-snapshot-custody.sh'
+      - 'scripts/runtime/provision-ponto-legacy-absence-attestation.sh'
       - 'scripts/runtime/install-ponto-legacy-snapshot-custody.sh'
       - 'scripts/tests/ponto-legacy-snapshot-custody.test.mjs'
+      - 'scripts/tests/ponto-legacy-absence-attestation.test.mjs'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
       - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
@@ -93,8 +95,10 @@ on:
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
       - 'scripts/runtime/ponto-legacy-snapshot-custody.mjs'
       - 'scripts/runtime/provision-ponto-legacy-snapshot-custody.sh'
+      - 'scripts/runtime/provision-ponto-legacy-absence-attestation.sh'
       - 'scripts/runtime/install-ponto-legacy-snapshot-custody.sh'
       - 'scripts/tests/ponto-legacy-snapshot-custody.test.mjs'
+      - 'scripts/tests/ponto-legacy-absence-attestation.test.mjs'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
       - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
@@ -172,6 +176,7 @@ jobs:
           node --test \
             .github/scripts/ponto-*.test.mjs \
             scripts/tests/ponto-legacy-snapshot-custody.test.mjs \
+            scripts/tests/ponto-legacy-absence-attestation.test.mjs \
             scripts/tests/ponto-jit-custody-runner.test.mjs \
             workforce/timekeeping/scripts/ponto-staging-journey-fixtures.test.mjs \
             shared/identity-runtime/workforce-onboarding.test.mjs \
@@ -181,6 +186,7 @@ jobs:
           bash -n scripts/runtime/provision-ponto-jit-custody.sh
           bash -n scripts/runtime/install-ponto-legacy-snapshot-custody.sh
           bash -n scripts/runtime/provision-ponto-legacy-snapshot-custody.sh
+          bash -n scripts/runtime/provision-ponto-legacy-absence-attestation.sh
           bash -n ops/runtime/github-actions-runner/ponto-jit-before-job.sh
           bash -n ops/runtime/github-actions-runner/ponto-jit-after-job.sh
           node .github/scripts/validate-progressive-release.mjs
