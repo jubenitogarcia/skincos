@@ -100,6 +100,8 @@ jobs:
         run: node --test .github/scripts/promotion-evidence.test.mjs .github/scripts/validate-promotion-source-ref.test.mjs
       - name: Test CRM private production candidate preflight contract
         run: node --test .github/scripts/crm-private-production-candidate-preflight.test.mjs
+      - name: Test Atendimento CRM Core staging-baseline custody contract
+        run: npm run atendimento:crm-core:backfill-custody:test
       - run: node .github/scripts/validate-progressive-release.mjs
       - name: Validate module catalog, maturity and dependency graph
         run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
