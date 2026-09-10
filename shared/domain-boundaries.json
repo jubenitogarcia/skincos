@@ -13,7 +13,7 @@
       "id": "crm-auth-adapter-v1",
       "kind": "adapter",
       "paths": ["shared/crm-auth/**"],
-      "consumers": ["api"],
+      "consumers": ["api", "crm", "integration"],
       "owner": "crm"
     },
     {
