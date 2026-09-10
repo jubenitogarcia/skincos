@@ -23,7 +23,7 @@ import {
 import {
     ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS,
     createAtendimentoProjectionBackfillBatch,
-} from '../../../../integration/atendimento/crm-core-projection-exporter/src/atendimentoProjectionExporter.mjs'
+} from '../../../../shared/crm-auth/atendimentoProjectionBackfillBatch.js'
 
 export const CRM_CORE_PROJECTION_DELTA_MIGRATION_ID = '20260908_crm_core_projection_delta_v1'
 export const CRM_CORE_PROJECTION_MEMBERSHIP_RELATION = 'crm_atendimento.crm_core_projection_memberships'

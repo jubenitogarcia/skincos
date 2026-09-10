@@ -14,6 +14,9 @@ import {
   createAtendimentoUnitScopedProjectionSource,
   exportAtendimentoClientProjectionBatch,
 } from '../src/atendimentoProjectionExporter.mjs'
+import {
+  createAtendimentoProjectionBackfillBatch as createSharedAtendimentoProjectionBackfillBatch,
+} from '../../../../shared/crm-auth/atendimentoProjectionBackfillBatch.js'
 
 const HMAC_KEY = `synthetic-projection-export-test-${'x'.repeat(40)}`
 const TARGET = Object.freeze({
@@ -142,6 +145,24 @@ test('batch output is deterministic for the same immutable source snapshot and H
 
   assert.deepEqual(second, first)
   assert.equal(assertAtendimentoProjectionBackfillBatch(first).integrity.eventsDigest, first.integrity.eventsDigest)
+})
+
+test('uses the neutral shared batch contract for CRM baseline and exporter derivation', () => {
+  const input = {
+    rows: [
+      sourceRow({ unit_slug: 'novo-hamburgo', updated_at: '2026-09-07T00:00:00.123456Z' }),
+      sourceRow({ id: '223e4567-e89b-42d3-a456-426614174000', unit_slug: 'barra-shopping-sul', updated_at: '2026-09-07T00:00:00.123457Z' }),
+    ],
+    capturedAt: '2026-09-07T00:00:01.000Z',
+    hmacKey: HMAC_KEY,
+    keyId: 'atendimento-projection-key-v2',
+    target: TARGET,
+  }
+
+  assert.deepEqual(
+    createAtendimentoProjectionBackfillBatch(input),
+    createSharedAtendimentoProjectionBackfillBatch(input),
+  )
 })
 
 test('requires an explicit owner source and rejects the retired two-column query family before any pool connection', async () => {

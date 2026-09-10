@@ -1,10 +1,14 @@
-import { createHash, createHmac } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import {
+  ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS as SHARED_ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS,
+  createAtendimentoProjectionBackfillBatch as createSharedAtendimentoProjectionBackfillBatch,
+} from '../../../../shared/crm-auth/atendimentoProjectionBackfillBatch.js'
 
 export const ATENDIMENTO_CRM_PROJECTION_EXPORTER_VERSION = 'atendimento/crm-core-projection-exporter/v2'
 export const CRM_PROJECTION_BACKFILL_BATCH_VERSION = 'skincos-crm/projection-backfill-batch/v2'
 export const ATENDIMENTO_PROJECTION_SCOPE = 'global-client-identities/v1'
 export const ATENDIMENTO_CRM_PROJECTION_MAX_ROWS = 10_000
-export const ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS = 20
+export const ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS = SHARED_ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS
 export const ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT = 'atendimento/crm-core/unit-scoped-projection-source/v1'
 
 export const ATENDIMENTO_PROJECTION_EXPORTER_DATABASE = Object.freeze({
@@ -46,7 +50,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/
 const RELEASE_PATTERN = /^[0-9a-f]{40}$/
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{3,96}$/
-const OPAQUE_PART_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
 const UNIT_SLUG_PATTERN = /^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const SOURCE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{1,6})Z$/
 const SOURCE_QUERY_FORBIDDEN = /\b(?:alter|call|copy|create|delete|drop|grant|insert|merge|offset|revoke|truncate|update|vacuum)\b/i
@@ -100,16 +103,6 @@ function canonicalize(value) {
 
 function sha256(value) {
   return `sha256:${createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')}`
-}
-
-function hmacPart(key, namespace, value) {
-  return createHmac('sha256', key).update(`${namespace}\u0000${value}`).digest('base64url')
-}
-
-function hmacReference(key, namespace, value, prefix) {
-  const valuePart = hmacPart(key, namespace, value)
-  if (!OPAQUE_PART_PATTERN.test(valuePart)) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_HMAC_INVALID')
-  return `${prefix}:${valuePart}`
 }
 
 function hmacKey(value) {
@@ -325,30 +318,6 @@ export async function preflightAtendimentoProjectionSource(client, { maxRows, so
   return Object.freeze({ identity, capturedAt, rowCount, source: sourceDefinition })
 }
 
-function eventFromSourceRow(row, { key }) {
-  // Source/projection references preserve one opaque global identity across
-  // units. Only the event identity incorporates unit and microsecond cursor
-  // material, so a legitimate multi-unit identity cannot collide in v2.
-  const sourceReference = hmacReference(key, 'source-reference/v2', row.id, 'source')
-  const projectionReference = hmacReference(key, 'projection-reference/v2', row.id, 'projection')
-  const eventId = hmacReference(
-    key,
-    'projection-event/v2',
-    `${sourceReference}\u0000${projectionReference}\u0000${row.unitSlug}\u0000${row.sourceUpdatedAt}\u00001\u0000upsert`,
-    'event',
-  )
-  return Object.freeze({
-    contractVersion: 'crm-projection-event/v2',
-    id: eventId,
-    projection: Object.freeze({ reference: projectionReference, kind: 'client-reference' }),
-    source: Object.freeze({ owner: 'atendimento', reference: sourceReference }),
-    unitScope: Object.freeze({ unitSlug: row.unitSlug }),
-    revision: 1,
-    operation: 'upsert',
-    occurredAt: row.updatedAt,
-  })
-}
-
 function assertProjectionEvent(value) {
   const event = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
   exactKeys(event, ['contractVersion', 'id', 'projection', 'source', 'unitScope', 'revision', 'operation', 'occurredAt'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
@@ -382,10 +351,6 @@ function assertProjectionEvent(value) {
   })
 }
 
-function batchId(key, keyIdentifier, capturedAt, eventsDigest) {
-  return `backfill:atendimento:${hmacPart(key, 'projection-backfill-batch/v2', `${keyIdentifier}\u0000${capturedAt}\u0000${eventsDigest}`)}`
-}
-
 function batchCursorDigest(capturedAt, events) {
   return sha256({
     contract: CRM_PROJECTION_BACKFILL_BATCH_VERSION,
@@ -411,29 +376,13 @@ export function createAtendimentoProjectionBackfillBatch({
   keyId: suppliedKeyId,
   target,
 } = {}) {
-  const key = hmacKey(suppliedHmacKey)
-  const keyIdentifier = keyId(suppliedKeyId)
-  const targetValue = assertAtendimentoProjectionExportTarget(target)
-  const normalizedCapturedAt = timestamp(capturedAt, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SNAPSHOT_INVALID')
-  const normalizedRows = sourceRows(rows, Array.isArray(rows) ? rows.length : -1)
-  if (normalizedRows.length === 0) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_BATCH_INVALID')
-  const events = Object.freeze(normalizedRows.map((row) => eventFromSourceRow(row, { key })))
-  const eventsDigest = sha256(events)
-  const cursorDigest = batchCursorDigest(normalizedCapturedAt, events)
-  return assertAtendimentoProjectionBackfillBatch({
-    contract: CRM_PROJECTION_BACKFILL_BATCH_VERSION,
-    batchId: batchId(key, keyIdentifier, normalizedCapturedAt, eventsDigest),
-    producer: { owner: 'atendimento', scope: ATENDIMENTO_PROJECTION_SCOPE, keyId: keyIdentifier },
-    sourceSnapshot: {
-      capturedAt: normalizedCapturedAt,
-      cursorDigest,
-      rowCount: normalizedRows.length,
-      unitSlugs: uniqueUnitSlugs(events),
-    },
-    target: targetValue,
-    events,
-    integrity: { algorithm: 'sha256', eventCount: events.length, eventsDigest },
-  })
+  return assertAtendimentoProjectionBackfillBatch(createSharedAtendimentoProjectionBackfillBatch({
+    rows,
+    capturedAt,
+    hmacKey: suppliedHmacKey,
+    keyId: suppliedKeyId,
+    target,
+  }))
 }
 
 export function assertAtendimentoProjectionBackfillBatch(value) {
