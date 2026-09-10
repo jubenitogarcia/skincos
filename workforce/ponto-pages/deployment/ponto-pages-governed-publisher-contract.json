@@ -117,7 +117,22 @@
       "same-main-source-sha-and-tree",
       "exact-ponto-core-and-identity-service-version-identities",
       "staging-readiness-and-rollback",
-      "private-no-domain-no-workers-dev-exposure",
+      "private-core-and-exact-identity-staging-route-exposure",
+      "sanitised-receipt-without-values-credentials-or-pii"
+    ]
+  },
+  "stagingPagesSmokeReceipt": {
+    "workflowName": "Ponto Pages staging synthetic smoke",
+    "workflowPath": ".github/workflows/ponto-pages-staging-synthetic-smoke.yml",
+    "workflowInput": "staging_smoke_run_id",
+    "stagingPublishRunInput": "staging_run_id",
+    "artifactName": "ponto-pages-staging-synthetic-smoke-<source_sha>-<project>",
+    "receiptFile": "ponto-pages-staging-synthetic-smoke.json",
+    "contractId": "skincos/ponto-pages-staging-synthetic-smoke/v1",
+    "requiredEvidence": [
+      "same-main-source-sha-and-tree",
+      "exact-dedicated-staging-pages-project-and-published-deployment-identity",
+      "synthetic-login-csrf-ponto-read-write-terminal-and-cleanup",
       "sanitised-receipt-without-values-credentials-or-pii"
     ]
   },
@@ -143,6 +158,7 @@
     "secret-injection-without-value-logging",
     "isolated-staging-synthetic-smoke",
     "same-artifact-rollback-receipt",
+    "exact-staging-synthetic-smoke-receipt",
     "domain-cookie-and-terminal-repair-plan",
     "single-writer-policy-update",
     "exact-ponto-core-staging-candidate-receipt"

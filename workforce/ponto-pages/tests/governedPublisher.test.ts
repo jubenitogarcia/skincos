@@ -40,6 +40,15 @@ describe('Ponto Pages governed publisher', () => {
       receiptFile: 'ponto-core-staging-candidate.json',
       contractId: 'skincos/ponto-core-staging-candidate/v1',
     })
+    expect(contract.stagingPagesSmokeReceipt).toMatchObject({
+      workflowName: 'Ponto Pages staging synthetic smoke',
+      workflowPath: '.github/workflows/ponto-pages-staging-synthetic-smoke.yml',
+      workflowInput: 'staging_smoke_run_id',
+      stagingPublishRunInput: 'staging_run_id',
+      artifactName: 'ponto-pages-staging-synthetic-smoke-<source_sha>-<project>',
+      receiptFile: 'ponto-pages-staging-synthetic-smoke.json',
+      contractId: 'skincos/ponto-pages-staging-synthetic-smoke/v1',
+    })
     expect(contract.stagingPagesRollbackReceipt).toMatchObject({
       workflowName: 'Ponto Pages staging same-artifact rollback',
       workflowPath: '.github/workflows/ponto-pages-staging-same-artifact-rollback.yml',
@@ -90,6 +99,13 @@ describe('Ponto Pages governed publisher', () => {
       'PONTO_RELEASE_PROBE_HMAC_KEY',
     ])
     expect(runtimeTemplate).toContain('__PONTO_PAGES_PROJECT__')
+    expect(runtimeTemplate).toContain('[[env.production.services]]')
+    expect(runtimeTemplate).toContain('[[env.production.kv_namespaces]]')
+    expect(runtimeTemplate).toContain('[env.production.vars]')
+    expect(runtimeTemplate).not.toMatch(/^\s*\[\[services\]\]/m)
+    expect(runtimeTemplate).not.toMatch(/^\s*\[\[kv_namespaces\]\]/m)
+    expect(runtimeTemplate).not.toMatch(/^\s*\[vars\]/m)
+    expect(runtimeTemplate).not.toContain('[env.preview')
     expect(runtimeTemplate).not.toMatch(/^\s*(account_id|route|routes|zone_id)\s*=/m)
     expect(runtimeTemplate).not.toMatch(/name\s*=\s*"(?:skincos|skincos-staging)"/)
     for (const unwanted of contract.runtimeContract.forbiddenLegacyBindings) expect(runtimeTemplate).not.toContain(unwanted)
@@ -114,11 +130,14 @@ describe('Ponto Pages governed publisher', () => {
     expect(workflow).toContain('ponto-core-staging-candidate-$RELEASE_SHA')
     expect(workflow).toContain('verify-ponto-core-staging-candidate.mjs')
     expect(workflow).toContain('staging_rollback_run_id')
+    expect(workflow).toContain('staging_smoke_run_id')
+    expect(workflow).toContain('PONTO_PAGES_STAGING_SMOKE_RECEIPT_REQUIRED')
+    expect(workflow).toContain('ponto-pages-staging-synthetic-smoke-$RELEASE_SHA-$staging_project')
+    expect(workflow).toContain('verify-ponto-pages-staging-smoke.mjs')
     expect(workflow).toContain('PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RECEIPT_REQUIRED')
     expect(workflow).toContain('ponto-pages-staging-same-artifact-rollback-$RELEASE_SHA-$staging_project')
     expect(workflow).toContain('verify-ponto-pages-same-artifact-rollback.mjs')
-    expect(workflow).toContain('PONTO_PAGES_REMOTE_SECRET_')
-    expect(workflow).toContain("envVars[name]?.type !== 'secret_text'")
+    expect(workflow).toContain('PONTO_API_TARGET AUTH_API_TARGET INSUMOS_API_TARGET')
     expect(workflow).toContain("promotion_environment: ${{ inputs.target == 'staging' && 'ponto-pages-staging' || 'ponto-pages-production' }}")
     expect(candidateWorkflow).toContain('promotion_environment: ponto-pages-staging')
     expect(promotionGate).toContain('promotion_environment: { required: false, type: string, default: "" }')
@@ -146,8 +165,12 @@ describe('Ponto Pages governed publisher', () => {
       'PONTO_RELEASE_PROBE_HMAC_KEY',
       'SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET',
     ]) expect(workflow).not.toContain('secrets.' + genericName)
-    expect((workflow.match(/curl --disable --fail --silent --show-error/g) || []).length).toBe(3)
-    expect((workflow.match(/--header @-/g) || []).length).toBe(3)
+    expect((workflow.match(/curl --disable --fail --silent --show-error/g) || []).length).toBe(4)
+    expect((workflow.match(/--header @-/g) || []).length).toBe(4)
+    expect(workflow).toContain('"$project_file" "$EXPECTED_PROJECT" empty')
+    expect(workflow).toContain('"$secret_readback_file" "$EXPECTED_PROJECT" secrets')
+    expect(workflow).toContain('"$runtime_readback_file" "$EXPECTED_PROJECT" runtime')
+    expect(workflow).toContain('PONTO_PAGES_EXPECTED_MODULE_CONTROL_KV_ID')
     expect(workflow).not.toMatch(/-H\s+"Authorization: Bearer \$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/)
 
     for (const mutationStep of [

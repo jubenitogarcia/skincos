@@ -18,6 +18,12 @@ function requireBoolean(value, code) {
   if (value !== true) fail(code)
 }
 
+function sameList(actual, expected) {
+  return Array.isArray(actual)
+    && actual.length === expected.length
+    && actual.every((value, index) => value === expected[index])
+}
+
 export function verifyPontoCoreStagingCandidate(evidence, expected) {
   if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) fail('RECEIPT_SHAPE')
   if (evidence.schemaVersion !== 1 || evidence.contractId !== 'skincos/ponto-core-staging-candidate/v1') {
@@ -53,11 +59,29 @@ export function verifyPontoCoreStagingCandidate(evidence, expected) {
   }
   requireBoolean(evidence.readiness?.passed, 'READINESS')
   requireBoolean(evidence.rollback?.passed, 'ROLLBACK')
-  if (evidence.privateExposure?.routeCount !== 0
+  const coreExposure = evidence.coreExposure
+  if (coreExposure?.workerRouteCount !== 0
+    || !sameList(coreExposure?.workerRoutes, [])
+    || coreExposure?.customDomainCount !== 0
+    || !sameList(coreExposure?.customDomains, [])
+    || coreExposure?.workersDevEnabled !== false
+    || coreExposure?.previewUrlsEnabled !== false
+    || evidence.privateExposure?.workerRouteCount !== 0
+    || !sameList(evidence.privateExposure?.workerRoutes, [])
     || evidence.privateExposure?.customDomainCount !== 0
+    || !sameList(evidence.privateExposure?.customDomains, [])
     || evidence.privateExposure?.workersDevEnabled !== false
     || evidence.privateExposure?.previewUrlsEnabled !== false) {
-    fail('PRIVATE_EXPOSURE')
+    fail('CORE_PRIVATE_EXPOSURE')
+  }
+  const identityExposure = evidence.identityExposure
+  if (identityExposure?.workerRouteCount !== 1
+    || !sameList(identityExposure?.workerRoutes, ['api-staging.skincos.com.br/insumos/*'])
+    || identityExposure?.customDomainCount !== 0
+    || !sameList(identityExposure?.customDomains, [])
+    || identityExposure?.workersDevEnabled !== false
+    || identityExposure?.previewUrlsEnabled !== false) {
+    fail('IDENTITY_EXPOSURE')
   }
   if (evidence.valuesIncluded !== false || evidence.credentialsIncluded !== false || evidence.piiIncluded !== false) {
     fail('SAFE_RECEIPT')

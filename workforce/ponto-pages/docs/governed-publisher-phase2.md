@@ -73,7 +73,9 @@ the dedicated token and account ID only as its CLOUDFLARE_API_TOKEN and
 CLOUDFLARE_ACCOUNT_ID process environment. Cloudflare readback continues to
 use curl configuration through stdin headers, never a curl command argument.
 
-The runtime template permits only:
+The rendered runtime template places all Ponto bindings and plain runtime
+variables under env.production. Preview receives no runtime variable, secret,
+KV or service binding. The template permits only:
 
 - PONTO_CORE and PONTO_IDENTITY service bindings;
 - MODULE_CONTROL KV binding;
@@ -110,13 +112,17 @@ If publish is explicitly true, the workflow requires:
 4. The exact protected target environment and PONTO_PAGES_PUBLISH_ENABLED set
    to true.
 5. Literal project, Ponto service, API-origin, version and source-SHA checks.
-6. Fresh silent Cloudflare readback of project name, branch, subdomain, no
-   custom domains other than the Pages-owned *.pages.dev subdomain, and disabled
-   automatic Git publication, followed by secret-name/type readback after the
-   guarded secret configuration.
+6. Three fresh silent Cloudflare readbacks: an empty project before mutation;
+   exactly the six Ponto secret names/types after guarded secret configuration;
+   then, after deployment, exactly five plain runtime variables, those six
+   secret names, two service bindings and one KV binding in production, with an
+   empty preview configuration. D1, R2, Durable Objects, Queues, Hyperdrive,
+   AI, Analytics, Browser, mTLS, Vectorize, extra config fields, custom domains
+   and automatic Git publication all fail closed.
 7. A dedicated deploy:ponto-pages target lease, revalidated immediately before
    secret configuration and again immediately before deployment.
-8. Same-SHA Pages deployment readback and a sanitised receipt.
+8. Same-SHA Pages deployment and complete runtime-configuration readback before
+   a sanitised receipt is written.
 
 An absent Git source is a valid direct-upload state. If a Git source is later
 connected, all automatic production and preview deployment controls must be
@@ -150,14 +156,32 @@ skincos/ponto-core-staging-candidate/v1. Its receipt must identify the same
 repository, commit SHA and Git tree as the Pages release; the exact
 skincos-ponto-core-staging and skincos-insumos-staging service names; and the
 same Core and Identity version IDs held by the protected staging environment.
-It must also attest successful staging readiness and same-artifact rollback,
-zero routes and custom domains, Workers.dev and preview URLs disabled, and no
-values, credentials or PII. A missing, stale, mismatched or public receipt
+It must also attest successful staging readiness and same-artifact rollback.
+The receipt keeps privateExposure as an explicit compatibility alias of the
+private Core, then separately attests the Core and Identity exposure. The
+private Core has zero Worker routes and custom domains, with Workers.dev and
+preview URLs disabled. Identity has only the allowed staging Worker route
+api-staging.skincos.com.br/insumos/* and its
+Workers.dev and preview URLs are also disabled. It must contain no values,
+credentials or PII. A missing, stale, mismatched or overly public receipt
 blocks before Cloudflare is read or changed.
 
 The production Pages path does not accept candidate-version overrides. It is
 instead chained to the immutable successful staging Pages evidence for the
 same source SHA, whose staging step has already verified this Core receipt.
+
+Production also requires an independent staging synthetic-smoke receipt; it
+may not treat the generic promotion artifact or a deployment-list match as a
+functional proof. The future workflow must be named Ponto Pages staging
+synthetic smoke and live at
+.github/workflows/ponto-pages-staging-synthetic-smoke.yml. It must publish
+ponto-pages-staging-synthetic-smoke-<source_sha>-<project>, containing
+ponto-pages-staging-synthetic-smoke.json with contract id
+skincos/ponto-pages-staging-synthetic-smoke/v1. The receipt must bind the
+same main SHA/tree, the exact staging publisher run and deployment ID, and
+successful synthetic login, CSRF, Ponto read, Ponto write, terminal and
+synthetic-cleanup checks. Missing or mismatched smoke evidence blocks before
+any production Cloudflare read or mutation.
 
 The staging Pages same-deployment-source rollback receipt is a separate future
 producer contract; this Phase 2 change does not create that producer or run a
@@ -193,8 +217,9 @@ already proven equal.
    another run is not an acceptable substitute.
 4. Read back each exact Pages project at release time and reject shared state,
    automatic Git publication, a domain or identity mismatch.
-5. Complete synthetic staging login, CSRF, Ponto read/write, terminal pairing
-   and staging Pages same-deployment-source rollback tests before a production
+5. Produce and verify the exact independent synthetic-smoke receipt for
+   staging login, CSRF, Ponto read/write, terminal pairing and cleanup, then
+   perform the same-deployment-source rollback drill before any production
    staging run is used.
 6. Approve host, cookie and terminal re-pairing plans before any domain or
    redirect change. The current CRM host remains untouched.

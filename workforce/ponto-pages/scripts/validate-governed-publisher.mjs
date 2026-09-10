@@ -94,7 +94,22 @@ const expected = {
       'same-main-source-sha-and-tree',
       'exact-ponto-core-and-identity-service-version-identities',
       'staging-readiness-and-rollback',
-      'private-no-domain-no-workers-dev-exposure',
+      'private-core-and-exact-identity-staging-route-exposure',
+      'sanitised-receipt-without-values-credentials-or-pii',
+    ],
+  },
+  stagingPagesSmokeReceipt: {
+    workflowName: 'Ponto Pages staging synthetic smoke',
+    workflowPath: '.github/workflows/ponto-pages-staging-synthetic-smoke.yml',
+    workflowInput: 'staging_smoke_run_id',
+    stagingPublishRunInput: 'staging_run_id',
+    artifactName: 'ponto-pages-staging-synthetic-smoke-<source_sha>-<project>',
+    receiptFile: 'ponto-pages-staging-synthetic-smoke.json',
+    contractId: 'skincos/ponto-pages-staging-synthetic-smoke/v1',
+    requiredEvidence: [
+      'same-main-source-sha-and-tree',
+      'exact-dedicated-staging-pages-project-and-published-deployment-identity',
+      'synthetic-login-csrf-ponto-read-write-terminal-and-cleanup',
       'sanitised-receipt-without-values-credentials-or-pii',
     ],
   },
@@ -179,6 +194,7 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     fail('DEDICATED_SECRET_INPUT_CONTRACT')
   }
   if (JSON.stringify(contract.stagingCoreCandidateReceipt) !== JSON.stringify(expected.stagingCoreCandidateReceipt)
+    || JSON.stringify(contract.stagingPagesSmokeReceipt) !== JSON.stringify(expected.stagingPagesSmokeReceipt)
     || JSON.stringify(contract.stagingPagesRollbackReceipt) !== JSON.stringify(expected.stagingPagesRollbackReceipt)
     || !sameList(contract.futureGates, [
       'protected-target-github-environment',
@@ -186,6 +202,7 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
       'secret-injection-without-value-logging',
       'isolated-staging-synthetic-smoke',
       'same-artifact-rollback-receipt',
+      'exact-staging-synthetic-smoke-receipt',
       'domain-cookie-and-terminal-repair-plan',
       'single-writer-policy-update',
       'exact-ponto-core-staging-candidate-receipt',
@@ -244,6 +261,15 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || /name\s*=\s*"(?:skincos|skincos-staging)"/i.test(runtimeTemplate)) {
     fail('RUNTIME_TEMPLATE_TARGET_LEAK')
   }
+  if (!runtimeTemplate.includes('[[env.production.services]]')
+    || !runtimeTemplate.includes('[[env.production.kv_namespaces]]')
+    || !runtimeTemplate.includes('[env.production.vars]')
+    || /^\s*\[\[services\]\]/mi.test(runtimeTemplate)
+    || /^\s*\[\[kv_namespaces\]\]/mi.test(runtimeTemplate)
+    || /^\s*\[vars\]/mi.test(runtimeTemplate)
+    || runtimeTemplate.includes('[env.preview')) {
+    fail('RUNTIME_TEMPLATE_PREVIEW_BOUNDARY')
+  }
   if (!phase1Config.includes('name = "skincos-ponto-pages-phase1-unconfigured"')
     || contract.phase1SourceConfigSha256 !== '441175006adaaea277927a315008f533b02e847f5ba811340067864f613c0763'
     || createHash('sha256').update(phase1Config).digest('hex') !== contract.phase1SourceConfigSha256
@@ -294,6 +320,11 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || !workflow.includes('ponto-core-staging-candidate-$RELEASE_SHA')
     || !workflow.includes('verify-ponto-core-staging-candidate.mjs')
     || !workflow.includes('staging_rollback_run_id')
+    || !workflow.includes('staging_smoke_run_id')
+    || !workflow.includes('PONTO_PAGES_STAGING_SMOKE_RECEIPT_REQUIRED')
+    || !workflow.includes('ponto-pages-staging-synthetic-smoke.yml')
+    || !workflow.includes('ponto-pages-staging-synthetic-smoke-$RELEASE_SHA-$staging_project')
+    || !workflow.includes('verify-ponto-pages-staging-smoke.mjs')
     || !workflow.includes('PONTO_PAGES_STAGING_SAME_ARTIFACT_ROLLBACK_RECEIPT_REQUIRED')
     || !workflow.includes('ponto-pages-staging-same-artifact-rollback.yml')
     || !workflow.includes('ponto-pages-staging-same-artifact-rollback-$RELEASE_SHA-$staging_project')
@@ -303,19 +334,27 @@ export async function validateGovernedPublisher({ target, releaseSha } = {}) {
     || !workflow.includes('run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY')
     || !workflow.includes('Number(run?.repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)')
     || !workflow.includes('Number(run?.head_repository?.id) !== Number(process.env.EXPECTED_REPOSITORY_ID)')
-    || (workflow.match(/curl --disable --fail --silent --show-error/g) || []).length !== 3
-    || (workflow.match(/--header @-/g) || []).length !== 3
+    || (workflow.match(/curl --disable --fail --silent --show-error/g) || []).length !== 4
+    || (workflow.match(/--header @-/g) || []).length !== 4
     || /-H\s+"Authorization: Bearer \$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/.test(workflow)
     || !wranglerSecretBulkHasDedicatedAccount
     || !wranglerDeployHasDedicatedAccount
-    || !workflow.includes('PONTO_PAGES_REMOTE_SECRET_')
-    || !workflow.includes("envVars[name]?.type !== 'secret_text'")
+    || !workflow.includes('verify-ponto-pages-remote-project.mjs')
+    || !workflow.includes('"$project_file" "$EXPECTED_PROJECT" empty')
+    || !workflow.includes('"$secret_readback_file" "$EXPECTED_PROJECT" secrets')
+    || !workflow.includes('"$runtime_readback_file" "$EXPECTED_PROJECT" runtime')
+    || !workflow.includes('PONTO_PAGES_EXPECTED_MODULE_CONTROL_KV_ID')
+    || !workflow.includes('PONTO_API_TARGET AUTH_API_TARGET INSUMOS_API_TARGET')
     || !workflow.includes("promotion_environment: ${{ inputs.target == 'staging' && 'ponto-pages-staging' || 'ponto-pages-production' }}")) {
     fail('WORKFLOW_DEFAULT_FAIL_CLOSED')
   }
   if (!workflow.includes('verify-ponto-pages-remote-project.mjs')
     || !remoteProjectVerifier.includes('project.domains.some((domain) => domain !== expectedSubdomain)')
-    || !remoteProjectVerifier.includes("fail('CUSTOM_DOMAIN_PRESENT')")) {
+    || !remoteProjectVerifier.includes("fail('CUSTOM_DOMAIN_PRESENT')")
+    || !remoteProjectVerifier.includes("scopeCode(scope, 'ENVIRONMENT_BINDING_NAMES')")
+    || !remoteProjectVerifier.includes("deploymentConfig(project, 'preview')")
+    || !remoteProjectVerifier.includes('BINDING_MAP_NAMES')
+    || !remoteProjectVerifier.includes('requireRuntimeMetadata')) {
     fail('REMOTE_PROJECT_READBACK_GUARD')
   }
   if (!/^\s*workflow_dispatch:/m.test(candidateWorkflow)

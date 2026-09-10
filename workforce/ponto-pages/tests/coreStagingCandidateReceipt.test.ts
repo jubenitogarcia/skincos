@@ -40,8 +40,26 @@ function receipt() {
     readiness: { passed: true },
     rollback: { passed: true },
     privateExposure: {
-      routeCount: 0,
+      workerRouteCount: 0,
+      workerRoutes: [],
       customDomainCount: 0,
+      customDomains: [],
+      workersDevEnabled: false,
+      previewUrlsEnabled: false,
+    },
+    coreExposure: {
+      workerRouteCount: 0,
+      workerRoutes: [],
+      customDomainCount: 0,
+      customDomains: [],
+      workersDevEnabled: false,
+      previewUrlsEnabled: false,
+    },
+    identityExposure: {
+      workerRouteCount: 1,
+      workerRoutes: ['api-staging.skincos.com.br/insumos/*'],
+      customDomainCount: 0,
+      customDomains: [],
       workersDevEnabled: false,
       previewUrlsEnabled: false,
     },
@@ -75,8 +93,12 @@ describe('Ponto Core staging candidate receipt', () => {
     wrongVersion.core.versionId = '33333333-3333-4333-8333-333333333333'
     expect(() => verifyPontoCoreStagingCandidate(wrongVersion, expected)).toThrow('PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_VERSION')
 
-    const publicSurface = receipt()
-    publicSurface.privateExposure.previewUrlsEnabled = true
-    expect(() => verifyPontoCoreStagingCandidate(publicSurface, expected)).toThrow('PONTO_CORE_STAGING_CANDIDATE_INVALID:PRIVATE_EXPOSURE')
+    const publicCore = receipt()
+    publicCore.coreExposure.previewUrlsEnabled = true
+    expect(() => verifyPontoCoreStagingCandidate(publicCore, expected)).toThrow('PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_PRIVATE_EXPOSURE')
+
+    const wrongIdentityRoute = receipt()
+    wrongIdentityRoute.identityExposure.workerRoutes = []
+    expect(() => verifyPontoCoreStagingCandidate(wrongIdentityRoute, expected)).toThrow('PONTO_CORE_STAGING_CANDIDATE_INVALID:IDENTITY_EXPOSURE')
   })
 })
