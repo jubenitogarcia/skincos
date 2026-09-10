@@ -38,8 +38,14 @@ route migrations and legacy-writer retirement remain separately governed.
 The source closure is `crm/api`, `crm/console`, `shared/crm-auth`, the API
 launcher, backend environment helper and capabilities catalog. Production Node
 dependencies are installed from the exact lockfile in the runner, archived
-separately, and checked before release installation. No host-side `npm install`
-or caller-selected path is permitted.
+separately, and checked with `npm ls --omit=dev --all` before and after a fresh
+archive extraction. npm's `.bin` links are materialized as bounded regular
+copies before archiving, so the final dependency closure contains no links.
+The archive also contains a canonical dependency manifest with the API
+package/lock digests, direct dependencies, every final path/type/mode and file
+digest. Its digest and byte count are signed with the archive and checked again
+by the root helper after root-owned mode normalization. No host-side `npm
+install` or caller-selected path is permitted.
 
 The source-level prepare/rollback scripts still allow an explicitly enabled
 **test** harness only. Staging/production mutation belongs exclusively to the
@@ -91,12 +97,15 @@ A materialized CRM release must contain
 }
 ```
 
-The complete schema also binds the separate dependency archive, policy,
-staging/runtime receipts, signed authorization, rendered unit and coordination
-fence. It fixes the API entrypoint, API lockfile and console root. The candidate
-is recursively rejected if it contains a symbolic link, hard link, special file
-or final Linux file capability. This keeps the native materialization boundary distinct from a
-checkout, worktree, Windows mount, `.env`, database dump or runtime state.
+The complete schema's new `runtimeCustody.schemaVersion: 2` also binds the
+separate dependency archive and its internal manifest, policy, staging/runtime
+receipts, signed authorization, rendered unit and coordination fence. Existing
+schema-version 1 releases remain readable only as rollback/inspection targets;
+new native publishes require version 2. It fixes the API entrypoint, API
+lockfile and console root. The candidate is recursively rejected if it contains
+a symbolic link, hard link, special file or final Linux file capability. This
+keeps the native materialization boundary distinct from a checkout, worktree,
+Windows mount, `.env`, database dump or runtime state.
 When an active release exists, the candidate's `predecessor` must bind both its
 immutable release SHA and source tree. An initial release must declare no
 predecessor. The test harness verifies this chain before any copy or pointer
@@ -123,8 +132,10 @@ frame:
 1. Verify the root-private policy, authorization, fresh incumbent digest and
    the global coordination lease.
 2. Copy the exact source/dependency archives into a private state directory;
-   reject unsafe archive members, links, special files and final Linux file
-   capabilities.
+   reject unsafe archive members, duplicate members, links, special files and
+   final Linux file capabilities. The dependency manifest must match the
+   signed digest, package/lock inputs and every extracted dependency byte
+   before release metadata is written.
 3. Materialize and revalidate `<sha>/crm-service` under the fixed production
    release base. Existing immutable releases are never overwritten.
 4. Snapshot the incumbent unit, allowed drop-ins and dedicated pointers in a
@@ -169,9 +180,25 @@ dispatching the workflow, the operator must provide:
 - an approved staging proof, per-domain projection/backfill evidence,
   single-publisher decision and legacy retirement plan.
 
-The installer must be executed by a host administrator from a reviewed clean
-checkout. It updates the custody-runner mount namespace to permit only the
-fixed CRM transaction paths, then restarts that runner — never `crm.service`.
+The installer must be executed by a host administrator from a reviewed release
+tree rooted in a physical `root:root` path. During `--apply` it rejects a
+non-root-owned, group/world-writable, symbolic-link or hard-linked source
+closure; it also requires every source path to stay on one approved native
+local mount (`ext4`, `xfs`, `btrfs`, `zfs` or `f2fs`) with filesystem root `/`,
+no `/mnt` target and no reported bind option. This rejects Windows/DrvFS/9p,
+network/FUSE/overlay mounts and nested mount redirects. It stops ancestor
+ownership traversal at that verified mountpoint so a separately mounted safe
+release tree is not rejected merely because its parent is on another device.
+
+`--verify-apply-source` performs those representation checks without changing
+the host. `--apply` repeats them, copies the exact installer closure through
+no-follow descriptors into a root-private staging directory, records SHA-256
+for every staged input and rechecks those digests immediately before installing
+any helper/unit/sudoers file. The root-only bootstrap still requires the
+administrator to begin from a reviewed canonical source path; a shell script
+cannot make a malicious file trusted after it has already been invoked. It
+updates the custody-runner mount namespace to permit only the fixed CRM
+transaction paths, then restarts that runner — never `crm.service`.
 Policy bootstrap and `rollback-last` are root-only; the GitHub runner receives
 sudo permission only for literal `preflight` and `publish` commands.
 
@@ -192,6 +219,9 @@ Run from an isolated worktree through the WSL gateway:
 ```
 
 The validation creates and removes only a `/tmp/skincos-crm-native-test-*`
-fixture. It checks claims, archive selection, link/hard-link handling, rendered
-unit syntax and the isolated pointer protocol. It does not install the helper,
-read a secret, contact a coordinator, alter a host or dispatch production.
+fixture. It checks claims, the signed dependency-manifest closure (including
+altered/extra/missing/link/hard-link/lockfile/direct-dependency failures),
+archive selection, rendered unit syntax and the isolated pointer protocol. It
+also verifies that a mutable local source representation cannot pass the
+installer preflight. It does not install the helper, read a secret, contact a
+coordinator, alter a host or dispatch production.

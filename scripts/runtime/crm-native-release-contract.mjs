@@ -8,6 +8,7 @@
  * may change.  Production is recognized only for the root-owned publisher;
  * the source-level prepare/rollback scripts remain unable to mutate it.
  */
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,6 +17,11 @@ const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const RELEASE_NAME = "crm-service";
 const RELEASE_METADATA = ".skincos-crm-native-release.json";
+export const CRM_NATIVE_DEPENDENCY_MANIFEST = "crm/api/.skincos-crm-native-dependency-manifest.json";
+const CRM_NATIVE_DEPENDENCY_ROOT = "crm/api/node_modules";
+const CRM_NATIVE_DEPENDENCY_MANIFEST_KIND = "skincos-crm-native-dependency-manifest";
+const MAX_DEPENDENCY_MANIFEST_BYTES = 16 * 1024 * 1024;
+const MAX_DEPENDENCY_MANIFEST_ENTRIES = 500_000;
 const REQUIRED_ARTIFACTS = Object.freeze({
   apiEntrypoint: "scripts/crm/run-api-linux.sh",
   apiPackageLock: "crm/api/package-lock.json",
@@ -107,9 +113,10 @@ function lstatRequired(file, label) {
 
 function assertRegularFile(file, label) {
   const stat = lstatRequired(file, label);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
     fail(`${label} must be a regular file.`);
   }
+  return stat;
 }
 
 function assertDirectory(file, label) {
@@ -146,6 +153,243 @@ function readJson(file, label) {
     return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch {
     fail(`${label} is not valid JSON.`);
+  }
+}
+
+function compareText(left, right) {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.keys(value).sort(compareText).map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+}
+
+function sha256File(file) {
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(128 * 1024);
+  let size = 0;
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile() || before.nlink !== 1) fail("dependency manifest input is not a regular file.");
+    for (;;) {
+      const read = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      hash.update(buffer.subarray(0, read));
+      size += read;
+    }
+    const after = fs.fstatSync(descriptor);
+    if (after.ino !== before.ino || after.dev !== before.dev || after.size !== before.size || after.nlink !== 1 || size !== before.size) {
+      fail("dependency manifest input changed during read.");
+    }
+    return { sha256: hash.digest("hex"), size };
+  } finally {
+    buffer.fill(0);
+    fs.closeSync(descriptor);
+  }
+}
+
+function dependencyEntryPath(value) {
+  const entry = assertString(value, "Dependency manifest entry path");
+  if (entry.length > 4096 || entry.includes("\\") || entry.startsWith("/") || entry.includes("//")
+    || entry.split("/").some((part) => !part || part === "." || part === "..")) {
+    fail("Dependency manifest entry path is invalid.");
+  }
+  return entry;
+}
+
+function normalizedDependencyMode(relativePath, type) {
+  if (type === "directory") return "0755";
+  return relativePath.endsWith(".sh") ? "0755" : "0644";
+}
+
+function safeDependencyName(value) {
+  const name = assertString(value, "Dependency manifest direct dependency");
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) {
+    fail("Dependency manifest direct dependency is invalid.");
+  }
+  return name;
+}
+
+function assertNormalizedDependencyTree(root, { requireNormalizedModes }) {
+  const dependencies = path.resolve(root);
+  assertDirectory(dependencies, "CRM locked production dependencies");
+  const stack = [{ directory: dependencies, relative: "" }];
+  const entries = [];
+  let fileCount = 0;
+  let byteCount = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    const children = fs.readdirSync(current.directory, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name));
+    for (const entry of children) {
+      const relative = current.relative ? `${current.relative}/${entry.name}` : entry.name;
+      const file = path.join(current.directory, entry.name);
+      const stat = fs.lstatSync(file);
+      if (entry.isSymbolicLink() || stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory())) {
+        fail("Dependency manifest tree contains a link or special file.");
+      }
+      if (stat.isDirectory()) {
+        const mode = normalizedDependencyMode(relative, "directory");
+        if (requireNormalizedModes && (stat.mode & 0o777) !== Number.parseInt(mode, 8)) {
+          fail("Dependency manifest directory mode differs.");
+        }
+        entries.push({ path: relative, type: "directory", mode });
+        stack.push({ directory: file, relative });
+        continue;
+      }
+      if (stat.nlink !== 1 || stat.size < 0) fail("Dependency manifest tree contains a hard-linked file.");
+      const mode = normalizedDependencyMode(relative, "file");
+      if (requireNormalizedModes && (stat.mode & 0o777) !== Number.parseInt(mode, 8)) {
+        fail("Dependency manifest file mode differs.");
+      }
+      const hashed = sha256File(file);
+      if (hashed.size !== stat.size) fail("Dependency manifest file changed during read.");
+      entries.push({ path: relative, type: "file", mode, size: hashed.size, sha256: hashed.sha256 });
+      fileCount += 1;
+      byteCount += hashed.size;
+      if (entries.length > MAX_DEPENDENCY_MANIFEST_ENTRIES || byteCount > MAX_ARCHIVE_BYTES) {
+        fail("Dependency manifest tree exceeds its bounded contract.");
+      }
+    }
+  }
+  entries.sort((left, right) => compareText(left.path, right.path));
+  return { entries, fileCount, byteCount };
+}
+
+export function canonicalCrmNativeDependencyManifest(value) {
+  return canonicalJson(value);
+}
+
+export function buildCrmNativeDependencyManifest({ apiRoot, requireNormalizedModes = false } = {}) {
+  const api = path.resolve(assertString(apiRoot, "CRM API root"));
+  assertDirectory(api, "CRM API root");
+  const packageJson = path.join(api, "package.json");
+  const packageLock = path.join(api, "package-lock.json");
+  const packageJsonHash = sha256File(packageJson);
+  const packageLockHash = sha256File(packageLock);
+  let packageManifest;
+  try {
+    packageManifest = JSON.parse(fs.readFileSync(packageJson, "utf8"));
+  } catch {
+    fail("CRM API package manifest is invalid.");
+  }
+  if (!packageManifest || typeof packageManifest !== "object" || Array.isArray(packageManifest)
+    || (packageManifest.dependencies !== undefined && (!packageManifest.dependencies || typeof packageManifest.dependencies !== "object" || Array.isArray(packageManifest.dependencies)))) {
+    fail("CRM API package manifest dependencies are invalid.");
+  }
+  const directDependencies = Object.keys(packageManifest.dependencies || {}).map(safeDependencyName).sort(compareText);
+  if (new Set(directDependencies).size !== directDependencies.length) fail("CRM API package manifest dependencies are duplicated.");
+  const dependencyRoot = path.join(api, "node_modules");
+  for (const dependency of directDependencies) {
+    assertDirectory(path.join(dependencyRoot, dependency), "CRM API direct production dependency");
+  }
+  const tree = assertNormalizedDependencyTree(dependencyRoot, { requireNormalizedModes });
+  return {
+    schemaVersion: 1,
+    kind: CRM_NATIVE_DEPENDENCY_MANIFEST_KIND,
+    apiPackageJsonSha256: packageJsonHash.sha256,
+    apiPackageLockSha256: packageLockHash.sha256,
+    directDependencies,
+    entryCount: tree.entries.length,
+    fileCount: tree.fileCount,
+    byteCount: tree.byteCount,
+    entries: tree.entries,
+  };
+}
+
+function assertDependencyManifestShape(value) {
+  const manifest = assertObject(value, "CRM dependency manifest");
+  assertExactKeys(manifest, [
+    "schemaVersion",
+    "kind",
+    "apiPackageJsonSha256",
+    "apiPackageLockSha256",
+    "directDependencies",
+    "entryCount",
+    "fileCount",
+    "byteCount",
+    "entries",
+  ], "CRM dependency manifest");
+  if (manifest.schemaVersion !== 1 || manifest.kind !== CRM_NATIVE_DEPENDENCY_MANIFEST_KIND) {
+    fail("CRM dependency manifest schema is unsupported.");
+  }
+  assertDigest(manifest.apiPackageJsonSha256, "CRM dependency manifest package digest");
+  assertDigest(manifest.apiPackageLockSha256, "CRM dependency manifest lock digest");
+  if (!Array.isArray(manifest.directDependencies) || manifest.directDependencies.length > 10_000
+    || JSON.stringify(manifest.directDependencies) !== JSON.stringify([...manifest.directDependencies].map(safeDependencyName).sort(compareText))) {
+    fail("CRM dependency manifest direct dependencies are invalid.");
+  }
+  for (const field of ["entryCount", "fileCount", "byteCount"]) {
+    if (!Number.isSafeInteger(manifest[field]) || manifest[field] < 0 || (field === "entryCount" && manifest[field] > MAX_DEPENDENCY_MANIFEST_ENTRIES)
+      || (field === "byteCount" && manifest[field] > MAX_ARCHIVE_BYTES)) {
+      fail("CRM dependency manifest counts are invalid.");
+    }
+  }
+  if (!Array.isArray(manifest.entries) || manifest.entries.length !== manifest.entryCount || manifest.entries.length > MAX_DEPENDENCY_MANIFEST_ENTRIES) {
+    fail("CRM dependency manifest entries are invalid.");
+  }
+  let previous = null;
+  let files = 0;
+  let bytes = 0;
+  for (const entry of manifest.entries) {
+    const record = assertObject(entry, "CRM dependency manifest entry");
+    const type = assertString(record.type, "CRM dependency manifest entry type");
+    if (type === "directory") assertExactKeys(record, ["path", "type", "mode"], "CRM dependency manifest directory");
+    else if (type === "file") assertExactKeys(record, ["path", "type", "mode", "size", "sha256"], "CRM dependency manifest file");
+    else fail("CRM dependency manifest entry type is invalid.");
+    const entryPath = dependencyEntryPath(record.path);
+    if (previous !== null && compareText(previous, entryPath) >= 0) fail("CRM dependency manifest entries are not strictly ordered.");
+    previous = entryPath;
+    if (record.mode !== normalizedDependencyMode(entryPath, type)) fail("CRM dependency manifest entry mode is invalid.");
+    if (type === "file") {
+      if (!Number.isSafeInteger(record.size) || record.size < 0 || record.size > MAX_ARCHIVE_BYTES) fail("CRM dependency manifest file size is invalid.");
+      assertDigest(record.sha256, "CRM dependency manifest file digest");
+      files += 1;
+      bytes += record.size;
+    }
+  }
+  if (files !== manifest.fileCount || bytes !== manifest.byteCount) fail("CRM dependency manifest counts differ.");
+  return manifest;
+}
+
+export function validateCrmNativeDependencyManifest({
+  releaseRoot,
+  expectedSha256 = null,
+  expectedBytes = null,
+  requireNormalizedModes = true,
+} = {}) {
+  const root = path.resolve(assertString(releaseRoot, "CRM release root"));
+  const file = path.join(root, CRM_NATIVE_DEPENDENCY_MANIFEST);
+  const stat = assertRegularFile(file, "CRM dependency manifest");
+  if (stat.size < 2 || stat.size > MAX_DEPENDENCY_MANIFEST_BYTES) fail("CRM dependency manifest size is invalid.");
+  const raw = fs.readFileSync(file);
+  try {
+    const digest = crypto.createHash("sha256").update(raw).digest("hex");
+    if (expectedSha256 !== null && digest !== assertDigest(expectedSha256, "Expected dependency manifest digest")) {
+      fail("CRM dependency manifest digest differs.");
+    }
+    if (expectedBytes !== null && (stat.size !== expectedBytes || expectedBytes < 2 || expectedBytes > MAX_DEPENDENCY_MANIFEST_BYTES)) {
+      fail("CRM dependency manifest size differs.");
+    }
+    let manifest;
+    try { manifest = JSON.parse(raw.toString("utf8")); }
+    catch { fail("CRM dependency manifest is not valid JSON."); }
+    const trusted = assertDependencyManifestShape(manifest);
+    if (!raw.equals(Buffer.from(`${canonicalCrmNativeDependencyManifest(trusted)}\n`, "utf8"))) {
+      fail("CRM dependency manifest is not canonical.");
+    }
+    const actual = buildCrmNativeDependencyManifest({
+      apiRoot: path.join(root, "crm", "api"),
+      requireNormalizedModes,
+    });
+    if (canonicalCrmNativeDependencyManifest(actual) !== canonicalCrmNativeDependencyManifest(trusted)) {
+      fail("CRM dependency manifest differs from the materialized dependency tree.");
+    }
+    return { sha256: digest, bytes: stat.size, manifest: trusted };
+  } finally {
+    raw.fill(0);
   }
 }
 
@@ -214,7 +458,7 @@ function assertArchiveBytes(value, label) {
 
 function assertRuntimeCustody(value) {
   const custody = assertObject(value, "Native runtime custody");
-  assertExactKeys(custody, [
+  const commonFields = [
     "schemaVersion",
     "dependencyArchiveSha256",
     "dependencyArchiveBytes",
@@ -227,8 +471,24 @@ function assertRuntimeCustody(value) {
     "coordinationLeaseId",
     "coordinationFencingToken",
     "coordinationIntentDigest",
-  ], "Native runtime custody");
-  if (custody.schemaVersion !== 1) fail("Native runtime custody schema is unsupported.");
+  ];
+  if (custody.schemaVersion === 1) {
+    // Releases already committed by the first custody protocol remain valid
+    // rollback targets. New publishers always emit V2 below.
+    assertExactKeys(custody, commonFields, "Native runtime custody");
+  } else if (custody.schemaVersion === 2) {
+    assertExactKeys(custody, [
+      ...commonFields,
+      "dependencyManifestSha256",
+      "dependencyManifestBytes",
+    ], "Native runtime custody");
+    assertDigest(custody.dependencyManifestSha256, "Dependency manifest digest");
+    if (!Number.isSafeInteger(custody.dependencyManifestBytes)
+      || custody.dependencyManifestBytes < 2
+      || custody.dependencyManifestBytes > MAX_DEPENDENCY_MANIFEST_BYTES) {
+      fail("Dependency manifest size is invalid.");
+    }
+  } else fail("Native runtime custody schema is unsupported.");
   assertDigest(custody.dependencyArchiveSha256, "Dependency archive digest");
   assertArchiveBytes(custody.dependencyArchiveBytes, "Dependency archive size");
   assertDigest(custody.policySha256, "Native publisher policy digest");
@@ -292,7 +552,7 @@ export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
   const sourceArchiveSha256 = assertDigest(metadata.sourceArchiveSha256, "Identity source archive digest");
   const sourceArchiveBytes = assertArchiveBytes(metadata.sourceArchiveBytes, "Identity source archive size");
   assertCustody(metadata.custody, expectedSha, sourceArchiveSha256, sourceArchiveBytes);
-  assertRuntimeCustody(metadata.runtimeCustody);
+  const runtimeCustody = assertRuntimeCustody(metadata.runtimeCustody);
   assertArtifacts(metadata.artifacts);
   let predecessor = null;
   if (metadata.predecessor !== null) {
@@ -312,6 +572,14 @@ export function validateCrmNativeRelease({ releaseRoot, releaseSha, target }) {
   assertDirectory(path.join(root, REQUIRED_ARTIFACTS.consoleRoot), "CRM console root");
   assertDirectory(path.join(root, REQUIRED_ARTIFACTS.productionDependencies), "CRM locked production dependencies");
   assertDirectory(path.join(root, REQUIRED_ARTIFACTS.sharedAuthRoot), "CRM shared authorization source");
+  if (runtimeCustody.schemaVersion === 2) {
+    validateCrmNativeDependencyManifest({
+      releaseRoot: root,
+      expectedSha256: runtimeCustody.dependencyManifestSha256,
+      expectedBytes: runtimeCustody.dependencyManifestBytes,
+      requireNormalizedModes: true,
+    });
+  }
   return {
     releaseSha: expectedSha,
     sourceTree: metadata.sourceTree,
