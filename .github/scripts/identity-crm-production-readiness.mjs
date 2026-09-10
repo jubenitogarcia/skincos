@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 export const PRODUCTION_WORKER_NAME = 'skincos-identity-crm-delivery-production';
 export const STAGING_WORKER_NAME = 'skincos-identity-crm-delivery-staging';
+export const CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE = 'crm-identity-readback';
 
 // This inventory contract checks only auditable binding metadata; it never
 // reads or emits a value. The signing key must be a non-extractable Cloudflare
@@ -268,15 +269,42 @@ function endpointWithResult(result, resultInfo = null) {
   return endpointState('available', { result, resultInfo });
 }
 
+function selectedReadbackCredentials(env) {
+  const source = string(env.IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE);
+  if (source === CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE) {
+    return {
+      source,
+      accountId: string(env.CRM_IDENTITY_READBACK_ACCOUNT_ID),
+      apiToken: string(env.CRM_IDENTITY_READBACK_API_TOKEN),
+      missingReason: 'CRM_IDENTITY_READBACK_API_TOKEN and CRM_IDENTITY_READBACK_ACCOUNT_ID are required',
+    };
+  }
+  if (!source || source === 'generic') {
+    return {
+      source: 'generic',
+      accountId: string(env.CLOUDFLARE_ACCOUNT_ID),
+      apiToken: string(env.CLOUDFLARE_API_TOKEN),
+      missingReason: 'CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required',
+    };
+  }
+  return {
+    source,
+    accountId: '',
+    apiToken: '',
+    missingReason: 'Identity production readback credential source is not recognized',
+  };
+}
+
 function credentialsState(env) {
-  const accountId = string(env.CLOUDFLARE_ACCOUNT_ID);
-  const apiToken = string(env.CLOUDFLARE_API_TOKEN);
+  const selected = selectedReadbackCredentials(env);
+  const { accountId, apiToken } = selected;
   if (!accountId || !apiToken) {
     return {
       usable: false,
       accountIdPresent: Boolean(accountId),
       apiTokenPresent: Boolean(apiToken),
-      reason: 'CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required',
+      source: selected.source,
+      reason: selected.missingReason,
     };
   }
   if (!ACCOUNT_ID_PATTERN.test(accountId)) {
@@ -284,10 +312,18 @@ function credentialsState(env) {
       usable: false,
       accountIdPresent: true,
       apiTokenPresent: true,
+      source: selected.source,
       reason: 'CLOUDFLARE_ACCOUNT_ID is malformed',
     };
   }
-  return { usable: true, accountIdPresent: true, apiTokenPresent: true };
+  return {
+    usable: true,
+    accountIdPresent: true,
+    apiTokenPresent: true,
+    source: selected.source,
+    accountId,
+    apiToken,
+  };
 }
 
 function cloudflareReader({ apiToken, fetchImpl = fetch }) {
@@ -560,6 +596,7 @@ export function evaluateIdentityCrmProductionReadiness({
       credentials: {
         accountIdPresent: Boolean(cloudflareCredentials?.accountIdPresent),
         apiTokenPresent: Boolean(cloudflareCredentials?.apiTokenPresent),
+        source: safeIdentifier(cloudflareCredentials?.source),
       },
       settings: worker?.settings?.state || 'not-read',
       deployments: worker?.deployments?.state || 'not-read',
@@ -568,6 +605,10 @@ export function evaluateIdentityCrmProductionReadiness({
       routeInventory: routes?.state || 'not-read',
       customDomains: domains?.state || 'not-read',
       workerSettings: sanitizedSettings,
+      subdomainReadback: {
+        enabled: typeof subdomain?.enabled === 'boolean' ? subdomain.enabled : null,
+        previewsEnabled: typeof subdomain?.previews_enabled === 'boolean' ? subdomain.previews_enabled : null,
+      },
       deploymentBaseline: deploymentReadback,
       secretInventory: secretReadback,
       routeReadback: routeReadback,
@@ -600,13 +641,13 @@ export async function runIdentityCrmProductionReadiness({ env = process.env, fet
 
   if (credentials.usable) {
     const reader = cloudflareReader({
-      apiToken: string(env.CLOUDFLARE_API_TOKEN),
+      apiToken: credentials.apiToken,
       fetchImpl,
     });
-    worker = await readProductionWorker({ reader, accountId: string(env.CLOUDFLARE_ACCOUNT_ID), workerName });
+    worker = await readProductionWorker({ reader, accountId: credentials.accountId, workerName });
     ({ routes, domains } = await readAccountWideExposure({
       reader,
-      accountId: string(env.CLOUDFLARE_ACCOUNT_ID),
+      accountId: credentials.accountId,
     }));
   }
 

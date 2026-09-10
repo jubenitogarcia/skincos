@@ -14,9 +14,22 @@ CI ou manutenção interna como evidência de staging, piloto ou produção.
 
 O navegador usa `https://crm.skincos.com.br/api/ponto/*`. A Pages Function autentica a sessão, assina claims mínimos e encaminha apenas headers autorizados para `https://api.skincos.com.br/api/ponto/*`. O gateway `api` monta o Worker `workforce/timekeeping` por Service Binding `TIMEKEEPING`. O domínio usa D1 próprio e consome a Escala pelo binding `SCHEDULE`.
 
-O backend legado `crm/api/server/pontoRoutes.js` não participa desse caminho. `ponto_store.v2.json` é somente entrada de migração/rollback controlado.
+O caminho Pages → gateway → Timekeeping é o caminho canônico pretendido. Porém, o backend legado `crm/api/server/pontoRoutes.js` continua registrado pelo `crm/api/server.js` e o `crm.service` ainda pode persistir `ponto_store.v2.json` e `ponto_audit.v1.jsonl`. Ele é uma superfície separada do proxy Pages, não apenas uma entrada de migração. Antes de alterar seu modo, confirmar no host alvo o listener, o reverse proxy e os consumidores reais; o source sozinho não comprova exposição ou inatividade.
 
 O terminal físico usa `https://crm.skincos.com.br/ponto-terminal.html`, autentica somente com um token de dispositivo revogável e registra por matrícula + PIN. A unidade, o dispositivo e o instante são definidos pelo servidor; não há seleção de unidade, reconhecimento facial ou horário do navegador. O procedimento de ativação e as políticas de rede/trabalho externo ficam em [ponto-terminal-presenca.md](ponto-terminal-presenca.md).
+
+## Retirada faseada do writer JSON legado
+
+`PONTO_LEGACY_RUNTIME_MODE` controla exclusivamente o runtime Express legado. Sem a variável, o modo é `enabled` e preserva o comportamento histórico. `read-only` permite somente métodos de leitura/health e recusa cada mutação com `503 PONTO_LEGACY_READ_ONLY`, sem dados pessoais. `disabled` impede toda a superfície, exceto o caminho de health seguro, que responde `503 PONTO_LEGACY_DISABLED`; qualquer valor diferente dos três valores aceitos falha fechado como `disabled`, sem refletir o valor recebido. Esse controle não é o `MODULE_CONTROL` do Timekeeping: os dois runtimes são independentes.
+
+Não alterar produção apenas por este patch. A ordem operacional obrigatória é:
+
+1. Registrar o SHA imutável e verificar no host real o `crm.service`, listener, proxy e rotas/consumidores do Express, sem inferir estado live a partir do repositório.
+2. Preparar o mesmo candidato em staging para CRM Core, Timekeeping e CRM Pages; confirmar bindings, `MODULE_CONTROL`, gates de terminal e a linhagem aditiva do D1. Manter o JSON/auditoria e os backups de D1 fora do Git, com checksum e procedimento de restore testado.
+3. Executar uma jornada sintética completa e readback autenticado: sessão, terminal, dispositivo, batida idempotente, correção e auditoria. Reparear um terminal de teste com credencial origin-local e provar backup + restore/reconciliação sem dual write.
+4. Somente com o caminho moderno publicado, lido de volta e com rollback provado, promover o Express legado para `read-only`. Confirmar que mutações retornam o código sem PII e que os arquivos JSON/auditoria continuam preservados; monitorar chamadas remanescentes ao caminho legado.
+5. Após a reconciliação da produção e o período de observação aprovados, promover para `disabled`. Conservar o artefato, configuração e backups imutáveis necessários ao rollback; não apagar o estado legado nesta etapa.
+6. Para rollback, primeiro colocar o caminho moderno em manutenção, então restaurar uma release legada exatamente verificada no modo necessário. Nunca reativar dois writers simultaneamente.
 
 ## Saúde e 404
 
