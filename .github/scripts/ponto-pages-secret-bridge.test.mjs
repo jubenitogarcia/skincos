@@ -291,6 +291,9 @@ test("workflow is manual, guards source provenance before secret hydration, and 
   assert.match(workflow, /staging\) TARGET_ENVIRONMENT='ponto-pages-staging'/);
   assert.match(workflow, /production\) TARGET_ENVIRONMENT='ponto-pages-production'/);
   assert.match(workflow, /cloudflare-workers-sync-ponto-secrets\.yml/);
+  assert.ok(workflow.includes("`${expectedPath}@refs/heads/main`"));
+  assert.ok(workflow.includes('run?.head_branch !== "main"'));
+  assert.ok(workflow.includes("Attest Ponto Workers ${sourceEnvironment} ${releaseSha} mode=read-only-bridge-attestation"));
   assert.match(workflow, /PONTO_ARTIFACT_METADATA_FILE="\$artifact_metadata_file"/);
   assert.match(workflow, /read -r artifact_id artifact_digest/);
   assert.match(workflow, /actions\/artifacts\/\$artifact_id\/zip/);

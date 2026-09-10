@@ -224,3 +224,23 @@ test("Ponto REST run provenance accepts canonical parent or immutable release pa
   }
   assert.match(workflow("ponto-progressive-release.yml"), /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/);
 });
+
+test("read-only Pages bridge custody is restricted to the exact staging main source", () => {
+  const source = workflow("cloudflare-workers-sync-ponto-secrets.yml");
+  const validation = source.slice(source.indexOf("  validate-dispatch:"), source.indexOf("  coordination:"));
+  const coordination = source.slice(source.indexOf("  coordination:"), source.indexOf("  provision:"));
+  const provision = source.slice(source.indexOf("  provision:"), source.indexOf("  global-coordination-release:"));
+  assert.ok(validation.length > 0 && coordination.length > 0 && provision.length > 0);
+  assert.match(source, /default: governed\s*\n\s*type: choice\s*\n\s*options: \[governed, read-only-bridge-attestation\]/);
+  assert.match(source, /mode=read-only-bridge-attestation/);
+  assert.match(validation, /Read-only bridge custody is staging-only/);
+  assert.match(validation, /Read-only bridge custody must execute from the exact current main SHA/);
+  assert.match(validation, /STAGING_RUN_ID ORCHESTRATOR_RUN_ID ORCHESTRATOR_STAGE ORCHESTRATOR_ISSUER_RUN_ID ORCHESTRATOR_NONCE/);
+  assert.match(coordination, /if: \$\{\{ needs\.validate-dispatch\.result == 'success' && inputs\.mode == 'governed' \}\}/);
+  assert.match(provision, /needs: \[validate-dispatch, coordination\]/);
+  assert.match(provision, /inputs\.mode == 'read-only-bridge-attestation' && github\.ref == 'refs\/heads\/main'/);
+  assert.match(provision, /Read-only bridge custody must use the exact current staging main source/);
+  assert.match(provision, /Revalidate the exact active coordinator before Worker custody secrets\s*\n\s*if: \$\{\{ inputs\.mode == 'governed' \}\}/);
+  assert.match(provision, /Authorize global Cloudflare Worker custody mutation\s*\n\s*if: \$\{\{ inputs\.mode == 'governed' \}\}/);
+  assert.doesNotMatch(source, /\b(?:secret put|secret bulk|wrangler[^\n]*\bdeploy\b|d1[^\n]*\bexecute\b|kv[^\n]*\bput\b|pages[^\n]*\bdeploy\b)\b/i);
+});

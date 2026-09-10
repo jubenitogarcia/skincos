@@ -53,6 +53,20 @@ o mesmo SHA atual de `main` e o mesmo target. O artifact
 `ponto-root-custody-<target>-<sha>` é baixado e verificado; ele comprova a
 separação do root e, em produção, também a separação de staging.
 
+Para preparar **somente staging** sem iniciar um rollout, use o modo manual
+`read-only-bridge-attestation` desse workflow com `target=staging`, o SHA
+atual de `main` e todos os campos de coordenador vazios. Esse modo recusa
+produção, tags e qualquer capability de release. Ele apenas confere a
+custódia por nome, cria o compromisso criptográfico da raiz, lê as identidades
+isoladas D1/KV e lista nomes de secrets remotos; não cria versão, não faz
+deploy, não escreve D1/KV, não troca rota e não chama Pages. O título do run e
+o artifact ficam vinculados explicitamente a esse modo, para que a ponte não
+aceite por engano um filho de rollout.
+
+O caminho de `production` continua dependente da cadeia governada de staging e
+produção já existente. Não use o modo somente-leitura como atalho para
+produção.
+
 O metadata preflight exige:
 
 - o envelope completo de roots canônico — `PONTO_PROFILE_DATA_KEY`,
@@ -74,7 +88,25 @@ O metadata preflight exige:
 Se alguma dessas condições estiver ausente, a ponte falha antes de hidratar o
 root. Não criar root, token ou configuração alternativa para contornar a falha.
 
-## Execução e evidência
+## Sequência segura de staging
+
+1. Faça merge da mudança que introduz o modo somente-leitura e confirme o SHA
+   atual de `main`.
+2. Em **Actions → Attest Ponto Worker secret custody**, execute
+   `mode=read-only-bridge-attestation`, `target=staging` e o SHA atual; deixe
+   todos os campos de coordenador vazios.
+3. Confirme que o run terminou com sucesso e use seu ID como
+   `root_custody_run_id` abaixo.
+4. Em **Actions → Ponto Pages environment secret bridge**, escolha `staging`,
+   repita o mesmo SHA, informe aquele ID e marque `apply`.
+5. Baixe o recibo sanitizado e confirme que
+   `PONTO_PAGES_PUBLISH_ENABLED` permanece `false`.
+
+Esses passos preparam o environment dedicado do Pages, mas não publicam Pages
+nem trocam tráfego. A promoção de staging continua sendo uma etapa posterior,
+governada e separada.
+
+## Execução da ponte e evidência
 
 Após o merge, abra **Actions → Ponto Pages environment secret bridge**, escolha
 o target, use o SHA exatamente atual de `main`, informe o ID do run canônico de
