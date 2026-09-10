@@ -10,6 +10,7 @@ if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value: web
 
 const issueUrl = 'https://identity-crm-delivery-staging.example/internal/identity-crm-delivery/v1/issue';
 const keysUrl = 'https://identity-crm-delivery-staging.example/.well-known/identity-crm-delivery/v1/keys';
+const keyRegistryUrl = 'https://identity-crm-delivery-staging.example/.well-known/identity-crm-delivery/v1/key-registry';
 const secret = 'synthetic-staging-request-hmac-secret-2026';
 const callerSecret = 'synthetic-crm-api-staging-caller-hmac-secret-2026';
 
@@ -163,6 +164,18 @@ test('staging service surface publishes only the public key and signs an authent
   });
   assert.equal(Object.hasOwn(keyDocument.keys[0], 'd'), false);
 
+  const registryResponse = await handleIdentityCrmIssuerStagingRequest(new Request(keyRegistryUrl), env);
+  assert.equal(registryResponse.status, 200);
+  const registry = await registryResponse.json();
+  assert.deepEqual(registry, {
+    version: 'identity-crm-delivery/key-registry/v1',
+    environment: 'staging',
+    active: { kid: env.IDENTITY_CRM_DELIVERY_KID, jwk: publicKey },
+    overlap: [],
+    revoked: [],
+  });
+  assert.equal(JSON.stringify(registry).includes('"d"'), false);
+
   const parsed = deliveryContract.parseIdentityCrmDeliveryCompact(result.compact);
   const importedPublic = await webcrypto.subtle.importKey('jwk', publicKey, { name: 'Ed25519' }, false, ['verify']);
   assert.equal(await webcrypto.subtle.verify(
@@ -175,6 +188,9 @@ test('staging service surface publishes only the public key and signs an authent
   const head = await handleIdentityCrmIssuerStagingRequest(new Request(keysUrl, { method: 'HEAD' }), env);
   assert.equal(head.status, 200);
   assert.equal(await head.text(), '');
+  const registryHead = await handleIdentityCrmIssuerStagingRequest(new Request(keyRegistryUrl, { method: 'HEAD' }), env);
+  assert.equal(registryHead.status, 200);
+  assert.equal(await registryHead.text(), '');
   assert.equal(pair.publicKey.type, 'public');
 });
 
@@ -229,6 +245,11 @@ test('unknown and unauthenticated traffic does not load staging private material
 
     const keys = await handleIdentityCrmIssuerStagingRequest(new Request(keysUrl), env);
     assert.equal(keys.status, 200);
+    assert.equal(signCount(), 2);
+    assert.equal(privateKeyImportCount(), 1);
+
+    const registry = await handleIdentityCrmIssuerStagingRequest(new Request(keyRegistryUrl), env);
+    assert.equal(registry.status, 200);
     assert.equal(signCount(), 2);
     assert.equal(privateKeyImportCount(), 1);
   });
