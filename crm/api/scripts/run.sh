@@ -85,7 +85,7 @@ case "$cmd" in
     # `backend/scripts/env.sh` may load an optional local workspace file.
     # Native custody deliberately wins over every mutable environment layer.
     if [[ -n "${CRM_NATIVE_RELEASE_ROOT:-}" ]]; then
-      export PONTO_LEGACY_RUNTIME_MODE='read-only'
+      export PONTO_LEGACY_RUNTIME_MODE='disabled'
     fi
     exec node server.js
     ;;

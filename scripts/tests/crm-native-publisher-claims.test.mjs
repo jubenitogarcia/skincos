@@ -66,7 +66,7 @@ function policy() {
       stateRoot: "/var/lib/skincos-runtime",
       configRoot: "/etc/skincos",
       logRoot: "/var/log/skincos",
-      legacyRuntimeMode: "read-only",
+      legacyRuntimeMode: "disabled",
     },
     maximumArchiveBytes: 32 * 1024 * 1024,
     maximumSourceExtractedBytes: 64 * 1024 * 1024,

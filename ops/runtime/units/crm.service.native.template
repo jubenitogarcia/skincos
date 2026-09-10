@@ -16,10 +16,10 @@ UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_V8_COVERA
 # a checkout, a shared source release, or a caller-controlled code path.
 Environment=CRM_NATIVE_RELEASE_ROOT=__CRM_NATIVE_RELEASE_ROOT__
 Environment=CRM_NATIVE_DEPLOYMENT_TARGET=__CRM_NATIVE_DEPLOYMENT_TARGET__
-# The first dedicated production cutover keeps the legacy Ponto writer
-# fail-closed until the separately governed data/backfill retirement proves
-# its replacement.  An EnvironmentFile cannot override this final setting.
-Environment=PONTO_LEGACY_RUNTIME_MODE=read-only
+# The dedicated production release disables the legacy Ponto runtime after
+# every EnvironmentFile. The transaction preserves the incumbent unit until
+# native health succeeds, so rollback restores its prior behavior instead.
+Environment=PONTO_LEGACY_RUNTIME_MODE=disabled
 # The Python sales chart executor is not part of the immutable Node runtime
 # closure.  Refuse its API entry point explicitly rather than falling back to
 # a shared checkout or a mutable host virtualenv.

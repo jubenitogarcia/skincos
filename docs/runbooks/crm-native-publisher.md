@@ -138,9 +138,9 @@ frame:
    pointers, reload systemd and restart the original service. A later root-only
    `rollback-last` uses the same captured transaction.
 
-The dedicated unit reasserts `PONTO_LEGACY_RUNTIME_MODE=read-only` after both
-private environment layers. That is an operational hold, not a legacy-writer
-retirement decision.
+The dedicated unit reasserts `PONTO_LEGACY_RUNTIME_MODE=disabled` after both
+private environment layers. The legacy service remains the rollback target until
+the native unit has passed its transactional health verification.
 
 The first native closure intentionally lacks the Python sales-chart runtime;
 `sales-chart-messenger` therefore returns `503` in native mode instead of

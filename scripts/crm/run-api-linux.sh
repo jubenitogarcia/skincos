@@ -59,10 +59,9 @@ if [[ -n "$NATIVE_RELEASE_ROOT" ]]; then
   export FRONTEND_DIR="$ROOT_DIR/crm/console"
   export CONFIG_DIR="$ROOT_DIR/backend/config"
   # EnvironmentFile contents are private deployment configuration, but a
-  # native CRM release must keep the legacy Ponto writer closed until its
-  # separately governed replacement is proven.  Reassert this after loading
-  # the private file so it cannot redirect a rollout into write-enabled mode.
-  export PONTO_LEGACY_RUNTIME_MODE='read-only'
+  # The dedicated CRM release retires this legacy writer at its process
+  # boundary. Reassert after the private file so it cannot reactivate it.
+  export PONTO_LEGACY_RUNTIME_MODE='disabled'
   export VAR_DIR="$RUNTIME_HOME/var"
 else
   export BACKEND_DIR="${BACKEND_DIR:-$ROOT_DIR/backend}"

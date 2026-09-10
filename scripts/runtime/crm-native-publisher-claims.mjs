@@ -162,7 +162,7 @@ function assertFixedTarget(target) {
     || value.stateRoot !== "/var/lib/skincos-runtime"
     || value.configRoot !== "/etc/skincos"
     || value.logRoot !== "/var/log/skincos"
-    || value.legacyRuntimeMode !== "read-only"
+    || value.legacyRuntimeMode !== "disabled"
   ) fail("publisher target differs from the fixed CRM production layout");
   return value;
 }

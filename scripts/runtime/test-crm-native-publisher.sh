@@ -30,7 +30,7 @@ grep -Fx 'WorkingDirectory=__REPO_ROOT__' "$UNIT" >/dev/null
 grep -Fx 'ExecStart=__REPO_ROOT__/scripts/crm/run-api-linux.sh' "$UNIT" >/dev/null
 grep -Fx 'WorkingDirectory=__CRM_NATIVE_RELEASE_ROOT__' "$NATIVE_UNIT" >/dev/null
 grep -Fx 'Environment=CRM_NATIVE_DEPLOYMENT_TARGET=__CRM_NATIVE_DEPLOYMENT_TARGET__' "$NATIVE_UNIT" >/dev/null
-grep -Fx 'Environment=PONTO_LEGACY_RUNTIME_MODE=read-only' "$NATIVE_UNIT" >/dev/null
+grep -Fx 'Environment=PONTO_LEGACY_RUNTIME_MODE=disabled' "$NATIVE_UNIT" >/dev/null
 grep -Fx 'Environment=CRM_NATIVE_UNSUPPORTED_JOBS=sales-chart-messenger' "$NATIVE_UNIT" >/dev/null
 grep -Fx 'Environment=CRM_NATIVE_MEDIA_TOOLS_MODE=__CRM_NATIVE_MEDIA_TOOLS_MODE__' "$NATIVE_UNIT" >/dev/null
 grep -Fx 'Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "$NATIVE_UNIT" >/dev/null
@@ -43,8 +43,8 @@ grep -F 'CRM_NATIVE_DEPLOYMENT_TARGET must be staging or production for a native
 grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable staging CRM-only release.' "$LAUNCHER" >/dev/null
 grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable production CRM-only release.' "$LAUNCHER" >/dev/null
 grep -F 'CRM launcher does not originate from CRM_NATIVE_RELEASE_ROOT.' "$LAUNCHER" >/dev/null
-grep -F 'PONTO_LEGACY_RUNTIME_MODE' "$LAUNCHER" >/dev/null
-grep -F 'PONTO_LEGACY_RUNTIME_MODE' "$ROOT_DIR/crm/api/scripts/run.sh" >/dev/null
+grep -Fx "  export PONTO_LEGACY_RUNTIME_MODE='disabled'" "$LAUNCHER" >/dev/null
+grep -Fx "      export PONTO_LEGACY_RUNTIME_MODE='disabled'" "$ROOT_DIR/crm/api/scripts/run.sh" >/dev/null
 grep -F 'assertNoFileCapabilities' "$CUSTODY_HELPER" >/dev/null
 grep -F 'restoreDropIns(backup)' "$CUSTODY_HELPER" >/dev/null
 grep -F 'current/source' "$CUSTODY_HELPER" >/dev/null

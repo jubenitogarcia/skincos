@@ -16,7 +16,7 @@ test("the native unit has fixed code, writer, PATH, and runtime boundaries", () 
   const root = `/opt/skincos/releases/${SHA}/crm-service`;
   const unit = renderCrmNativeUnit({ releaseRoot: root, mediaRouteMode: "disabled" });
   assert.match(unit, new RegExp(`WorkingDirectory=${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.match(unit, /Environment=PONTO_LEGACY_RUNTIME_MODE=read-only/);
+  assert.match(unit, /Environment=PONTO_LEGACY_RUNTIME_MODE=disabled/);
   assert.match(unit, /Environment=CRM_NATIVE_MEDIA_TOOLS_MODE=disabled/);
   assert.match(unit, /Environment=PATH=\/usr\/local\/sbin:\/usr\/local\/bin:\/usr\/sbin:\/usr\/bin:\/sbin:\/bin/);
   assert.doesNotMatch(unit, /current\/source/);
