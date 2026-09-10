@@ -729,6 +729,16 @@ test("canonical drill provenance accepts only the exact release tag and recovery
   assert.match(coreRestore, /rollback-started/);
 });
 
+test("all Ponto Identity release paths pin the Node runtime required by Inventory SQLite tests", () => {
+  for (const jobName of ["ponto-identity-preview", "ponto-identity-staging", "ponto-identity-progressive-release"]) {
+    const start = canonicalWorkflow.indexOf(`  ${jobName}:`);
+    assert.notEqual(start, -1, `missing ${jobName} job`);
+    const next = canonicalWorkflow.slice(start + 1).search(/\n(?=  [A-Za-z0-9_-]+:)/);
+    const job = canonicalWorkflow.slice(start, next === -1 ? undefined : start + 1 + next);
+    assert.match(job, /node:sqlite is required by the Inventory migration and RBAC tests\.\s+node-version: 22\.23\.1/);
+  }
+});
+
 test("every embedded workflow Bash block is syntactically valid", () => {
   for (const [name, source] of [["candidate", workflow], ["canonical", canonicalWorkflow]]) {
     const blocks = bashBlocks(source);
