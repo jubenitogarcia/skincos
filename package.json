@@ -21,6 +21,7 @@
     "api:test": "npm --prefix api test",
     "booking:test": "npm --prefix booking test",
     "runtime:lifecycle:prepare": "bash ./scripts/runtime/prepare-lifecycle-layout.sh",
+    "crm:native-publisher:test": "bash ./scripts/runtime/test-crm-native-publisher.sh",
     "crm:console:dev": "npm --prefix crm/console run dev",
     "crm:api:test": "npm --prefix crm/api test",
     "website:test": "npm --prefix website run test",
