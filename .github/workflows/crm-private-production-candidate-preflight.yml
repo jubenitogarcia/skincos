@@ -63,8 +63,9 @@ jobs:
 
       - name: Read Identity production custody without mutation
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE: crm-identity-readback
+          CRM_IDENTITY_READBACK_API_TOKEN: ${{ secrets.CRM_IDENTITY_READBACK_API_TOKEN }}
+          CRM_IDENTITY_READBACK_ACCOUNT_ID: ${{ secrets.CRM_IDENTITY_READBACK_ACCOUNT_ID }}
           IDENTITY_CRM_PRODUCTION_WORKER_NAME: ${{ vars.IDENTITY_CRM_PRODUCTION_WORKER_NAME }}
           IDENTITY_CRM_STAGING_WORKER_NAME: ${{ vars.IDENTITY_CRM_STAGING_WORKER_NAME }}
           IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_REF: ${{ vars.IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_REF }}
@@ -85,7 +86,9 @@ jobs:
           CRM_PRIVATE_CANDIDATE_CORE_ARTIFACT_DIGEST: ${{ inputs.core_artifact_digest }}
           CRM_PRIVATE_CANDIDATE_CONFIRMATION: ${{ inputs.confirmation }}
           CRM_PRIVATE_CANDIDATE_PREFLIGHT_REPORT: ${{ runner.temp }}/crm-private-production-candidate/report.json
+          IDENTITY_CRM_PRODUCTION_READINESS_REPORT: ${{ runner.temp }}/crm-private-production-candidate/identity-readback.json
           CRM_PRIVATE_CANDIDATE_OBSERVED_MAIN_SHA: ${{ steps.source.outputs.observed_main_sha }}
+          CRM_PRIVATE_CANDIDATE_CHECKED_OUT_SHA: ${{ steps.source.outputs.checked_out_sha }}
           CRM_PRIVATE_CANDIDATE_IDENTITY_CUSTODY_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_IDENTITY_CUSTODY_ATTESTED }}
           CRM_PRIVATE_CANDIDATE_CORE_SOURCE_CUSTODY_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_CORE_SOURCE_CUSTODY_ATTESTED }}
           CRM_PRIVATE_CANDIDATE_PONTO_SEPARATED_ATTESTED: ${{ vars.CRM_PRIVATE_CANDIDATE_PONTO_SEPARATED_ATTESTED }}

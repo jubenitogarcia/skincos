@@ -48,6 +48,10 @@ on:
 jobs:
   preflight:
     environment: crm-production-candidate-preflight
+    env:
+      IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE: crm-identity-readback
+      CRM_IDENTITY_READBACK_API_TOKEN: \${{ secrets.CRM_IDENTITY_READBACK_API_TOKEN }}
+      CRM_IDENTITY_READBACK_ACCOUNT_ID: \${{ secrets.CRM_IDENTITY_READBACK_ACCOUNT_ID }}
 `;
 
 function identityReadback() {
@@ -101,6 +105,7 @@ function environment(overrides = {}) {
     GITHUB_RUN_ATTEMPT: '1',
     CRM_PRIVATE_CANDIDATE_OPERATION: 'preflight',
     CRM_PRIVATE_CANDIDATE_SOURCE_SHA: sha,
+    CRM_PRIVATE_CANDIDATE_CHECKED_OUT_SHA: sha,
     CRM_PRIVATE_CANDIDATE_OBSERVED_MAIN_SHA: sha,
     CRM_PRIVATE_CANDIDATE_CORE_SOURCE_SHA: coreSha,
     CRM_PRIVATE_CANDIDATE_CORE_ARTIFACT_DIGEST: digest,
@@ -130,12 +135,13 @@ test('preflight produces a sanitized source-only plan and never admits a publish
   assert.doesNotMatch(JSON.stringify(report), /private-value-that-must-never-leave-custody/);
 });
 
-test('source custody rejects an automatic event, ref drift, stale main and missing workflow custody', () => {
+test('source custody rejects an automatic event, ref drift, stale main, checkout drift and missing workflow custody', () => {
   const report = evaluateCrmPrivateProductionCandidatePreflight({
     env: environment({
       GITHUB_EVENT_NAME: 'push',
       GITHUB_REF: 'refs/heads/codex/untrusted',
       CRM_PRIVATE_CANDIDATE_OBSERVED_MAIN_SHA: 'd'.repeat(40),
+      CRM_PRIVATE_CANDIDATE_CHECKED_OUT_SHA: 'e'.repeat(40),
       GITHUB_WORKFLOW_REF: '',
       GITHUB_RUN_ATTEMPT: '',
     }),
@@ -148,8 +154,33 @@ test('source custody rejects an automatic event, ref drift, stale main and missi
   assert.ok(report.blockers.includes('workflow event is not workflow_dispatch'));
   assert.ok(report.blockers.includes('workflow ref is not main'));
   assert.ok(report.blockers.includes('requested source SHA is not the observed main tip'));
+  assert.ok(report.blockers.includes('checked-out source SHA is not bound to GitHub, requested and observed main SHA'));
   assert.ok(report.blockers.includes('workflow source is not pinned to main'));
   assert.ok(report.blockers.includes('only the first manual run attempt is admissible'));
+});
+
+test('workflow contract rejects generic Cloudflare credentials and missing dedicated credentials', () => {
+  const genericCredentialWorkflow = `${workflowSource}\n      GENERIC_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}\n`;
+  const genericReport = evaluateCrmPrivateProductionCandidatePreflight({
+    env: environment(),
+    identityReadiness: identityReadback(),
+    identityManifest,
+    apiManifest,
+    workflowSource: genericCredentialWorkflow,
+  });
+  assert.equal(genericReport.result, 'blocked');
+  assert.ok(genericReport.blockers.includes('candidate preflight workflow references a generic Cloudflare credential'));
+
+  const missingDedicatedWorkflow = workflowSource.replace('      CRM_IDENTITY_READBACK_API_TOKEN: ${{ secrets.CRM_IDENTITY_READBACK_API_TOKEN }}\n', '');
+  const missingReport = evaluateCrmPrivateProductionCandidatePreflight({
+    env: environment(),
+    identityReadiness: identityReadback(),
+    identityManifest,
+    apiManifest,
+    workflowSource: missingDedicatedWorkflow,
+  });
+  assert.equal(missingReport.result, 'blocked');
+  assert.ok(missingReport.blockers.includes('candidate preflight workflow is missing the dedicated Identity readback credential CRM_IDENTITY_READBACK_API_TOKEN'));
 });
 
 test('Identity custody must retain the existing readiness eligibility', () => {
@@ -216,8 +247,14 @@ test('the checked-in workflow is manual, dedicated-environment-gated and has no 
   assert.match(workflow, new RegExp(`environment: ${PREFLIGHT_ENVIRONMENT}`));
   assert.match(workflow, /identity-crm-production-readiness\.mjs/);
   assert.match(workflow, /crm-private-production-candidate-preflight\.mjs/);
+  assert.match(workflow, /CRM_IDENTITY_READBACK_API_TOKEN:\s*\$\{\{\s*secrets\.CRM_IDENTITY_READBACK_API_TOKEN\s*\}\}/);
+  assert.match(workflow, /CRM_IDENTITY_READBACK_ACCOUNT_ID:\s*\$\{\{\s*secrets\.CRM_IDENTITY_READBACK_ACCOUNT_ID\s*\}\}/);
+  assert.match(workflow, /IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE:\s*crm-identity-readback/);
+  assert.match(workflow, /IDENTITY_CRM_PRODUCTION_READINESS_REPORT:\s*\$\{\{\s*runner\.temp\s*\}\}\/crm-private-production-candidate\/identity-readback\.json/);
+  assert.match(workflow, /CRM_PRIVATE_CANDIDATE_CHECKED_OUT_SHA:\s*\$\{\{\s*steps\.source\.outputs\.checked_out_sha\s*\}\}/);
   assert.doesNotMatch(workflow, /^\s*(?:push|pull_request|schedule):/m);
   assert.doesNotMatch(workflow, /deploy-core-workers\.yml|deploy-crm-pages\.yml/);
   assert.doesNotMatch(workflow, /\bwrangler\b|cloudflare\.com\/client\/v4.*(?:POST|PUT|PATCH|DELETE)/i);
   assert.doesNotMatch(workflow, /IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY:\s*[^$\n]/);
+  assert.doesNotMatch(workflow, /\bCLOUDFLARE_(?:API_TOKEN|ACCOUNT_ID)\b/);
 });

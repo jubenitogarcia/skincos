@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   IDENTITY_CRM_DELIVERY_PROTOCOL,
+  CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE,
   PRODUCTION_WORKER_NAME,
   REQUIRED_PRODUCTION_SECRET_NAMES,
   REQUIRED_PRODUCTION_SECRET_KEY_METADATA,
@@ -45,13 +46,13 @@ function requiredRuntimeBindings(overrides = {}) {
   }));
 }
 
-function assertReadCalls(calls, expectedUrls = completeReadUrls) {
+function assertReadCalls(calls, expectedUrls = completeReadUrls, expectedApiToken = apiToken) {
   assert.deepEqual(calls.map(({ url }) => url), expectedUrls);
   for (const { url, options } of calls) {
     assert.equal(options.method, 'GET');
     assert.equal(options.body, undefined);
-    assert.deepEqual(options.headers, { authorization: `Bearer ${apiToken}`, accept: 'application/json' });
-    assert.ok(!url.includes(apiToken));
+    assert.deepEqual(options.headers, { authorization: `Bearer ${expectedApiToken}`, accept: 'application/json' });
+    assert.ok(!url.includes(expectedApiToken));
   }
 }
 
@@ -139,6 +140,56 @@ test('missing external credentials produces a blocked, non-mutating report', asy
   assert.equal(report.readOnly.secretValuesReadOrEmitted, false);
   assert.equal(report.cloudflare.credentials.apiTokenPresent, false);
   assert.match(report.blockers.join('\n'), /CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
+});
+
+test('dedicated CRM readback credentials never fall back to generic Cloudflare credentials', async () => {
+  const genericToken = 'generic-token-that-must-not-be-used';
+  let calls = 0;
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment({
+      IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE: CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE,
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: genericToken,
+      CRM_IDENTITY_READBACK_ACCOUNT_ID: '',
+      CRM_IDENTITY_READBACK_API_TOKEN: '',
+    }),
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error('fetch must not use generic fallback credentials');
+    },
+  });
+  assert.equal(calls, 0);
+  assert.equal(report.result, 'blocked');
+  assert.equal(report.cloudflare.credentials.source, CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE);
+  assert.equal(report.cloudflare.credentials.apiTokenPresent, false);
+  assert.match(report.blockers.join('\n'), /CRM_IDENTITY_READBACK_API_TOKEN and CRM_IDENTITY_READBACK_ACCOUNT_ID/);
+  assert.doesNotMatch(JSON.stringify(report), new RegExp(genericToken));
+});
+
+test('dedicated CRM readback credentials are used only when explicitly selected', async () => {
+  const calls = [];
+  const dedicatedToken = 'dedicated-readback-token-used-only-by-test';
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment({
+      IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE: CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE,
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'generic-token-that-must-not-be-used',
+      CRM_IDENTITY_READBACK_ACCOUNT_ID: accountId,
+      CRM_IDENTITY_READBACK_API_TOKEN: dedicatedToken,
+    }),
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      const workerResponse = completeWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'eligible-for-approved-cutover');
+  assert.equal(report.cloudflare.credentials.source, CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE);
+  assertReadCalls(calls, completeReadUrls, dedicatedToken);
+  assert.doesNotMatch(JSON.stringify(report), /generic-token-that-must-not-be-used/);
 });
 
 test('complete external readback is eligible only when all attestations are present', async () => {

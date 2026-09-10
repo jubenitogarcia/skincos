@@ -22,14 +22,23 @@ JWS, cookie, PII ou conteúdo de recibo.
 O operador fornece o SHA completo de `main`, o SHA do candidato no repositório
 independente `jubenitogarcia/skincos-crm-core` e o digest sanitizado de seu
 artefato. O workflow recusa a execução se o SHA não for exatamente o checkout
-da execução e a ponta observada de `origin/main`, se não estiver em `main`, ou
-se o evento não for `workflow_dispatch`.
+observado, `GITHUB_SHA`, a entrada do operador e a ponta observada de
+`origin/main`, se não estiver em `main`, ou se o evento não for
+`workflow_dispatch`.
 
 Ele também reutiliza o readback sanitizado de Identity para verificar que o
 Worker de produção correto está sem `workers.dev`, rota ou domínio público e
 que a custódia externa apresenta os nomes e tipos esperados. A chave de emissão
 precisa ser Ed25519 somente para assinatura; seu valor nunca é lido nem salvo
 no GitHub.
+
+O novo workflow aceita exclusivamente `CRM_IDENTITY_READBACK_API_TOKEN` e
+`CRM_IDENTITY_READBACK_ACCOUNT_ID`, ambos como segredos do ambiente dedicado
+`crm-production-candidate-preflight` e destinados somente ao readback GET de
+Identity. Ele não lê, referencia nem usa `CLOUDFLARE_API_TOKEN` ou
+`CLOUDFLARE_ACCOUNT_ID` genéricos. Enquanto os dois segredos dedicados não
+existirem, o leitor não faz chamada Cloudflare: produz um relatório sanitizado
+`blocked` e o workflow falha fechado.
 
 O modo `request-private-inert-candidates` exige a frase exata
 `request-private-inert-crm-candidates`, mas ainda termina bloqueado. Ele existe
@@ -89,7 +98,9 @@ Além da fonte imutável, os requisitos externos mínimos de custódia são:
 
 - aprovação do ambiente dedicado `crm-production-candidate-preflight` para a leitura;
 - um ambiente de produção separado, com a admissão revisada do publisher futuro;
-- token Cloudflare com escopo mínimo, usado apenas para readback neste fluxo;
+- os segredos dedicados `CRM_IDENTITY_READBACK_API_TOKEN` e
+  `CRM_IDENTITY_READBACK_ACCOUNT_ID`, com escopo mínimo e somente GET para o
+  readback; segredos Cloudflare genéricos são proibidos neste workflow;
 - nomes e tipos de segredo de Identity visíveis no readback, mas nunca seus
   valores;
 - chave não extraível Ed25519 de assinatura e registro de rotação/rollback;

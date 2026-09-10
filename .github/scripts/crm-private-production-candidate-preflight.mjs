@@ -16,6 +16,11 @@ const SHA = /^[0-9a-f]{40}$/i;
 const DIGEST = /^(?:sha256:)?[0-9a-f]{64}$/i;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9._:/-]{1,200}$/;
 const REQUESTED_OPERATIONS = new Set(['preflight', 'request-private-inert-candidates']);
+const DEDICATED_IDENTITY_READBACK_SECRET_NAMES = Object.freeze([
+  'CRM_IDENTITY_READBACK_API_TOKEN',
+  'CRM_IDENTITY_READBACK_ACCOUNT_ID',
+]);
+const DEDICATED_IDENTITY_READBACK_SOURCE = 'crm-identity-readback';
 const REQUIRED_IDENTITY_SECRETS = Object.freeze({
   IDENTITY_CRM_DELIVERY_PRODUCTION_KID: 'secret_text',
   IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: 'secret_key',
@@ -111,6 +116,17 @@ function manifestContract({ identityManifest = '', apiManifest = '', workflowSou
   }
   if (!new RegExp(`environment:\\s*${PREFLIGHT_ENVIRONMENT}`).test(workflow)) {
     blockers.push('candidate preflight workflow is not protected by the dedicated preflight environment');
+  }
+  for (const name of DEDICATED_IDENTITY_READBACK_SECRET_NAMES) {
+    if (!workflow.includes(`secrets.${name}`)) {
+      blockers.push(`candidate preflight workflow is missing the dedicated Identity readback credential ${name}`);
+    }
+  }
+  if (!new RegExp(`IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE:\\s*${DEDICATED_IDENTITY_READBACK_SOURCE}`).test(workflow)) {
+    blockers.push('candidate preflight workflow does not select the dedicated Identity readback credential source');
+  }
+  if (/secrets\.CLOUDFLARE_(?:API_TOKEN|ACCOUNT_ID)/.test(workflow)) {
+    blockers.push('candidate preflight workflow references a generic Cloudflare credential');
   }
   if (/deploy-core-workers\.yml|deploy-crm-pages\.yml/.test(workflow)) {
     blockers.push('candidate preflight workflow invokes a general publisher');
@@ -223,6 +239,7 @@ function sourceContext(env) {
     eventName: safeIdentifier(env.GITHUB_EVENT_NAME),
     ref: safeIdentifier(env.GITHUB_REF),
     githubSha: safeSha(env.GITHUB_SHA),
+    checkedOutSha: safeSha(env.CRM_PRIVATE_CANDIDATE_CHECKED_OUT_SHA),
     observedMainSha: safeSha(env.CRM_PRIVATE_CANDIDATE_OBSERVED_MAIN_SHA),
     sourceSha: safeSha(env.CRM_PRIVATE_CANDIDATE_SOURCE_SHA),
     workflowRef: text(env.GITHUB_WORKFLOW_REF),
@@ -240,6 +257,12 @@ function sourceContextBlockers(context) {
   }
   if (!context.observedMainSha || context.observedMainSha !== context.sourceSha) {
     blockers.push('requested source SHA is not the observed main tip');
+  }
+  if (!context.checkedOutSha
+    || context.checkedOutSha !== context.githubSha
+    || context.checkedOutSha !== context.sourceSha
+    || context.checkedOutSha !== context.observedMainSha) {
+    blockers.push('checked-out source SHA is not bound to GitHub, requested and observed main SHA');
   }
   if (context.workflowRef !== `${CANONICAL_REPOSITORY}/${WORKFLOW_PATH}@refs/heads/${CANONICAL_BRANCH}`) {
     blockers.push('workflow source is not pinned to main');
@@ -307,6 +330,7 @@ export function evaluateCrmPrivateProductionCandidatePreflight({
       repository: context.repository,
       branch: context.ref === `refs/heads/${CANONICAL_BRANCH}` ? CANONICAL_BRANCH : null,
       sourceSha: context.sourceSha,
+      checkedOutSha: context.checkedOutSha,
       observedMainSha: context.observedMainSha,
       workflowPinnedToMain: !sourceContextBlockers(context).includes('workflow source is not pinned to main'),
     },
