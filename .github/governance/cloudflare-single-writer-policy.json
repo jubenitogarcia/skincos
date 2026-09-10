@@ -155,6 +155,7 @@
       "coordinationGroup": "ponto-workers-writer",
       "mutationWorkflows": [
         ".github/workflows/deploy-core-workers.yml",
+        ".github/workflows/ponto-core-staging-candidate.yml",
         ".github/workflows/ponto-staging-core-provenance-recovery.yml",
         ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
         ".github/workflows/insumos-production-smoke-identity.yml",

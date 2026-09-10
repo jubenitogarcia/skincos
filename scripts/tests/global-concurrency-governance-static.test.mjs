@@ -143,6 +143,7 @@ test("Ponto release custody pins the active coordination key at every release bo
     ".github/workflows/module-availability.yml",
     ".github/workflows/ponto-production-baseline.yml",
     ".github/workflows/ponto-production-slo.yml",
+    ".github/workflows/ponto-core-staging-candidate.yml",
     ".github/workflows/ponto-staging-rollback-drill.yml",
     ".github/workflows/ponto-waf-security.yml",
     ".github/workflows/timekeeping-staging-journey.yml",

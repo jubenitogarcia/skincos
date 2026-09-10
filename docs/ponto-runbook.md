@@ -218,6 +218,11 @@ diante, exige também o run bem-sucedido do predecessor para o mesmo SHA. Se
 `main` avançar entre estágios, não continue com o ancestral: reinicie em
 `preview` usando o novo SHA.
 
+Quando o Ponto Pages isolado precisar de um recibo de Core/Identity de staging,
+use o [runbook do candidato de staging](runbooks/ponto-core-staging-candidate.md).
+Esse workflow apenas exercita versões já publicadas pelo publisher canônico;
+ele não substitui o coordenador nem autoriza produção.
+
 Toda mutation direta de Worker, Pages, secret de Pages, D1, KV ou
 module-control na cadeia Ponto usa o mutex global
 `ponto-surface-mutation`. Isso inclui publishers canônicos, os três writers

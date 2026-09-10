@@ -1,0 +1,472 @@
+name: Ponto Core staging candidate
+run-name: Ponto Core staging candidate ${{ inputs.release_sha }} timekeeping=${{ inputs.timekeeping_staging_run_id }} core=${{ inputs.core_staging_run_id }} identity=${{ inputs.identity_staging_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact current main SHA already published by the canonical Ponto child workflows
+        required: true
+        type: string
+      timekeeping_staging_run_id:
+        description: Exact successful Deploy Workforce Timekeeping staging run for release_sha
+        required: true
+        type: string
+      core_staging_run_id:
+        description: Exact successful Deploy Core Worker API staging run for release_sha
+        required: true
+        type: string
+      identity_staging_run_id:
+        description: Exact successful Deploy Core Worker Inventory staging run for release_sha
+        required: true
+        type: string
+      execute_same_artifact_rollback:
+        description: "Required true: exercise only the already-uploaded staging Core and Identity versions, then restore those same versions"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  # The canonical publisher remains deploy-core-workers.yml. This attester
+  # never uploads code, applies migrations, writes a secret, or changes a
+  # route; it only exercises weight rollback for exact already-published
+  # staging artifacts under the same surface lock.
+  group: ponto-surface-mutation
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      source_tree: ${{ steps.source.outputs.source_tree }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Require one fresh trusted main source identity
+        id: source
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto Core staging candidate must run from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Ponto Core staging candidate cannot be rerun; dispatch a fresh candidate'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$RELEASE_SHA" == "$GITHUB_SHA" ]] || { echo 'release_sha must be the exact trusted main workflow SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'candidate checkout differs from release_sha'; exit 1; }
+          echo "source_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_tree=$(git rev-parse "${RELEASE_SHA}^{tree}")" >> "$GITHUB_OUTPUT"
+
+  attest:
+    needs: source
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    env:
+      RELEASE_SHA: ${{ needs.source.outputs.source_sha }}
+      SOURCE_TREE: ${{ needs.source.outputs.source_tree }}
+      TIMEKEEPING_RUN_ID: ${{ inputs.timekeeping_staging_run_id }}
+      CORE_RUN_ID: ${{ inputs.core_staging_run_id }}
+      IDENTITY_RUN_ID: ${{ inputs.identity_staging_run_id }}
+      EXECUTE_ROLLBACK: ${{ inputs.execute_same_artifact_rollback }}
+      PONTO_CANDIDATE_SOURCE_REPOSITORY: ${{ github.repository }}
+      PONTO_CANDIDATE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+      PONTO_CANDIDATE_SOURCE_TREE: ${{ needs.source.outputs.source_tree }}
+      PONTO_CANDIDATE_RUN_ID: ${{ github.run_id }}
+      CANDIDATE_ROOT: ${{ runner.temp }}/ponto-core-staging-candidate
+      LEASE_PROOF: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 1
+
+      - name: Require the executable same-artifact rollback drill
+        run: |
+          set -euo pipefail
+          [[ "$EXECUTE_ROLLBACK" == true ]] || {
+            echo 'A Pages-consumable candidate requires execute_same_artifact_rollback=true.'
+            exit 1
+          }
+          for value in "$TIMEKEEPING_RUN_ID" "$CORE_RUN_ID" "$IDENTITY_RUN_ID"; do
+            [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo 'Upstream staging run IDs must be numeric'; exit 1; }
+          done
+          mkdir -p "$CANDIDATE_ROOT"
+
+      - name: Acquire the global Ponto Workers writer lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: global:ponto-workers-writer
+          module: ponto
+          source_sha: ${{ needs.source.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
+
+      - name: Download exact canonical staging child evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$CANDIDATE_ROOT/upstream"
+          mkdir -p "$root/timekeeping" "$root/core" "$root/identity"
+          for pair in timekeeping:"$TIMEKEEPING_RUN_ID" core:"$CORE_RUN_ID" identity:"$IDENTITY_RUN_ID"; do
+            name="${pair%%:*}"
+            run_id="${pair#*:}"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$root/$name/run.json"
+          done
+          gh run download "$TIMEKEEPING_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-surface-timekeeping-staging-$RELEASE_SHA" --dir "$root/timekeeping/surface"
+          gh run download "$CORE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-surface-core-api-staging-$RELEASE_SHA" --dir "$root/core/surface"
+          gh run download "$CORE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-mutation-core-api-staging-$RELEASE_SHA" --dir "$root/core/mutation"
+          gh run download "$IDENTITY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-surface-identity-workforce-staging-$RELEASE_SHA" --dir "$root/identity/surface"
+          gh run download "$IDENTITY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-mutation-identity-workforce-staging-$RELEASE_SHA" --dir "$root/identity/mutation"
+
+      - name: Bind only exact child artifacts to this candidate
+        id: bind_candidate
+        run: |
+          set -euo pipefail
+          root="$CANDIDATE_ROOT/upstream"
+          find_one() {
+            local directory="$1" filename="$2"
+            mapfile -t found < <(find "$directory" -type f -name "$filename" -print)
+            [[ "${#found[@]}" == 1 ]] || { echo "Expected exactly one $filename in $directory"; exit 1; }
+            printf '%s' "${found[0]}"
+          }
+          timekeeping_surface="$(find_one "$root/timekeeping/surface" surface.json)"
+          core_surface="$(find_one "$root/core/surface" surface.json)"
+          core_mutation="$(find_one "$root/core/mutation" mutation.json)"
+          identity_surface="$(find_one "$root/identity/surface" surface.json)"
+          identity_mutation="$(find_one "$root/identity/mutation" mutation.json)"
+          TIMEKEEPING_SURFACE="$timekeeping_surface" CORE_SURFACE="$core_surface" CORE_MUTATION="$core_mutation" \
+          IDENTITY_SURFACE="$identity_surface" IDENTITY_MUTATION="$identity_mutation" \
+            node - "$CANDIDATE_ROOT/candidate-input.json" <<'NODE'
+          const fs = require("fs");
+          const load = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+          const sanitizeRun = (run) => ({
+            runId: String(run?.id || ""),
+            workflowPath: String(run?.path || "").replace(/@refs\/heads\/[^\s]+$/, ""),
+            event: String(run?.event || ""),
+            status: String(run?.status || ""),
+            conclusion: String(run?.conclusion || ""),
+            runAttempt: Number(run?.run_attempt),
+            headSha: String(run?.head_sha || "").toLowerCase(),
+            headBranch: String(run?.head_branch || ""),
+            repository: String(run?.repository?.full_name || ""),
+            headRepository: String(run?.head_repository?.full_name || ""),
+          });
+          const root = process.env.CANDIDATE_ROOT;
+          const output = process.argv[2];
+          const input = {
+            schemaVersion: 1,
+            source: {
+              repository: process.env.GITHUB_REPOSITORY,
+              sha: process.env.RELEASE_SHA,
+              tree: process.env.SOURCE_TREE,
+              candidateRunId: process.env.GITHUB_RUN_ID,
+            },
+            upstream: {
+              timekeeping: {
+                run: sanitizeRun(load(`${root}/upstream/timekeeping/run.json`)),
+                surface: load(process.env.TIMEKEEPING_SURFACE),
+              },
+              core: {
+                run: sanitizeRun(load(`${root}/upstream/core/run.json`)),
+                surface: load(process.env.CORE_SURFACE),
+                mutation: load(process.env.CORE_MUTATION),
+              },
+              identity: {
+                run: sanitizeRun(load(`${root}/upstream/identity/run.json`)),
+                surface: load(process.env.IDENTITY_SURFACE),
+                mutation: load(process.env.IDENTITY_MUTATION),
+              },
+            },
+          };
+          fs.writeFileSync(output, `${JSON.stringify(input, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          node .github/scripts/ponto-core-staging-candidate.mjs validate-input \
+            "$CANDIDATE_ROOT/candidate-input.json" "$CANDIDATE_ROOT/candidate-validated.json"
+
+      - name: Attest the closed staging module before any weight mutation
+        run: |
+          set -euo pipefail
+          node --input-type=module - "$CANDIDATE_ROOT/module-health.json" <<'NODE'
+          import fs from "node:fs";
+          const url = new URL("https://api-staging.skincos.com.br/api/ponto/health");
+          url.searchParams.set("ponto_core_candidate_maintenance", process.env.GITHUB_RUN_ID);
+          const response = await fetch(url, { headers: { accept: "application/json", "cache-control": "no-cache" } });
+          const payload = await response.json().catch(() => null);
+          if (response.status !== 200 || payload?.availability?.state !== "maintenance") {
+            throw new Error("Ponto staging must be in maintenance before the Core candidate rollback drill");
+          }
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({ state: "maintenance", passed: true })}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Read-only attest exact Core and Identity staging candidates
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-candidate.mjs attest-remote \
+            "$CANDIDATE_ROOT/candidate-input.json" "$CANDIDATE_ROOT/remote-before.json"
+
+      - name: Probe exact exposed Identity readiness before the drill
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-candidate.mjs probe-identity \
+            "$CANDIDATE_ROOT/candidate-input.json" "$CANDIDATE_ROOT/identity-health-before.json"
+
+      - name: Check lease immediately before Core rollback
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
+          resource: global:ponto-workers-writer
+          module: ponto
+          source_sha: ${{ needs.source.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Roll back Core only to its exact staging incumbent
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          incumbent="$(node -e "process.stdout.write(require(process.argv[1]).core.incumbentVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          npx --yes wrangler@4.112.0 rollback "$incumbent" --yes \
+            --message "ponto:staging-candidate-rollback:$RELEASE_SHA" \
+            --config api/wrangler.ponto.toml --env staging
+          touch "$CANDIDATE_ROOT/core-rolled-back"
+
+      - name: Check lease immediately before Identity rollback
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
+          resource: global:ponto-workers-writer
+          module: ponto
+          source_sha: ${{ needs.source.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Roll back Identity only to its exact staging incumbent
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          incumbent="$(node -e "process.stdout.write(require(process.argv[1]).identity.incumbentVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          npx --yes wrangler@4.112.0 rollback "$incumbent" --yes \
+            --message "ponto:staging-candidate-rollback:$RELEASE_SHA" \
+            --config inventory/wrangler.toml --env staging
+          touch "$CANDIDATE_ROOT/identity-rolled-back"
+
+      - name: Read-only attest exact Core and Identity incumbents at the rollback point
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-candidate.mjs attest-rollback-incumbents \
+            "$CANDIDATE_ROOT/candidate-input.json" "$CANDIDATE_ROOT/rollback-incumbents.json"
+
+      - name: Check lease immediately before restoring the exact Identity candidate
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
+          resource: global:ponto-workers-writer
+          module: ponto
+          source_sha: ${{ needs.source.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Restore the same Identity candidate artifact
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          candidate="$(node -e "process.stdout.write(require(process.argv[1]).identity.candidateVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          npx --yes wrangler@4.112.0 versions deploy "$candidate@100%" --yes \
+            --message "ponto:staging-candidate-restore:$RELEASE_SHA" \
+            --config inventory/wrangler.toml --env staging
+          touch "$CANDIDATE_ROOT/identity-restored"
+
+      - name: Check lease immediately before restoring the exact Core candidate
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
+          resource: global:ponto-workers-writer
+          module: ponto
+          source_sha: ${{ needs.source.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Restore the same Core candidate artifact
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          candidate="$(node -e "process.stdout.write(require(process.argv[1]).core.candidateVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          npx --yes wrangler@4.112.0 versions deploy "$candidate@100%" --yes \
+            --message "ponto:staging-candidate-restore:$RELEASE_SHA" \
+            --config api/wrangler.ponto.toml --env staging
+          touch "$CANDIDATE_ROOT/core-restored"
+
+      - name: Read-only reattest the restored exact candidates
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-candidate.mjs attest-remote \
+            "$CANDIDATE_ROOT/candidate-input.json" "$CANDIDATE_ROOT/remote-restored.json"
+
+      - name: Probe exact exposed Identity readiness after restoration
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-candidate.mjs probe-identity \
+            "$CANDIDATE_ROOT/candidate-input.json" "$CANDIDATE_ROOT/identity-health-restored.json"
+
+      - name: Write sanitized same-artifact rollback proof
+        run: |
+          set -euo pipefail
+          [[ -f "$CANDIDATE_ROOT/core-rolled-back" && -f "$CANDIDATE_ROOT/identity-rolled-back" ]] || exit 1
+          [[ -f "$CANDIDATE_ROOT/core-restored" && -f "$CANDIDATE_ROOT/identity-restored" ]] || exit 1
+          node - "$CANDIDATE_ROOT/candidate-validated.json" "$CANDIDATE_ROOT/rollback-incumbents.json" "$CANDIDATE_ROOT/rollback.json" <<'NODE'
+          const fs = require("fs");
+          const candidate = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const incumbents = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const compactReadback = (surface) => ({
+            worker: String(surface?.worker || ""),
+            activeVersionId: String(surface?.activeVersionId || "").toLowerCase(),
+            activeDeploymentId: String(surface?.activeDeploymentId || "").toLowerCase(),
+          });
+          const proof = {
+            passed: true,
+            valuesIncluded: false,
+            core: {
+              rolledBackToIncumbent: true,
+              restoredCandidate: true,
+              incumbentVersionId: candidate.core.incumbentVersionId,
+              candidateVersionId: candidate.core.candidateVersionId,
+              incumbentReadback: compactReadback(incumbents.core),
+            },
+            identity: {
+              rolledBackToIncumbent: true,
+              restoredCandidate: true,
+              incumbentVersionId: candidate.identity.incumbentVersionId,
+              candidateVersionId: candidate.identity.candidateVersionId,
+              incumbentReadback: compactReadback(incumbents.identity),
+            },
+            credentialsIncluded: false,
+            piiIncluded: false,
+          };
+          fs.writeFileSync(process.argv[4], `${JSON.stringify(proof, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Write Pages-consumable staging candidate receipt
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-candidate.mjs build-receipt \
+            "$CANDIDATE_ROOT/candidate-input.json" \
+            "$CANDIDATE_ROOT/remote-restored.json" \
+            "$CANDIDATE_ROOT/identity-health-restored.json" \
+            "$CANDIDATE_ROOT/rollback.json" \
+            "$CANDIDATE_ROOT/ponto-core-staging-candidate.json"
+
+      - name: Upload sanitized Ponto Core staging candidate receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-core-staging-candidate-${{ needs.source.outputs.source_sha }}
+          path: ${{ runner.temp }}/ponto-core-staging-candidate/ponto-core-staging-candidate.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Reacquire candidate state after an interrupted drill only when exact incumbent is active
+        if: ${{ always() && (failure() || cancelled()) && steps.bind_candidate.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
+          resource: global:ponto-workers-writer
+          module: ponto
+          source_sha: ${{ needs.source.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Restore both candidate versions only from exact incumbents after failure
+        if: ${{ always() && (failure() || cancelled()) && steps.bind_candidate.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          restore_if_incumbent() {
+            local label="$1" config="$2" candidate="$3" incumbent="$4"
+            local status="$RUNNER_TEMP/${label}-candidate-recovery-status.json"
+            npx --yes wrangler@4.112.0 deployments status --json --config "$config" --env staging > "$status"
+            active="$(node - "$status" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployments = Array.isArray(payload) ? payload : (payload?.deployments || payload?.latest?.deployments || []);
+          const active = [...deployments].sort((a, b) => Date.parse(String(b?.created_on || "")) - Date.parse(String(a?.created_on || "")))[0];
+          const versions = payload?.versions || payload?.latest?.versions || active?.versions || [];
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100) process.exit(1);
+          process.stdout.write(String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase());
+          NODE
+            )"
+            if [[ "$active" == "$candidate" ]]; then
+              echo "$label is already restored to the exact candidate"
+              return 0
+            fi
+            [[ "$active" == "$incumbent" ]] || { echo "$label is not owned by this rollback drill; refusing compensation"; return 1; }
+            npx --yes wrangler@4.112.0 versions deploy "$candidate@100%" --yes \
+              --message "ponto:staging-candidate-failure-recovery:$RELEASE_SHA" \
+              --config "$config" --env staging
+          }
+          core_candidate="$(node -e "process.stdout.write(require(process.argv[1]).core.candidateVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          core_incumbent="$(node -e "process.stdout.write(require(process.argv[1]).core.incumbentVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          identity_candidate="$(node -e "process.stdout.write(require(process.argv[1]).identity.candidateVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          identity_incumbent="$(node -e "process.stdout.write(require(process.argv[1]).identity.incumbentVersionId)" "$CANDIDATE_ROOT/candidate-validated.json")"
+          restore_if_incumbent identity inventory/wrangler.toml "$identity_candidate" "$identity_incumbent"
+          restore_if_incumbent core api/wrangler.ponto.toml "$core_candidate" "$core_incumbent"
+
+      - name: Release the global Ponto Workers writer lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-core-staging-candidate.json
