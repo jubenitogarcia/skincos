@@ -5,15 +5,32 @@ import { pathToFileURL } from 'node:url';
 export const PRODUCTION_WORKER_NAME = 'skincos-identity-crm-delivery-production';
 export const STAGING_WORKER_NAME = 'skincos-identity-crm-delivery-staging';
 
-// These names are an inventory contract for the future production runtime. The
-// audit only checks their presence by name; it never reads or emits a value.
-// Provisioning them is deliberately a separate, reviewed custody operation.
-export const REQUIRED_PRODUCTION_SECRET_NAMES = Object.freeze([
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK',
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
-  'IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC',
-]);
+// This inventory contract checks only auditable binding metadata; it never
+// reads or emits a value. The signing key must be a non-extractable Cloudflare
+// `secret_key` for Ed25519 signing, while the remaining short configuration
+// values are `secret_text`. Provisioning remains a separate custody operation.
+export const REQUIRED_PRODUCTION_SECRET_TYPES = Object.freeze({
+  IDENTITY_CRM_DELIVERY_PRODUCTION_KID: 'secret_text',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: 'secret_key',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK: 'secret_text',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+});
+export const REQUIRED_PRODUCTION_SECRET_NAMES = Object.freeze(Object.keys(REQUIRED_PRODUCTION_SECRET_TYPES));
+export const REQUIRED_PRODUCTION_SECRET_KEY_METADATA = Object.freeze({
+  IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY: Object.freeze({
+    algorithm: 'Ed25519',
+    usages: Object.freeze(['sign']),
+  }),
+});
+// These deployment-owned vars are non-secret, but the readiness report never
+// emits their actual values. Each one must appear exactly once as a plain-text
+// binding with the fixed runtime value below before cutover can be approved.
+export const REQUIRED_PRODUCTION_RUNTIME_BINDINGS = Object.freeze({
+  IDENTITY_CRM_DELIVERY_ENABLED: 'true',
+  IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'production',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: 'crm-api-production-v1',
+});
 
 export const IDENTITY_CRM_DELIVERY_PROTOCOL = Object.freeze({
   version: 'identity-crm-delivery/v1',
@@ -118,9 +135,21 @@ function sanitizeBindings(settings) {
     .sort((left, right) => `${left.name}:${left.type}`.localeCompare(`${right.name}:${right.type}`));
 }
 
+function sanitizeRequiredRuntimeBindings(settings) {
+  const bindings = Array.isArray(settings?.bindings) ? settings.bindings : [];
+  return Object.fromEntries(Object.entries(REQUIRED_PRODUCTION_RUNTIME_BINDINGS).map(([name, expected]) => {
+    const matches = bindings.filter((binding) => binding?.name === name);
+    const isExact = matches.length === 1
+      && matches[0]?.type === 'plain_text'
+      && typeof matches[0]?.text === 'string'
+      && matches[0].text === expected;
+    return [name, isExact ? 'matches' : matches.length === 0 ? 'missing' : 'incorrect'];
+  }));
+}
+
 export function sanitizeWorkerSettings(settings) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-    return { compatibilityDate: null, usageModel: null, workersDev: null, bindings: [] };
+    return { compatibilityDate: null, usageModel: null, workersDev: null, bindings: [], requiredRuntimeBindings: {} };
   }
   return {
     compatibilityDate: string(settings.compatibility_date) || null,
@@ -129,6 +158,7 @@ export function sanitizeWorkerSettings(settings) {
       : null,
     workersDev: typeof settings.workers_dev === 'boolean' ? settings.workers_dev : null,
     bindings: sanitizeBindings(settings),
+    requiredRuntimeBindings: sanitizeRequiredRuntimeBindings(settings),
   };
 }
 
@@ -152,14 +182,50 @@ export function sanitizeDeployments(value) {
 
 export function sanitizeSecretInventory(value) {
   const entries = resultArray(value, 'secrets');
-  const names = [...new Set(entries
-    .map((entry) => safeIdentifier(entry?.name))
-    .filter(Boolean))].sort();
+  const bindingsByName = new Map();
+  for (const entry of entries) {
+    const name = safeIdentifier(entry?.name);
+    const type = safeIdentifier(entry?.type);
+    if (!name || !type) continue;
+    const algorithm = type === 'secret_key' ? safeIdentifier(entry?.algorithm?.name) : null;
+    const usages = type === 'secret_key' && Array.isArray(entry?.usages)
+      ? [...new Set(entry.usages.map(safeIdentifier).filter(Boolean))].sort()
+      : null;
+    const binding = {
+      type,
+      keyMetadata: type === 'secret_key' && algorithm && usages
+        ? { algorithm, usages }
+        : null,
+    };
+    const existing = bindingsByName.get(name);
+    if (!existing) {
+      bindingsByName.set(name, binding);
+    } else if (existing.type !== binding.type
+      || JSON.stringify(existing.keyMetadata) !== JSON.stringify(binding.keyMetadata)) {
+      // A contradictory inventory is not evidence that the required binding
+      // has safe type or key metadata. Preserve no value and make the later
+      // exact comparison fail closed.
+      bindingsByName.set(name, { type: null, keyMetadata: null });
+    }
+  }
+  const names = [...bindingsByName.keys()].sort();
+  const types = Object.fromEntries(names.map((name) => [name, bindingsByName.get(name).type]));
+  const keyMetadata = Object.fromEntries(names
+    .filter((name) => bindingsByName.get(name).keyMetadata)
+    .map((name) => [name, bindingsByName.get(name).keyMetadata]));
   return {
     count: names.length,
     names,
+    types,
+    keyMetadata,
     valuesReadOrEmitted: false,
   };
+}
+
+function hasExactKeyMetadata(actual, expected) {
+  if (!actual || actual.algorithm !== expected.algorithm || !Array.isArray(actual.usages)) return false;
+  return actual.usages.length === expected.usages.length
+    && actual.usages.every((usage, index) => usage === expected.usages[index]);
 }
 
 export function sanitizeRoutes(value, workerName, zoneCount = 0) {
@@ -391,12 +457,13 @@ export function evaluateIdentityCrmProductionReadiness({
   const productionWorker = string(workerName);
   const stagingWorker = string(stagingWorkerName);
   const settings = worker?.settings?.state === 'available' ? worker.settings.result : null;
+  const sanitizedSettings = settings ? sanitizeWorkerSettings(settings) : null;
   const deploymentReadback = worker?.deployments?.state === 'available'
     ? sanitizeDeployments(worker.deployments.result)
     : { count: 0, entries: [] };
   const secretReadback = worker?.secrets?.state === 'available'
     ? sanitizeSecretInventory(worker.secrets.result)
-    : { count: 0, names: [], valuesReadOrEmitted: false };
+    : { count: 0, names: [], types: {}, keyMetadata: {}, valuesReadOrEmitted: false };
   const subdomain = worker?.subdomain?.state === 'available' ? worker.subdomain.result : null;
   const routeReadback = routes?.state === 'available'
     ? sanitizeRoutes(routes.result, productionWorker, routes.resultInfo?.zoneCount)
@@ -417,6 +484,11 @@ export function evaluateIdentityCrmProductionReadiness({
   if (!hasAvailableEndpoint(worker?.settings)) {
     blockers.push('production Worker settings could not be read');
   }
+  const wrongRuntimeBindings = Object.keys(REQUIRED_PRODUCTION_RUNTIME_BINDINGS)
+    .filter((name) => sanitizedSettings?.requiredRuntimeBindings?.[name] !== 'matches');
+  if (wrongRuntimeBindings.length > 0) {
+    blockers.push(`production Worker has required runtime bindings that are missing or incorrect: ${wrongRuntimeBindings.join(', ')}`);
+  }
   if (!hasAvailableEndpoint(worker?.deployments) || deploymentReadback.count < 1) {
     blockers.push('production Worker has no externally verified deployment baseline');
   }
@@ -427,6 +499,18 @@ export function evaluateIdentityCrmProductionReadiness({
     .filter((name) => !secretReadback.names.includes(name));
   if (missingSecretNames.length > 0) {
     blockers.push(`production Worker is missing required secret names: ${missingSecretNames.join(', ')}`);
+  }
+  const wrongSecretTypes = Object.entries(REQUIRED_PRODUCTION_SECRET_TYPES)
+    .filter(([name, expectedType]) => secretReadback.types[name] !== expectedType)
+    .map(([name, expectedType]) => `${name} (expected ${expectedType})`);
+  if (wrongSecretTypes.length > 0) {
+    blockers.push(`production Worker has required secret bindings with incorrect types: ${wrongSecretTypes.join(', ')}`);
+  }
+  const wrongSecretKeyMetadata = Object.entries(REQUIRED_PRODUCTION_SECRET_KEY_METADATA)
+    .filter(([name, expected]) => !hasExactKeyMetadata(secretReadback.keyMetadata[name], expected))
+    .map(([name, expected]) => `${name} (expected ${expected.algorithm} with usages ${expected.usages.join(', ')})`);
+  if (wrongSecretKeyMetadata.length > 0) {
+    blockers.push(`production Worker has required secret-key metadata: ${wrongSecretKeyMetadata.join(', ')}`);
   }
   if (!hasAvailableEndpoint(worker?.subdomain)) {
     blockers.push('production Worker public subdomain state could not be read');
@@ -458,7 +542,6 @@ export function evaluateIdentityCrmProductionReadiness({
     blockers.push('key rotation, overlap and rollback window are not externally attested');
   }
 
-  const sanitizedSettings = settings ? sanitizeWorkerSettings(settings) : null;
   const report = {
     schemaVersion: 1,
     result: blockers.length === 0 ? 'eligible-for-approved-cutover' : 'blocked',

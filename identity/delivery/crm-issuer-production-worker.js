@@ -5,10 +5,10 @@ import { createIdentityCrmIssuerWorker } from './crm-issuer-worker-runtime.js';
  * disabled by the production manifest until the protected secret manager,
  * CRM caller and rollback gates are independently attested.
  *
- * The private JWK is accepted only from the runtime secret environment and is
- * imported as a non-extractable Ed25519 signing key. The public key secret may
- * contain the active key plus an explicit overlap/revocation ring; the ring is
- * validated before publication so an active or expired key cannot be served.
+ * The private signing key arrives only as a non-extractable Cloudflare
+ * `secret_key` binding. The public key secret may contain the active key plus
+ * an explicit overlap/revocation ring; the runtime signs a custody challenge
+ * and verifies it against that active public key before publication.
  */
 export const handleIdentityCrmIssuerProductionRequest = createIdentityCrmIssuerWorker({
   environment: 'production',
@@ -21,9 +21,17 @@ export const handleIdentityCrmIssuerProductionRequest = createIdentityCrmIssuerW
   },
   secretNames: {
     kid: 'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
-    privateJwk: 'IDENTITY_CRM_DELIVERY_PRODUCTION_PRIVATE_JWK',
+    signingKey: 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
     publicJwk: 'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
-    requestHmac: 'IDENTITY_CRM_DELIVERY_PRODUCTION_REQUEST_HMAC',
+    requestHmac: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC',
+  },
+  caller: {
+    enabled: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED',
+    id: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID',
+    hmac: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC',
+    expectedId: 'crm-api-production-v1',
+    header: 'x-skincos-identity-issuer-caller',
+    required: true,
   },
 });
 

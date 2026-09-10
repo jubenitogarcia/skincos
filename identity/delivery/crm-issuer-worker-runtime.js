@@ -14,6 +14,12 @@ const ED25519_PUBLIC_KEY_BYTES = 32;
 const ED25519_PRIVATE_KEY_BYTES = 32;
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const JTI_PATTERN = /^[A-Za-z0-9_-]{16,160}$/;
+const MAX_CACHED_CUSTODY_PROOFS = 16;
+// A custody proof signs a fixed challenge. Cache only the non-extractable
+// signer closure, keyed by the active public key, so arbitrary traffic cannot
+// repeatedly make the Worker sign that challenge. Key-ring parsing remains
+// per request so expiry, revocation and overlap state are never cached.
+const verifiedSignerByActiveKey = new Map();
 
 function fail(code) {
   throw new TypeError(code);
@@ -193,11 +199,14 @@ async function isAuthorizedIssueRequest(request, rawBody, secret, authErrorCode,
 }
 
 function assertSecretNames(secretNames) {
-  const required = ['kid', 'privateJwk', 'publicJwk', 'requestHmac'];
+  const required = ['kid', 'publicJwk', 'requestHmac'];
   if (!secretNames || required.some((name) => typeof secretNames[name] !== 'string' || !secretNames[name])) {
     throw new TypeError('IDENTITY_SECRET_NAMES_INVALID');
   }
-  return secretNames;
+  const hasPrivateJwk = typeof secretNames.privateJwk === 'string' && secretNames.privateJwk.length > 0;
+  const hasSigningKey = typeof secretNames.signingKey === 'string' && secretNames.signingKey.length > 0;
+  if (hasPrivateJwk === hasSigningKey) throw new TypeError('IDENTITY_SECRET_NAMES_INVALID');
+  return Object.freeze({ ...secretNames, hasPrivateJwk, hasSigningKey });
 }
 
 function assertCallerConfig(caller) {
@@ -213,7 +222,46 @@ function assertCallerConfig(caller) {
     hmac: caller.hmac,
     expectedId: caller.expectedId,
     header: caller.header,
+    required: caller.required === true,
   });
+}
+
+async function createVerifiedSigner(privateKey, activePublicJwk, cryptoErrorCode) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle || typeof subtle.importKey !== 'function' || typeof subtle.verify !== 'function') fail(cryptoErrorCode);
+  const signer = createCrmIdentityEd25519Signer(privateKey);
+  const challenge = 'skincos/identity-crm-delivery/custody-proof/v1';
+  const publicKey = await subtle.importKey('jwk', activePublicJwk, { name: 'Ed25519' }, false, ['verify']);
+  const signature = await signer(challenge);
+  if (!await subtle.verify({ name: 'Ed25519' }, publicKey, signature, TEXT_ENCODER.encode(challenge))) {
+    fail('IDENTITY_PUBLIC_KEY_MISMATCH');
+  }
+  return signer;
+}
+
+function custodyProofCacheKey(environment, kid, activePublicJwk) {
+  return JSON.stringify([environment, kid, activePublicJwk.kty, activePublicJwk.crv, activePublicJwk.x, activePublicJwk.alg, activePublicJwk.use]);
+}
+
+function cacheVerifiedSigner({ environment, kid, activePublicJwk, loadPrivateKey, cryptoErrorCode }) {
+  if (typeof loadPrivateKey !== 'function') throw new TypeError('IDENTITY_PRIVATE_KEY_LOADER_INVALID');
+  const cacheKey = custodyProofCacheKey(environment, kid, activePublicJwk);
+  const existing = verifiedSignerByActiveKey.get(cacheKey);
+  if (existing) return existing;
+  // Check the cache before touching staging's serialised private JWK. That
+  // keeps public-key refreshes cheap and, more importantly, lets the request
+  // handler authenticate an issue request before its first private-key import.
+  const pending = Promise.resolve()
+    .then(loadPrivateKey)
+    .then((privateKey) => createVerifiedSigner(privateKey, activePublicJwk, cryptoErrorCode));
+  verifiedSignerByActiveKey.set(cacheKey, pending);
+  while (verifiedSignerByActiveKey.size > MAX_CACHED_CUSTODY_PROOFS) {
+    verifiedSignerByActiveKey.delete(verifiedSignerByActiveKey.keys().next().value);
+  }
+  pending.catch(() => {
+    if (verifiedSignerByActiveKey.get(cacheKey) === pending) verifiedSignerByActiveKey.delete(cacheKey);
+  });
+  return pending;
 }
 
 /**
@@ -250,22 +298,19 @@ export function createIdentityCrmIssuerWorker({
       && env?.IDENTITY_CRM_DELIVERY_ENVIRONMENT === environment;
   }
 
-  function loadMaterial(env, nowSeconds) {
+  async function loadMaterial(env, nowSeconds) {
     if (!enabled(env)) return null;
     const kid = assertKeyId(env[names.kid], keyIdPrefix);
-    if (typeof env[names.privateJwk] !== 'string'
-      || typeof env[names.publicJwk] !== 'string'
+    if (typeof env[names.publicJwk] !== 'string'
       || typeof env[names.requestHmac] !== 'string') {
       fail(errorCodes.custody);
     }
-    const privateJwk = parsePrivateJwk(env[names.privateJwk]);
     const publicKeyRing = publicKeyMode === 'production-ring'
       ? parsePublicKeyRing(env[names.publicJwk], kid, keyIdPrefix, nowSeconds)
       : (() => {
         const activeJwk = parsePublicJwk(env[names.publicJwk]);
         return Object.freeze({ activeJwk, keys: Object.freeze([{ ...activeJwk, kid }]) });
       })();
-    if (privateJwk.x !== publicKeyRing.activeJwk.x) fail('IDENTITY_PUBLIC_KEY_MISMATCH');
     if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
     let callerMaterial = null;
     if (callerConfig && env[callerConfig.enabled] === 'true') {
@@ -279,21 +324,34 @@ export function createIdentityCrmIssuerWorker({
       }
       callerMaterial = Object.freeze({ id: callerId, hmac: callerHmac, header: callerConfig.header });
     }
+    if (callerConfig?.required && !callerMaterial) fail(errorCodes.custody);
     return Object.freeze({
       kid,
-      privateJwk,
+      activePublicJwk: publicKeyRing.activeJwk,
       publicKeys: publicKeyRing.keys,
       requestHmac: env[names.requestHmac],
       caller: callerMaterial,
     });
   }
 
-  async function createEnabledIssuer(material) {
-    const privateKey = await importPrivateKey(material.privateJwk, errorCodes.crypto);
+  function loadSigner(env, material) {
+    const loadPrivateKey = names.hasSigningKey
+      ? () => env[names.signingKey]
+      : () => importPrivateKey(parsePrivateJwk(env[names.privateJwk]), errorCodes.crypto);
+    return cacheVerifiedSigner({
+      environment,
+      kid: material.kid,
+      activePublicJwk: material.activePublicJwk,
+      loadPrivateKey,
+      cryptoErrorCode: errorCodes.crypto,
+    });
+  }
+
+  function createEnabledIssuer(material) {
     const keyRing = createCrmIdentityDeliveryKeyRing({
       active: {
         kid: material.kid,
-        sign: createCrmIdentityEd25519Signer(privateKey),
+        sign: material.signer,
       },
     });
     return createCrmIdentityDeliveryIssuer({ enabled: true, keyRing });
@@ -311,20 +369,32 @@ export function createIdentityCrmIssuerWorker({
       return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: 'IDENTITY_CRM_DELIVERY_DISABLED' }, 503);
     }
 
+    const url = new URL(request.url);
+    const isPublicKeysRequest = url.pathname === IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH
+      && (request.method === 'GET' || request.method === 'HEAD');
+    const isIssueRequest = url.pathname === IDENTITY_CRM_DELIVERY_ISSUE_PATH && request.method === 'POST';
+    if (!isPublicKeysRequest && !isIssueRequest) {
+      return json({ ok: false, error: 'NOT_FOUND' }, 404);
+    }
+
     let material;
     try {
-      material = loadMaterial(env, Math.floor(Date.now() / 1000));
+      material = await loadMaterial(env, Math.floor(Date.now() / 1000));
     } catch {
       return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: errorCodes.custody }, 503);
     }
 
-    const url = new URL(request.url);
-    if (url.pathname === IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (isPublicKeysRequest) {
+      // Publication remains coupled to a verified signer, but cache lookup
+      // happens before a staging JWK import. A public endpoint never needs to
+      // parse private material more than once per active key/isolate.
+      try {
+        await loadSigner(env, material);
+      } catch {
+        return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: errorCodes.custody }, 503);
+      }
       if (request.method === 'HEAD') return noContent(200, { 'cache-control': 'no-store' });
       return publicKeyResponse(material);
-    }
-    if (url.pathname !== IDENTITY_CRM_DELIVERY_ISSUE_PATH || request.method !== 'POST') {
-      return json({ ok: false, error: 'NOT_FOUND' }, 404);
     }
 
     const declaredLength = request.headers.get('content-length');
@@ -335,19 +405,26 @@ export function createIdentityCrmIssuerWorker({
     if (TEXT_ENCODER.encode(rawBody).byteLength > MAX_REQUEST_BYTES) return json({ ok: false, error: 'REQUEST_TOO_LARGE' }, 413);
     try {
       const requestedCallerId = callerConfig ? request.headers.get(callerConfig.header) : null;
-      const requestHmac = requestedCallerId === null
-        ? material.requestHmac
-        : material.caller?.id === requestedCallerId
+      const requestHmac = callerConfig?.required
+        ? material.caller?.id === requestedCallerId
           ? material.caller.hmac
-          : null;
+          : null
+        : requestedCallerId === null
+          ? material.requestHmac
+          : material.caller?.id === requestedCallerId
+            ? material.caller.hmac
+            : null;
       if (!requestHmac || !await isAuthorizedIssueRequest(request, rawBody, requestHmac, errorCodes.auth, errorCodes.crypto)) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
     } catch {
       return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
     }
 
     try {
+      // Do not import the staging private JWK until the caller HMAC has been
+      // verified. Production's non-extractable key follows the same order.
+      const signer = await loadSigner(env, material);
       const payload = assertPayloadShape(parseJson(rawBody, 'IDENTITY_ISSUE_PAYLOAD_INVALID'));
-      const issuer = await createEnabledIssuer(material);
+      const issuer = await createEnabledIssuer({ ...material, signer });
       const result = await issuer.issue({
         identity: payload.identity,
         request: {
