@@ -148,29 +148,71 @@ jobs:
             --source-sha "$RELEASE_SHA" \
             --output "$candidate" >/dev/null
           npm --prefix "$candidate/crm/api" ci --omit=dev --ignore-scripts --no-audit --no-fund
-          node - "$candidate" <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
+          # This runs before intentionally removing `.bin` links below. It
+          # proves npm materialized the complete locked production graph,
+          # including transitives, without a network mutation after `npm ci`.
+          if ! npm --prefix "$candidate/crm/api" ls --omit=dev --all --json >/dev/null; then
+            echo 'Locked CRM production dependency tree is incomplete or invalid.' >&2
+            exit 78
+          fi
+          node --input-type=module - "$candidate" <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {
+            buildCrmNativeDependencyManifest,
+            canonicalCrmNativeDependencyManifest,
+            CRM_NATIVE_DEPENDENCY_MANIFEST,
+          } from './scripts/runtime/crm-native-release-contract.mjs';
           const root = path.resolve(process.argv[2]);
           if (!root.startsWith(path.resolve(process.env.RUNNER_TEMP) + path.sep)) throw new Error('candidate must remain below RUNNER_TEMP');
           const api = path.join(root, 'crm', 'api');
-          const manifest = JSON.parse(fs.readFileSync(path.join(api, 'package.json'), 'utf8'));
-          fs.rmSync(path.join(api, 'node_modules', '.bin'), { recursive: true, force: true });
-          for (const dependency of Object.keys(manifest.dependencies || {})) {
-            if (!fs.statSync(path.join(api, 'node_modules', dependency)).isDirectory()) throw new Error(`missing direct dependency: ${dependency}`);
-          }
-          const stack = [path.join(api, 'node_modules')];
-          while (stack.length) {
-            const directory = stack.pop();
-            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-              const file = path.join(directory, entry.name);
-              const stat = fs.lstatSync(file);
-              if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory()) || (stat.isFile() && stat.nlink !== 1)) throw new Error('dependency tree contains an unsafe entry');
-              if (stat.isDirectory()) stack.push(file);
+          const dependencyRoot = path.join(api, 'node_modules');
+          const binDirectory = path.join(dependencyRoot, '.bin');
+          if (fs.existsSync(binDirectory)) {
+            const dependencyReal = fs.realpathSync.native(dependencyRoot);
+            const binStat = fs.lstatSync(binDirectory);
+            if (!binStat.isDirectory() || binStat.isSymbolicLink()) throw new Error('npm .bin directory is unsafe');
+            for (const entry of fs.readdirSync(binDirectory, { withFileTypes: true }).sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)))) {
+              const shim = path.join(binDirectory, entry.name);
+              const shimStat = fs.lstatSync(shim);
+              if (!entry.isSymbolicLink() || !shimStat.isSymbolicLink()) throw new Error('npm .bin entry is not a symbolic link');
+              const target = fs.realpathSync.native(shim);
+              const relativeTarget = path.relative(dependencyReal, target);
+              if (!relativeTarget || relativeTarget === '..' || relativeTarget.startsWith(`..${path.sep}`) || path.isAbsolute(relativeTarget)) {
+                throw new Error('npm .bin entry escapes node_modules');
+              }
+              const targetStat = fs.lstatSync(target);
+              if (!targetStat.isFile() || targetStat.isSymbolicLink() || targetStat.nlink !== 1) throw new Error('npm .bin target is unsafe');
+              const contents = fs.readFileSync(target);
+              fs.unlinkSync(shim);
+              try { fs.writeFileSync(shim, contents, { mode: 0o644, flag: 'wx' }); }
+              finally { contents.fill(0); }
             }
           }
+          const manifest = buildCrmNativeDependencyManifest({ apiRoot: api, requireNormalizedModes: false });
+          const manifestFile = path.join(root, CRM_NATIVE_DEPENDENCY_MANIFEST);
+          fs.writeFileSync(manifestFile, `${canonicalCrmNativeDependencyManifest(manifest)}\n`, { mode: 0o644, flag: 'wx' });
           NODE
-          tar --create --gzip --file "$work/dependencies.tar.gz" --directory "$candidate" crm/api/node_modules
+          tar --create --gzip --file "$work/dependencies.tar.gz" --directory "$candidate" \
+            crm/api/node_modules crm/api/.skincos-crm-native-dependency-manifest.json
+          verify="$work/dependency-archive-verify"
+          mkdir -p "$verify/crm/api"
+          cp -- "$candidate/crm/api/package.json" "$candidate/crm/api/package-lock.json" "$verify/crm/api/"
+          tar --extract --gzip --file "$work/dependencies.tar.gz" --directory "$verify" --no-same-owner --no-same-permissions
+          node --input-type=module - "$verify" "$work/selection.json" <<'NODE'
+          import fs from 'node:fs';
+          import { validateCrmNativeDependencyManifest } from './scripts/runtime/crm-native-release-contract.mjs';
+          const [releaseRoot, selectionFile] = process.argv.slice(2);
+          const verified = validateCrmNativeDependencyManifest({ releaseRoot, requireNormalizedModes: false });
+          const selection = JSON.parse(fs.readFileSync(selectionFile, 'utf8'));
+          selection.dependencyManifestSha256 = verified.sha256;
+          selection.dependencyManifestBytes = verified.bytes;
+          fs.writeFileSync(selectionFile, JSON.stringify(selection) + '\n', { mode: 0o600 });
+          NODE
+          if ! npm --prefix "$verify/crm/api" ls --omit=dev --all --json >/dev/null; then
+            echo 'Fresh dependency archive does not contain the locked production graph.' >&2
+            exit 78
+          fi
           node - "$work/dependencies.tar.gz" "$work/selection.json" <<'NODE'
           const crypto = require('node:crypto');
           const fs = require('node:fs');
@@ -239,7 +281,8 @@ jobs:
             workflowPath: '.github/workflows/publish-crm-native-release.yml', workflowJob: 'publish', githubRef: process.env.GITHUB_REF,
             sourceSha: process.env.RELEASE_SHA, sourceTree: selection.sourceTree, sourceArchiveSha256: selection.sourceArchiveSha256,
             sourceArchiveBytes: selection.sourceArchiveBytes, dependencyArchiveSha256: selection.dependencyArchiveSha256,
-            dependencyArchiveBytes: selection.dependencyArchiveBytes, artifactName: `release-source-${process.env.RELEASE_SHA}`,
+            dependencyArchiveBytes: selection.dependencyArchiveBytes, dependencyManifestSha256: selection.dependencyManifestSha256,
+            dependencyManifestBytes: selection.dependencyManifestBytes, artifactName: `release-source-${process.env.RELEASE_SHA}`,
             sourceArtifactRunId: selection.workflowRunId, workflowRunId: String(process.env.GITHUB_RUN_ID), runAttempt: String(process.env.GITHUB_RUN_ATTEMPT),
             target: 'production', service: 'crm.service', incumbentStateSha256: preflight.incumbentStateSha256,
             stagingProofSha256: process.env.STAGING_PROOF_SHA256, runtimeAttestationSha256: process.env.RUNTIME_ATTESTATION_SHA256,

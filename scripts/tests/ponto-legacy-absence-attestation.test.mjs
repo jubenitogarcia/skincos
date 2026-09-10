@@ -350,6 +350,8 @@ test("separate wrapper, installer, and sudoers expose only the literal absence a
   const wrapper = read("scripts/runtime/provision-ponto-legacy-absence-attestation.sh");
   const installer = read("scripts/runtime/install-ponto-legacy-snapshot-custody.sh");
   const sudoers = read("ops/runtime/github-actions-runner/skincos-native-custody.sudoers");
+  const runnerUnit = read("ops/runtime/units/skincos-native-custody-runner.service");
+  const runnerReadme = read("ops/runtime/github-actions-runner/README.md");
   assert.match(helper, /fs\.lstatSync\(file\)/);
   assert.match(helper, /PONTO_LEGACY_RUNTIME_MODE=/);
   assert.match(helper, /processStartTime/);
@@ -365,4 +367,10 @@ test("separate wrapper, installer, and sudoers expose only the literal absence a
   assert.match(installer, /assert_root_owned_immutable_source_tree/);
   assert.match(sudoers, /skincos-attest-ponto-legacy-absence attest-absence/);
   assert.doesNotMatch(sudoers, /skincos-attest-ponto-legacy-absence bootstrap-absence/);
+  assert.match(runnerUnit, /^ProtectSystem=strict$/m);
+  assert.match(runnerUnit, /^ReadWritePaths=\/etc\/skincos\/ponto-legacy-absence-attestation$/m);
+  assert.match(runnerUnit, /^ReadWritePaths=\/var\/lib\/skincos\/ponto-legacy-absence-attestation$/m);
+  assert.match(runnerReadme, /systemctl daemon-reload/);
+  assert.match(runnerReadme, /skincos-native-custody-runner\.service/);
+  assert.match(runnerReadme, /does not\s+restart `crm\.service`/);
 });

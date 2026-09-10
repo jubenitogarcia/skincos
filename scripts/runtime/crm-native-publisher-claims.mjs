@@ -33,6 +33,8 @@ export const AUTHORIZATION_CLAIM_FIELDS = Object.freeze([
   "sourceArchiveBytes",
   "dependencyArchiveSha256",
   "dependencyArchiveBytes",
+  "dependencyManifestSha256",
+  "dependencyManifestBytes",
   "artifactName",
   "sourceArtifactRunId",
   "workflowRunId",
@@ -60,6 +62,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const MAX_AUTHORIZATION_TTL_MS = 5 * 60 * 1000;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
+const MAX_DEPENDENCY_MANIFEST_BYTES = 16 * 1024 * 1024;
 
 export class CrmNativePublisherContractError extends Error {
   constructor(message) {
@@ -332,6 +335,12 @@ function validateClaims(claims, policy, now) {
     fail("publisher authorization dependency archive size is invalid");
   }
   digest(value.dependencyArchiveSha256, "publisher authorization dependency archive digest");
+  if (!Number.isSafeInteger(value.dependencyManifestBytes)
+    || value.dependencyManifestBytes < 2
+    || value.dependencyManifestBytes > MAX_DEPENDENCY_MANIFEST_BYTES) {
+    fail("publisher authorization dependency manifest size is invalid");
+  }
+  digest(value.dependencyManifestSha256, "publisher authorization dependency manifest digest");
   positiveId(value.workflowRunId, "publisher authorization workflow run id");
   digest(value.incumbentStateSha256, "publisher authorization incumbent digest");
   const issuedAt = strictIso(value.issuedAt, "publisher authorization issued at");
