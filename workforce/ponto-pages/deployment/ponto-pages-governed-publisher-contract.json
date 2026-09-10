@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "contractId": "skincos/ponto-pages-governed-publisher/phase-2",
+  "status": "guarded-manual-publisher",
+  "sourcePackage": "workforce/ponto-pages",
+  "phase1SourceConfig": "wrangler.toml",
+  "phase1SourceConfigSha256": "441175006adaaea277927a315008f533b02e847f5ba811340067864f613c0763",
+  "runtimeTemplate": "deployment/wrangler.runtime.template.toml",
+  "githubEnvironmentTemplate": "deployment/github-environment.template.json",
+  "publication": {
+    "manualOnly": true,
+    "defaultPublish": false,
+    "publisherImplemented": true,
+    "requiresExactSourceSha": true,
+    "requiresSourceReachableFromMain": true,
+    "reason": "Publication remains opt-in and runs only from the exact protected target environment after literal project identity, source provenance, protected custody and remote coordination gates pass."
+  },
+  "projectPolicy": {
+    "forbiddenProjects": [
+      "skincos",
+      "skincos-staging"
+    ],
+    "targets": {
+      "staging": {
+        "project": "skincos-ponto-staging",
+        "projectSubdomain": "skincos-ponto-staging.pages.dev",
+        "productionBranch": "main",
+        "githubEnvironment": "ponto-pages-staging",
+        "runtimeEnvironment": "staging",
+        "bindingServices": {
+          "PONTO_CORE": "skincos-ponto-core-staging",
+          "PONTO_IDENTITY": "skincos-insumos-staging"
+        },
+        "allowedRolloutStages": [
+          "staging"
+        ]
+      },
+      "production": {
+        "project": "skincos-ponto",
+        "projectSubdomain": "skincos-ponto.pages.dev",
+        "productionBranch": "main",
+        "githubEnvironment": "ponto-pages-production",
+        "runtimeEnvironment": "production",
+        "bindingServices": {
+          "PONTO_CORE": "skincos-ponto-core",
+          "PONTO_IDENTITY": "skincos-insumos"
+        },
+        "allowedRolloutStages": [
+          "maintenance"
+        ]
+      }
+    }
+  },
+  "runtimeContract": {
+    "serviceBindings": [
+      "PONTO_CORE",
+      "PONTO_IDENTITY"
+    ],
+    "kvBindings": [
+      "MODULE_CONTROL"
+    ],
+    "runtimeVars": [
+      "SKINCOS_DEPLOYMENT_ENV",
+      "PONTO_RELEASE_SHA",
+      "PONTO_ROLLOUT_STAGE"
+    ],
+    "runtimeSecrets": [
+      "PONTO_API_TARGET",
+      "AUTH_API_TARGET",
+      "INSUMOS_API_TARGET",
+      "PONTO_ACTOR_HMAC_KEY",
+      "PONTO_NETWORK_CONTEXT_KEY",
+      "PONTO_RELEASE_PROBE_HMAC_KEY"
+    ],
+    "releaseCandidateVars": [
+      "PONTO_CORE_VERSION_ID",
+      "PONTO_IDENTITY_VERSION_ID"
+    ],
+    "forbiddenLegacyBindings": [
+      "SHARE_BUCKET",
+      "ATENDIMENTO_API_TARGET",
+      "ESCALA_API_TARGET",
+      "META_ADS_CONFIG_ID"
+    ],
+    "forbiddenLocalVars": [
+      "LOCAL_AUTH_BYPASS",
+      "PONTO_ALLOW_LOCAL_DIRECT_TIMEKEEPING"
+    ]
+  },
+  "stagingCoreCandidateReceipt": {
+    "workflowName": "Ponto Core staging candidate",
+    "workflowPath": ".github/workflows/ponto-core-staging-candidate.yml",
+    "workflowInput": "core_candidate_run_id",
+    "artifactName": "ponto-core-staging-candidate-<source_sha>",
+    "receiptFile": "ponto-core-staging-candidate.json",
+    "contractId": "skincos/ponto-core-staging-candidate/v1",
+    "requiredEvidence": [
+      "same-main-source-sha-and-tree",
+      "exact-ponto-core-and-identity-service-version-identities",
+      "staging-readiness-and-rollback",
+      "private-no-domain-no-workers-dev-exposure",
+      "sanitised-receipt-without-values-credentials-or-pii"
+    ]
+  },
+  "futureGates": [
+    "protected-target-github-environment",
+    "exact-remote-project-identity-readback",
+    "secret-injection-without-value-logging",
+    "isolated-staging-synthetic-smoke",
+    "same-artifact-rollback-receipt",
+    "domain-cookie-and-terminal-repair-plan",
+    "single-writer-policy-update",
+    "exact-ponto-core-staging-candidate-receipt"
+  ]
+}

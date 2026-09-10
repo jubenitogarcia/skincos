@@ -5,6 +5,7 @@ on:
     inputs:
       unit: { required: true, type: string }
       target: { required: true, type: string }
+      promotion_environment: { required: false, type: string, default: "" }
       release_sha: { required: false, type: string, default: "" }
       source_repository: { required: false, type: string, default: "" }
       source_commit: { required: false, type: string, default: "" }
@@ -44,7 +45,7 @@ on:
 jobs:
   gate:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.target }}
+    environment: ${{ inputs.promotion_environment || inputs.target }}
     permissions:
       actions: read
       contents: read

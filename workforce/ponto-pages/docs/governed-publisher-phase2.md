@@ -1,0 +1,152 @@
+# Ponto Pages Phase 2 guarded dedicated publisher
+
+Phase 1 remains a source-only package. Phase 2 adds a separate guarded
+publisher for the dedicated Ponto Pages projects. Its default manual path is a
+credential-free plan. Its opt-in publication path cannot proceed until
+protected GitHub environments, immutable promotion evidence, remote identity
+readback and global coordination all pass.
+
+This source change does not configure a project, read a secret, call
+Cloudflare, deploy an artifact, move a domain, or change a browser URL.
+
+## Inventory used for the boundary
+
+| Legacy source | Inventory finding | Phase 2 treatment |
+| --- | --- | --- |
+| crm/console/wrangler.toml | Ponto Core, Ponto Identity and module control coexist with unrelated CRM integrations and shared storage. | Retain only Ponto roles. The dedicated contract pins the Ponto service identities but copies no unrelated CRM storage, integration or value. |
+| .github/workflows/deploy-crm-pages.yml | The composite CRM publisher owns legacy skincos and skincos-staging deployment paths. | Explicitly excluded. It must never be pointed at the dedicated Ponto projects. |
+| .github/workflows/cloudflare-pages-sync-ponto.yml | Existing Ponto secret custody is coupled to the legacy composite Pages projects. | Not reused. The successor uses separate protected environments. |
+| .github/workflows/ponto-progressive-release.yml | Existing Ponto rollout and rollback governance is domain-wide. | It remains the evidence source for later release decisions; Phase 2 does not replace it. |
+
+The template excludes the unrelated share bucket, Atendimento, Escala, Meta
+Ads and local-development controls. It contains no account, route, custom
+domain or secret value.
+
+## Dedicated target contract
+
+| Target | Exact Pages project | GitHub environment | Rollout state |
+| --- | --- | --- | --- |
+| staging | skincos-ponto-staging | ponto-pages-staging | staging |
+| production | skincos-ponto | ponto-pages-production | maintenance |
+
+The composite project names skincos and skincos-staging are forbidden. The
+workflow has a literal staging to skincos-ponto-staging and production to
+skincos-ponto mapping. The configured project variable is compared with that
+literal map; it never selects the project.
+
+The Ponto-only service map is also literal:
+
+| Target | PONTO_CORE | PONTO_IDENTITY |
+| --- | --- | --- |
+| staging | skincos-ponto-core-staging | skincos-insumos-staging |
+| production | skincos-ponto-core | skincos-insumos |
+
+MODULE_CONTROL remains a protected target-specific opaque identifier. It is
+validated by format and is not committed.
+
+## Custody and runtime boundary
+
+deployment/github-environment.template.json is a names-only checklist for
+ponto-pages-staging and ponto-pages-production. It contains no values and
+permits no repository-secret fallback. The guarded job receives Cloudflare
+custody, API origins and Ponto keys only from the selected target environment,
+writes the secret payload in runner temporary storage without echoing it, and
+removes that material at the end of the job.
+
+The runtime template permits only:
+
+- PONTO_CORE and PONTO_IDENTITY service bindings;
+- MODULE_CONTROL KV binding;
+- deployment environment, release SHA and rollout state;
+- exact Core and Identity version identifiers for staging only;
+- PONTO_API_TARGET, AUTH_API_TARGET and INSUMOS_API_TARGET, plus actor,
+  network-context and release-probe keys.
+
+Auth and health have their own fail-closed origin checks. AUTH_API_TARGET and
+INSUMOS_API_TARGET are therefore explicit roles beside PONTO_API_TARGET;
+omitting either makes its route unavailable. Production rejects version
+overrides while in maintenance.
+
+## Manual candidate and publication gates
+
+ponto-pages-candidate-preflight.yml is the first manual, non-publishing stage.
+It attests a full SHA reachable from main, checks the source package, and emits
+standard preview promotion evidence. Its promotion gate explicitly uses
+ponto-pages-staging rather than a generic preview or staging environment.
+
+ponto-pages-governed-publisher.yml is the sole dedicated Pages publisher. It
+always checks a full SHA and emits a sanitised plan. Its publish input defaults
+to false. With the default, no protected environment, Cloudflare credential or
+mutation job is reached.
+
+If publish is explicitly true, the workflow requires:
+
+1. Candidate evidence for staging, and exact staging evidence for production.
+2. For staging, a successful Ponto Core staging-candidate run and its exact
+   immutable receipt, selected by core_candidate_run_id.
+3. The exact protected target environment and PONTO_PAGES_PUBLISH_ENABLED set
+   to true.
+4. Literal project, Ponto service, API-origin, version and source-SHA checks.
+5. Fresh silent Cloudflare readback of project name, branch, subdomain, absence
+   of custom domains and disabled automatic Git publication, followed by
+   secret-name/type readback after the guarded secret configuration.
+6. A dedicated deploy:ponto-pages target lease, revalidated immediately before
+   secret configuration and again immediately before deployment.
+7. Same-SHA Pages deployment readback and a sanitised receipt.
+
+An absent Git source is a valid direct-upload state. If a Git source is later
+connected, all automatic production and preview deployment controls must be
+explicitly disabled. The workflow re-reads this at mutation time and does not
+infer it from an earlier snapshot.
+
+Run locally from workforce/ponto-pages with:
+
+    npm run publisher:validate
+
+This validates source contracts only. It cannot authorize publication.
+
+## Next Ponto Core staging candidate receipt
+
+This Phase 2 change deliberately does not create, configure or publish a Ponto
+Core candidate. The next Core-only phase must emit the exact receipt that the
+staging Pages publisher will consume. This prevents a Pages release from
+pointing at a legacy Core SHA or an unrelated Worker version.
+
+The future successful main workflow must be named Ponto Core staging candidate
+and live at .github/workflows/ponto-core-staging-candidate.yml. The person
+starting a guarded staging Pages publication supplies that run identifier as
+core_candidate_run_id. The publisher silently verifies that run's success,
+main branch and exact release SHA before it downloads precisely one artifact:
+
+    ponto-core-staging-candidate-<source_sha>
+
+That artifact must contain ponto-core-staging-candidate.json with contract id
+skincos/ponto-core-staging-candidate/v1. Its receipt must identify the same
+repository, commit SHA and Git tree as the Pages release; the exact
+skincos-ponto-core-staging and skincos-insumos-staging service names; and the
+same Core and Identity version IDs held by the protected staging environment.
+It must also attest successful staging readiness and same-artifact rollback,
+zero routes and custom domains, Workers.dev and preview URLs disabled, and no
+values, credentials or PII. A missing, stale, mismatched or public receipt
+blocks before Cloudflare is read or changed.
+
+The production Pages path does not accept candidate-version overrides. It is
+instead chained to the immutable successful staging Pages evidence for the
+same source SHA, whose staging step has already verified this Core receipt.
+
+## Required evidence before the guarded publisher is used
+
+1. Keep ponto-pages-staging and ponto-pages-production protected, with
+   target-specific custody matching the names-only template and no repository
+   fallback.
+2. Run the non-publishing candidate preflight and retain immutable evidence;
+   never substitute an arbitrary workflow run as a staging predecessor.
+3. Before a staging Pages publication, produce the exact future Ponto Core
+   candidate receipt described above; a legacy Ponto Core SHA or a receipt from
+   another run is not an acceptable substitute.
+4. Read back each exact Pages project at release time and reject shared state,
+   automatic Git publication, a domain or identity mismatch.
+5. Complete synthetic staging login, CSRF, Ponto read/write, terminal pairing
+   and same-artifact rollback tests before a production staging run is used.
+6. Approve host, cookie and terminal re-pairing plans before any domain or
+   redirect change. The current CRM host remains untouched.

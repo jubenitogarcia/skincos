@@ -141,6 +141,17 @@
       "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled"}
     },
     {
+      "id": "ponto-pages",
+      "workflow": ".github/workflows/ponto-pages-governed-publisher.yml",
+      "concurrencyPrefix": "ponto-pages-governed-publisher-",
+      "publishes": ["Pages:skincos-ponto", "Pages:skincos-ponto-staging"],
+      "resources": ["dedicated Ponto Pages bundle", "skincos-ponto Pages project", "skincos-ponto-staging Pages project", "Ponto Core and Identity service bindings", "Ponto module-control KV binding"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "PONTO_API_TARGET", "AUTH_API_TARGET", "INSUMOS_API_TARGET", "PONTO_ACTOR_HMAC_KEY", "PONTO_NETWORK_CONTEXT_KEY", "PONTO_RELEASE_PROBE_HMAC_KEY", "SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET"],
+      "migrationPaths": [],
+      "environments": ["staging", "production"],
+      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "candidatePreflight": ".github/workflows/ponto-pages-candidate-preflight.yml", "rollback": "A later same-artifact rollback receipt is required; this publisher never changes a custom domain, DNS record or legacy CRM Pages project."}
+    },
+    {
       "id": "crm-pages",
       "workflow": ".github/workflows/deploy-crm-pages.yml",
       "concurrencyPrefix": "ponto-surface-mutation",

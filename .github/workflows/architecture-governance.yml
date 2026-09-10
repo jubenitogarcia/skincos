@@ -118,6 +118,8 @@ jobs:
         run: node --test .github/scripts/ponto-core-baseline-publisher.test.mjs
       - name: Test Ponto Core staging predecessor attestation
         run: node --test .github/scripts/ponto-core-staging-precondition.test.mjs
+      - name: Test Ponto Pages dedicated promotion environments
+        run: node --test .github/scripts/ponto-pages-promotion-environment.test.mjs
       - name: Test Ponto cancelled Core rollback guard
         run: node --test .github/scripts/ponto-cancelled-core-before-mutation.test.mjs .github/scripts/ponto-automatic-rollback-safety.test.mjs
 

@@ -86,6 +86,11 @@
       "purpose": "Dedicated Finance UI Pages projects; staging and production are isolated projects."
     },
     {
+      "id": "ponto-pages-dedicated-writer",
+      "resource": "deploy:ponto-pages:<environment>",
+      "purpose": "Serializes only the dedicated Ponto Pages projects through the guarded manual publisher; it has no authority over the legacy composite CRM Pages projects."
+    },
+    {
       "id": "schedule-public-read-adapter-writer",
       "resource": "deploy:schedule-public-read-adapter:staging",
       "purpose": "Serializes the isolated Schedule public-read staging adapter only; it is not authority to publish the Schedule core."
@@ -260,6 +265,15 @@
       "automaticDeploymentsRequired": false
     },
     {
+      "id": "ponto-pages-dedicated",
+      "platform": "cloudflare-pages",
+      "projects": ["skincos-ponto", "skincos-ponto-staging"],
+      "canonicalDeployWorkflow": ".github/workflows/ponto-pages-governed-publisher.yml",
+      "coordinationGroup": "ponto-pages-dedicated-writer",
+      "mutationWorkflows": [".github/workflows/ponto-pages-governed-publisher.yml"],
+      "automaticDeploymentsRequired": false
+    },
+    {
       "id": "ponto-waf",
       "platform": "cloudflare-waf",
       "canonicalDeployWorkflow": ".github/workflows/ponto-waf-security.yml",
@@ -314,7 +328,9 @@
     }
   ],
   "pagesGitIntegration": {
-    "governedProjects": ["skincos", "skincos-staging", "skincos-finance-ui", "skincos-finance-ui-staging"],
+    "governedProjects": ["skincos", "skincos-staging", "skincos-finance-ui", "skincos-finance-ui-staging", "skincos-ponto", "skincos-ponto-staging"],
+    "directUploadProjects": ["skincos-ponto", "skincos-ponto-staging"],
+    "directUploadEvidence": "A null source is an allowed proof that Git integration is absent for a dedicated direct-upload project; a non-null source must expose all required disabled deployment fields.",
     "connectionMayExist": true,
     "automaticDeploymentsMustBeDisabled": true,
     "requiredEvidenceFields": ["source.config.deployments_enabled", "source.config.production_deployments_enabled", "source.config.preview_deployment_setting"],
