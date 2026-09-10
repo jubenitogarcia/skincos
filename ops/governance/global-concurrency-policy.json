@@ -43,6 +43,7 @@
       "patterns": [
         "workforce/timekeeping/**",
         "workforce/ponto-pages/scripts/verify-ponto-core-staging-candidate.mjs",
+        "workforce/ponto-pages/scripts/verify-ponto-pages-staging-smoke.mjs",
         "workforce/ponto-pages/scripts/verify-ponto-pages-same-artifact-rollback.mjs",
         "workforce/ponto-pages/scripts/verify-ponto-pages-remote-project.mjs",
         "crm/console/**",
