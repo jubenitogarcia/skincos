@@ -23,6 +23,7 @@ export const VALIDATION_COMMANDS = Object.freeze({
   ponto: Object.freeze([
     "node --test .github/scripts/ponto-core-baseline-publisher.test.mjs",
     "node --test .github/scripts/ponto-core-staging-precondition.test.mjs",
+    "node --test .github/scripts/ponto-core-staging-candidate.test.mjs",
     "node --test .github/scripts/ponto-cancelled-core-before-mutation.test.mjs .github/scripts/ponto-automatic-rollback-safety.test.mjs",
   ]),
   influencer: Object.freeze([
