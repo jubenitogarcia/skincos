@@ -4,12 +4,12 @@ on:
   pull_request:
     paths:
       - 'workforce/ponto-pages/**'
-      - '.github/workflows/deploy-ponto-pages.yml'
+      - '.github/workflows/validate-ponto-pages-phase1.yml'
   push:
     branches: [main]
     paths:
       - 'workforce/ponto-pages/**'
-      - '.github/workflows/deploy-ponto-pages.yml'
+      - '.github/workflows/validate-ponto-pages-phase1.yml'
   workflow_dispatch:
     inputs:
       publish:
@@ -50,4 +50,4 @@ jobs:
           node-version: 22.23.1
       - run: npm ci
       - name: Stop because this phase has no publisher
-        run: npm run deploy:check
+        run: npm run publisher:assert-disabled

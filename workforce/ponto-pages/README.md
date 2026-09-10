@@ -31,8 +31,8 @@ npm run check
 
 `npm run dev` starts a Vite-only browser preview at `127.0.0.1:5173`. It proves
 the standalone client boots, but it does not emulate Pages Functions or grant
-authentication. Use `npm run deploy:check` only to verify the intentional
-no-publisher guard; it exits non-zero by design.
+authentication. Use `npm run publisher:assert-disabled` only to verify the
+intentional no-publisher guard; it exits non-zero by design.
 
 On the shared Windows workspace, invoke Node commands through
 `scripts/invoke-skincos-wsl.ps1` from the repository root, with

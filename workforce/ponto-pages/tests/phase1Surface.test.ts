@@ -19,7 +19,7 @@ describe('Ponto Pages Phase 1 release boundary', () => {
   })
 
   it('makes the dedicated workflow source-only by default', async () => {
-    const workflow = await readFile(resolve(repositoryRoot, '.github/workflows/deploy-ponto-pages.yml'), 'utf8')
+    const workflow = await readFile(resolve(repositoryRoot, '.github/workflows/validate-ponto-pages-phase1.yml'), 'utf8')
     expect(workflow).toContain('default: false')
     expect(workflow).toContain('npm run check')
     expect(workflow).not.toMatch(/(?:wrangler|pages)\s+deploy/i)
