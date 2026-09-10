@@ -1,10 +1,11 @@
 # Clientes: refresh seguro das fontes
 
-> O entrypoint legado `crm/api/scripts/refresh-atendimento-source.mjs` e seu
-> launcher nativo permanecem apenas como compatibilidade fail-closed e não
-> devem ser reativados. Para sincronizar a fonte de Atendimento, use o
-> [runbook dedicado](atendimento-source-sync.md), que executa em unidade
-> isolada, com credencial Google privada, backup, lock e fingerprint.
+> Os entrypoints legados `crm/api/scripts/refresh-atendimento-source.mjs` e
+> `crm/api/scripts/import-atendimento-sheet.mjs` (inclusive `--write`) permanecem
+> apenas como compatibilidade fail-closed e não devem ser reativados. Para
+> sincronizar a fonte de Atendimento, use o [runbook dedicado](atendimento-source-sync.md),
+> que executa em unidade isolada, com credencial Google privada, backup, lock e
+> fingerprint.
 
 O importador de Atendimento lê a planilha Google em modo somente leitura e
 materializa as linhas idempotentes no schema `crm_atendimento`. Cada aplicação

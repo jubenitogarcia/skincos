@@ -1,27 +1,12 @@
 #!/usr/bin/env node
-import { createAtendimentoStore } from '../server/atendimento/store.js'
-import { importAtendimentoFromGoogleSheet } from '../server/atendimento/importer.js'
 
-const args = new Set(process.argv.slice(2))
-const dryRun = !args.has('--write')
-
-const actor = {
-  id: 'cli-import',
-  username: 'cli-import',
-  role: 'GESTOR',
-  allowedModules: ['atendimento'],
-}
-
-async function main() {
-  const store = createAtendimentoStore()
-  const result = await importAtendimentoFromGoogleSheet(store, { actor, dryRun })
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-  if (dryRun) {
-    process.stdout.write('Dry-run concluído. Use --write para gravar no banco configurado em DATABASE_URL.\n')
-  }
-}
-
-main().catch((error) => {
-  process.stderr.write(`${error?.stack || error?.message || error}\n`)
-  process.exitCode = 1
-})
+// This compatibility entry point used to accept `--write` and bypassed the
+// target-bound source-sync contract.  Keep the command name only to prevent a
+// stale operator or automation from silently reaching a configured database.
+process.stderr.write(`${JSON.stringify({
+  ok: false,
+  code: 'ATENDIMENTO_LEGACY_SHEET_IMPORT_RETIRED',
+  replacement: 'npm run sync-atendimento-source -- --dry-run',
+  writesDisabled: true,
+})}\n`)
+process.exitCode = 78
