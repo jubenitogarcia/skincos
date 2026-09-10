@@ -3,19 +3,22 @@ import {
   createAtendimentoUnitScopedProjectionSource,
 } from './atendimentoProjectionExporter.mjs'
 
-export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION = 'atendimento/crm-core/confirmed-unit-membership-source/v2'
+export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION = 'atendimento/crm-core/confirmed-unit-membership-source/v3'
 
-// This source is limited to evidence whose lifecycle is owned and observable in
-// the Atendimento database. App registration and supplemental lead imports are
-// intentionally not included: their source contract says absence is not
-// retirement evidence, so exporting them here could retain a revoked unit.
+// This source is limited to relations whose lifecycle is owned and observable
+// in Atendimento. Finance-owned Caixa sales are intentionally not included:
+// they need their own owner contract and admission before they can influence a
+// CRM Core projection. App registration and supplemental lead imports are also
+// intentionally excluded: their source contract says absence is not retirement
+// evidence, so exporting them here could retain a revoked unit.
 // A unit only becomes exportable after it resolves to a canonical
 // `crm_atendimento.units` row; an identity without such evidence has no output
 // row and can never fall back to a global/wildcard scope.
 export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS = Object.freeze({
   version: ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION,
-  membership: 'union of active attendance and Caixa sale evidence resolved through canonical units',
-  deferredSources: 'app registration and supplemental lead remain excluded until their owner provides complete-snapshot retirement evidence or explicit tombstones',
+  membership: 'active attendance evidence resolved through canonical units',
+  excludedDomains: Object.freeze(['finance']),
+  deferredSources: 'Finance Caixa sale evidence, app registration and supplemental lead remain excluded until their owner provides a dedicated source contract plus complete-snapshot retirement evidence or explicit tombstones',
   duplicateEvidence: 'one identity/unit row, with the latest observed source timestamp',
   divergentUnits: 'valid multi-unit membership; emit one row for each canonical unit slug',
   missingEvidence: 'no projection row; there is no global or wildcard fallback',
@@ -52,21 +55,6 @@ const MEMBERSHIP_CTE = `WITH unit_membership_evidence AS (
   WHERE member.source_type = 'attendance_client'
     AND member.source_id ~ '${UUID_TEXT_PATTERN}'
     AND attendance.deleted_at IS NULL
-
-  UNION ALL
-
-  SELECT member.identity_id,
-    unit.slug AS unit_slug,
-    sale.created_at AS observed_at
-  FROM crm_atendimento.global_client_identity_members member
-  JOIN crm_caixa.sales sale ON sale.customer_id = CASE
-    WHEN member.source_id ~ '${UUID_TEXT_PATTERN}' THEN member.source_id::uuid
-    ELSE NULL
-  END
-  JOIN crm_atendimento.units unit ON unit.id = sale.unit_id
-  WHERE member.source_type = 'caixa_customer'
-    AND member.source_id ~ '${UUID_TEXT_PATTERN}'
-
 ), unit_memberships AS (
   SELECT identity_id, unit_slug, max(observed_at) AS observed_at
   FROM unit_membership_evidence
