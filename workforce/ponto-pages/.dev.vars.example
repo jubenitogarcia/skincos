@@ -1,0 +1,5 @@
+# Phase 1 deliberately has no runnable remote or local Pages deployment.
+# Never put real credentials or production values in this file.
+SKINCOS_DEPLOYMENT_ENV=unconfigured
+LOCAL_AUTH_BYPASS=false
+LOCAL_AUTH_ALLOWED_HOSTS=localhost,127.0.0.1

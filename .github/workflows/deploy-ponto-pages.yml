@@ -1,0 +1,53 @@
+name: Validate Ponto Pages phase 1
+
+on:
+  pull_request:
+    paths:
+      - 'workforce/ponto-pages/**'
+      - '.github/workflows/deploy-ponto-pages.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'workforce/ponto-pages/**'
+      - '.github/workflows/deploy-ponto-pages.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Reserved for a future governed publisher; Phase 1 always remains source-only.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  validate-source-only-package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workforce/ponto-pages
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
+      - run: npm ci
+      - run: npm run check
+
+  reject-publish-intent:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workforce/ponto-pages
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.23.1
+      - run: npm ci
+      - name: Stop because this phase has no publisher
+        run: npm run deploy:check
