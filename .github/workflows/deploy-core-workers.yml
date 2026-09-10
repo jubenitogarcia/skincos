@@ -201,7 +201,8 @@ jobs:
           fetch-depth: 1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
-          node-version: 22.12.0
+          # node:sqlite is required by the Inventory migration and RBAC tests.
+          node-version: 22.23.1
       - name: Activate the Inventory-pinned pnpm
         run: |
           set -euo pipefail
@@ -312,7 +313,8 @@ jobs:
           fetch-depth: 1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
-          node-version: 22.12.0
+          # node:sqlite is required by the Inventory migration and RBAC tests.
+          node-version: 22.23.1
       - name: Activate the Inventory-pinned pnpm
         run: |
           set -euo pipefail
@@ -2310,7 +2312,8 @@ jobs:
           fetch-depth: 1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
-          node-version: 22.12.0
+          # node:sqlite is required by the Inventory migration and RBAC tests.
+          node-version: 22.23.1
       - name: Activate the Inventory-pinned pnpm
         run: |
           set -euo pipefail
