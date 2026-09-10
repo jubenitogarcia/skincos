@@ -47,6 +47,15 @@
         "invite_token_hmac",
         "Upload private delivery artifact"
       ]
+    },
+    {
+      "workflow": ".github/workflows/ponto-core-staging-candidate.yml",
+      "reason": "Consumes only immutable artifacts from canonical Ponto staging publisher runs to assemble a Pages-consumable receipt. It has no Cloudflare credential, GitHub environment, coordination lease, or Cloudflare mutation authority; the same-artifact traffic drill remains inside deploy-core-workers.yml.",
+      "requiredMarkers": [
+        "Build the Pages-consumable candidate from canonical-only evidence",
+        "ponto-core-staging-rollback-drill-coreApi-$RELEASE_SHA",
+        "ponto-core-staging-rollback-drill-identityWorkforce-$RELEASE_SHA"
+      ]
     }
   ],
   "coordinationGroups": [

@@ -34,6 +34,29 @@
     "requiresSourceReachableFromMain": true,
     "reason": "Publication remains opt-in and runs only from the exact protected target environment after literal project identity, source provenance, protected custody and remote coordination gates pass."
   },
+  "secretBridge": {
+    "contractId": "skincos/ponto-pages-environment-secret-bridge/v1",
+    "workflowPath": ".github/workflows/ponto-pages-secret-bridge.yml",
+    "manualOnly": true,
+    "requiresExplicitApply": true,
+    "sourceEnvironmentByTarget": {
+      "staging": "staging",
+      "production": "production"
+    },
+    "targetEnvironmentByTarget": {
+      "staging": "ponto-pages-staging",
+      "production": "ponto-pages-production"
+    },
+    "requiresRootCustodyWorkflow": ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+    "transport": "gh-environment-secret-api-stdin-only",
+    "doesNotMutateCloudflare": true,
+    "doesNotEnablePublication": true,
+    "derivationDomains": {
+      "PONTO_PAGES_ACTOR_HMAC_KEY": "skincos/ponto/actor/v1",
+      "PONTO_PAGES_NETWORK_CONTEXT_KEY": "skincos/ponto/network-context/v1",
+      "PONTO_PAGES_RELEASE_PROBE_HMAC_KEY": "skincos/ponto/release-probe/v1"
+    }
+  },
   "projectPolicy": {
     "forbiddenProjects": [
       "skincos",
