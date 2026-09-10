@@ -192,12 +192,25 @@ async function ensureDir(dir) {
   try { await fs.mkdir(dir, { recursive: true }) } catch { /* ignore */ }
 }
 
+function resolveLegacyPontoRuntimeMode(input) {
+  const configured = String(input ?? '').trim().toLowerCase()
+  if (!configured || configured === 'enabled') return { mode: 'enabled', configurationValid: true }
+  if (configured === 'read-only') return { mode: 'read-only', configurationValid: true }
+  if (configured === 'disabled') return { mode: 'disabled', configurationValid: true }
+
+  // Never echo an unexpected environment value in an HTTP response or log.
+  return { mode: 'disabled', configurationValid: false }
+}
+
 export function registerPontoRoutes(app, { coreStateDir }) {
   const STORE_FILE_V1 = path.join(coreStateDir, 'ponto_store.v1.json')
   const STORE_FILE = path.join(coreStateDir, 'ponto_store.v2.json')
   const AUDIT_FILE = path.join(coreStateDir, 'ponto_audit.v1.jsonl')
 
   const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production'
+  const legacyRuntime = resolveLegacyPontoRuntimeMode(process.env.PONTO_LEGACY_RUNTIME_MODE)
+  const legacyRuntimeMode = legacyRuntime.mode
+  const legacyPontoWritesEnabled = legacyRuntimeMode === 'enabled'
   const adminToken = String(process.env.PONTO_ADMIN_TOKEN || '').trim()
   const templatesKey = tryParseKey(process.env.PONTO_TEMPLATES_KEY)
   const auditHmacKey = tryParseKey(process.env.PONTO_AUDIT_HMAC_KEY)
@@ -214,6 +227,41 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   const pinMaxAttempts = clampInt(process.env.PONTO_PIN_MAX_ATTEMPTS, 0, 20, 5)
   const pinWindowSeconds = clampInt(process.env.PONTO_PIN_WINDOW_SECONDS, 10, 3600, 600)
   const pinLockSeconds = clampInt(process.env.PONTO_PIN_LOCK_SECONDS, 10, 24 * 3600, 600)
+
+  function legacyPontoUnavailablePayload() {
+    const code = legacyRuntimeMode === 'read-only'
+      ? 'PONTO_LEGACY_READ_ONLY'
+      : 'PONTO_LEGACY_DISABLED'
+    return {
+      ok: false,
+      error: code,
+      code,
+      mode: legacyRuntimeMode,
+      writesDisabled: true,
+      ...(legacyRuntime.configurationValid ? {} : { configurationValid: false })
+    }
+  }
+
+  function respondLegacyPontoUnavailable(res) {
+    return res.status(503).set('cache-control', 'no-store').json(legacyPontoUnavailablePayload())
+  }
+
+  function isSafeLegacyPontoRead(req) {
+    return req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS'
+  }
+
+  function isLegacyPontoHealth(req) {
+    return String(req.originalUrl || '').split('?')[0] === '/api/ponto/health'
+  }
+
+  // This precedes every legacy Ponto route so a future mutation cannot bypass
+  // the retirement switch. The default remains the historic JSON writer.
+  app.use('/api/ponto', (req, res, next) => {
+    if (legacyRuntimeMode === 'enabled') return next()
+    if (legacyRuntimeMode === 'read-only' && isSafeLegacyPontoRead(req)) return next()
+    if (legacyRuntimeMode === 'disabled' && isLegacyPontoHealth(req) && isSafeLegacyPontoRead(req)) return next()
+    return respondLegacyPontoUnavailable(res)
+  })
 
   const faceCache = new Map() // employeeId -> number[][]
   const pinAttempts = new Map() // employeeId -> { count, firstAt, lockedUntil }
@@ -248,11 +296,13 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   let writeQueue = Promise.resolve()
 
   function schedulePersist() {
+    if (!legacyPontoWritesEnabled) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { void persistNow() }, 500).unref()
   }
 
   async function persistNow() {
+    if (!legacyPontoWritesEnabled) return
     await ensureDir(coreStateDir)
     const tmp = STORE_FILE + '.tmp'
     await fs.writeFile(tmp, JSON.stringify(state, null, 2))
@@ -260,11 +310,13 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   }
 
   function enqueueWrite(fn) {
+    if (!legacyPontoWritesEnabled) return Promise.resolve()
     writeQueue = writeQueue.then(fn, fn)
     return writeQueue
   }
 
   async function appendAudit(event) {
+    if (!legacyPontoWritesEnabled) return
     await ensureDir(coreStateDir)
     await fs.appendFile(AUDIT_FILE, JSON.stringify(event) + '\n')
   }
@@ -293,6 +345,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   }
 
   async function writeAudit(type, data, actor) {
+    if (!legacyPontoWritesEnabled) return null
     const ev = makeAuditEvent(type, data, actor)
     state.audit = { ...(state.audit || {}), lastHash: ev.hash }
     await appendAudit(ev)
@@ -401,8 +454,10 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       res.status(401).json({ ok: false, error: 'DEVICE_UNAUTHORIZED' })
       return null
     }
-    device.lastSeenAt = new Date().toISOString()
-    schedulePersist()
+    if (legacyPontoWritesEnabled) {
+      device.lastSeenAt = new Date().toISOString()
+      schedulePersist()
+    }
     return { device, actor: actorFromReq(req, { kind: 'device', id: device.id, label: device.label, unit: device.unit }) }
   }
 
@@ -595,7 +650,8 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   }
 
   async function loadNow() {
-    await ensureDir(coreStateDir)
+    if (legacyRuntimeMode === 'disabled') return
+    if (legacyPontoWritesEnabled) await ensureDir(coreStateDir)
     const loadedV2 = await tryReadJson(STORE_FILE)
     if (loadedV2 && typeof loadedV2 === 'object') {
       state = {
@@ -637,7 +693,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
         if (out.length >= maxDescriptors) break
       }
       if (out.length) faceCache.set(e.id, out)
-      if (needsReencrypt && out.length) {
+      if (needsReencrypt && out.length && legacyPontoWritesEnabled) {
         e.faceTemplates = out.slice(0, maxDescriptors).map((d) => encryptJson(templatesKey, d))
         e.updatedAt = new Date().toISOString()
         needsPersist = true
@@ -647,7 +703,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
     faceIndexDirty = true
   }
 
-  void loadNow()
+  if (legacyRuntimeMode !== 'disabled') void loadNow()
 
   function findLastEmployeePunch(employeeId) {
     for (let i = state.records.length - 1; i >= 0; i--) {
@@ -798,6 +854,7 @@ export function registerPontoRoutes(app, { coreStateDir }) {
   // Health (public)
   // -------------------------------------------------------------
   app.get('/api/ponto/health', async (req, res) => {
+    if (legacyRuntimeMode === 'disabled') return respondLegacyPontoUnavailable(res)
     const cryptoTemplates = !!templatesKey
     const ok = !(isProd && !cryptoTemplates)
     if (!ok) {
@@ -813,6 +870,8 @@ export function registerPontoRoutes(app, { coreStateDir }) {
       employees: state.employees.filter((e) => e && !e.deletedAt).length,
       devices: state.devices.filter((d) => d && !d.revokedAt).length,
       records: state.records.length,
+      legacyRuntimeMode,
+      writesEnabled: legacyPontoWritesEnabled,
       ...(ok ? {} : { error: 'TEMPLATES_KEY_NOT_CONFIGURED' })
     })
   })
