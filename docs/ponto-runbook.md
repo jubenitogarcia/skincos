@@ -36,13 +36,22 @@ Depois de uma release real verificada em `disabled`, a atestação opcional
 dois nomes de arquivo não existiam naquele instante. Ela é independente do
 publisher nativo: não publica, reinicia, remove, importa, consulta D1 nem muda
 o modo do serviço. O helper root-only exige política privada com `crm.service`,
-PID ativo, `PONTO_LEGACY_RUNTIME_MODE=disabled` e hashes de artefato da release;
-o sudo do runner aceita somente a operação literal de atestação. O artefato
-sanitizado inclui hashes, PID e modo, mas nunca caminhos, conteúdo ou ambiente.
+PID ativo no cgroup esperado, release imutável `root:root`, SHA/metadado da
+fonte, `PONTO_LEGACY_RUNTIME_MODE=disabled` e hashes de artefato. Ele compara
+duas leituras da identidade do processo e dos dois `lstat`; o sudo do runner
+aceita somente a operação literal de atestação. A chave que assina o recibo
+fica somente no host root; o ambiente protegido expõe a chave pública, ID e
+digest de política para validar um recibo do run atual. O artefato sanitizado
+inclui hashes, IDs do run, PID e modo, mas nunca caminhos, conteúdo ou ambiente.
 Falha da atestação é fail-closed e não deve ser reinterpretada como confirmação
 de ausência. Sucesso é prova limitada àquele instante: não substitui a
 reconciliação D1, snapshot privado, backup/restore, rollback ou decisão de
 retirada final.
+
+O instalador de custody com `--apply` também só pode rodar de uma árvore de
+release imutável, não gravável por grupo/outros e pertencente a root. Ele recusa
+intencionalmente o checkout do runner; antes de instalá-lo no host, a release
+mesclada deve ser colocada na árvore root-owned que será registrada na política.
 
 ## Saúde e 404
 

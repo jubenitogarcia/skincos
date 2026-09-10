@@ -28,17 +28,30 @@ const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file
 
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-legacy-absence-attestation-"));
-  const stateDirectory = path.join(directory, "runtime", "core");
-  const releaseDirectory = path.join(directory, "release");
-  const entrypoint = path.join(releaseDirectory, "run-api-linux.sh");
-  const artifact = path.join(releaseDirectory, "pontoRoutes.js");
+  const varDirectory = path.join(directory, "runtime", "var");
+  const stateDirectory = path.join(varDirectory, "core");
+  // Keep the fixture on the same fixed native-release layout enforced by the
+  // root helper. A generic temporary "release" directory must never satisfy
+  // the production policy contract.
+  const releaseDirectory = path.join(directory, "release", "crm-service");
+  const entrypoint = path.join(releaseDirectory, "scripts", "crm", "run-api-linux.sh");
+  const artifact = path.join(releaseDirectory, "crm", "api", "server", "pontoRoutes.js");
+  const metadata = path.join(releaseDirectory, ".skincos-crm-native-release.json");
   const ledger = path.join(directory, "private-ledger");
   fs.mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(releaseDirectory, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.dirname(entrypoint), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.dirname(artifact), { recursive: true, mode: 0o700 });
   fs.writeFileSync(entrypoint, "#!/usr/bin/env bash\nexec node server.js\n", { mode: 0o600 });
   fs.writeFileSync(artifact, "export const legacyPontoWritesEnabled = false;\n", { mode: 0o600 });
+  fs.writeFileSync(metadata, JSON.stringify({
+    schemaVersion: 1,
+    kind: "skincos-crm-native-release",
+    target: "production",
+    releaseSha: sourceSha,
+  }) + "\n", { mode: 0o600 });
   fs.mkdirSync(ledger, { mode: 0o700 });
   const signing = crypto.generateKeyPairSync("ed25519");
+  const receiptSigning = crypto.generateKeyPairSync("ed25519");
   const policy = {
     schemaVersion: 1,
     domain: PONTO_LEGACY_ABSENCE_DOMAIN,
@@ -53,17 +66,37 @@ function fixture() {
       target: "production",
       purpose: "ponto-legacy-absence-attestation",
     },
+    receiptSigning: {
+      keyId: "ponto-legacy-absence-receipt-v1",
+      publicKeyPem: receiptSigning.publicKey.export({ type: "spki", format: "pem" }),
+    },
     legacyStateDirectory: stateDirectory,
     service: {
       unit: "crm.service",
       runtimeMode: "disabled",
+      releaseRootPath: releaseDirectory,
+      releaseSourceSha: sourceSha,
+      releaseMetadataPath: metadata,
+      releaseMetadataSha256: sha256(metadata),
       entrypointPath: entrypoint,
       entrypointSha256: sha256(entrypoint),
       releaseArtifactPath: artifact,
       releaseArtifactSha256: sha256(artifact),
     },
   };
-  return { directory, stateDirectory, entrypoint, artifact, ledger, signing, policy };
+  return {
+    directory,
+    varDirectory,
+    stateDirectory,
+    releaseDirectory,
+    entrypoint,
+    artifact,
+    metadata,
+    ledger,
+    signing,
+    receiptSigning,
+    policy,
+  };
 }
 
 function authorization(policy, signing, changes = {}) {
@@ -107,8 +140,28 @@ function observedService(policy) {
     unit: policy.service.unit,
     pid: 1234,
     runtimeMode: "disabled",
+    varDir: path.dirname(policy.legacyStateDirectory),
+    nativeReleaseRoot: policy.service.releaseRootPath,
+    nativeDeploymentTarget: "production",
+    workingDirectory: path.join(policy.service.releaseRootPath, "crm", "api"),
+    executable: "/usr/bin/node",
+    command: ["/usr/bin/node", "server.js"],
+    processStartTime: "123456",
+    cgroupSha256: "c".repeat(64),
     entrypointSha256: policy.service.entrypointSha256,
     artifactSha256: policy.service.releaseArtifactSha256,
+    metadataSha256: policy.service.releaseMetadataSha256,
+  };
+}
+
+function receiptValidationOptions(item) {
+  return {
+    expectedReceiptSigningKeyId: item.policy.receiptSigning.keyId,
+    expectedReceiptSigningPublicKeyPem: item.policy.receiptSigning.publicKeyPem,
+    expectedSourceSha: sourceSha,
+    expectedPolicySha256: absencePolicySha256(item.policy),
+    expectedWorkflowRunId: "456",
+    expectedRunAttempt: 1,
   };
 }
 
@@ -132,7 +185,7 @@ test("absence policy and signature fail closed on mode, service, workflow, or si
     assert.equal(verifyAbsenceAuthorization(signed, { policy: item.policy, now }).authorizationId, attestationId);
     assert.throws(
       () => verifyAbsenceAuthorization({ ...signed, sourceSha: "b".repeat(40) }, { policy: item.policy, now }),
-      /absence authorization signature is invalid/,
+      /absence authorization release source differs/,
     );
     const invalidMode = structuredClone(item.policy);
     invalidMode.service.runtimeMode = "read-only";
@@ -162,6 +215,7 @@ test("attests exactly the fixed absent pair once with mode, PID, and release has
       ledgerUid: process.getuid(),
       ledgerGid: process.getgid(),
       inspectService: observedService,
+      receiptSigningPrivateKeyPem: item.receiptSigning.privateKey.export({ type: "pkcs8", format: "pem" }),
     });
     assert.equal(result.passed, true);
     assert.equal(result.attestationId, attestationId);
@@ -170,7 +224,7 @@ test("attests exactly the fixed absent pair once with mode, PID, and release has
     assert.deepEqual(result.absences.map((entry) => entry.id), ["ponto-store-v2", "ponto-audit-v1"]);
     assert.match(result.release.entrypointSha256, /^[0-9a-f]{64}$/);
     assert.match(result.release.artifactSha256, /^[0-9a-f]{64}$/);
-    assert.deepEqual(validateLegacyAbsenceReceipt(result), result);
+    assert.deepEqual(validateLegacyAbsenceReceipt(result, receiptValidationOptions(item)), result);
     const serialized = JSON.stringify(result);
     assert.equal(serialized.includes(item.stateDirectory), false);
     assert.equal(serialized.includes(item.entrypoint), false);
@@ -184,6 +238,7 @@ test("attests exactly the fixed absent pair once with mode, PID, and release has
         ledgerUid: process.getuid(),
         ledgerGid: process.getgid(),
         inspectService: observedService,
+        receiptSigningPrivateKeyPem: item.receiptSigning.privateKey.export({ type: "pkcs8", format: "pem" }),
       }),
       /authorization was already consumed/,
     );
@@ -192,7 +247,7 @@ test("attests exactly the fixed absent pair once with mode, PID, and release has
   }
 });
 
-test("uses lstat ENOENT for both fixed names and rejects a present file or symlink", {
+test("uses lstat ENOENT only for both fixed names and rejects a present file, symlink, or missing state directory", {
   skip: !canExercisePrivateLedger,
 }, () => {
   const present = fixture();
@@ -210,6 +265,7 @@ test("uses lstat ENOENT for both fixed names and rejects a present file or symli
         ledgerUid: process.getuid(),
         ledgerGid: process.getgid(),
         inspectService: observedService,
+        receiptSigningPrivateKeyPem: present.receiptSigning.privateKey.export({ type: "pkcs8", format: "pem" }),
       }),
       /absence source file exists/,
     );
@@ -223,6 +279,7 @@ test("uses lstat ENOENT for both fixed names and rejects a present file or symli
         ledgerUid: process.getuid(),
         ledgerGid: process.getgid(),
         inspectService: observedService,
+        receiptSigningPrivateKeyPem: present.receiptSigning.privateKey.export({ type: "pkcs8", format: "pem" }),
       }),
       /authorization was already consumed/,
     );
@@ -236,27 +293,55 @@ test("uses lstat ENOENT for both fixed names and rejects a present file or symli
         ledgerUid: process.getuid(),
         ledgerGid: process.getgid(),
         inspectService: observedService,
+        receiptSigningPrivateKeyPem: symlinked.receiptSigning.privateKey.export({ type: "pkcs8", format: "pem" }),
       }),
       /absence source file exists/,
     );
     fs.rmSync(missingDirectory.stateDirectory, { recursive: true, force: true });
-    const missingResult = attestLegacyPontoAbsence({
-      policy: missingDirectory.policy,
-      authorization: authorization(missingDirectory.policy, missingDirectory.signing),
-      now,
-      ledgerDirectory: missingDirectory.ledger,
-      ledgerUid: process.getuid(),
-      ledgerGid: process.getgid(),
-      inspectService: observedService,
-    });
-    assert.deepEqual(missingResult.absences, [
-      { id: "ponto-store-v2", absent: true },
-      { id: "ponto-audit-v1", absent: true },
-    ]);
+    assert.throws(
+      () => attestLegacyPontoAbsence({
+        policy: missingDirectory.policy,
+        authorization: authorization(missingDirectory.policy, missingDirectory.signing),
+        now,
+        ledgerDirectory: missingDirectory.ledger,
+        ledgerUid: process.getuid(),
+        ledgerGid: process.getgid(),
+        inspectService: observedService,
+        receiptSigningPrivateKeyPem: missingDirectory.receiptSigning.privateKey.export({ type: "pkcs8", format: "pem" }),
+      }),
+      /absence state directory cannot be inspected/,
+    );
   } finally {
     fs.rmSync(present.directory, { recursive: true, force: true });
     fs.rmSync(symlinked.directory, { recursive: true, force: true });
     fs.rmSync(missingDirectory.directory, { recursive: true, force: true });
+  }
+});
+
+test("fails closed when the observed native process identity changes during the absence decision", {
+  skip: !canExercisePrivateLedger,
+}, () => {
+  const item = fixture();
+  let observed = 0;
+  try {
+    assert.throws(
+      () => attestLegacyPontoAbsence({
+        policy: item.policy,
+        authorization: authorization(item.policy, item.signing),
+        now,
+        ledgerDirectory: item.ledger,
+        ledgerUid: process.getuid(),
+        ledgerGid: process.getgid(),
+        inspectService: (policy) => ({
+          ...observedService(policy),
+          processStartTime: String(123456 + observed++),
+        }),
+        receiptSigningPrivateKeyPem: item.receiptSigning.privateKey.export({ type: "pkcs8", format: "pem" }),
+      }),
+      /observed service or legacy Ponto state changed during absence attestation/,
+    );
+  } finally {
+    fs.rmSync(item.directory, { recursive: true, force: true });
   }
 });
 
@@ -267,12 +352,17 @@ test("separate wrapper, installer, and sudoers expose only the literal absence a
   const sudoers = read("ops/runtime/github-actions-runner/skincos-native-custody.sudoers");
   assert.match(helper, /fs\.lstatSync\(file\)/);
   assert.match(helper, /PONTO_LEGACY_RUNTIME_MODE=/);
+  assert.match(helper, /processStartTime/);
+  assert.match(helper, /cgroupSha256/);
+  assert.match(helper, /receiptSignature/);
   assert.match(helper, /attest-absence/);
   assert.match(helper, /PONTO_LEGACY_ABSENCE_LEDGER_DIR/);
   assert.doesNotMatch(wrapper, /--source|--destination|--service|--mode|"\$@"/);
   assert.match(wrapper, /bootstrap-absence\|attest-absence/);
+  assert.match(wrapper, /^#!\/bin\/bash/m);
   assert.match(wrapper, /\/usr\/bin\/timeout --signal=KILL 120s/);
   assert.match(installer, /SKINCOS_PONTO_LEGACY_ABSENCE_ATTESTATION/);
+  assert.match(installer, /assert_root_owned_immutable_source_tree/);
   assert.match(sudoers, /skincos-attest-ponto-legacy-absence attest-absence/);
   assert.doesNotMatch(sudoers, /skincos-attest-ponto-legacy-absence bootstrap-absence/);
 });

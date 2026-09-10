@@ -35,7 +35,47 @@ Usage: scripts/runtime/install-ponto-legacy-snapshot-custody.sh [--apply]
 Without --apply, validates the fixed helpers and wrappers. With --apply, root
 installs those fixed files and prepares only root-private custody directories.
 The installer never accepts a source path, destination path, service, or mode.
+
+For --apply, this script must itself be run from a root-owned, non-group- and
+non-world-writable immutable release tree. It intentionally refuses a runner
+checkout, so an untrusted CI workspace can never become root helper source.
 EOF
+}
+
+assert_root_owned_immutable_path() {
+  local candidate="$1"
+  local label="$2"
+  local owner mode
+
+  [[ -e "$candidate" && ! -L "$candidate" ]] || {
+    echo "$label must exist and must not be a symbolic link" >&2
+    exit 78
+  }
+  read -r owner mode < <(stat -c '%u %a' -- "$candidate") || {
+    echo "$label ownership cannot be inspected" >&2
+    exit 78
+  }
+  [[ "$owner" == '0' && "$mode" =~ ^[0-7]{3,4}$ ]] || {
+    echo "$label must be root-owned" >&2
+    exit 78
+  }
+  if (( (8#$mode & 8#022) != 0 )); then
+    echo "$label must not be group- or world-writable" >&2
+    exit 78
+  fi
+}
+
+assert_root_owned_immutable_source_tree() {
+  local current="$ROOT_DIR"
+  while :; do
+    assert_root_owned_immutable_path "$current" 'custody installer source tree'
+    [[ "$current" == '/' ]] && break
+    current="$(dirname -- "$current")"
+  done
+  assert_root_owned_immutable_path "$HELPER_SOURCE" 'bounded legacy snapshot helper source'
+  assert_root_owned_immutable_path "$WRAPPER_SOURCE" 'bounded legacy snapshot wrapper source'
+  assert_root_owned_immutable_path "$ABSENCE_WRAPPER_SOURCE" 'bounded legacy absence wrapper source'
+  assert_root_owned_immutable_path "$SUDOERS_SOURCE" 'native custody sudoers source'
 }
 
 while [[ "$#" -gt 0 ]]; do
@@ -65,7 +105,7 @@ if [[ "$APPLY" -ne 1 ]]; then
 fi
 
 [[ "$(id -u)" == '0' ]] || { echo '--apply requires root' >&2; exit 78; }
-for command in grep id install node timeout tr visudo; do
+for command in grep id install node stat timeout tr visudo; do
   command -v "$command" >/dev/null 2>&1 || { echo "$command is required" >&2; exit 78; }
 done
 id "$RUNNER_USER" >/dev/null 2>&1 || { echo 'capture runner account is unavailable' >&2; exit 78; }
@@ -89,6 +129,7 @@ grep -Fqx "$ABSENCE_SUDOERS_GRANT" "$SUDOERS_SOURCE" || {
   echo 'native custody source lacks the exact legacy absence attestation grant' >&2
   exit 78
 }
+assert_root_owned_immutable_source_tree
 
 install -d -o root -g root -m 0755 "$HELPER_LIBRARY_DIR"
 install -d -o root -g root -m 0700 "$RUNTIME_DIR"

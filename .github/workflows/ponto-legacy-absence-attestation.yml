@@ -13,7 +13,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ponto-legacy-absence-attestation
+  # Serialize with the native crm.service transaction: the root observation is
+  # meaningful only after the dedicated release has stopped changing.
+  group: crm-native-publisher-production
   cancel-in-progress: false
 
 jobs:
@@ -117,6 +119,10 @@ jobs:
       - name: Attest the fixed legacy pair is absent and emit only a sanitized receipt
         env:
           AUTHORIZATION_FILE: ${{ env.PONTO_LEGACY_ABSENCE_AUTHORIZATION_FILE }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_LEGACY_ABSENCE_ATTESTATION_POLICY_SHA256: ${{ vars.PONTO_LEGACY_ABSENCE_ATTESTATION_POLICY_SHA256 }}
+          PONTO_LEGACY_ABSENCE_RECEIPT_SIGNING_KEY_ID: ${{ vars.PONTO_LEGACY_ABSENCE_RECEIPT_SIGNING_KEY_ID }}
+          PONTO_LEGACY_ABSENCE_RECEIPT_SIGNING_PUBLIC_KEY: ${{ vars.PONTO_LEGACY_ABSENCE_RECEIPT_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           [[ -s "$AUTHORIZATION_FILE" ]] || { echo 'PONTO_LEGACY_ABSENCE_AUTHORIZATION_REQUIRED'; exit 1; }

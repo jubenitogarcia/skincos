@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 # Fixed root entrypoint for the point-in-time legacy Ponto absence attestation.

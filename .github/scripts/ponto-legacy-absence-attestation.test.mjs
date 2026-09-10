@@ -11,6 +11,7 @@ test("legacy absence attestation is dispatch-only, main-bound, protected, and is
   assert.match(workflow, /github\.run_attempt == 1/);
   assert.match(workflow, /runs-on: \[self-hosted, Linux, X64, skincos-native-custody\]/);
   assert.match(workflow, /environment: ponto-legacy-absence-attestation/);
+  assert.match(workflow, /group: crm-native-publisher-production/);
   assert.match(workflow, /git rev-parse origin\/main/);
   assert.match(workflow, /PONTO_LEGACY_ABSENCE_MAIN_ADVANCED/);
 });
@@ -26,6 +27,8 @@ test("absence workflow signs a bounded one-use authorization and invokes only th
     'workflowJob: "attest"',
     'crypto.sign(null, Buffer.from(canonical), key)',
     "sudo -n /usr/local/sbin/skincos-attest-ponto-legacy-absence attest-absence",
+    "PONTO_LEGACY_ABSENCE_RECEIPT_SIGNING_KEY_ID",
+    "PONTO_LEGACY_ABSENCE_RECEIPT_SIGNING_PUBLIC_KEY",
   ]) assert.ok(workflow.includes(marker), marker);
   assert.doesNotMatch(workflow, /skincos-capture-ponto-legacy-snapshot|skincos-provision-ponto-jit|systemctl|wrangler|d1 |secret put|deploy|import-ponto-json/);
 });

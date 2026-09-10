@@ -29,11 +29,13 @@ from the `skincos` service account and is never used by pull-request workflows.
 - the separate `/usr/local/sbin/skincos-attest-ponto-legacy-absence
   attest-absence` command is available only to `skincos-actions`. It accepts a
   distinct signed, short-lived authorization on stdin and is bound by a
-  separate root-owned policy to `crm.service`, `disabled`, two release hashes
-  and the fixed legacy pair. It only checks `MainPID`/mode and `lstat ENOENT`
-  for those names, writes a root-private one-use ledger, and returns a
-  sanitized point-in-time receipt. It cannot bootstrap policy, select a path,
-  read file content, restart a service, import data, or invoke a publisher;
+  separate root-owned policy to `crm.service`, `disabled`, an immutable native
+  release SHA/metadata, release hashes and the fixed legacy pair. It verifies
+  the native process cgroup, command, working directory, start time and safe
+  environment twice around the fixed `lstat ENOENT` observations, writes a
+  root-private one-use ledger, and returns a root-Ed25519-signed sanitized
+  point-in-time receipt. It cannot bootstrap policy, select a path, read file
+  content, restart a service, import data, or invoke a publisher;
 - the runner workspace and credentials stay on native Linux storage and are
   not copied to Windows, the repository, artifacts, or logs.
 
@@ -100,17 +102,19 @@ Use `.github/workflows/ponto-legacy-absence-attestation.yml` only after a root
 operator has installed the helper and bootstrapped its separate private policy.
 The protected dispatch signs a new Ed25519 authorization bound to the current
 `main` SHA and consumes it once. The root helper verifies the fixed active
-service PID, its `PONTO_LEGACY_RUNTIME_MODE=disabled` marker, and the hashes of
-the policy-selected wrapper and Ponto route artifact before requiring `ENOENT`
-from `lstat` for each of the two fixed legacy names. The uploaded receipt has
-only authorization/policy/source IDs, PID, mode, artifact hashes and the two
-absence booleans; it excludes paths, process command lines, environment values,
-file content, credentials and PII.
+service PID, its `PONTO_LEGACY_RUNTIME_MODE=disabled` marker, the native release
+source metadata, process identity and hashes of the policy-selected wrapper and
+Ponto route artifact before requiring `ENOENT` from `lstat` twice for each fixed
+legacy name. The uploaded receipt has only authorization/policy/source and run
+IDs, PID, mode, artifact hashes and the two absence booleans; it excludes paths,
+process command lines, environment values, file content, credentials and PII.
 
 The protected `ponto-legacy-absence-attestation` environment must independently
-hold `PONTO_LEGACY_ABSENCE_ATTESTATION_PRIVATE_KEY` and expose only its key ID
-and the canonical private-policy SHA-256 as variables. The workflow fails if
-the policy digest, key ID, ref, current `main` SHA, run attempt, signature or
+hold `PONTO_LEGACY_ABSENCE_ATTESTATION_PRIVATE_KEY` and expose only its
+authorization key ID, receipt signing key ID/public key and canonical
+private-policy SHA-256 as variables. The corresponding receipt private key is
+provisioned only by local root bootstrap. The workflow fails if the policy
+digest, key IDs, ref, current `main` SHA, run attempt, root receipt signature or
 one-use ledger does not match; it must not fall back to the snapshot policy, a
 publisher credential, or a manual shell command.
 
