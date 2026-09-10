@@ -15,11 +15,12 @@ function plan() {
   return JSON.parse(readFileSync(planPath, "utf8"))
 }
 
-test("the canonical admission plan keeps production and route mutations disabled", () => {
+test("the canonical admission plan authorizes only custodied staging preparation while keeping production and routes disabled", () => {
   const summary = assertCrmDomainBackfillAdmission(plan())
-  assert.equal(summary.state, "pre-cut")
+  assert.equal(summary.state, "staging-preparation-authorized")
   assert.equal(summary.productionMutationAllowed, false)
   assert.equal(summary.publicRouteMutationAllowed, false)
+  assert.deepEqual(summary.stagingSourceReadAuthorized, ["atendimento-client-memberships"])
   assert.deepEqual(summary.stagingProjectionCandidateIds, ["atendimento-client-memberships"])
   assert.deepEqual(summary.eligibleNow, [])
   assert.deepEqual(summary.excludedDomainIds, ["identity-delivery", "inventory", "finance", "messaging", "timekeeping", "booking"])
