@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+CONTRACT="$ROOT_DIR/scripts/runtime/crm-native-release-contract.mjs"
+PREPARE="$ROOT_DIR/scripts/runtime/prepare-crm-native-release.sh"
+ROLLBACK="$ROOT_DIR/scripts/runtime/rollback-crm-native-release.sh"
+UNIT="$ROOT_DIR/ops/runtime/units/crm.service"
+LAUNCHER="$ROOT_DIR/scripts/crm/run-api-linux.sh"
+LIFECYCLE_INSTALLER="$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh"
+NATIVE_MANAGER="$ROOT_DIR/scripts/runtime/manage-native-runtime.sh"
+
+for file in "$PREPARE" "$ROLLBACK"; do
+  bash -n "$file"
+done
+node --check "$CONTRACT"
+bash -n "$LAUNCHER"
+bash -n "$LIFECYCLE_INSTALLER"
+bash -n "$NATIVE_MANAGER"
+
+grep -Fx 'WorkingDirectory=/opt/skincos/current/crm-service' "$UNIT" >/dev/null
+grep -Fx 'ExecStart=/opt/skincos/current/crm-service/scripts/crm/run-api-linux.sh' "$UNIT" >/dev/null
+! grep -F '/opt/skincos/current/source' "$UNIT" >/dev/null
+! grep -F 'systemctl' "$PREPARE" >/dev/null
+! grep -F 'systemctl' "$ROLLBACK" >/dev/null
+! grep -F '/opt/skincos/current/source' "$PREPARE" >/dev/null
+! grep -F '/opt/skincos/current/source' "$ROLLBACK" >/dev/null
+grep -F 'CRM_NATIVE_RELEASE_ROOT must resolve to an immutable CRM-only release.' "$LAUNCHER" >/dev/null
+grep -F 'CRM launcher does not originate from CRM_NATIVE_RELEASE_ROOT.' "$LAUNCHER" >/dev/null
+grep -F 'crm.service is deliberately excluded:' "$LIFECYCLE_INSTALLER" >/dev/null
+! sed -n '/^units=(/,/^)/p' "$LIFECYCLE_INSTALLER" | grep -F 'crm.service' >/dev/null
+grep -F 'NOT_RESTARTED %s (dedicated CRM custody required)' "$NATIVE_MANAGER" >/dev/null
+grep -F 'NOT_VALIDATED %s (dedicated CRM custody and smoke required)' "$NATIVE_MANAGER" >/dev/null
+! sed -n '/^shared_units=(/,/^)/p' "$NATIVE_MANAGER" | grep -F 'crm.service' >/dev/null
+! grep -F 'backend/scripts/e2e.sh' "$NATIVE_MANAGER" >/dev/null
+
+tmp_root="$(mktemp -d -t skincos-crm-native-test-XXXXXXXX)"
+linked_root=''
+cleanup() {
+  rm -rf -- "$tmp_root"
+  [[ -z "$linked_root" ]] || rm -rf -- "$linked_root"
+}
+trap cleanup EXIT INT TERM
+
+# Render the fixed CRM unit through the same placeholders used by the lifecycle
+# renderer, substituting only a disposable pointer so systemd-analyze can
+# validate syntax without requiring a live /opt release.
+render_root="$tmp_root/rendered-crm-service"
+mkdir -p "$render_root/scripts/crm"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$render_root/scripts/crm/run-api-linux.sh"
+chmod 0755 "$render_root/scripts/crm/run-api-linux.sh"
+sed \
+  -e "s|/opt/skincos/current/crm-service|$render_root|g" \
+  -e "s|__STATE_ROOT__|$tmp_root/state|g" \
+  -e "s|__CONFIG_ROOT__|$tmp_root/config|g" \
+  -e "s|__LOG_ROOT__|$tmp_root/log|g" \
+  "$UNIT" >"$tmp_root/crm.service"
+systemd-analyze verify "$tmp_root/crm.service"
+
+release_a='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+release_b='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+node - "$tmp_root" "$release_a" "$release_b" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const [root, firstSha, secondSha] = process.argv.slice(2);
+const makeRelease = (releaseSha, sourceTree, predecessor) => {
+  const releaseRoot = path.join(root, `candidate-${releaseSha}`);
+  fs.mkdirSync(path.join(releaseRoot, 'scripts', 'crm'), { recursive: true });
+  fs.mkdirSync(path.join(releaseRoot, 'crm', 'api'), { recursive: true });
+  fs.mkdirSync(path.join(releaseRoot, 'crm', 'console'), { recursive: true });
+  fs.writeFileSync(path.join(releaseRoot, 'scripts', 'crm', 'run-api-linux.sh'), '#!/usr/bin/env bash\nexit 0\n');
+  fs.writeFileSync(path.join(releaseRoot, 'crm', 'api', 'package-lock.json'), '{"lockfileVersion":3}\n');
+  fs.writeFileSync(path.join(releaseRoot, 'crm', 'console', '.keep'), 'fixture\n');
+  const sourceArchiveSha256 = releaseSha === firstSha ? '1'.repeat(64) : '2'.repeat(64);
+  fs.writeFileSync(path.join(releaseRoot, '.skincos-crm-native-release.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    kind: 'skincos-crm-native-release',
+    releaseSha,
+    sourceTree,
+    sourceArchiveSha256,
+    target: 'test',
+    custody: {
+      schemaVersion: 1,
+      issuer: 'github-actions',
+      repository: 'jubenitogarcia/skincos',
+      workflow: 'prepare-release-candidate.yml',
+      runId: releaseSha === firstSha ? '101' : '102',
+      artifactName: `release-source-${releaseSha}`,
+      sourceSha: releaseSha,
+      sourceArchiveSha256,
+    },
+    artifacts: {
+      apiEntrypoint: 'scripts/crm/run-api-linux.sh',
+      apiPackageLock: 'crm/api/package-lock.json',
+      consoleRoot: 'crm/console',
+    },
+    predecessor,
+  }, null, 2)}\n`);
+  return releaseRoot;
+};
+makeRelease(firstSha, 'c'.repeat(40), null);
+makeRelease(secondSha, 'd'.repeat(40), { releaseSha: firstSha, sourceTree: 'c'.repeat(40) });
+NODE
+
+export CRM_NATIVE_RELEASE_BASE="$tmp_root/releases"
+export CRM_NATIVE_CURRENT_LINK="$tmp_root/current/crm-service"
+export CRM_NATIVE_PREVIOUS_LINK="$tmp_root/current/crm-service.previous"
+
+dry_output="$(bash "$PREPARE" --target test --release-sha "$release_a" --candidate-root "$tmp_root/candidate-$release_a")"
+grep -Fx 'dry_run=true' <<<"$dry_output" >/dev/null
+grep -Fx 'service_restart=false' <<<"$dry_output" >/dev/null
+[[ ! -e "$CRM_NATIVE_CURRENT_LINK" && ! -L "$CRM_NATIVE_CURRENT_LINK" ]]
+
+if staging_apply_output="$(env -u CRM_NATIVE_RELEASE_BASE -u CRM_NATIVE_CURRENT_LINK -u CRM_NATIVE_PREVIOUS_LINK \
+  bash "$PREPARE" --target staging --release-sha "$release_a" --candidate-root "$tmp_root/not-opened" --apply 2>&1)"; then
+  echo 'Staging apply unexpectedly bypassed the custody gate.' >&2
+  exit 1
+fi
+grep -F 'external authenticated custody bootstrap is not installed' <<<"$staging_apply_output" >/dev/null
+
+if test_apply_output="$(bash "$PREPARE" --target test --release-sha "$release_a" --candidate-root "$tmp_root/not-opened" --apply 2>&1)"; then
+  echo 'Test apply unexpectedly bypassed the explicit test harness guard.' >&2
+  exit 1
+fi
+grep -F 'explicitly enabled isolated test harness' <<<"$test_apply_output" >/dev/null
+
+linked_root="$(mktemp -d -t skincos-crm-native-test-XXXXXXXX)"
+mkdir -p "$linked_root/redirected-release-base"
+ln -s -- "$linked_root/redirected-release-base" "$linked_root/releases"
+if linked_apply_output="$(CRM_NATIVE_RELEASE_BASE="$linked_root/releases" \
+  CRM_NATIVE_CURRENT_LINK="$linked_root/current/crm-service" \
+  CRM_NATIVE_PREVIOUS_LINK="$linked_root/current/crm-service.previous" \
+  CRM_NATIVE_PUBLISHER_TEST_MODE=1 \
+  bash "$PREPARE" --target test --release-sha "$release_a" --candidate-root "$tmp_root/candidate-$release_a" --apply 2>&1)"; then
+  echo 'Test apply unexpectedly accepted a symbolic-link release base.' >&2
+  exit 1
+fi
+grep -F 'must not use symbolic links' <<<"$linked_apply_output" >/dev/null
+rm -rf -- "$linked_root"
+linked_root=''
+
+CRM_NATIVE_PUBLISHER_TEST_MODE=1 bash "$PREPARE" \
+  --target test --release-sha "$release_a" --candidate-root "$tmp_root/candidate-$release_a" --apply >/dev/null
+[[ "$(node "$CONTRACT" pointer-release-sha --release-base "$CRM_NATIVE_RELEASE_BASE" --link "$CRM_NATIVE_CURRENT_LINK")" == "$release_a" ]]
+[[ ! -e "$CRM_NATIVE_PREVIOUS_LINK" && ! -L "$CRM_NATIVE_PREVIOUS_LINK" ]]
+
+CRM_NATIVE_PUBLISHER_TEST_MODE=1 bash "$PREPARE" \
+  --target test --release-sha "$release_b" --candidate-root "$tmp_root/candidate-$release_b" --apply >/dev/null
+[[ "$(node "$CONTRACT" pointer-release-sha --release-base "$CRM_NATIVE_RELEASE_BASE" --link "$CRM_NATIVE_CURRENT_LINK")" == "$release_b" ]]
+[[ "$(node "$CONTRACT" pointer-release-sha --release-base "$CRM_NATIVE_RELEASE_BASE" --link "$CRM_NATIVE_PREVIOUS_LINK")" == "$release_a" ]]
+
+rollback_dry_output="$(bash "$ROLLBACK" --target test --to-release-sha "$release_a")"
+grep -Fx 'dry_run=true' <<<"$rollback_dry_output" >/dev/null
+grep -Fx 'service_restart=false' <<<"$rollback_dry_output" >/dev/null
+CRM_NATIVE_PUBLISHER_TEST_MODE=1 bash "$ROLLBACK" \
+  --target test --to-release-sha "$release_a" --apply >/dev/null
+[[ "$(node "$CONTRACT" pointer-release-sha --release-base "$CRM_NATIVE_RELEASE_BASE" --link "$CRM_NATIVE_CURRENT_LINK")" == "$release_a" ]]
+[[ "$(node "$CONTRACT" pointer-release-sha --release-base "$CRM_NATIVE_RELEASE_BASE" --link "$CRM_NATIVE_PREVIOUS_LINK")" == "$release_b" ]]
+
+malicious="$tmp_root/candidate-malicious"
+cp -a -- "$tmp_root/candidate-$release_a" "$malicious"
+ln -s -- /etc/passwd "$malicious/untrusted-link"
+if node "$CONTRACT" validate-release --release-root "$malicious" --release-sha "$release_a" --target test >/dev/null 2>&1; then
+  echo 'A candidate with a symbolic link unexpectedly passed validation.' >&2
+  exit 1
+fi
+
+if node "$CONTRACT" validate-layout \
+  --target production \
+  --release-base "$CRM_NATIVE_RELEASE_BASE" \
+  --current-link "$CRM_NATIVE_CURRENT_LINK" \
+  --previous-link "$CRM_NATIVE_PREVIOUS_LINK" >/dev/null 2>&1; then
+  echo 'Production layout unexpectedly passed the CRM-native contract.' >&2
+  exit 1
+fi
+
+echo 'CRM native publisher source contract checks passed'
