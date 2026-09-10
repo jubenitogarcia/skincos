@@ -130,6 +130,9 @@ test('preflight produces a sanitized source-only plan and never admits a publish
   assert.equal(report.singleWriterPolicy.futurePublisherRequiresPolicyAdmission, true);
   assert.equal(report.candidateRoles.I.publicTraffic, 'forbidden');
   assert.equal(report.candidateRoles.C.owner, 'jubenitogarcia/skincos-crm-core');
+  assert.equal(report.core.provenanceVerified, false);
+  assert.equal(report.core.publisherEligible, false);
+  assert.equal(report.core.state, 'metadata-only-owner-receipt-required');
   assert.ok(report.explicitlyOutOfScope.includes('identity-resolver-R'));
   assert.ok(report.externalGates.deferredBeforeResolverReceiptOrActivation.includes('pontoSeparated'));
   assert.doesNotMatch(JSON.stringify(report), /private-value-that-must-never-leave-custody/);

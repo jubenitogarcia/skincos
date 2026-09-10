@@ -26,6 +26,15 @@ observado, `GITHUB_SHA`, a entrada do operador e a ponta observada de
 `origin/main`, se não estiver em `main`, ou se o evento não for
 `workflow_dispatch`.
 
+Os dois campos de Core são somente metadados de handoff neste fluxo: ele ainda
+não possui um recibo assinado pelo dono de Core que prenda repositório, SHA e
+digest. Por isso o relatório sempre os marca como `metadata-only-owner-receipt-required`,
+com `provenanceVerified=false` e `publisherEligible=false`. Nem um resultado
+`preflight-complete-source-only` valida um candidato Core nem pode autorizar
+upload, rota, tráfego ou qualquer publisher. O futuro produtor de Core deverá
+emitir e o futuro publisher deverá verificar esse recibo imutável antes de
+qualquer mutação.
+
 Ele também reutiliza o readback sanitizado de Identity para verificar que o
 Worker de produção correto está sem `workers.dev`, rota ou domínio público e
 que a custódia externa apresenta os nomes e tipos esperados. A chave de emissão

@@ -259,7 +259,10 @@ function identityCustodyBlockers(summary) {
 function externalGates(env) {
   return Object.freeze({
     identityCustodyAttested: isTrue(env.CRM_PRIVATE_CANDIDATE_IDENTITY_CUSTODY_ATTESTED),
-    coreSourceCustodyAttested: isTrue(env.CRM_PRIVATE_CANDIDATE_CORE_SOURCE_CUSTODY_ATTESTED),
+    // This flag is an operator declaration only.  It intentionally does not
+    // attest or bind the two Core input values: this source-only workflow has
+    // no Core-owned signed receipt to verify yet.
+    coreSourceCustodyDeclared: isTrue(env.CRM_PRIVATE_CANDIDATE_CORE_SOURCE_CUSTODY_ATTESTED),
     pontoSeparated: isTrue(env.CRM_PRIVATE_CANDIDATE_PONTO_SEPARATED_ATTESTED),
     backfillReconciled: isTrue(env.CRM_PRIVATE_CANDIDATE_BACKFILL_RECONCILED_ATTESTED),
     singlePublisher: isTrue(env.CRM_PRIVATE_CANDIDATE_SINGLE_PUBLISHER_ATTESTED),
@@ -309,7 +312,9 @@ function coreHandoff(env) {
     ownerRepository: CORE_REPOSITORY,
     sourceSha: safeSha(env.CRM_PRIVATE_CANDIDATE_CORE_SOURCE_SHA),
     artifactDigest: safeDigest(env.CRM_PRIVATE_CANDIDATE_CORE_ARTIFACT_DIGEST),
-    state: 'independent-owner-required',
+    state: 'metadata-only-owner-receipt-required',
+    provenanceVerified: false,
+    publisherEligible: false,
   });
 }
 
@@ -335,7 +340,6 @@ export function evaluateCrmPrivateProductionCandidatePreflight({
   if (!core.sourceSha) blockers.push('independent Core source SHA is absent or malformed');
   if (!core.artifactDigest) blockers.push('independent Core artifact digest is absent or malformed');
   if (!gates.identityCustodyAttested) blockers.push('Identity custody attestation is absent');
-  if (!gates.coreSourceCustodyAttested) blockers.push('independent Core source custody attestation is absent');
 
   if (operation === 'request-private-inert-candidates') {
     if (text(env.CRM_PRIVATE_CANDIDATE_CONFIRMATION) !== PRIVATE_CANDIDATE_REQUEST_CONFIRMATION) {
@@ -401,7 +405,7 @@ export function evaluateCrmPrivateProductionCandidatePreflight({
       C: {
         owner: CORE_REPOSITORY,
         worker: 'skincos-crm-core',
-        state: 'independent-repository-candidate-required',
+        state: 'independent-owner-receipt-required',
         publicTraffic: 'forbidden',
       },
       G: {
