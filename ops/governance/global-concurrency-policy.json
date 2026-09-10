@@ -128,10 +128,17 @@
         "crm/api/**",
         "api/**",
         "inventory/**",
+        "integration/atendimento/crm-core-projection-exporter/**",
+        "shared/crm-auth/atendimentoProjectionBackfillBatch.js",
+        "shared/crm-auth/atendimentoProjectionDeltaBaseline.js",
         "ops/runtime/**",
         "scripts/runtime/**",
         ".github/workflows/atendimento-*.yml",
-        ".github/scripts/atendimento-*.mjs"
+        ".github/scripts/atendimento-*.mjs",
+        "docs/extraction/crm-domain-backfill-admission.json",
+        "docs/extraction/crm-domain-backfill-admission.md",
+        "docs/runbooks/atendimento-crm-core-projection-backfill-custody.md",
+        "scripts/verify-crm-domain-backfill-admission.mjs"
       ],
       "sharedInputs": true
     },
