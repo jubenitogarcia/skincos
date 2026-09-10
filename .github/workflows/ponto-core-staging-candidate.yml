@@ -97,6 +97,17 @@ jobs:
             name="${pair%%:*}"
             run_id="${pair#*:}"
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$root/$name/run.json"
+            head_branch="$(node -e "const run=require(process.argv[1]);process.stdout.write(String(run.head_branch||''))" "$root/$name/run.json")"
+            if [[ "$head_branch" == main ]]; then
+              printf '%s\n' '{"ref":"","object":{"type":"","sha":""}}' > "$root/$name/release-ref.json"
+            elif [[ "$head_branch" == "skincos/release/ponto/$RELEASE_SHA" ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$head_branch" > "$root/$name/release-ref.json"
+            else
+              # Preserve the untrusted child identity for the validator.  It
+              # deliberately fails closed rather than widening the accepted
+              # branch/tag set before any artifact is consumed.
+              printf '%s\n' '{"ref":"","object":{"type":"","sha":""}}' > "$root/$name/release-ref.json"
+            fi
           done
           gh run download "$TIMEKEEPING_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "ponto-surface-timekeeping-staging-$RELEASE_SHA" --dir "$root/timekeeping/surface"
@@ -135,9 +146,9 @@ jobs:
             node - "$CANDIDATE_ROOT/candidate-input.json" <<'NODE'
           const fs = require("fs");
           const load = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-          const sanitizeRun = (run) => ({
+          const sanitizeRun = (run, releaseRef) => ({
             runId: String(run?.id || ""),
-            workflowPath: String(run?.path || "").replace(/@refs\/heads\/[^\s]+$/, ""),
+            workflowPath: String(run?.path || "").replace(/@refs\/(?:heads|tags)\/[^\s]+$/, ""),
             event: String(run?.event || ""),
             status: String(run?.status || ""),
             conclusion: String(run?.conclusion || ""),
@@ -146,6 +157,9 @@ jobs:
             headBranch: String(run?.head_branch || ""),
             repository: String(run?.repository?.full_name || ""),
             headRepository: String(run?.head_repository?.full_name || ""),
+            releaseRef: String(releaseRef?.ref || ""),
+            releaseTagObjectType: String(releaseRef?.object?.type || ""),
+            releaseTagTarget: String(releaseRef?.object?.sha || "").toLowerCase(),
           });
           const root = process.env.CANDIDATE_ROOT;
           const output = process.argv[2];
@@ -159,16 +173,25 @@ jobs:
             },
             upstream: {
               timekeeping: {
-                run: sanitizeRun(load(`${root}/upstream/timekeeping/run.json`)),
+                run: sanitizeRun(
+                  load(`${root}/upstream/timekeeping/run.json`),
+                  load(`${root}/upstream/timekeeping/release-ref.json`),
+                ),
                 surface: load(process.env.TIMEKEEPING_SURFACE),
               },
               core: {
-                run: sanitizeRun(load(`${root}/upstream/core/run.json`)),
+                run: sanitizeRun(
+                  load(`${root}/upstream/core/run.json`),
+                  load(`${root}/upstream/core/release-ref.json`),
+                ),
                 surface: load(process.env.CORE_SURFACE),
                 mutation: load(process.env.CORE_MUTATION),
               },
               identity: {
-                run: sanitizeRun(load(`${root}/upstream/identity/run.json`)),
+                run: sanitizeRun(
+                  load(`${root}/upstream/identity/run.json`),
+                  load(`${root}/upstream/identity/release-ref.json`),
+                ),
                 surface: load(process.env.IDENTITY_SURFACE),
                 mutation: load(process.env.IDENTITY_MUTATION),
               },

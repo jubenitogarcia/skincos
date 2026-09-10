@@ -60,6 +60,27 @@ function normalizedWorkflowPath(value) {
   return String(value || "").trim().replace(/@refs\/(?:heads|tags)\/[^\s]+$/, "");
 }
 
+/**
+ * A canonical Ponto child normally executes from protected main, but the
+ * governed coordinator dispatches it from the immutable release tag.  Treat
+ * that tag as a source identity, not as a broad alternative branch: it must
+ * have the deterministic name for this SHA and resolve to this exact commit.
+ */
+export function validateCanonicalDrillSource(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) fail("DRILL_SOURCE_SHAPE");
+  const ref = asString(source.ref, "DRILL_SOURCE_REF");
+  const sha = exactSha(source.sha, "DRILL_SOURCE_SHA");
+  const releaseSha = exactSha(source.releaseSha, "DRILL_RELEASE_SHA");
+  const refTargetSha = exactSha(source.refTargetSha, "DRILL_SOURCE_REF_TARGET_SHA");
+  if (sha !== releaseSha || Number(source.runAttempt) !== 1) fail("DRILL_SOURCE_PROVENANCE");
+  if (ref === "refs/heads/main") {
+    if (refTargetSha !== sha) fail("DRILL_SOURCE_MAIN");
+    return { ref, logicalBranch: "main", refTargetSha, runAttempt: 1 };
+  }
+  if (ref !== `refs/tags/skincos/release/ponto/${sha}` || refTargetSha !== sha) fail("DRILL_SOURCE_TAG");
+  return { ref, logicalBranch: "main", refTargetSha, runAttempt: 1 };
+}
+
 function assertRun(run, { workflowPath, sourceSha, repository, code }) {
   if (!run || typeof run !== "object" || Array.isArray(run)) fail(`${code}_RUN_SHAPE`);
   const runId = exactRunId(run.runId ?? run.id, `${code}_RUN_ID`);
@@ -75,11 +96,34 @@ function assertRun(run, { workflowPath, sourceSha, repository, code }) {
     || String(run.headRepository || run.head_repository || "") !== repository
   ) fail(`${code}_RUN_PROVENANCE`);
   const headBranch = String(run.headBranch ?? run.head_branch ?? "");
-  // A Pages-consumable candidate is deliberately stricter than an ordinary
-  // Ponto release child: its source and every consumed canonical artifact
-  // must have been dispatched from the current protected main branch.
-  if (headBranch !== "main") fail(`${code}_RUN_BRANCH`);
-  return { runId, headSha, headBranch };
+  if (headBranch === "main") {
+    return {
+      runId,
+      headSha,
+      headBranch,
+      sourceRef: "refs/heads/main",
+      logicalBranch: "main",
+      refTargetSha: sourceSha,
+    };
+  }
+  const expectedTag = `skincos/release/ponto/${sourceSha}`;
+  const releaseRef = String(run.releaseRef || "");
+  const releaseTagObjectType = String(run.releaseTagObjectType || "");
+  const releaseTagTarget = exactSha(run.releaseTagTarget, `${code}_RUN_TAG_TARGET`);
+  if (
+    headBranch !== expectedTag
+    || releaseRef !== `refs/tags/${expectedTag}`
+    || releaseTagObjectType !== "commit"
+    || releaseTagTarget !== sourceSha
+  ) fail(`${code}_RUN_TAG`);
+  return {
+    runId,
+    headSha,
+    headBranch,
+    sourceRef: releaseRef,
+    logicalBranch: "main",
+    refTargetSha: releaseTagTarget,
+  };
 }
 
 function assertSurface(surface, { code, sourceSha, runId, kind }) {
@@ -174,12 +218,26 @@ export function validateCandidateInput(input, expected = {}) {
   assertMutation(upstream.identity?.mutation, {
     code: "IDENTITY", sourceSha, runId: identityRun.runId, surface: "identityWorkforce",
   });
+  const childRuns = [timekeepingRun, coreRun, identityRun];
+  if (childRuns.some((run) => (
+    run.sourceRef !== timekeepingRun.sourceRef
+    || run.logicalBranch !== timekeepingRun.logicalBranch
+    || run.refTargetSha !== timekeepingRun.refTargetSha
+  ))) fail("UPSTREAM_SOURCE_REF");
 
   return {
-    source: { repository: sourceRepository, sha: sourceSha, tree: sourceTree, candidateRunId },
-    timekeeping: { ...timekeeping, runId: timekeepingRun.runId },
-    core: { ...core, runId: coreRun.runId, service: CORE_WORKER },
-    identity: { ...identity, runId: identityRun.runId, service: IDENTITY_WORKER },
+    source: {
+      repository: sourceRepository,
+      sha: sourceSha,
+      tree: sourceTree,
+      candidateRunId,
+      ref: timekeepingRun.sourceRef,
+      logicalBranch: timekeepingRun.logicalBranch,
+      refTargetSha: timekeepingRun.refTargetSha,
+    },
+    timekeeping: { ...timekeeping, ...timekeepingRun },
+    core: { ...core, ...coreRun, service: CORE_WORKER },
+    identity: { ...identity, ...identityRun, service: IDENTITY_WORKER },
   };
 }
 
@@ -310,7 +368,13 @@ export function validateDrillInput(input) {
   const sourceSha = exactSha(source.sha, "DRILL_SOURCE_SHA");
   const sourceTree = exactSha(source.tree, "DRILL_SOURCE_TREE");
   const runId = exactRunId(source.runId, "DRILL_RUN_ID");
-  if (source.branch !== "main" || Number(source.runAttempt) !== 1) fail("DRILL_SOURCE_MAIN");
+  const sourceProvenance = validateCanonicalDrillSource({
+    ref: source.ref,
+    sha: sourceSha,
+    releaseSha: source.releaseSha,
+    refTargetSha: source.refTargetSha,
+    runAttempt: source.runAttempt,
+  });
 
   const subject = requiredObject(input.subject, "DRILL_SUBJECT_SHAPE");
   const surface = String(subject.surface || "");
@@ -330,8 +394,7 @@ export function validateDrillInput(input) {
       sha: sourceSha,
       tree: sourceTree,
       runId,
-      branch: "main",
-      runAttempt: 1,
+      ...sourceProvenance,
     },
     subject: {
       surface,
@@ -469,6 +532,7 @@ function drillConfigFromProof(proof) {
   const source = requiredObject(proof.source, "DRILL_PROOF_SOURCE_SHAPE");
   const producer = requiredObject(proof.producer, "DRILL_PROOF_PRODUCER_SHAPE");
   const target = requiredObject(proof.target, "DRILL_PROOF_TARGET_SHAPE");
+  if (String(source.logicalBranch || "") !== "main") fail("DRILL_PROOF_SOURCE_LOGICAL_BRANCH");
   return validateDrillInput({
     schemaVersion: 1,
     source: {
@@ -476,7 +540,9 @@ function drillConfigFromProof(proof) {
       sha: source.sha,
       tree: source.tree,
       runId: producer.runId,
-      branch: producer.branch,
+      ref: source.ref,
+      releaseSha: source.sha,
+      refTargetSha: source.refTargetSha,
       runAttempt: producer.runAttempt,
     },
     subject: {
@@ -504,6 +570,9 @@ export function validateDrillProof(proof, candidate, surface) {
   const config = drillConfigFromProof(proof);
   if (
     String(proof.producer?.workflow || "") !== CANONICAL_CORE_WORKFLOW
+    || String(proof.producer?.ref || "") !== config.source.ref
+    || String(proof.producer?.logicalBranch || "") !== config.source.logicalBranch
+    || exactSha(proof.producer?.refTargetSha, "DRILL_PROOF_PRODUCER_REF_TARGET") !== config.source.refTargetSha
     || config.source.repository !== candidate.source.repository
     || config.source.sha !== candidate.source.sha
     || config.source.tree !== candidate.source.tree
@@ -513,6 +582,9 @@ export function validateDrillProof(proof, candidate, surface) {
   if (
     config.subject.surface !== surface
     || config.source.runId !== upstream.runId
+    || config.source.ref !== upstream.sourceRef
+    || config.source.logicalBranch !== upstream.logicalBranch
+    || config.source.refTargetSha !== upstream.refTargetSha
     || config.subject.candidateVersionId !== upstream.candidateVersionId
     || config.subject.incumbentVersionId !== upstream.incumbentVersionId
     || config.subject.timekeepingVersionId !== candidate.timekeeping.candidateVersionId
@@ -712,12 +784,17 @@ export function buildDrillProof({ config, before, rollback, restoration, composi
       workflow: CANONICAL_CORE_WORKFLOW,
       runId: validated.source.runId,
       runAttempt: 1,
-      branch: "main",
+      ref: validated.source.ref,
+      logicalBranch: validated.source.logicalBranch,
+      refTargetSha: validated.source.refTargetSha,
     },
     source: {
       repository: validated.source.repository,
       sha: validated.source.sha,
       tree: validated.source.tree,
+      ref: validated.source.ref,
+      logicalBranch: validated.source.logicalBranch,
+      refTargetSha: validated.source.refTargetSha,
     },
     target: {
       surface: validated.subject.surface,
@@ -837,6 +914,9 @@ export function buildCandidateReceipt({ input, coreDrill, identityDrill, expecte
     sourceRepository: candidate.source.repository,
     sourceSha: candidate.source.sha,
     sourceTree: candidate.source.tree,
+    sourceRef: candidate.source.ref,
+    sourceLogicalBranch: candidate.source.logicalBranch,
+    sourceRefTargetSha: candidate.source.refTargetSha,
     producer: {
       workflow: ".github/workflows/ponto-core-staging-candidate.yml",
       workflowName: "Ponto Core staging candidate",
@@ -1146,6 +1226,18 @@ async function retryRemoteAttestation(operation) {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (command === "assert-drill-source") {
+    const [outputFile] = args;
+    if (!outputFile) fail("USAGE");
+    writeJson(outputFile, validateCanonicalDrillSource({
+      ref: process.env.PONTO_DRILL_SOURCE_REF,
+      sha: process.env.PONTO_DRILL_SOURCE_SHA,
+      releaseSha: process.env.PONTO_DRILL_RELEASE_SHA,
+      refTargetSha: process.env.PONTO_DRILL_SOURCE_REF_TARGET_SHA,
+      runAttempt: process.env.PONTO_DRILL_RUN_ATTEMPT,
+    }));
+    return;
+  }
   if (command === "validate-input") {
     const [inputFile, outputFile] = args;
     if (!inputFile || !outputFile) fail("USAGE");

@@ -487,8 +487,23 @@ jobs:
           CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'The same-artifact staging Identity drill must dispatch from main'; exit 1; }
-          [[ "$GITHUB_RUN_ATTEMPT" == 1 && "$RELEASE_SHA" == "$GITHUB_SHA" ]] || { echo 'The same-artifact staging Identity drill requires the exact first-attempt main source'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/identity-staging-drill"
+          source_ref_target="$GITHUB_SHA"
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            :
+          elif [[ "$GITHUB_REF" == "refs/tags/skincos/release/ponto/$RELEASE_SHA" ]]; then
+            source_ref_target="$(git ls-remote --refs origin "$GITHUB_REF" | awk 'NF { print $1; exit }')"
+          else
+            echo 'The same-artifact staging Identity drill requires protected main or its exact immutable Ponto release tag'
+            exit 1
+          fi
+          PONTO_DRILL_SOURCE_REF="$GITHUB_REF" \
+          PONTO_DRILL_SOURCE_SHA="$GITHUB_SHA" \
+          PONTO_DRILL_RELEASE_SHA="$RELEASE_SHA" \
+          PONTO_DRILL_SOURCE_REF_TARGET_SHA="$source_ref_target" \
+          PONTO_DRILL_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            node .github/scripts/ponto-core-staging-candidate.mjs assert-drill-source "$RUNNER_TEMP/identity-staging-drill/source.json"
+          echo "PONTO_DRILL_SOURCE_FILE=$RUNNER_TEMP/identity-staging-drill/source.json" >> "$GITHUB_ENV"
           [[ "$DRILL_SCOPE" == ponto && "$DRILL_TARGET" == staging && "$DRILL_UNIT" == inventory ]] || { echo 'The same-artifact drill is limited to canonical Ponto staging Identity publication'; exit 1; }
           [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$CORE_CANDIDATE_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The Identity drill requires exact Timekeeping and Core candidate UUIDs'; exit 1; }
           [[ "$IDENTITY_CANDIDATE_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$IDENTITY_INCUMBENT_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The Identity drill requires exact canonical candidate and incumbent UUIDs'; exit 1; }
@@ -500,10 +515,10 @@ jobs:
           CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/identity-staging-drill"
           RELEASE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")"
           RELEASE_TREE="$RELEASE_TREE" node - "$RUNNER_TEMP/identity-staging-drill/input.json" <<'NODE'
           const fs = require("fs");
+          const sourceProof = JSON.parse(fs.readFileSync(process.env.PONTO_DRILL_SOURCE_FILE, "utf8"));
           fs.writeFileSync(process.argv[2], `${JSON.stringify({
             schemaVersion: 1,
             source: {
@@ -511,8 +526,8 @@ jobs:
               sha: process.env.RELEASE_SHA,
               tree: process.env.RELEASE_TREE,
               runId: process.env.GITHUB_RUN_ID,
-              branch: "main",
-              runAttempt: 1,
+              releaseSha: process.env.RELEASE_SHA,
+              ...sourceProof,
             },
             subject: {
               surface: "identityWorkforce",
@@ -715,6 +730,7 @@ jobs:
           if-no-files-found: error
       - name: Revalidate the global lease before interrupted Identity drill recovery
         if: ${{ always() && inputs.same_artifact_rollback_drill == true && (failure() || cancelled()) && needs.coordination.result == 'success' }}
+        id: identity_drill_recovery_lease
         uses: ./.github/actions/global-coordination-check
         with:
           required: 'true'
@@ -727,7 +743,7 @@ jobs:
           module: ponto
           source_sha: ${{ needs.promotion.outputs.source_sha }}
       - name: Restore the exact Identity candidate after an interrupted drill
-        if: ${{ always() && inputs.same_artifact_rollback_drill == true && (failure() || cancelled()) && needs.coordination.result == 'success' }}
+        if: ${{ always() && inputs.same_artifact_rollback_drill == true && (failure() || cancelled()) && needs.coordination.result == 'success' && steps.identity_drill_recovery_lease.outcome == 'success' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -1376,8 +1392,23 @@ jobs:
           TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'The same-artifact Ponto Core staging drill must dispatch from main'; exit 1; }
-          [[ "$GITHUB_RUN_ATTEMPT" == 1 && "$RELEASE_SHA" == "$GITHUB_SHA" ]] || { echo 'The same-artifact Ponto Core staging drill requires the exact first-attempt main source'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/core-staging-drill"
+          source_ref_target="$GITHUB_SHA"
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            :
+          elif [[ "$GITHUB_REF" == "refs/tags/skincos/release/ponto/$RELEASE_SHA" ]]; then
+            source_ref_target="$(git ls-remote --refs origin "$GITHUB_REF" | awk 'NF { print $1; exit }')"
+          else
+            echo 'The same-artifact Ponto Core staging drill requires protected main or its exact immutable Ponto release tag'
+            exit 1
+          fi
+          PONTO_DRILL_SOURCE_REF="$GITHUB_REF" \
+          PONTO_DRILL_SOURCE_SHA="$GITHUB_SHA" \
+          PONTO_DRILL_RELEASE_SHA="$RELEASE_SHA" \
+          PONTO_DRILL_SOURCE_REF_TARGET_SHA="$source_ref_target" \
+          PONTO_DRILL_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            node .github/scripts/ponto-core-staging-candidate.mjs assert-drill-source "$RUNNER_TEMP/core-staging-drill/source.json"
+          echo "PONTO_DRILL_SOURCE_FILE=$RUNNER_TEMP/core-staging-drill/source.json" >> "$GITHUB_ENV"
           [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The Ponto Core drill requires the exact Timekeeping candidate UUID'; exit 1; }
           [[ "$CORE_STAGING_CANDIDATE_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$CORE_STAGING_INCUMBENT_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The Ponto Core drill requires exact canonical candidate and incumbent UUIDs'; exit 1; }
       - name: Write canonical Ponto Core staging drill input
@@ -1387,10 +1418,10 @@ jobs:
           TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/core-staging-drill"
           RELEASE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")"
           RELEASE_TREE="$RELEASE_TREE" node - "$RUNNER_TEMP/core-staging-drill/input.json" <<'NODE'
           const fs = require("fs");
+          const sourceProof = JSON.parse(fs.readFileSync(process.env.PONTO_DRILL_SOURCE_FILE, "utf8"));
           fs.writeFileSync(process.argv[2], `${JSON.stringify({
             schemaVersion: 1,
             source: {
@@ -1398,8 +1429,8 @@ jobs:
               sha: process.env.RELEASE_SHA,
               tree: process.env.RELEASE_TREE,
               runId: process.env.GITHUB_RUN_ID,
-              branch: "main",
-              runAttempt: 1,
+              releaseSha: process.env.RELEASE_SHA,
+              ...sourceProof,
             },
             subject: {
               surface: "coreApi",
@@ -1575,6 +1606,7 @@ jobs:
           if-no-files-found: error
       - name: Revalidate the global lease before interrupted Ponto Core drill recovery
         if: ${{ always() && inputs.same_artifact_rollback_drill == true && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' && (failure() || cancelled()) && needs.coordination.result == 'success' }}
+        id: core_drill_recovery_lease
         uses: ./.github/actions/global-coordination-check
         with:
           required: 'true'
@@ -1587,7 +1619,7 @@ jobs:
           module: ponto
           source_sha: ${{ needs.promotion.outputs.source_sha }}
       - name: Restore the exact Ponto Core candidate after an interrupted drill
-        if: ${{ always() && inputs.same_artifact_rollback_drill == true && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' && (failure() || cancelled()) && needs.coordination.result == 'success' }}
+        if: ${{ always() && inputs.same_artifact_rollback_drill == true && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' && (failure() || cancelled()) && needs.coordination.result == 'success' && steps.core_drill_recovery_lease.outcome == 'success' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

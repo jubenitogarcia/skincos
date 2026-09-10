@@ -11,6 +11,7 @@ import {
   buildCandidateReceipt,
   buildDrillProof,
   preflightTimekeepingWorker,
+  validateCanonicalDrillSource,
   validateCandidateInput,
 } from "./ponto-core-staging-candidate.mjs";
 
@@ -51,6 +52,13 @@ function bashBlocks(source) {
     blocks.push(block.join("\n"));
   }
   return blocks;
+}
+
+function workflowStep(source, name) {
+  const start = source.indexOf(`      - name: ${name}`);
+  assert.notEqual(start, -1, `missing workflow step: ${name}`);
+  const end = source.indexOf("\n      - name:", start + 1);
+  return source.slice(start, end === -1 ? undefined : end);
 }
 
 function run(id, workflowPath) {
@@ -241,7 +249,9 @@ function drillConfig(surface) {
       sha: sourceSha,
       tree: sourceTree,
       runId: isCore ? "102" : "103",
-      branch: "main",
+      ref: "refs/heads/main",
+      releaseSha: sourceSha,
+      refTargetSha: sourceSha,
       runAttempt: 1,
     },
     subject: {
@@ -313,6 +323,9 @@ test("builds only a source-bound, private, same-artifact candidate receipt", () 
   const receipt = buildCandidateReceipt({ input: input(), coreDrill: drillProof("coreApi"), identityDrill: drillProof("identityWorkforce") });
   assert.equal(receipt.contractId, "skincos/ponto-core-staging-candidate/v1");
   assert.equal(receipt.sourceSha, sourceSha);
+  assert.equal(receipt.sourceRef, "refs/heads/main");
+  assert.equal(receipt.sourceLogicalBranch, "main");
+  assert.equal(receipt.sourceRefTargetSha, sourceSha);
   assert.equal(receipt.core.versionId, ids.coreCandidate);
   assert.equal(receipt.identity.versionId, ids.identityCandidate);
   assert.deepEqual(receipt.coreExposure.workerRoutes, []);
@@ -323,6 +336,107 @@ test("builds only a source-bound, private, same-artifact candidate receipt", () 
   assert.equal(receipt.timekeeping.observedPhysicalWorker, "skincos-timekeeping-staging");
   assert.equal(receipt.credentialsIncluded, false);
   assert.equal(receipt.piiIncluded, false);
+});
+
+test("accepts only the exact immutable Ponto tag and records it separately from logical main", () => {
+  const tag = `skincos/release/ponto/${sourceSha}`;
+  const tagged = input();
+  for (const child of Object.values(tagged.upstream)) {
+    child.run.headBranch = tag;
+    child.run.releaseRef = `refs/tags/${tag}`;
+    child.run.releaseTagObjectType = "commit";
+    child.run.releaseTagTarget = sourceSha;
+  }
+  assert.doesNotThrow(() => validateCandidateInput(tagged));
+
+  const taggedConfig = drillConfig("coreApi");
+  taggedConfig.source.ref = `refs/tags/${tag}`;
+  taggedConfig.source.refTargetSha = sourceSha;
+  const taggedProof = buildDrillProof({
+    config: taggedConfig,
+    before: stateFor("coreApi", "candidate"),
+    rollback: stateFor("coreApi", "incumbent"),
+    restoration: stateFor("coreApi", "candidate"),
+    composite: null,
+    readiness: { passed: true, mode: "control-plane-only" },
+    context: {
+      maintenance: { passed: true, state: "maintenance" },
+      lease: { resource: "global:ponto-workers-writer", revalidatedBeforeRollback: true, revalidatedBeforeRestore: true },
+      recovery: { attempted: false, disposition: "not-required" },
+      timekeepingPreflight: {
+        schemaVersion: 1,
+        passed: true,
+        configuredPhysicalWorker: "skincos-timekeeping-staging",
+        expectedVersionId: ids.timekeepingCandidate,
+        expectedTag: `ponto:timekeeping:${sourceSha}`,
+        expectedSourceSha: sourceSha,
+        observed: {
+          state: "exact",
+          worker: "skincos-timekeeping-staging",
+          activeVersionId: ids.timekeepingCandidate,
+          activeDeploymentId: ids.timekeepingDeployment,
+        },
+        valuesIncluded: false,
+        credentialsIncluded: false,
+        piiIncluded: false,
+      },
+    },
+  });
+  assert.equal(taggedProof.source.ref, `refs/tags/${tag}`);
+  assert.equal(taggedProof.source.logicalBranch, "main");
+  assert.equal(taggedProof.producer.refTargetSha, sourceSha);
+
+  const retagProof = (proof) => {
+    const retagged = clone(proof);
+    retagged.source.ref = `refs/tags/${tag}`;
+    retagged.source.logicalBranch = "main";
+    retagged.source.refTargetSha = sourceSha;
+    retagged.producer.ref = `refs/tags/${tag}`;
+    retagged.producer.logicalBranch = "main";
+    retagged.producer.refTargetSha = sourceSha;
+    return retagged;
+  };
+  const taggedReceipt = buildCandidateReceipt({
+    input: tagged,
+    coreDrill: retagProof(drillProof("coreApi")),
+    identityDrill: retagProof(drillProof("identityWorkforce")),
+  });
+  assert.equal(taggedReceipt.sourceRef, `refs/tags/${tag}`);
+  assert.equal(taggedReceipt.sourceLogicalBranch, "main");
+
+  const exactTagSource = validateCanonicalDrillSource({
+    ref: `refs/tags/${tag}`,
+    sha: sourceSha,
+    releaseSha: sourceSha,
+    refTargetSha: sourceSha,
+    runAttempt: 1,
+  });
+  assert.deepEqual(exactTagSource, {
+    ref: `refs/tags/${tag}`,
+    logicalBranch: "main",
+    refTargetSha: sourceSha,
+    runAttempt: 1,
+  });
+
+  const mismatchedTag = input();
+  mismatchedTag.upstream.core.run.headBranch = tag;
+  mismatchedTag.upstream.core.run.releaseRef = `refs/tags/${tag}`;
+  mismatchedTag.upstream.core.run.releaseTagObjectType = "commit";
+  mismatchedTag.upstream.core.run.releaseTagTarget = "c".repeat(40);
+  assert.throws(() => validateCandidateInput(mismatchedTag), /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_RUN_TAG/);
+  const mixedPhysicalRefs = input();
+  mixedPhysicalRefs.upstream.core.run.headBranch = tag;
+  mixedPhysicalRefs.upstream.core.run.releaseRef = `refs/tags/${tag}`;
+  mixedPhysicalRefs.upstream.core.run.releaseTagObjectType = "commit";
+  mixedPhysicalRefs.upstream.core.run.releaseTagTarget = sourceSha;
+  assert.throws(() => validateCandidateInput(mixedPhysicalRefs), /PONTO_CORE_STAGING_CANDIDATE_INVALID:UPSTREAM_SOURCE_REF/);
+  assert.throws(() => validateCanonicalDrillSource({
+    ref: `refs/tags/${tag}`,
+    sha: sourceSha,
+    releaseSha: sourceSha,
+    refTargetSha: "c".repeat(40),
+    runAttempt: 1,
+  }), /PONTO_CORE_STAGING_CANDIDATE_INVALID:DRILL_SOURCE_TAG/);
 });
 
 test("rejects forged child provenance, public exposure, and non-exact canonical drill evidence", () => {
@@ -542,6 +656,8 @@ test("candidate workflow is a main-only, secretless canonical-artifact attester"
     "ponto-surface-identity-workforce-staging-$RELEASE_SHA",
     "ponto-core-staging-rollback-drill-coreApi-$RELEASE_SHA",
     "ponto-core-staging-rollback-drill-identityWorkforce-$RELEASE_SHA",
+    "git/ref/tags/$head_branch",
+    "releaseTagTarget",
     "Build the Pages-consumable candidate from canonical-only evidence",
     "node .github/scripts/ponto-core-staging-candidate.mjs build-receipt",
   ]) assert.ok(workflow.includes(marker), marker);
@@ -585,6 +701,32 @@ test("only the canonical deploy workflow owns optional same-artifact traffic dri
     canonicalWorkflow.lastIndexOf("preflight-timekeeping-worker")
       < canonicalWorkflow.indexOf('api/node_modules/.bin/wrangler rollback "$incumbent"'),
   );
+});
+
+test("canonical drill provenance accepts only the exact release tag and recovery requires a successful lease recheck", () => {
+  for (const [guardName, sourceFile] of [
+    ["Guard the canonical same-artifact staging Identity rollback drill", "identity-staging-drill/source.json"],
+    ["Guard the canonical same-artifact Ponto Core staging rollback drill", "core-staging-drill/source.json"],
+  ]) {
+    const guard = workflowStep(canonicalWorkflow, guardName);
+    assert.match(guard, /\[\[ "\$GITHUB_REF" == refs\/heads\/main \]\]/);
+    assert.match(guard, /refs\/tags\/skincos\/release\/ponto\/\$RELEASE_SHA/);
+    assert.match(guard, /git ls-remote --refs origin "\$GITHUB_REF"/);
+    assert.match(guard, /PONTO_DRILL_SOURCE_REF_TARGET_SHA/);
+    assert.match(guard, new RegExp(`assert-drill-source "\\$RUNNER_TEMP/${sourceFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+  }
+
+  const identityRecheck = workflowStep(canonicalWorkflow, "Revalidate the global lease before interrupted Identity drill recovery");
+  const identityRestore = workflowStep(canonicalWorkflow, "Restore the exact Identity candidate after an interrupted drill");
+  assert.match(identityRecheck, /id: identity_drill_recovery_lease/);
+  assert.match(identityRestore, /steps\.identity_drill_recovery_lease\.outcome == 'success'/);
+  assert.match(identityRestore, /rollback-started/);
+
+  const coreRecheck = workflowStep(canonicalWorkflow, "Revalidate the global lease before interrupted Ponto Core drill recovery");
+  const coreRestore = workflowStep(canonicalWorkflow, "Restore the exact Ponto Core candidate after an interrupted drill");
+  assert.match(coreRecheck, /id: core_drill_recovery_lease/);
+  assert.match(coreRestore, /steps\.core_drill_recovery_lease\.outcome == 'success'/);
+  assert.match(coreRestore, /rollback-started/);
 });
 
 test("every embedded workflow Bash block is syntactically valid", () => {

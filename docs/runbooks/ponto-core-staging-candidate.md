@@ -11,7 +11,13 @@ O publisher canônico de tráfego de Core e Identity é
 executar este drill same-artifact. O candidato não cria uma nova versão, não
 modifica pesos e não consegue iniciar, recuperar ou repetir um rollback.
 
-## Sequência canônica
+> Estado atual: este é um recibo complementar e limitado, não o sucessor do
+> drill composto legado. O coordenador `ponto-progressive-release.yml` continua
+> chamando `ponto-staging-rollback-drill.yml` para a prova integrada de
+> Timekeeping e CRM Pages. Não substitua essa chamada, nem avance um release,
+> apenas com este recibo de Core/Identity.
+
+## Evidência canônica limitada
 
 Use a sequência normal e governada do Ponto para o SHA completo atual de
 `main`; não despache publishers auxiliares nem use um SHA ancestral.
@@ -29,11 +35,12 @@ Use a sequência normal e governada do Ponto para o SHA completo atual de
    `core_candidate_version_id` exato do passo anterior. Ele publica Identity
    normalmente, exerce somente seu candidato/incumbent exatos e gera
    `ponto-core-staging-rollback-drill-identityWorkforce-<SHA>`.
-4. Somente depois dos três runs canônicos bem-sucedidos (Timekeeping, Core e
+4. Somente quando um preflight do publisher isolado de Pages solicitar esse
+   recibo, depois dos três runs canônicos bem-sucedidos (Timekeeping, Core e
    Identity), despache `ponto-core-staging-candidate.yml` em `main`, com o SHA
-   exato e os três IDs de run. Não há mais a opção
-   `execute_same_artifact_rollback` neste workflow: se qualquer recibo
-   canônico estiver ausente ou divergente, ele apenas falha fechado.
+   exato e os três IDs de run. Ele não é um estágio automático do coordenador.
+   Não há opção `execute_same_artifact_rollback` neste workflow: se qualquer
+   recibo canônico estiver ausente ou divergente, ele apenas falha fechado.
 
 Os requisitos habituais do coordenador, da proteção do branch e do ambiente
 de staging continuam valendo para os publishers canônicos. O atestador não os
@@ -41,9 +48,13 @@ substitui nem concede aprovação de release.
 
 ## O que o recibo verifica
 
-O atestador vincula cada artefato ao mesmo repositório, SHA, árvore Git, branch
-`main` e primeira tentativa de run. Ele consome somente os recibos de superfície
-e mutação dos publishers canônicos e as duas provas de drill acima.
+O atestador vincula cada artefato ao mesmo repositório, SHA, árvore Git e
+primeira tentativa de run. O próprio atestador executa em `main`; cada child
+canônico aceito deve ter vindo de `main` ou da tag imutável exata
+`refs/tags/skincos/release/ponto/<SHA>`, cuja referência remota resolve para o
+mesmo SHA. A prova registra separadamente a ref física e `logicalBranch=main`.
+Ele consome somente os recibos de superfície e mutação dos publishers canônicos
+e as duas provas de drill acima.
 
 - A prova de Core contém snapshots remotos exatos antes do drill, no incumbent
   e após a restauração, sempre incluindo a identidade/versão de Timekeeping.
@@ -79,12 +90,19 @@ entre o candidato já publicado e o incumbent exato e restaura o candidato.
 A publicação normal anterior continua sujeita às proteções e recibos próprios
 do publisher canônico.
 
+O recibo prova somente as transições same-artifact de **Core e Identity**.
+Ele não prova rollback/restauração de Timekeeping ou CRM Pages, e não permite
+inferir essas duas superfícies a partir da afinidade lida nos snapshots. Essas
+provas continuam pendentes no caminho canônico; até haver paridade por
+publisher, a evidência integrada do drill legado e seu uso atual pelo
+coordenador permanecem obrigatórios.
+
 Se o drill canônico for interrompido, somente ele pode tentar a recuperação, e
 apenas depois de revalidar o lease e confirmar no plano de controle o
 incumbent exato que lhe pertence. Qualquer outro estado falha fechado sem nova
 mutação. O workflow de candidato não tem caminho de recuperação.
 
-Este recibo não autoriza produção e não substitui o smoke sintético privado do
-Ponto Pages. A validação posterior do Pages é quem prova o caminho privado de
-Core via service binding e decide se o candidato de staging pode continuar no
-fluxo governado.
+Este recibo não autoriza produção, não substitui o drill legado nem o smoke
+sintético privado do Ponto Pages. A validação posterior do Pages é quem prova
+o caminho privado de Core via service binding; ela não transforma este recibo
+limitado em uma prova de rollback de Pages ou Timekeeping.

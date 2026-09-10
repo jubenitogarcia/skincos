@@ -225,7 +225,11 @@ canônicos; ele não recebe ambiente/credencial Cloudflare nem exerce tráfego.
 O exercício same-artifact ocorre exclusivamente dentro de
 `.github/workflows/deploy-core-workers.yml`, logo após a publicação canônica de
 Core ou Identity em staging, sob maintenance e o lease existente. O atestador
-não substitui o coordenador nem autoriza produção.
+não substitui o coordenador nem autoriza produção. Ele só prova Core/Identity:
+rollback de Timekeeping e CRM Pages continuam fora desse recibo e seguem
+cobertos pelo drill composto legado que o coordenador ainda chama. Não trate o
+candidato como substituição ou desativação daquele caminho até existir prova
+canônica equivalente para as quatro superfícies.
 
 Toda mutation direta de Worker, Pages, secret de Pages, D1, KV ou
 module-control na cadeia Ponto usa o mutex global
