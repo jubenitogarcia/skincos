@@ -19,10 +19,17 @@ error_file="${output_file}.stderr"
 
 for ((attempt = 1; attempt <= attempts; attempt += 1)); do
   rm -f "$output_file" "$error_file"
-  if WRANGLER_OUTPUT_FILE_PATH="$output_file" "$@" 2> >(tee "$error_file" >&2); then
+  # Do not use a process substitution with tee here. Bash does not wait for the
+  # process substitution before the command status is handled, so a just-written
+  # Cloudflare propagation error could be read as an empty or partial file below.
+  # Capture first, then replay synchronously before classifying the failure.
+  if WRANGLER_OUTPUT_FILE_PATH="$output_file" "$@" 2>"$error_file"; then
+    cat "$error_file" >&2
     rm -f "$error_file"
     exit 0
   fi
+
+  cat "$error_file" >&2
 
   if ! grep -Eq 'code: 100146|requested Worker version could not be found' "$error_file"; then
     echo "Worker version deployment failed with a non-propagation failure on attempt $attempt/$attempts" >&2
