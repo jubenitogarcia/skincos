@@ -329,7 +329,7 @@ jobs:
 
       - name: Upload disabled bootstrap evidence
         if: ${{ steps.bootstrap-disabled-smoke.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: schedule-public-read-adapter-bootstrap-evidence
           path: ${{ runner.temp }}/schedule-public-read-adapter-bootstrap/schedule-public-read-adapter-bootstrap-evidence.json
@@ -562,7 +562,7 @@ jobs:
 
       - name: Upload staging promotion evidence
         if: ${{ steps.candidate.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-schedule-public-read-adapter
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
@@ -744,7 +744,7 @@ jobs:
         run: node workforce/schedule/scripts/public-read-bootstrap-evidence.mjs write "$RUNNER_TEMP/schedule-public-read-adapter-bootstrap/schedule-public-read-adapter-bootstrap-evidence.json" workforce/schedule/public-read.wrangler.toml
       - name: Upload private production bootstrap evidence
         if: ${{ inputs.operation == 'bootstrap-disabled' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: schedule-public-read-adapter-bootstrap-evidence
           path: ${{ runner.temp }}/schedule-public-read-adapter-bootstrap/schedule-public-read-adapter-bootstrap-evidence.json
@@ -960,7 +960,7 @@ jobs:
         run: node workforce/schedule/scripts/public-read-production-resources.mjs cleanup
       - name: Retain sanitized production checkpoint readback and cleanup evidence
         if: ${{ always() && steps.production-lease.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: schedule-public-read-production-resource-evidence
           path: ${{ runner.temp }}/schedule-production-*.json
@@ -1072,7 +1072,7 @@ jobs:
           node workforce/schedule/scripts/public-read-production-resources.mjs reconcile
       - name: Retain exact residual-probe recovery evidence
         if: ${{ always() && steps.recovery-lease.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: schedule-public-read-probe-recovery-evidence
           path: ${{ runner.temp }}/schedule-production-probe-recovery*.json
