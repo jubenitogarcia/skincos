@@ -317,7 +317,8 @@
         ".github/workflows/insumos-staging-rbac-smoke.yml",
         ".github/workflows/timekeeping-staging-journey.yml",
         ".github/workflows/beauty-movement-staging-smoke.yml",
-        ".github/workflows/identity-crm-delivery.yml"
+        ".github/workflows/identity-crm-delivery.yml",
+        ".github/workflows/ponto-pages-staging-synthetic-smoke.yml"
       ]
     },
     {
