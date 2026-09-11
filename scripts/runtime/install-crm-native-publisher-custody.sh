@@ -81,6 +81,16 @@ source_mount_value() {
   printf '%s' "$value"
 }
 
+source_tree_is_within_mount_target() {
+  local mount_target="$1"
+  local source_tree="$2"
+
+  # A slash mount is the root of every absolute source tree. Appending a
+  # second slash would turn the prefix check below into `//`, which rejects a
+  # legitimate root-owned source tree beneath `/`.
+  [[ "$mount_target" == '/' || "$source_tree" == "$mount_target" || "$source_tree" == "$mount_target/"* ]]
+}
+
 assert_trusted_source_mount() {
   local mount_target mount_type mount_root mount_source mount_options
   mount_target="$(source_mount_value TARGET "$ROOT_DIR")"
@@ -88,8 +98,8 @@ assert_trusted_source_mount() {
   mount_root="$(source_mount_value FSROOT "$ROOT_DIR")"
   mount_source="$(source_mount_value SOURCE "$ROOT_DIR")"
   mount_options="$(source_mount_value OPTIONS "$ROOT_DIR")"
-  [[ "$mount_target" == /* && "$mount_target" != '/mnt' && "$mount_target" != /mnt/* \
-    && ( "$ROOT_DIR" == "$mount_target" || "$ROOT_DIR" == "$mount_target/"* ) ]] \
+  [[ "$mount_target" == /* && "$mount_target" != '/mnt' && "$mount_target" != /mnt/* ]] \
+    && source_tree_is_within_mount_target "$mount_target" "$ROOT_DIR" \
     || source_failure 'source mount target is not a native trusted path'
   case "$mount_type" in
     ext4|xfs|btrfs|zfs|f2fs) ;;
