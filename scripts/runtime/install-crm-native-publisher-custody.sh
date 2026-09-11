@@ -18,6 +18,35 @@ readonly POLICY_DIR='/etc/skincos/crm-native-publisher'
 readonly STATE_DIR='/var/lib/skincos-runtime/crm-native-publisher'
 readonly RUNNER_UNIT='skincos-native-custody-runner.service'
 readonly FINDMNT='/usr/bin/findmnt'
+readonly PONTO_LEGACY_ABSENCE_RUNTIME_DIR='/etc/skincos/ponto-legacy-absence-attestation'
+readonly PONTO_LEGACY_ABSENCE_LEDGER_DIR='/var/lib/skincos/ponto-legacy-absence-attestation'
+
+# This list is deliberately exact: systemd requires every ReadWritePaths
+# target to exist before it can build the runner's protected mount namespace.
+# Keep it synchronized with the rendered runner unit so a new target cannot
+# turn a custody bootstrap into a status=226/NAMESPACE outage.
+readonly -a RUNNER_WRITE_PATHS=(
+  '/var/lib/skincos-runtime/github-actions-runner'
+  '/etc/skincos/global-coordination'
+  '/var/lib/skincos/ponto-jit'
+  '/var/lib/skincos-runtime/global-coordination'
+  "$PONTO_LEGACY_ABSENCE_RUNTIME_DIR"
+  "$PONTO_LEGACY_ABSENCE_LEDGER_DIR"
+  '/opt/skincos/releases'
+  '/opt/skincos/current'
+  "$POLICY_DIR"
+  "$STATE_DIR"
+  '/etc/systemd/system'
+)
+
+# Only these paths belong to this bootstrap transaction. The incumbent runner
+# paths must already exist; creating them here could mask a broken host setup.
+readonly -a RUNNER_BOOTSTRAP_PRIVATE_WRITE_PATHS=(
+  "$PONTO_LEGACY_ABSENCE_RUNTIME_DIR"
+  "$PONTO_LEGACY_ABSENCE_LEDGER_DIR"
+  "$POLICY_DIR"
+  "$STATE_DIR"
+)
 
 apply=0
 verify_apply_source=0
@@ -197,6 +226,81 @@ assert_private_install_directory() {
     || { echo "$label is not root-owned and non-writable: $directory" >&2; exit 78; }
 }
 
+runner_unit_write_path_failure() {
+  echo "Native custody runner ReadWritePaths contract is invalid: $1" >&2
+  exit 78
+}
+
+assert_runner_unit_write_path_contract() {
+  local unit="$1"
+  local line path index
+  local -a actual_paths=()
+
+  [[ -f "$unit" && ! -L "$unit" ]] \
+    || runner_unit_write_path_failure "unit is not a regular file: $unit"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*ReadWritePaths=(.*)$ ]]; then
+      path="${BASH_REMATCH[1]}"
+      [[ "$path" == /* && "$path" != *[[:space:]]* ]] \
+        || runner_unit_write_path_failure "entry is not one absolute path: $path"
+      actual_paths+=("$path")
+    fi
+  done < "$unit"
+
+  [[ "${#actual_paths[@]}" == "${#RUNNER_WRITE_PATHS[@]}" ]] \
+    || runner_unit_write_path_failure "entry count differs from the installer contract"
+
+  for index in "${!RUNNER_WRITE_PATHS[@]}"; do
+    [[ "${actual_paths[$index]}" == "${RUNNER_WRITE_PATHS[$index]}" ]] \
+      || runner_unit_write_path_failure "entry $((index + 1)) differs from the installer contract"
+  done
+}
+
+runner_write_path_is_bootstrap_private() {
+  local candidate="$1"
+  local private_path
+  for private_path in "${RUNNER_BOOTSTRAP_PRIVATE_WRITE_PATHS[@]}"; do
+    [[ "$candidate" == "$private_path" ]] && return 0
+  done
+  return 1
+}
+
+assert_existing_runner_write_path() {
+  local directory="$1"
+  [[ -d "$directory" && ! -L "$directory" ]] \
+    || { echo "Required native custody runner writable path is unavailable: $directory" >&2; exit 78; }
+}
+
+ensure_private_runner_write_path() {
+  local directory="$1"
+  local uid gid mode
+
+  if [[ -e "$directory" || -L "$directory" ]]; then
+    [[ -d "$directory" && ! -L "$directory" ]] \
+      || { echo "Native custody runner writable path is not a real directory: $directory" >&2; exit 78; }
+  else
+    /usr/bin/install -d -o root -g root -m 0700 "$directory"
+  fi
+
+  uid="$(/usr/bin/stat -c '%u' -- "$directory")"
+  gid="$(/usr/bin/stat -c '%g' -- "$directory")"
+  mode="$(/usr/bin/stat -c '%a' -- "$directory")"
+  [[ "$uid" == '0' && "$gid" == '0' && "$mode" == '700' ]] \
+    || { echo "Native custody runner writable path must be root:root mode 0700: $directory" >&2; exit 78; }
+}
+
+prepare_native_custody_runner_write_paths() {
+  local directory
+  for directory in "${RUNNER_WRITE_PATHS[@]}"; do
+    if runner_write_path_is_bootstrap_private "$directory"; then
+      ensure_private_runner_write_path "$directory"
+    else
+      assert_existing_runner_write_path "$directory"
+    fi
+  done
+}
+
 stage_apply_sources() {
   local stage="$1"
   node - "$ROOT_DIR" "$stage" "$INSTALLER_SOURCE" "${sources[@]}" <<'NODE'
@@ -343,6 +447,7 @@ staged_source_path() {
 for source in "${sources[@]}"; do
   [[ -f "$source" ]] || { echo "Required source is missing: $source" >&2; exit 78; }
 done
+assert_runner_unit_write_path_contract "$ROOT_DIR/ops/runtime/units/$RUNNER_UNIT"
 
 if [[ "$apply" == '1' || "$verify_apply_source" == '1' ]]; then
   assert_trusted_apply_sources
@@ -390,6 +495,11 @@ node --check "$(staged_source_path "$stage_dir" "$ROOT_DIR/scripts/runtime/crm-n
 node --check "$(staged_source_path "$stage_dir" "$ROOT_DIR/scripts/runtime/crm-native-release-contract.mjs")"
 visudo -cf "$(staged_source_path "$stage_dir" "$ROOT_DIR/ops/runtime/github-actions-runner/skincos-native-custody.sudoers")" >/dev/null
 assert_staged_apply_sources "$stage_dir"
+assert_runner_unit_write_path_contract "$(staged_source_path "$stage_dir" "$ROOT_DIR/ops/runtime/units/$RUNNER_UNIT")"
+# systemd evaluates ReadWritePaths while starting the replacement runner unit.
+# Materialize the transaction-owned targets first and fail closed if any
+# incumbent target is absent, before changing helper, sudoers, or unit state.
+prepare_native_custody_runner_write_paths
 
 assert_private_install_directory "$LIB_ROOT/scripts" 'CRM native publisher script library'
 assert_private_install_directory "$LIB_ROOT/scripts/runtime" 'CRM native publisher runtime library'
@@ -428,7 +538,6 @@ install -o root -g root -m 0755 "$wrapper" "$HELPER"
 rm -f -- "$wrapper"
 trap cleanup_source_stage EXIT INT TERM
 
-install -d -o root -g root -m 0700 "$POLICY_DIR" "$STATE_DIR"
 install -o root -g root -m 0440 "$(staged_source_path "$stage_dir" "$ROOT_DIR/ops/runtime/github-actions-runner/skincos-native-custody.sudoers")" "$SUDOERS_FILE"
 visudo -cf "$SUDOERS_FILE" >/dev/null
 
