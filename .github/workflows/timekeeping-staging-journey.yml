@@ -21,13 +21,21 @@ on:
         required: true
         type: string
       crm_pages_staging_run_id:
-        description: Canonical CRM Pages staging run containing promotion evidence
+        description: Canonical selected Pages staging run containing promotion evidence
         required: true
         type: string
       pages_url:
-        description: Immutable skincos-staging Pages deployment URL
+        description: Immutable Pages staging deployment URL for the selected surface
         required: true
         type: string
+      pages_surface:
+        description: Pages surface owning pages_url; dedicated Ponto Pages requires its exact staging origin
+        required: false
+        default: legacy
+        type: choice
+        options:
+          - legacy
+          - dedicated-ponto-pages
       timekeeping_version_id:
         description: Exact staging Timekeeping candidate version
         required: true
@@ -109,11 +117,19 @@ jobs:
           IDENTITY_RUN: ${{ inputs.identity_staging_run_id }}
           CRM_PAGES_RUN: ${{ inputs.crm_pages_staging_run_id }}
           PAGES_URL: ${{ inputs.pages_url }}
+          PAGES_SURFACE: ${{ inputs.pages_surface }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
           [[ "$TIMEKEEPING_RUN" =~ ^[0-9]+$ && "$CORE_API_RUN" =~ ^[0-9]+$ && "$IDENTITY_RUN" =~ ^[0-9]+$ && "$CRM_PAGES_RUN" =~ ^[0-9]+$ ]] || { echo 'canonical run IDs must be numeric'; exit 1; }
-          [[ "$PAGES_URL" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'pages_url must be an immutable skincos-staging.pages.dev URL'; exit 1; }
+          if [[ "$PAGES_SURFACE" == 'legacy' ]]; then
+            [[ "$PAGES_URL" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'legacy pages_url must be an immutable skincos-staging.pages.dev URL'; exit 1; }
+          elif [[ "$PAGES_SURFACE" == 'dedicated-ponto-pages' ]]; then
+            [[ "$PAGES_URL" =~ ^https://skincos-ponto-staging\.pages\.dev/?$ ]] || { echo 'dedicated Ponto pages_url must be https://skincos-ponto-staging.pages.dev/'; exit 1; }
+          else
+            echo 'pages_surface must be legacy or dedicated-ponto-pages'
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/promotion-evidence/timekeeping" "$RUNNER_TEMP/promotion-evidence/core-api" "$RUNNER_TEMP/promotion-evidence/identity" "$RUNNER_TEMP/promotion-evidence/crm-pages"
           gh run download "$TIMEKEEPING_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-timekeeping --dir "$RUNNER_TEMP/promotion-evidence/timekeeping"
           gh run download "$CORE_API_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-api --dir "$RUNNER_TEMP/promotion-evidence/core-api"
@@ -374,6 +390,7 @@ jobs:
           IDENTITY_VERSION_ID: ${{ inputs.identity_version_id }}
           TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
           PAGES_URL: ${{ inputs.pages_url }}
+          PAGES_SURFACE: ${{ inputs.pages_surface }}
           FIXTURES: ${{ runner.temp }}/ponto-staging-fixtures.json
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
         run: |
@@ -388,8 +405,21 @@ jobs:
             throw new Error("protected contract requires the run-scoped synthetic staging identity");
           }
           const origin = new URL(process.env.PAGES_URL);
-          if (origin.protocol !== "https:" || !origin.hostname.endsWith(".skincos-staging.pages.dev") || origin.pathname !== "/" || origin.search || origin.hash) {
-            throw new Error("protected contract requires the immutable staging Pages origin");
+          const pagesSurface = String(process.env.PAGES_SURFACE || "").trim().toLowerCase();
+          const originIsWellFormed = origin.protocol === "https:"
+            && !origin.port
+            && !origin.username
+            && !origin.password
+            && origin.pathname === "/"
+            && !origin.search
+            && !origin.hash;
+          const allowedOrigin = pagesSurface === "legacy"
+            ? origin.hostname.endsWith(".skincos-staging.pages.dev")
+            : pagesSurface === "dedicated-ponto-pages"
+              ? origin.origin === "https://skincos-ponto-staging.pages.dev"
+              : false;
+          if (!originIsWellFormed || !allowedOrigin) {
+            throw new Error("protected contract requires the declared immutable staging Pages origin");
           }
           const pathname = "/api/ponto/_release-contract";
           const rawBody = JSON.stringify({ email: fixture.email, password: fixture.password });
@@ -515,6 +545,7 @@ jobs:
       - name: Execute authenticated Ponto journey
         env:
           PONTO_STAGING_CRM_URL: ${{ inputs.pages_url }}
+          PONTO_STAGING_PAGES_SURFACE: ${{ inputs.pages_surface }}
           PONTO_STAGING_EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
           PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
           PONTO_STAGING_FIXTURES_FILE: ${{ runner.temp }}/ponto-staging-fixtures.json
