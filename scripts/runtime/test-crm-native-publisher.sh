@@ -54,6 +54,20 @@ grep -Fx 'ReadWritePaths=/var/lib/skincos-runtime/crm-native-publisher' "$CUSTOD
 grep -Fx 'ReadWritePaths=/etc/systemd/system' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/etc/skincos/ponto-legacy-absence-attestation' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/var/lib/skincos/ponto-legacy-absence-attestation' "$CUSTODY_RUNNER_UNIT" >/dev/null
+runner_write_path_contract_output="$(bash "$CUSTODY_INSTALLER")"
+grep -Fx 'crm_native_publisher_custody_contract=valid' <<<"$runner_write_path_contract_output" >/dev/null
+runner_bootstrap_paths="$(sed -n '/^readonly -a RUNNER_BOOTSTRAP_PRIVATE_WRITE_PATHS=(/,/^)/p' "$CUSTODY_INSTALLER")"
+grep -Fx '  "$PONTO_LEGACY_ABSENCE_RUNTIME_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
+grep -Fx '  "$PONTO_LEGACY_ABSENCE_LEDGER_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
+grep -Fx '  "$POLICY_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
+grep -Fx '  "$STATE_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
+private_runner_path_helper="$(sed -n '/^ensure_private_runner_write_path()/,/^}/p' "$CUSTODY_INSTALLER")"
+grep -Fx '    /usr/bin/install -d -o root -g root -m 0700 "$directory"' <<<"$private_runner_path_helper" >/dev/null
+grep -F 'must be root:root mode 0700' <<<"$private_runner_path_helper" >/dev/null
+runner_path_preflight_line="$(grep -n -Fx 'prepare_native_custody_runner_write_paths' "$CUSTODY_INSTALLER" | cut -d: -f1)"
+runner_unit_install_line="$(grep -n -F '"/etc/systemd/system/$RUNNER_UNIT"' "$CUSTODY_INSTALLER" | cut -d: -f1)"
+[[ "$runner_path_preflight_line" =~ ^[1-9][0-9]*$ && "$runner_unit_install_line" =~ ^[1-9][0-9]*$ ]]
+(( runner_path_preflight_line < runner_unit_install_line ))
 grep -F '/usr/local/sbin/skincos-publish-crm-native-release preflight' "$CUSTODY_SUDOERS" >/dev/null
 ! grep -F '/usr/local/sbin/skincos-publish-crm-native-release rollback-last' "$CUSTODY_SUDOERS" >/dev/null
 readonly META_ADS_CUSTODY_ALIAS='Cmnd_Alias SKINCOS_META_ADS_TRACKING_CUSTODY = /usr/local/sbin/skincos-meta-ads-tracking-custody attest, /usr/local/sbin/skincos-meta-ads-tracking-custody audit, /usr/local/sbin/skincos-meta-ads-tracking-custody checkpoint, /usr/local/sbin/skincos-meta-ads-tracking-custody discover-current, /usr/local/sbin/skincos-meta-ads-tracking-custody checkpoint-current, /usr/local/sbin/skincos-meta-ads-tracking-custody apply, /usr/local/sbin/skincos-meta-ads-tracking-custody preflight, /usr/local/sbin/skincos-meta-ads-tracking-custody preflight-rollback, /usr/local/sbin/skincos-meta-ads-tracking-custody restore, /usr/local/sbin/skincos-meta-ads-tracking-custody promote-native, /usr/local/sbin/skincos-meta-ads-tracking-custody promote-and-apply, /usr/local/sbin/skincos-meta-ads-tracking-custody rollback-native, /usr/local/sbin/skincos-meta-ads-tracking-custody conversion-readback'
@@ -88,11 +102,13 @@ tmp_root="$(mktemp -d -t skincos-crm-native-test-XXXXXXXX)"
 linked_root=''
 source_fixture_root=''
 source_invocation_link=''
+runner_contract_fixture_root=''
 cleanup() {
   rm -rf -- "$tmp_root"
   [[ -z "$linked_root" ]] || rm -rf -- "$linked_root"
   [[ -z "$source_fixture_root" ]] || rm -rf -- "$source_fixture_root"
   [[ -z "$source_invocation_link" ]] || rm -f -- "$source_invocation_link"
+  [[ -z "$runner_contract_fixture_root" ]] || rm -rf -- "$runner_contract_fixture_root"
 }
 trap cleanup EXIT INT TERM
 
@@ -129,6 +145,18 @@ if mutable_source_output="$(bash "$source_fixture_root/scripts/runtime/install-c
   exit 1
 fi
 grep -E 'source tree is not root:root-owned|source mount filesystem is not trusted|source mount target is not a native trusted path' <<<"$mutable_source_output" >/dev/null
+
+# The no-apply source contract must reject a unit that introduces an
+# undeclared writable mount target. This runs entirely inside /tmp and proves
+# a future ReadWritePaths addition cannot reach the runner restart unchecked.
+runner_contract_fixture_root="$tmp_root/runner-write-path-contract"
+copy_mutable_source_fixture "$runner_contract_fixture_root"
+printf '%s\n' 'ReadWritePaths=/var/lib/skincos-runtime/unexpected-custody-path' >>"$runner_contract_fixture_root/ops/runtime/units/skincos-native-custody-runner.service"
+if runner_contract_output="$(bash "$runner_contract_fixture_root/scripts/runtime/install-crm-native-publisher-custody.sh" 2>&1)"; then
+  echo 'Native custody installer unexpectedly accepted an undeclared runner writable path.' >&2
+  exit 1
+fi
+grep -F 'entry count differs from the installer contract' <<<"$runner_contract_output" >/dev/null
 
 # When non-interactive sudo is available, exercise the actual immutable-source
 # preflight from a root-owned tree beneath `/root`. This is a disposable local
