@@ -56,6 +56,11 @@ grep -Fx 'ReadWritePaths=/etc/skincos/ponto-legacy-absence-attestation' "$CUSTOD
 grep -Fx 'ReadWritePaths=/var/lib/skincos/ponto-legacy-absence-attestation' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -F '/usr/local/sbin/skincos-publish-crm-native-release preflight' "$CUSTODY_SUDOERS" >/dev/null
 ! grep -F '/usr/local/sbin/skincos-publish-crm-native-release rollback-last' "$CUSTODY_SUDOERS" >/dev/null
+readonly META_ADS_CUSTODY_ALIAS='Cmnd_Alias SKINCOS_META_ADS_TRACKING_CUSTODY = /usr/local/sbin/skincos-meta-ads-tracking-custody attest, /usr/local/sbin/skincos-meta-ads-tracking-custody audit, /usr/local/sbin/skincos-meta-ads-tracking-custody checkpoint, /usr/local/sbin/skincos-meta-ads-tracking-custody discover-current, /usr/local/sbin/skincos-meta-ads-tracking-custody checkpoint-current, /usr/local/sbin/skincos-meta-ads-tracking-custody apply, /usr/local/sbin/skincos-meta-ads-tracking-custody preflight, /usr/local/sbin/skincos-meta-ads-tracking-custody preflight-rollback, /usr/local/sbin/skincos-meta-ads-tracking-custody restore, /usr/local/sbin/skincos-meta-ads-tracking-custody promote-native, /usr/local/sbin/skincos-meta-ads-tracking-custody promote-and-apply, /usr/local/sbin/skincos-meta-ads-tracking-custody rollback-native, /usr/local/sbin/skincos-meta-ads-tracking-custody conversion-readback'
+grep -Fxc "$META_ADS_CUSTODY_ALIAS" "$CUSTODY_SUDOERS" | grep -Fx '1' >/dev/null
+grep -Fxc 'skincos-actions ALL=(root) NOPASSWD: SKINCOS_META_ADS_TRACKING_CUSTODY' "$CUSTODY_SUDOERS" | grep -Fx '1' >/dev/null
+grep -Fc '/usr/local/sbin/skincos-meta-ads-tracking-custody' "$CUSTODY_SUDOERS" | grep -Fx '1' >/dev/null
+visudo -cf "$CUSTODY_SUDOERS" >/dev/null
 grep -F 'release:crm-native' "$CUSTODY_WORKFLOW" >/dev/null
 dependency_graph_check_line="$(grep -n -F 'npm --prefix "$candidate/crm/api" ls --omit=dev --all --json >/dev/null' "$CUSTODY_WORKFLOW" | cut -d: -f1)"
 dependency_bin_materialize_line="$(grep -n -F 'npm .bin entry is not a symbolic link' "$CUSTODY_WORKFLOW" | cut -d: -f1)"
@@ -124,6 +129,37 @@ if mutable_source_output="$(bash "$source_fixture_root/scripts/runtime/install-c
   exit 1
 fi
 grep -E 'source tree is not root:root-owned|source mount filesystem is not trusted|source mount target is not a native trusted path' <<<"$mutable_source_output" >/dev/null
+
+# When non-interactive sudo is available, exercise the actual immutable-source
+# preflight from a root-owned tree beneath `/root`. This is a disposable local
+# fixture and `--verify-apply-source` exits before any host installation,
+# service, sudoers, or pointer mutation. It guards the `/` mount-prefix case
+# without making the regular source suite require sudo everywhere.
+if [[ -x /usr/bin/sudo ]] && /usr/bin/sudo -n /usr/bin/true >/dev/null 2>&1; then
+  root_owned_source_output="$({
+    /usr/bin/sudo -n /usr/bin/env -i PATH='/usr/bin:/bin' SKINCOS_TEST_SOURCE_ROOT="$ROOT_DIR" /bin/bash -s -- "${source_fixture_files[@]}" <<'ROOT_OWNED_SOURCE_FIXTURE'
+set -euo pipefail
+
+source_root="$(/usr/bin/mktemp -d /root/skincos-crm-native-source-test-XXXXXXXX)"
+case "$source_root" in
+  /root/skincos-crm-native-source-test-*) ;;
+  *) echo 'Root-owned CRM source fixture escaped its dedicated path.' >&2; exit 1 ;;
+esac
+cleanup_root_owned_source_fixture() {
+  /usr/bin/rm -rf -- "$source_root"
+}
+trap cleanup_root_owned_source_fixture EXIT INT TERM
+
+for relative in "$@"; do
+  /usr/bin/install -d -o root -g root -m 0755 "$source_root/$(/usr/bin/dirname -- "$relative")"
+  /usr/bin/install -o root -g root -m 0644 "$SKINCOS_TEST_SOURCE_ROOT/$relative" "$source_root/$relative"
+done
+
+/bin/bash "$source_root/scripts/runtime/install-crm-native-publisher-custody.sh" --verify-apply-source
+ROOT_OWNED_SOURCE_FIXTURE
+  } 2>&1)"
+  grep -Fx 'crm_native_publisher_custody_apply_source=valid' <<<"$root_owned_source_output" >/dev/null
+fi
 
 source_invocation_link="$tmp_root/custody-installer-link.sh"
 ln -s -- "$CUSTODY_INSTALLER" "$source_invocation_link"
