@@ -13,7 +13,9 @@ usage() {
 Usage: scripts/cloudflare-token-health.sh [--strict]
 
 Checks Cloudflare access without printing secrets:
-- CLOUDFLARE_API_TOKEN validity via /user/tokens/verify.
+- CLOUDFLARE_API_TOKEN validity via /user/tokens/verify when the bearer is an
+  API token, or via the configured account when the bearer is a Wrangler OAuth
+  credential that deliberately does not expose the user-token endpoint.
 - Account-scoped API access when CLOUDFLARE_ACCOUNT_ID is present.
 - Pages project read access.
 - D1 database visibility for espacofacial-booking.
@@ -68,12 +70,27 @@ assert_success_json() {
   ' "$label" <<<"$payload"
 }
 
+json_success() {
+  local payload="$1"
+  node -e '
+    const fs = require("node:fs");
+    let data;
+    try { data = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(1); }
+    process.exit(data && data.success === true ? 0 : 1);
+  ' <<<"$payload"
+}
+
 if [[ -n "$TOKEN" ]]; then
-  verify_payload="$(cf_get "/user/tokens/verify")" || fail "Cloudflare token verify request failed"
-  assert_success_json "Cloudflare token verify failed" "$verify_payload"
-  ok "Cloudflare API token is valid"
+  token_validation="account-scoped"
+  if verify_payload="$(cf_get "/user/tokens/verify" 2>/dev/null)" && json_success "$verify_payload"; then
+    token_validation="user-token"
+    ok "Cloudflare API token is valid"
+  fi
 
   if [[ -z "$ACCOUNT_ID" ]]; then
+    if [[ "$token_validation" == "account-scoped" ]]; then
+      fail "CLOUDFLARE_ACCOUNT_ID is required for a bearer that does not support /user/tokens/verify"
+    fi
     if [[ "$STRICT" == "1" ]]; then
       fail "CLOUDFLARE_ACCOUNT_ID is required in strict mode"
     fi
@@ -83,6 +100,9 @@ if [[ -n "$TOKEN" ]]; then
 
   account_payload="$(cf_get "/accounts/${ACCOUNT_ID}")" || fail "Cloudflare account read failed"
   assert_success_json "Cloudflare account read failed" "$account_payload"
+  if [[ "$token_validation" == "account-scoped" ]]; then
+    ok "Cloudflare OAuth bearer is valid for the configured account"
+  fi
   ok "Cloudflare account is readable"
 
   pages_payload="$(cf_get "/accounts/${ACCOUNT_ID}/pages/projects/${PROJECT}")" || fail "Cloudflare Pages project read failed: ${PROJECT}"
