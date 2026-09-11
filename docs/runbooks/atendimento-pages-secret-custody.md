@@ -9,9 +9,12 @@ interno gerado, não deve entrar no Git, em logs ou em artefatos.
 O workflow manual
 `.github/workflows/cloudflare-pages-sync-atendimento.yml` propaga a chave
 privada do GitHub Environment para as configurações `production` e `preview`
-do projeto Pages canônico `skincos`. Ele exige o gate geral de Pages, o lease
+do projeto Pages canônico `skincos`. Ele exige somente os controles dedicados
+`ATENDIMENTO_PAGES_PROJECT=skincos` e
+`ENABLE_ATENDIMENTO_PAGES_SECRET_SYNC=true`, preserva o lease
 `global:crm-cloudflare-writer` e verifica somente a presença do binding como
-`secret_text`; o valor nunca é lido de volta.
+`secret_text`; o valor nunca é lido de volta. Os controles do publisher legado
+`general` não são fallback para essa sincronização.
 
 Antes de executar:
 

@@ -11,7 +11,7 @@ const runbook = fs.readFileSync(path.join(root, 'docs', 'runbooks', 'atendimento
 test('Atendimento Pages secret reconciliation is manual, gated and environment-scoped', () => {
   assert.match(workflow, /workflow_dispatch:/)
   assert.doesNotMatch(workflow, /schedule:/)
-  assert.match(workflow, /ENABLE_CRM_GENERAL_PAGES_DEPLOY/)
+  assert.match(workflow, /ENABLE_ATENDIMENTO_PAGES_SECRET_SYNC/)
   assert.match(workflow, /global-coordination-acquire/)
   assert.match(workflow, /global-coordination-check/)
   assert.match(workflow, /global-coordination-release/)
@@ -20,7 +20,8 @@ test('Atendimento Pages secret reconciliation is manual, gated and environment-s
   assert.match(workflow, /pages secret put ATENDIMENTO_ACTOR_HMAC_KEY --project-name "\$PROJECT" --env "\$env_name"/)
   assert.match(workflow, /for env_name in production preview/)
   assert.match(workflow, /binding\.get\('type'\) != 'secret_text'/)
-  assert.match(workflow, /PROJECT: \$\{\{ vars\.CRM_GENERAL_PAGES_PROJECT \}\}/)
+  assert.match(workflow, /PROJECT: \$\{\{ vars\.ATENDIMENTO_PAGES_PROJECT \}\}/)
+  assert.doesNotMatch(workflow, /CRM_GENERAL_PAGES_PROJECT|ENABLE_CRM_GENERAL_PAGES_DEPLOY/)
   assert.match(runbook, /mesma `ATENDIMENTO_ACTOR_HMAC_KEY`/i)
   assert.match(runbook, /Health e presença de secret não provam/i)
   assert.doesNotMatch(workflow, /echo .*ATENDIMENTO_ACTOR_HMAC_KEY\}/)
