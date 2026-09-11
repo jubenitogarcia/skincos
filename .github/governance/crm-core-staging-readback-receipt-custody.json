@@ -1,6 +1,6 @@
 {
   "contract": "skincos/crm-core-staging-readback-receipt-custody/v1",
-  "state": "public-key-pinning-pending",
+  "state": "active",
   "source": {
     "repository": "jubenitogarcia/skincos-crm-core",
     "repositoryId": "1353934107",
@@ -36,9 +36,17 @@
     "domainChangeAuthorized": false
   },
   "keyRing": {
-    "activeKeyId": null,
-    "acceptedKeyIds": [],
-    "publicKeys": {}
+    "activeKeyId": "crm-core-staging-readback-20260911-r1",
+    "acceptedKeyIds": [
+      "crm-core-staging-readback-20260911-r1"
+    ],
+    "publicKeys": {
+      "crm-core-staging-readback-20260911-r1": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "RRwndzeF_7fyLiIJim4r_KVxv9Rg1eJP8hfUEpPydNA"
+      }
+    }
   },
   "prohibitions": [
     "A receipt is evidence only for the exact staging artifact and does not authorize deployment, production, domain changes, data migration, or legacy retirement.",
