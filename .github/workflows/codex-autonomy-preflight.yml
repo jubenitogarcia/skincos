@@ -19,10 +19,10 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       META_ADS_REPORT_WORKER_API_TOKEN: ${{ secrets.META_ADS_REPORT_WORKER_API_TOKEN }}
       INTEGRATIONS_ENCRYPTION_SECRET: ${{ secrets.INTEGRATIONS_ENCRYPTION_SECRET }}
-      # Read the namespaced general CRM controls; environment-scoped legacy
-      # values are reserved for Ponto replay containment.
-      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CRM_GENERAL_PAGES_PROJECT }}
-      ENABLE_CRM_PAGES_DEPLOY: ${{ vars.ENABLE_CRM_GENERAL_PAGES_DEPLOY }}
+      # Read dedicated composite Pages-operation controls. Legacy general
+      # values remain reserved exclusively for the retired general writer.
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CRM_COMPOSITE_PAGES_PROJECT }}
+      ENABLE_CRM_PAGES_DEPLOY: ${{ vars.ENABLE_CRM_COMPOSITE_PAGES_OPERATIONS }}
       ENABLE_CRM_API_DEPLOY: ${{ vars.ENABLE_CRM_API_DEPLOY }}
       META_ADS_REPORT_WORKER_BASE_URL: ${{ vars.META_ADS_REPORT_WORKER_BASE_URL }}
 
