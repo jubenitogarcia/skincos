@@ -72,6 +72,7 @@
         ".github/governance/cloudflare-single-writer-policy.json",
         ".github/workflows/ponto-pages-candidate-preflight.yml",
         ".github/workflows/ponto-pages-governed-publisher.yml",
+        ".github/workflows/ponto-pages-staging-synthetic-smoke.yml",
         ".github/workflows/ponto-pages-secret-bridge.yml",
         ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
         ".github/actions/global-coordination-acquire/**",
@@ -85,8 +86,12 @@
         ".github/scripts/ponto-source-closure.mjs",
         ".github/scripts/ponto-root-custody.mjs",
         ".github/workflows/ponto-orchestrator-gate.yml",
+        "crm/console/scripts/ponto-staging-journey.cjs",
         "inventory/wrangler.toml",
+        "workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs",
+        "workforce/timekeeping/security.js",
         "workforce/timekeeping/wrangler.toml",
+        ".github/scripts/ponto-json-output.mjs",
         ".github/scripts/promotion-*.mjs"
       ],
       "sharedInputs": true
