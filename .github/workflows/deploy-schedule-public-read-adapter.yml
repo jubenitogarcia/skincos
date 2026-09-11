@@ -74,7 +74,7 @@ jobs:
     environment: preview
     steps:
       - name: Checkout immutable adapter source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
 
@@ -106,7 +106,7 @@ jobs:
     environment: staging
     steps:
       - name: Checkout immutable adapter source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
           fetch-depth: 1
@@ -598,7 +598,7 @@ jobs:
       SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: ${{ secrets.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }}
     steps:
       - name: Checkout immutable private adapter and probe
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ (needs.promotion.outputs.source_sha || needs.recovery-source.outputs.source_sha) }}
       - name: Setup Node
@@ -990,7 +990,7 @@ jobs:
       PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
     steps:
       - name: Checkout immutable recovery source without an expiring promotion artifact
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
@@ -1026,7 +1026,7 @@ jobs:
       PROBE_RECOVERY_RUN_ID: ${{ inputs.probe_recovery_run_id }}
     steps:
       - name: Checkout immutable residual-probe reconciler
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.recovery-source.outputs.source_sha }}
       - name: Setup Node
