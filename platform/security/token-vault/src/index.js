@@ -644,6 +644,8 @@ function contract(requestId) {
       createToken: 'POST /internal/token-vault/v1/tokens',
       updateToken: 'PATCH /internal/token-vault/v1/tokens/:id',
       updateMetaAdsPublishConfig: 'PUT /internal/token-vault/v1/meta-ads-publish/config',
+      metaAdsRunJournal: 'GET /internal/token-vault/v1/meta-ads-publish/runs/:run_id',
+      metaAdsImageReadback: 'GET /internal/token-vault/v1/meta-ads-publish/runs/:run_id/image-readback',
       analyticsOperation: 'POST /internal/token-vault/v1/analytics/operations',
     },
     auth: {
