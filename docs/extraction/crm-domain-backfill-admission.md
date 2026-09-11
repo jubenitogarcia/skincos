@@ -33,7 +33,7 @@ canônica, recibos de lote, reconciliação ou rollback.
 
 | Domínio | Limite atual |
 | --- | --- |
-| Atendimento | Único candidato: projeções opacas de associação identidade/unidade em staging, lidas somente de `crm_atendimento.global_client_identity_members`, `attendance_client_links`, `attendances` e `units`. Não transporta atributos de cliente. |
+| Atendimento | Único candidato: projeções opacas de associação identidade/unidade em staging, lidas somente de `crm_atendimento.crm_core_identity_members`, `crm_core_attendance_client_links`, `attendances` e `units`. A fonte `v5` exige links explicitamente confirmados; não transporta atributos de cliente. |
 | Identity | Somente entrega autenticada opaca; usuários, sessões, funções e grants continuam no owner. |
 | Inventory | Mantém D1, estoque e o proxy legado `/api/crm/*`; não é fallback do Core. |
 | Finance | Mantém ledger, grants, importações e `crm_caixa.sales` no Worker/armazenamento Finance; nenhuma relação Finance alimenta o candidato de Atendimento. |
@@ -48,6 +48,18 @@ preparação custodiada de staging para Atendimento e força todos os demais
 domínios a permanecerem explicitamente excluídos. A allowlist de relações da
 fonte também é parte do contrato: uma relação Finance não pode ser introduzida
 por mudança da consulta de Atendimento.
+
+As quatro relações do candidato só passam a cumprir esse contrato depois da
+migração aditiva
+`20260910_atendimento_crm_core_identity_materialization_v1` e de seu
+preflight de schema. As relações de fonte usam nomes isolados `crm_core_*` e
+uma FK composta entre identidade e cliente canônico; a migração ampla anterior
+não equivale a essa admissão nem é reutilizada como dependência.
+
+A `20260908_crm_core_projection_delta_v1` continua imutável e presa ao grafo
+legado. Logo, a fonte `v5` ainda não pode alimentar seu outbox: uma migration
+delta-v2 aditiva, recibos de custódia e um cutover explícito continuam sendo
+pré-requisitos separados.
 
 ## Como o primeiro domínio poderá avançar
 

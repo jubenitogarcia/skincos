@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { IDENTITY_GRAPH_LOCK_KEY } from '../../../../shared/crm-auth/identityGraphLock.js'
+
+export { IDENTITY_GRAPH_LOCK_KEY }
 
 export const IDENTITY_REVIEW_TYPES = new Set([
     'attendance_name_merge',
@@ -15,11 +18,6 @@ export const IDENTITY_REVIEW_SOURCE_TYPES = new Set([
     'app_registration',
     'lead_profile',
 ])
-
-// All importers and the human review workflow take this transaction lock
-// before changing the current global-identity projection.  Source-specific
-// locks remain in place for their own run bookkeeping.
-export const IDENTITY_GRAPH_LOCK_KEY = 'crm_atendimento.identity_graph_materialization'
 
 export function identityReviewError(code, statusCode = 400) {
     const error = new Error(code)
