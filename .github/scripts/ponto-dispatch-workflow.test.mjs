@@ -337,8 +337,10 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
 
   const preflight = readWorkflow("codex-autonomy-preflight.yml");
   assert.doesNotMatch(preflight, /vars\.CRM_PAGES_PROJECT\b/);
-  assert.match(preflight, /vars\.CRM_GENERAL_PAGES_PROJECT\b/);
-  assert.match(preflight, /vars\.ENABLE_CRM_GENERAL_PAGES_DEPLOY\b/);
+  assert.doesNotMatch(preflight, /vars\.CRM_GENERAL_PAGES_PROJECT\b/);
+  assert.doesNotMatch(preflight, /vars\.ENABLE_CRM_GENERAL_PAGES_DEPLOY\b/);
+  assert.match(preflight, /vars\.CRM_COMPOSITE_PAGES_PROJECT\b/);
+  assert.match(preflight, /vars\.ENABLE_CRM_COMPOSITE_PAGES_OPERATIONS\b/);
 
   const sharedPages = readWorkflow("deploy-crm-pages.yml");
   assert.doesNotMatch(

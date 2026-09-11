@@ -25,14 +25,14 @@ jobs:
         env:
           TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ vars.CRM_GENERAL_PAGES_PROJECT }}
-          ENABLE_PRODUCTION: ${{ vars.ENABLE_CRM_GENERAL_PAGES_DEPLOY }}
+          PROJECT: ${{ vars.ATENDIMENTO_PAGES_PROJECT }}
+          ENABLE_PRODUCTION: ${{ vars.ENABLE_ATENDIMENTO_PAGES_SECRET_SYNC }}
           ATENDIMENTO_ACTOR_HMAC_KEY: ${{ secrets.ATENDIMENTO_ACTOR_HMAC_KEY }}
           REASON: ${{ inputs.reason }}
         run: |
           set -euo pipefail
           [[ -n "${TOKEN:-}" && -n "${ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are required.'; exit 1; }
-          [[ "${ENABLE_PRODUCTION:-}" == true ]] || { echo 'ENABLE_CRM_GENERAL_PAGES_DEPLOY must be true for this production secret reconciliation.'; exit 1; }
+          [[ "${ENABLE_PRODUCTION:-}" == true ]] || { echo 'ENABLE_ATENDIMENTO_PAGES_SECRET_SYNC must be true for this production secret reconciliation.'; exit 1; }
           [[ "${PROJECT:-}" == skincos ]] || { echo 'Atendimento production secret reconciliation requires the canonical skincos Pages project.'; exit 1; }
           [[ "${REASON:-}" =~ ^[^[:space:]][^[:cntrl:]]{7,239}$ ]] || { echo 'A bounded non-secret reason is required.'; exit 1; }
           [[ -n "${ATENDIMENTO_ACTOR_HMAC_KEY:-}" ]] || { echo 'Missing GitHub secret ATENDIMENTO_ACTOR_HMAC_KEY.'; exit 1; }
