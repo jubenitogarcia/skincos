@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
@@ -9,11 +10,29 @@ const workflowDirectory = path.join(repositoryRoot, '.github/workflows')
 const readWorkflow = (name) => fs.readFileSync(path.join(workflowDirectory, name), 'utf8')
 const readJson = (name) => JSON.parse(fs.readFileSync(path.join(repositoryRoot, name), 'utf8'))
 const workflowStep = (workflow, name) => {
+  const normalized = workflow.replaceAll('\r\n', '\n')
   const marker = '      - name: ' + name + '\n'
-  const start = workflow.indexOf(marker)
-  const end = workflow.indexOf('\n      - ', start + marker.length)
-  return start < 0 ? '' : workflow.slice(start, end < 0 ? workflow.length : end)
+  const start = normalized.indexOf(marker)
+  const end = normalized.indexOf('\n      - ', start + marker.length)
+  return start < 0 ? '' : normalized.slice(start, end < 0 ? normalized.length : end)
 }
+const runPontoStagingHarness = ({ pagesSurface, origin }) => spawnSync(
+  process.execPath,
+  [path.join(repositoryRoot, 'crm/console/scripts/ponto-staging-journey.cjs')],
+  {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...(pagesSurface ? { PONTO_STAGING_PAGES_SURFACE: pagesSurface } : {}),
+      PONTO_STAGING_CRM_URL: origin,
+      PONTO_STAGING_EXPECTED_RELEASE_SHA: 'a'.repeat(40),
+      PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: '11111111-1111-4111-8111-111111111111',
+      PONTO_STAGING_FIXTURES_FILE: path.join(repositoryRoot, '.git/ponto-staging-harness-fixture-missing.json'),
+      PONTO_STAGING_REPORT_FILE: path.join(repositoryRoot, '.git/ponto-staging-harness-report-missing.json'),
+    },
+  },
+)
 
 test('only Ponto Pages overrides the reusable promotion environment', () => {
   const promotionGate = readWorkflow('promotion-gate.yml')
@@ -56,6 +75,7 @@ test('Ponto Pages declares a dedicated release closure that contains its governe
     '.github/governance/cloudflare-single-writer-policy.json',
     '.github/workflows/ponto-pages-candidate-preflight.yml',
     '.github/workflows/ponto-pages-governed-publisher.yml',
+    '.github/workflows/ponto-pages-staging-synthetic-smoke.yml',
     '.github/workflows/ponto-pages-secret-bridge.yml',
     '.github/workflows/cloudflare-workers-sync-ponto-secrets.yml',
     '.github/actions/global-coordination-acquire/**',
@@ -69,8 +89,12 @@ test('Ponto Pages declares a dedicated release closure that contains its governe
     '.github/scripts/ponto-source-closure.mjs',
     '.github/scripts/ponto-root-custody.mjs',
     '.github/workflows/ponto-orchestrator-gate.yml',
+    'crm/console/scripts/ponto-staging-journey.cjs',
     'inventory/wrangler.toml',
+    'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs',
+    'workforce/timekeeping/security.js',
     'workforce/timekeeping/wrangler.toml',
+    '.github/scripts/ponto-json-output.mjs',
     '.github/scripts/promotion-*.mjs',
   ])
   assert.equal(policy.releaseClosures[unit.releaseClosure].sharedInputs, true)
@@ -137,4 +161,58 @@ test('Ponto Pages accepts only dedicated secret custody, account-scoped mutation
   assert.equal((publisher.match(/curl --disable --fail --silent --show-error/g) || []).length, 4)
   assert.equal((publisher.match(/--header @-/g) || []).length, 4)
   assert.doesNotMatch(publisher, /-H\s+"Authorization: Bearer \$PONTO_PAGES_CLOUDFLARE_API_TOKEN"/)
+})
+
+test('Ponto Pages staging smoke is an executable dedicated-only synthetic producer', () => {
+  const smoke = readWorkflow('ponto-pages-staging-synthetic-smoke.yml')
+
+  assert.match(smoke, /^name: Ponto Pages staging synthetic smoke$/m)
+  assert.match(smoke, /^\s+workflow_dispatch:$/m)
+  assert.doesNotMatch(smoke, /^\s+(?:push|pull_request|schedule):$/m)
+  assert.match(smoke, /pages_surface:[\s\S]*?default: legacy[\s\S]*?options: \[legacy, dedicated-ponto-pages\]/)
+  assert.match(smoke, /execute:[\s\S]*?default: false[\s\S]*?type: boolean/)
+  assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_EXECUTION_NOT_AUTHORIZED/)
+  assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_SURFACE_NOT_DEDICATED/)
+  assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_PUBLISH_DISABLED/)
+  assert.match(smoke, /PONTO_PAGES_PROJECT" == 'skincos-ponto-staging'/)
+  assert.match(smoke, /PONTO_STAGING_CRM_URL: https:\/\/skincos-ponto-staging\.pages\.dev\//)
+  assert.match(smoke, /PONTO_STAGING_PAGES_SURFACE: dedicated-ponto-pages/)
+  assert.match(smoke, /PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID/)
+  assert.match(smoke, /ponto-pages-publish-receipt-staging-\$RELEASE_SHA/)
+  assert.match(smoke, /verify-ponto-core-staging-candidate\.mjs/)
+  assert.match(smoke, /verify-ponto-pages-remote-project\.mjs/)
+  assert.match(smoke, /global:staging-d1/)
+  assert.match(smoke, /global-coordination-acquire/)
+  assert.match(smoke, /global-coordination-check/)
+  assert.match(smoke, /if: \$\{\{ always\(\) && steps\.generate_fixture\.outcome == 'success' \}\}/)
+  assert.match(smoke, /ponto-pages-staging-synthetic-smoke-\$\{\{ needs\.preflight\.outputs\.source_sha \}\}-skincos-ponto-staging/)
+  assert.match(smoke, /contractId: 'skincos\/ponto-pages-staging-synthetic-smoke\/v1'/)
+  assert.match(smoke, /checks: \['login', 'csrf', 'ponto-read', 'ponto-write', 'terminal', 'synthetic-cleanup'\]/)
+  assert.match(smoke, /Tear down only this run's synthetic staging records/)
+  assert.doesNotMatch(smoke, /secrets\.CLOUDFLARE_(?:ACCOUNT_ID|API_TOKEN)/)
+  assert.doesNotMatch(smoke, /\bpages\s+(?:deploy|secret)\b/i)
+  assert.doesNotMatch(smoke, /ponto-pages-production/)
+  assert.doesNotMatch(smoke, /https:\/\/api\.skincos\.com\.br/)
+})
+
+test('canonical journey accepts only the exact dedicated Pages origin when selected', () => {
+  const dedicated = runPontoStagingHarness({
+    pagesSurface: 'dedicated-ponto-pages',
+    origin: 'https://skincos-ponto-staging.pages.dev/',
+  })
+  assert.notEqual(dedicated.status, 0)
+  assert.match(dedicated.stderr, /ponto-staging-harness-fixture-missing\.json/)
+
+  const legacy = runPontoStagingHarness({
+    origin: 'https://skincos-ponto-staging.pages.dev/',
+  })
+  assert.notEqual(legacy.status, 0)
+  assert.match(legacy.stderr, /skincos-staging\.pages\.dev HTTPS origin/)
+
+  const nonCanonicalDedicated = runPontoStagingHarness({
+    pagesSurface: 'dedicated-ponto-pages',
+    origin: 'https://not-skincos-ponto-staging.pages.dev/',
+  })
+  assert.notEqual(nonCanonicalDedicated.status, 0)
+  assert.match(nonCanonicalDedicated.stderr, /exact dedicated Ponto Pages staging origin/)
 })
