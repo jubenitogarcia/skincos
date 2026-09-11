@@ -7,6 +7,17 @@ fixado a `main`, a um SHA exato e ao runner `skincos-native-custody`; não abre
 conexão PostgreSQL pelo workflow, não contém segredo, não configura Cloudflare,
 não muda rota e não desativa o writer legado.
 
+Antes de qualquer lease, autorização ou helper root-owned, ele aceita somente
+o `receipt.json` sanitizado e assinado que saiu do readback oficial do Core. O
+input `core_readback_receipt_base64` é a codificação Base64 desse único arquivo;
+o workflow reconstrói-o apenas em `runner.temp` e o verifica contra a chave
+pública pinada em
+`.github/governance/crm-core-staging-readback-receipt-custody.json`. SHA do
+Core, digest do bundle, IDs de exportação e readback e o digest do statement
+assinado precisam coincidir com os outros inputs. A política começa pendente e
+falha fechada até que a chave pública real seja aprovada conforme o runbook
+dedicado; nenhum valor secreto é passado por esse input.
+
 O helper root-owned chamado pelo workflow recebe somente uma autorização
 Ed25519 curta pelo stdin. Suas capacidades ficam fora do repositório:
 
