@@ -21,11 +21,12 @@ test("the canonical admission plan authorizes only custodied staging preparation
   assert.equal(summary.state, "staging-preparation-authorized")
   assert.equal(summary.productionMutationAllowed, false)
   assert.equal(summary.publicRouteMutationAllowed, false)
+  assert.equal(summary.atendimentoSourceSemantics, "atendimento/crm-core/confirmed-unit-membership-source/v5")
   assert.deepEqual(summary.stagingSourceReadAuthorized, ["atendimento-client-memberships"])
   assert.deepEqual(summary.stagingProjectionCandidateIds, ["atendimento-client-memberships"])
   assert.deepEqual(summary.atendimentoSourceRelationAllowlist, [
-    "crm_atendimento.global_client_identity_members",
-    "crm_atendimento.attendance_client_links",
+    "crm_atendimento.crm_core_identity_members",
+    "crm_atendimento.crm_core_attendance_client_links",
     "crm_atendimento.attendances",
     "crm_atendimento.units",
   ])

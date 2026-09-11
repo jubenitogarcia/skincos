@@ -45,11 +45,14 @@ até 240 segundos; uma prova somente comparada em memória não é suficiente.
 3. Fonte canônica atestada: `skincos_clientes_production`, principal
    `crm_core_projection_exporter`, transação `REPEATABLE READ READ ONLY`,
    grafo de identidade/membership e checkpoint de source-sync completos. A
-   allowlist fixa é `crm_atendimento.global_client_identity_members`,
-   `crm_atendimento.attendance_client_links`, `crm_atendimento.attendances` e
+    allowlist fixa é `crm_atendimento.crm_core_identity_members`,
+    `crm_atendimento.crm_core_attendance_client_links`, `crm_atendimento.attendances` e
    `crm_atendimento.units`; o helper não pode consultar ou obter grant para
    `crm_caixa.sales` ou qualquer outra relação Finance. O helper não pode
-   materializar esse grafo nem criar grants automaticamente.
+   materializar esse grafo nem criar grants automaticamente. O grafo só é
+   admissível depois de `20260910_atendimento_crm_core_identity_materialization_v1`
+   ativo e do preflight dedicado confirmar schema `runtimeReady`; a migração
+   ampla anterior não satisfaz esse requisito.
 4. Ambiente GitHub protegido
    `crm-atendimento-projection-backfill-staging`, com a chave privada de
    autorização e o respectivo key ID; o public key correspondente só fica na

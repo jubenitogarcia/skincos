@@ -1,0 +1,3 @@
+-- Non-destructive rollback for 20260910_atendimento_crm_core_identity_materialization_v1.
+-- Do not drop schema, links or future evidence. The guarded migration runner
+-- records rollback in crm_atendimento.schema_migrations and preserves recovery.

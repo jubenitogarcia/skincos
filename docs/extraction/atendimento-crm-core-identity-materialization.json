@@ -1,0 +1,43 @@
+{
+  "contract": "skincos/atendimento-crm-core-identity-materialization/v2",
+  "state": "schema-preparation-authorized",
+  "migration": {
+    "id": "20260910_atendimento_crm_core_identity_materialization_v1",
+    "mode": "additive-schema-only",
+    "automaticApplicationAllowed": false,
+    "dataMutationAllowed": false,
+    "rollback": "non-destructive-registry-only"
+  },
+  "identityPolicy": {
+    "version": "atendimento/crm-core/identity-materialization/v2",
+    "sourceType": "attendance_client",
+    "componentKeyTemplate": "attendance-client:<canonical-client-uuid>",
+    "approvedLinkMethods": ["operator_attested", "stable_source_reference", "reviewed_reconciliation"],
+    "uuidFromNameAllowed": false,
+    "nameBasedAutomaticLinkAllowed": false,
+    "ambiguousLinkPolicy": "exclude-until-reviewed",
+    "reassignmentPolicy": "review-required",
+    "revisionPolicy": "monotonic",
+    "sameRevisionEvidencePolicy": "review-required"
+  },
+  "projection": {
+    "sourceSemantics": "atendimento/crm-core/confirmed-unit-membership-source/v5",
+    "sourceRelationAllowlist": [
+      "crm_atendimento.crm_core_identity_members",
+      "crm_atendimento.crm_core_attendance_client_links",
+      "crm_atendimento.attendances",
+      "crm_atendimento.units"
+    ],
+    "excludedSourceDomains": ["finance"],
+    "customerAttributesCopied": false,
+    "productionBackfillAllowed": false
+  },
+  "writer": {
+    "contract": "atendimento/crm-core/identity-materialization-writer/v1",
+    "databaseRole": "crm_core_identity_materializer",
+    "automaticExecutionAllowed": false,
+    "input": "explicit-uuid-run-id-and-links-only",
+    "ledger": "crm_atendimento.crm_core_identity_materialization_runs",
+    "grants": "none-created-by-source-migration"
+  }
+}
