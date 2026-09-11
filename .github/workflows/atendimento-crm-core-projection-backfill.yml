@@ -32,6 +32,10 @@ on:
         description: Exact GitHub Actions run ID that read back the deployed Core staging artifact.
         required: true
         type: string
+      core_readback_receipt_base64:
+        description: Base64 of the exact sanitized signed CRM Core staging readback receipt artifact.
+        required: true
+        type: string
       confirmation:
         description: Type prepare-exact-atendimento-crm-core-staging-baseline
         required: true
@@ -72,6 +76,8 @@ jobs:
       CORE_ARTIFACT_RUN_ID: ${{ inputs.core_artifact_run_id }}
       CORE_READBACK_DIGEST: ${{ inputs.core_readback_digest }}
       CORE_READBACK_RUN_ID: ${{ inputs.core_readback_run_id }}
+      CORE_READBACK_RECEIPT_BASE64: ${{ inputs.core_readback_receipt_base64 }}
+      CORE_READBACK_RECEIPT_FILE: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/core-readback-receipt.json
       COORDINATION_PROOF: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/coordination.json
       AUTHORIZATION_FILE: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/authorization.json
       RAW_RECEIPT: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/receipt.raw.json
@@ -95,9 +101,37 @@ jobs:
           [[ "$CORE_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_ARTIFACT_RUN_INVALID'; exit 1; }
           [[ "$CORE_READBACK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_READBACK_INVALID'; exit 1; }
           [[ "$CORE_READBACK_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_READBACK_RUN_INVALID'; exit 1; }
+          [[ ${#CORE_READBACK_RECEIPT_BASE64} -ge 128 && ${#CORE_READBACK_RECEIPT_BASE64} -le 32768 ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_READBACK_RECEIPT_INVALID'; exit 1; }
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CHECKOUT_MISMATCH'; exit 1; }
           git fetch --no-tags origin main
           [[ "$(git rev-parse origin/main)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_MAIN_ADVANCED'; exit 1; }
+          umask 077
+          mkdir -p "$(dirname "$CORE_READBACK_RECEIPT_FILE")"
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const encoded = process.env.CORE_READBACK_RECEIPT_BASE64 || "";
+          const target = process.env.CORE_READBACK_RECEIPT_FILE || "";
+          if (!target || encoded.length < 128 || encoded.length > 32768 || encoded.length % 4 !== 0
+            || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+            throw new Error("ATENDIMENTO_CRM_CORE_BACKFILL_CORE_READBACK_RECEIPT_INVALID");
+          }
+          const bytes = Buffer.from(encoded, "base64");
+          try {
+            if (bytes.length < 2 || bytes.length > 16384 || bytes.toString("base64") !== encoded) {
+              throw new Error("ATENDIMENTO_CRM_CORE_BACKFILL_CORE_READBACK_RECEIPT_INVALID");
+            }
+            fs.writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
+          } finally {
+            bytes.fill(0);
+          }
+          NODE
+          node .github/scripts/verify-crm-core-staging-readback-receipt.mjs verify \
+            --receipt "$CORE_READBACK_RECEIPT_FILE" \
+            --expected-source-sha "$CORE_RELEASE_SHA" \
+            --expected-artifact-digest "$CORE_ARTIFACT_DIGEST" \
+            --expected-artifact-run-id "$CORE_ARTIFACT_RUN_ID" \
+            --expected-readback-digest "$CORE_READBACK_DIGEST" \
+            --expected-readback-run-id "$CORE_READBACK_RUN_ID" >/dev/null
           node scripts/verify-crm-domain-backfill-admission.mjs
           mkdir -p "$(dirname "$AUTHORIZATION_FILE")"
           admission_plan_sha="$(sha256sum docs/extraction/crm-domain-backfill-admission.json | awk '{print $1}')"
