@@ -1,7 +1,7 @@
 import { createFinanceHandler } from './api/worker.js';
-import { canUseCanary, readModuleAvailability, moduleUnavailableResponse } from '../shared/module-availability/worker.js';
-import { verifySignedDomainContext } from '../shared/service-adapters/signed-domain-context.js';
-import { dependencyState, operationalLog, operationalStatus } from '../shared/observability/contract.js';
+import { canUseCanary, readModuleAvailability, moduleUnavailableResponse } from '@jubenitogarcia/skincos-platform-contracts/module-availability';
+import { verifySignedDomainContext } from '@jubenitogarcia/skincos-edge-adapters';
+import { dependencyState, operationalLog, operationalStatus } from '@jubenitogarcia/skincos-platform-contracts/observability';
 
 const handler = createFinanceHandler();
 const requestIdFor = (request) => String(request.headers.get('x-request-id') || crypto.randomUUID()).trim();

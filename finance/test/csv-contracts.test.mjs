@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { analyseCsvImport, decimalToMinorUnits, normalizeImportRow } from '../../shared/finance-contracts/csv.js';
+import { analyseCsvImport, decimalToMinorUnits, normalizeImportRow } from '@jubenitogarcia/skincos-finance-contracts/csv';
 
 test('analisa CSV brasileiro UTF-8 com ponto e vírgula, acentos e duplicidade preservável', async () => {
   const csv = await readFile(new URL('./fixtures/extrato-br-duplicados.csv', import.meta.url), 'utf8');

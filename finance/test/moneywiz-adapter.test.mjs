@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { prepareMoneyWizImport } from '../../shared/finance-contracts/moneywiz.js';
-import { analyseCsvImport, normalizeImportRow } from '../../shared/finance-contracts/csv.js';
+import { prepareMoneyWizImport } from '@jubenitogarcia/skincos-finance-contracts/moneywiz';
+import { analyseCsvImport, normalizeImportRow } from '@jubenitogarcia/skincos-finance-contracts/csv';
 
 test('MoneyWiz adapter normalizes documented transaction CSV columns without posting to the ledger', async () => {
   const csv = await readFile(new URL('./fixtures/moneywiz-transactions-comma.csv', import.meta.url), 'utf8'); const prepared = prepareMoneyWizImport(csv);

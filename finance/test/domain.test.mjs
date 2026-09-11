@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FinanceContractError } from '../../shared/finance-contracts/index.js';
+import { FinanceContractError } from '@jubenitogarcia/skincos-finance-contracts';
 import { buildPostedJournal } from '../domain.js';
 
 test('income and expense use distinct financial and category ledger accounts', () => {

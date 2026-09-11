@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { prepareEfCaixaImport } from '../../shared/finance-contracts/ef-caixa.js';
-import { analyseCsvImport, normalizeImportRow } from '../../shared/finance-contracts/csv.js';
+import { prepareEfCaixaImport } from '@jubenitogarcia/skincos-finance-contracts/ef-caixa';
+import { analyseCsvImport, normalizeImportRow } from '@jubenitogarcia/skincos-finance-contracts/csv';
 
 test('Caixa EF delivery becomes generic staging CSV without selecting accounts or posting the ledger', async () => {
   const delivery = JSON.parse(await readFile(new URL('./fixtures/ef-caixa-delivery-nh.json', import.meta.url), 'utf8')); const prepared = prepareEfCaixaImport(delivery); const rows = analyseCsvImport(prepared.csv, prepared.mapping).rows;
