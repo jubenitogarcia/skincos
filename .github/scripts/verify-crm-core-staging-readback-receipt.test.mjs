@@ -23,6 +23,12 @@ import {
 const signing = crypto.generateKeyPairSync("ed25519");
 const publicJwk = signing.publicKey.export({ format: "jwk" });
 const keyId = "crm-core-staging-readback-custody-test-v1";
+const checkedInKeyId = "crm-core-staging-readback-20260911-r1";
+const checkedInPublicJwk = Object.freeze({
+  kty: "OKP",
+  crv: "Ed25519",
+  x: "RRwndzeF_7fyLiIJim4r_KVxv9Rg1eJP8hfUEpPydNA",
+});
 const sourceSha = "a".repeat(40);
 const artifactRunId = "34567890123";
 const readbackRunId = "34567890124";
@@ -187,15 +193,14 @@ test("rejects a receipt signed by a key that is not pinned by the external custo
   );
 });
 
-test("the checked-in policy remains deliberately pending until the real external public key is reviewed", () => {
-  const pending = readCrmCoreStagingReadbackCustodyPolicy(DEFAULT_POLICY_FILE);
-  assert.equal(pending.state, "public-key-pinning-pending");
-  assert.equal(Object.keys(pending.keyRing.publicKeys).length, 0);
-  const { receipt, options } = verificationOptions(pending);
-  assert.throws(
-    () => verifyCrmCoreStagingReadbackReceipt(receipt, options),
-    /CRM_CORE_STAGING_READBACK_CUSTODY_KEY_PINNING_PENDING/,
-  );
+test("the checked-in policy pins only the reviewed public Core signer", () => {
+  const policy = readCrmCoreStagingReadbackCustodyPolicy(DEFAULT_POLICY_FILE);
+  assert.equal(policy.state, "active");
+  assert.equal(policy.keyRing.activeKeyId, checkedInKeyId);
+  assert.deepEqual(policy.keyRing.acceptedKeyIds, [checkedInKeyId]);
+  assert.deepEqual(Object.keys(policy.keyRing.publicKeys), [checkedInKeyId]);
+  assert.deepEqual(policy.keyRing.publicKeys[checkedInKeyId].jwk, checkedInPublicJwk);
+  assert.equal(Object.hasOwn(policy.keyRing.publicKeys[checkedInKeyId].jwk, "d"), false);
 });
 
 test("policy parser refuses accidental private material, unreviewed key IDs, and inconsistent key ring state", () => {
