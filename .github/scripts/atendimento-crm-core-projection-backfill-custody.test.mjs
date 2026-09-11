@@ -2,9 +2,20 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import test from "node:test";
-import yaml from "js-yaml";
 
 const workflow = fs.readFileSync(new URL("../workflows/atendimento-crm-core-projection-backfill.yml", import.meta.url), "utf8");
+
+const readLiteralRunBlock = (source, stepName) => {
+  const stepMarker = `      - name: ${stepName}\n`;
+  const stepStart = source.indexOf(stepMarker);
+  assert.ok(stepStart >= 0, `workflow step is missing: ${stepName}`);
+
+  const nextStep = source.indexOf("\n      - name:", stepStart + stepMarker.length);
+  const step = source.slice(stepStart, nextStep >= 0 ? nextStep : source.length);
+  const run = step.match(/^        run: \|\n((?: {10}.*(?:\n|$))*)/m);
+  assert.ok(run, `literal shell block is missing from step: ${stepName}`);
+  return run[1].replace(/^ {10}/gm, "");
+};
 
 test("Atendimento CRM Core baseline preparation is dispatch-only, main-bound, and confined to the custody runner", () => {
   assert.match(workflow, /^on:\n  workflow_dispatch:/m);
@@ -71,9 +82,7 @@ test("only the validated sanitized receipt can be uploaded", () => {
 });
 
 test("the receipt decoding and verification shell stays Bash-parseable", () => {
-  const document = yaml.load(workflow);
-  const step = document?.jobs?.backfill?.steps?.find((entry) => entry?.name === "Bind the custody request to exact main source and an immutable staging target");
-  assert.equal(typeof step?.run, "string");
-  const result = spawnSync("bash", ["-n"], { input: step.run, encoding: "utf8" });
+  const shell = readLiteralRunBlock(workflow, "Bind the custody request to exact main source and an immutable staging target");
+  const result = spawnSync("bash", ["-n"], { input: shell, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });
