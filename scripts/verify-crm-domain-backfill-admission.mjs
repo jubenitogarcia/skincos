@@ -4,6 +4,10 @@ import fs from "node:fs"
 import path from "node:path"
 import process from "node:process"
 import { fileURLToPath } from "node:url"
+import {
+  ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS,
+  ATENDIMENTO_CRM_CORE_IDENTITY_SOURCE_SEMANTICS_VERSION,
+} from "../shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const defaultPlanPath = path.join(root, "docs/extraction/crm-domain-backfill-admission.json")
@@ -24,12 +28,7 @@ const requiredAtendimentoEvidence = Object.freeze([
   "accepted-idempotent-receipts-and-d1-readback",
   "same-artifact-rollback-without-data-deletion",
 ])
-const requiredAtendimentoSourceRelations = Object.freeze([
-  "crm_atendimento.global_client_identity_members",
-  "crm_atendimento.attendance_client_links",
-  "crm_atendimento.attendances",
-  "crm_atendimento.units",
-])
+const requiredAtendimentoSourceRelations = ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS
 const excludedAtendimentoSourceDomains = Object.freeze(["finance"])
 
 function fail(code) {
@@ -86,7 +85,7 @@ function assertProjectionCandidate(value) {
     || domain.mode !== "projection-candidate"
     || domain.state !== "staging-preparation-authorized"
     || domain.sourceContract !== "atendimento/crm-core/unit-scoped-projection-source/v1"
-    || domain.sourceSemantics !== "atendimento/crm-core/confirmed-unit-membership-source/v3"
+    || domain.sourceSemantics !== ATENDIMENTO_CRM_CORE_IDENTITY_SOURCE_SEMANTICS_VERSION
     || domain.recordClass !== "opaque-client-membership-projection"
     || domain.targetEnvironment !== "staging"
     || domain.stagingSourceReadAllowed !== true
@@ -142,6 +141,7 @@ export function assertCrmDomainBackfillAdmission(value) {
     publicRouteMutationAllowed: target.publicRouteMutationAllowed,
     stagingSourceReadAuthorized: Object.freeze([atendimento.id]),
     stagingProjectionCandidateIds: Object.freeze([atendimento.id]),
+    atendimentoSourceSemantics: atendimento.sourceSemantics,
     atendimentoSourceRelationAllowlist: atendimento.sourceRelationAllowlist,
     atendimentoExcludedSourceDomains: atendimento.excludedSourceDomains,
     eligibleNow: Object.freeze([]),

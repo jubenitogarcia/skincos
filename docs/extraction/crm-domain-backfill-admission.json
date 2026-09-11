@@ -15,10 +15,10 @@
       "mode": "projection-candidate",
       "state": "staging-preparation-authorized",
       "sourceContract": "atendimento/crm-core/unit-scoped-projection-source/v1",
-      "sourceSemantics": "atendimento/crm-core/confirmed-unit-membership-source/v3",
+      "sourceSemantics": "atendimento/crm-core/confirmed-unit-membership-source/v5",
       "sourceRelationAllowlist": [
-        "crm_atendimento.global_client_identity_members",
-        "crm_atendimento.attendance_client_links",
+        "crm_atendimento.crm_core_identity_members",
+        "crm_atendimento.crm_core_attendance_client_links",
         "crm_atendimento.attendances",
         "crm_atendimento.units"
       ],

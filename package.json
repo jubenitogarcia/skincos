@@ -5,6 +5,7 @@
     "architecture:validate": "node ./.github/scripts/validate-architecture.mjs && node ./.github/scripts/validate-module-catalog.mjs && node ./.github/scripts/validate-domain-boundaries.mjs && node ./.github/scripts/validate-dependency-closures.mjs",
     "atendimento:deploy-contract:test": "node --test .github/scripts/atendimento-deployment-contract.test.mjs",
     "atendimento:crm-core:backfill-custody:test": "node --test .github/scripts/atendimento-crm-core-projection-backfill-binding.test.mjs .github/scripts/atendimento-crm-core-projection-backfill-custody.test.mjs .github/scripts/atendimento-crm-core-projection-backfill-receipt.test.mjs scripts/tests/verify-crm-domain-backfill-admission.test.mjs",
+    "atendimento:crm-core:identity-materialization:test": "node --test crm/api/server/atendimento/__tests__/crmCoreIdentityMaterializationMigration.test.js crm/api/server/atendimento/__tests__/crmCoreIdentityMaterializationWriter.test.js crm/api/scripts/preflight-atendimento-crm-core-identity-materialization.test.mjs scripts/tests/verify-atendimento-crm-core-identity-materialization.test.mjs",
     "architecture:test": "npm run architecture:validate",
     "module-catalog:validate": "node ./.github/scripts/validate-module-catalog.mjs",
     "module-maturity:validate": "node ./.github/scripts/validate-module-maturity.mjs",
