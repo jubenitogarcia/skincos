@@ -1,0 +1,57 @@
+{
+  "contract": "skincos/crm-core-staging-readback-receipt-custody/v1",
+  "state": "active",
+  "source": {
+    "repository": "jubenitogarcia/skincos-crm-core",
+    "repositoryId": "1353934107",
+    "ref": "refs/heads/main"
+  },
+  "receipt": {
+    "contract": "skincos-crm/staging-artifact-readback-receipt/v1",
+    "signatureContract": "skincos-crm/staging-artifact-readback-receipt-signature/v1",
+    "environment": "staging",
+    "artifactKind": "bundle-tree-v1",
+    "origin": "https://skincos-crm-core-staging.skincos.workers.dev",
+    "workflow": ".github/workflows/crm-staging-artifact-readback.yml",
+    "checks": [
+      "artifact-identity",
+      "health",
+      "readiness",
+      "public-health",
+      "public-readiness",
+      "modules-read-only",
+      "projection-route-auth-required",
+      "internal-route-rejected",
+      "inventory-fallback-rejected",
+      "unknown-route-rejected",
+      "write-surface-blocked",
+      "cors-origin-rejected",
+      "backfill-ingestion-disabled",
+      "session-requires-verified-identity"
+    ]
+  },
+  "authority": {
+    "deploymentAuthorized": false,
+    "productionAuthorized": false,
+    "domainChangeAuthorized": false
+  },
+  "keyRing": {
+    "activeKeyId": "crm-core-staging-readback-20260911-r1",
+    "acceptedKeyIds": [
+      "crm-core-staging-readback-20260911-r1"
+    ],
+    "publicKeys": {
+      "crm-core-staging-readback-20260911-r1": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "RRwndzeF_7fyLiIJim4r_KVxv9Rg1eJP8hfUEpPydNA"
+      }
+    }
+  },
+  "prohibitions": [
+    "A receipt is evidence only for the exact staging artifact and does not authorize deployment, production, domain changes, data migration, or legacy retirement.",
+    "The Core private signing key is never copied into this repository, workflow input, artifact, log, or receipt consumer.",
+    "The consumer fails closed until a reviewed follow-up pins the real public Ed25519 key emitted by the protected Core readback custody environment.",
+    "Only the sanitized signed receipt may cross repositories; no Worker response body, credential, customer record, raw identifier, session, token, or source payload is accepted."
+  ]
+}

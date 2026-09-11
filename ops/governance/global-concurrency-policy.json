@@ -140,9 +140,13 @@
         "scripts/runtime/**",
         ".github/workflows/atendimento-*.yml",
         ".github/scripts/atendimento-*.mjs",
+        ".github/scripts/verify-crm-core-staging-readback-receipt.mjs",
+        ".github/scripts/verify-crm-core-staging-readback-receipt.test.mjs",
+        ".github/governance/crm-core-staging-readback-receipt-custody.json",
         "docs/extraction/crm-domain-backfill-admission.json",
         "docs/extraction/crm-domain-backfill-admission.md",
         "docs/runbooks/atendimento-crm-core-projection-backfill-custody.md",
+        "docs/runbooks/crm-core-staging-readback-receipt-custody.md",
         "scripts/verify-crm-domain-backfill-admission.mjs"
       ],
       "sharedInputs": true
