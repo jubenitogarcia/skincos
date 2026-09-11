@@ -112,7 +112,7 @@ jobs:
       - name: Reject a gateway runtime source override for the test operation
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_gateway_source_sha != '' }}
         run: echo 'Gateway runtime source overrides require extended session smoke'; exit 1
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22.12.0'
@@ -156,7 +156,7 @@ jobs:
       EXPECTED_GATEWAY_SOURCE_SHA: ${{ inputs.expected_gateway_source_sha }}
       CRM_IDENTITY_SMOKE_PROFILE: ${{ inputs.smoke_profile || 'session' }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
