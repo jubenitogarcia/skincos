@@ -18,10 +18,38 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -lc 'exec \"$(git rev-parse --show-toplevel)/.codex/hooks/invoke-codex-lifecycle.sh\"'",
-            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ((& git rev-parse --show-toplevel).Trim()) '.codex\\hooks\\invoke-codex-lifecycle.ps1')\"",
+            "command": "bash -lc 'exec \"$(git rev-parse --show-toplevel)/.codex/hooks/invoke-codex-session-start.sh\"'",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ((& git rev-parse --show-toplevel).Trim()) '.codex\\hooks\\invoke-codex-session-start.ps1')\"",
             "timeout": 15,
             "statusMessage": "SKINCOS session checkpoint"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'exec \"$(git rev-parse --show-toplevel)/.codex/hooks/invoke-codex-thread-routing.sh\"'",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ((& git rev-parse --show-toplevel).Trim()) '.codex\\hooks\\invoke-codex-thread-routing.ps1')\"",
+            "timeout": 30,
+            "additionalContextLimit": 1800,
+            "statusMessage": "SKINCOS thread routing"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'exec \"$(git rev-parse --show-toplevel)/.codex/hooks/invoke-codex-thread-routing-guard.sh\"'",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ((& git rev-parse --show-toplevel).Trim()) '.codex\\hooks\\invoke-codex-thread-routing-guard.ps1')\"",
+            "timeout": 15,
+            "statusMessage": "SKINCOS replacement-route guard"
           }
         ]
       }

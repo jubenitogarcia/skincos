@@ -66,8 +66,10 @@ C:\CodexShared\Worktrees\skincos\admin\canonical\crm\<module>
 Inventário e plano não alteram Git:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 -Action inventory
-powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 -Action plan
+powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
+  -Action inventory -ProjectRoot (Get-Location).Path
+powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
+  -Action plan -ProjectRoot (Get-Location).Path
 ```
 
 Criar ou reivindicar um slot exige SHA explícito e `-Apply`; não existe
@@ -76,9 +78,10 @@ fallback automático para outro worktree:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
   -Action ensure-canonical -SurfaceType crm-module -SurfaceId users `
-  -TargetCommit <sha> -Apply
+  -TargetCommit <sha> -ProjectRoot (Get-Location).Path -Apply
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
-  -Action claim -SurfaceType crm-module -SurfaceId users -Apply
+  -Action claim -SurfaceType crm-module -SurfaceId users `
+  -ProjectRoot (Get-Location).Path -Apply
 ```
 
 O estado de owners e leases fica no runtime privado em
@@ -92,6 +95,74 @@ somente `git worktree remove` e depois `git worktree prune`.
 
 O Orb executa apenas releases imutáveis sob `/opt/orb`, sob a governança do
 repositório independente. O SKINCOS não usa worktree Orb como `cwd` de serviço.
+
+## Roteamento de novas threads
+
+No primeiro turno, o hook `UserPromptSubmit` entrega o objetivo recebido ao
+resolver. Mensagens normais sempre usam intenção `edit`; `preview` e `qualify`
+são ações explícitas, jamais inferidas por palavras da mensagem:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\resolve-codex-thread-worktree.ps1 `
+  -ProjectRoot (Get-Location).Path `
+  -TaskBrief "<objetivo da thread>" `
+  -TaskSlug <task-slug> `
+  -Intent edit
+```
+
+O resolver é somente-leitura. `ready` permite continuar;
+`replace/currentThreadAction=create_replacement_thread` orienta a camada nativa
+do Codex App a criar uma task substituta; `handoff_other_thread` só autoriza
+handoff para uma task diferente, já identificada com segurança.
+`manual_registration_required`, `ambiguous` e `blocked` interrompem a escolha
+automática. A task chamadora não altera o próprio `cwd`, não faz handoff de si
+mesma e o script nunca recebe ou infere `threadId`.
+
+Para preview/qualificação, o slot canônico precisa estar registrado como
+projeto no Codex App. O registro de projeto é uma operação do aplicativo, não
+um fallback do PowerShell. Para edição, a task substituta usa uma worktree
+gerenciada pelo App dentro de
+`C:\CodexShared\Worktrees\skincos\admin\managed`, ou uma candidata de tarefa
+comprovadamente correspondente. Uma candidata temporária só é comprovada quando
+o `TaskSlug` coincide exatamente; o texto do objetivo não seleciona worktrees
+existentes por semelhança.
+
+No piloto, registrar manualmente no Codex App estes cinco projetos, usando os
+caminhos completos abaixo:
+
+```text
+C:\CodexShared\Worktrees\skincos\admin\canonical\crm\users
+C:\CodexShared\Worktrees\skincos\admin\canonical\crm\atendimento
+C:\CodexShared\Worktrees\skincos\admin\canonical\crm\clientes
+C:\CodexShared\Worktrees\skincos\admin\canonical\orb\livia
+C:\CodexShared\Worktrees\skincos\admin\canonical\orb\meta-ads-publish
+```
+
+Depois do registro, confirme os projetos no Codex App antes de usar preview ou
+qualificação e grave a confirmação privada com
+`codex-thread-routing-state.ps1 -Action register-native-project`. Se um caminho
+não estiver registrado, o resolver retorna `manual_registration_required`; ele
+não seleciona outro projeto por nome, proximidade ou histórico da task.
+
+Quando a task precisa ser substituída, o hook reserva antes um nonce privado
+com checkout, superfície, SHA e validade curta. A task substituta deve colocar
+o marcador emitido na primeira linha do seu primeiro prompt; o vínculo é aceito
+somente uma vez, no worktree gerenciado, detached e no SHA esperado. O contexto
+transferido contém somente objetivo, restrições, SHA, checkout e decisão do
+resolver — nunca IDs de task, cookies ou segredos. A task original é arquivada
+somente depois de a substituta estar pronta; exclusão permanente de histórico
+não é suportada pela API atual.
+
+Quando um checkout SKINCOS antigo não possui a implementação completa do hook,
+use somente a ponte global privada materializada de um source limpo pelo
+`manage-codex-thread-routing-bridge.ps1`. A ponte usa o `cwd` real, mas lê
+resolver, topologia e estado do bundle privado verificado; o clone
+compartilhado continua apenas contexto. Ela é inerte fora de
+`jubenitogarcia/skincos` e também é inerte onde os hooks do projeto já estão
+completos, para não duplicar decisões concorrentes. Candidato é restrito a um
+nonce curto para a prova nativa; após merge, ative somente um bundle estável do
+SHA integrado em `origin/main`. Revise novamente a definição global alterada
+em `/hooks` antes de usar a ponte.
 
 ## Checklist de encerramento por chat
 - Branch/worktree limpos (`git status` sem alteracoes locais).
