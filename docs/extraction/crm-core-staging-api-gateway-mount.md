@@ -210,6 +210,31 @@ reconciliação. Upload recusado antes do switch deixa uma versão sem tráfego,
 sem alterar o incumbente. O artefato `crm-gateway-refresh-<release_sha>` contém
 apenas `crm-gateway-refresh-report.json`, com checkpoint e resultado sanitizados.
 
+O relatório futuro do refresh usa `schemaVersion=2`: a resposta POST pode
+confirmar somente um `id` UUID, sem fornecer todo o deployment. O operador
+persiste `acknowledgedDeploymentId` antes de qualquer inspeção adicional ou
+GET. Isso não é prova de posse: `deploymentId` só é preenchido após GET pelo
+UUID exato, conferência do deployment ativo, versão, annotation da execução,
+bindings/runtime/Timekeeping e emissor incumbentes. Após o smoke público, a
+mesma posse é conferida novamente. Campos presentes mas contraditórios no ACK
+falham fechados; campos ausentes não são inventados.
+
+`switchAcknowledgement` contém somente o tipo do resultado, tipos dos campos
+fixos `id`, `strategy`, `versions`, `annotations` e contagem de campos extras;
+nenhum nome extra ou valor bruto é persistido. O rollback segue o mesmo
+processo com `rollbackAcknowledgedDeploymentId`, `rollbackAcknowledgement` e
+GET exato antes de registrar `rollbackDeploymentId`. A lease e a posse exata
+da API/emissor continuam obrigatórias antes de qualquer POST de rollback.
+ACK sem UUID válido ou erro de transporte após POST permanece de resultado
+desconhecido: não há retry nem rollback automático por inferência de versão.
+
+A evolução do relatório exige um leitor v2 explicitamente atualizado antes
+de usar futuros artefatos para promoção. Ela não reescreve o relatório v1 da
+execução `34249264280`, cujo corpo POST original não foi capturado: a causa
+exata do campo ou formato divergente permanece desconhecida. A reconciliação
+somente de leitura desse evento e os leitores frozen usados na prova atual
+são trilhas independentes, sem novo deploy por causa desta correção de fonte.
+
 O smoke existente mantém `operation=session-smoke` e
 `confirmation=smoke-crm-identity-staging`. `smoke_profile=session` permanece
 padrão, preserva exatamente o relatório de sessão v1 e consome duas entregas
