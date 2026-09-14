@@ -10,6 +10,7 @@ import {
   REQUIRED_PRODUCTION_RUNTIME_BINDINGS,
   REQUIRED_PRODUCTION_SECRET_TYPES,
   runIdentityCrmProductionReadiness,
+  sanitizeDeployments,
 } from './identity-crm-production-readiness.mjs';
 
 const accountId = '0123456789abcdef0123456789abcdef';
@@ -18,13 +19,18 @@ const secondZoneId = '00112233445566778899aabbccddeeff';
 const apiToken = 'read-only-token-used-only-by-test';
 const workerUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${PRODUCTION_WORKER_NAME}`;
 const workerUrls = ['settings', 'deployments', 'secrets', 'subdomain'].map((endpoint) => `${workerUrl}/${endpoint}`);
+const deploymentId = '11111111-1111-4111-8111-111111111111';
+const resolverVersionId = '22222222-2222-4222-8222-222222222222';
+const issuerVersionId = '33333333-3333-4333-8333-333333333333';
+const versionUrls = [resolverVersionId, issuerVersionId].map((versionId) => `${workerUrl}/versions/${versionId}`);
+const workerReadbackUrls = [...workerUrls, ...versionUrls];
 const zonesUrl = `https://api.cloudflare.com/client/v4/zones?account.id=${accountId}&page=1&per_page=50`;
 const zonesSecondPageUrl = `https://api.cloudflare.com/client/v4/zones?account.id=${accountId}&page=2&per_page=50`;
 const routesUrl = `https://api.cloudflare.com/client/v4/zones/${zoneId}/workers/routes`;
 const secondRoutesUrl = `https://api.cloudflare.com/client/v4/zones/${secondZoneId}/workers/routes`;
 const domainsUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains?page=1&per_page=50`;
 const domainsSecondPageUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains?page=2&per_page=50`;
-const completeReadUrls = [...workerUrls, zonesUrl, domainsUrl, routesUrl];
+const completeReadUrls = [...workerReadbackUrls, zonesUrl, domainsUrl, routesUrl];
 
 function requiredSecretInventory(overrides = {}) {
   return REQUIRED_PRODUCTION_SECRET_NAMES.map((name) => ({
@@ -44,6 +50,28 @@ function requiredRuntimeBindings(overrides = {}) {
     text,
     ...overrides,
   }));
+}
+
+function roleBindings(role) {
+  const roleFlags = role === 'R'
+    ? [
+      { name: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED', type: 'plain_text', text: 'false' },
+      { name: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED', type: 'plain_text', text: 'true' },
+    ]
+    : [
+      { name: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED', type: 'plain_text', text: 'true' },
+      { name: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED', type: 'plain_text', text: 'false' },
+    ];
+  return [...requiredRuntimeBindings(), ...roleFlags];
+}
+
+function versionResponse(versionId, role) {
+  return cloudflareResponse({
+    id: versionId,
+    resources: {
+      bindings: roleBindings(role),
+    },
+  });
 }
 
 function assertReadCalls(calls, expectedUrls = completeReadUrls, expectedApiToken = apiToken) {
@@ -82,8 +110,19 @@ function completeWorkerResponse(url, { previewsEnabled = false } = {}) {
     return cloudflareResponse({ compatibility_date: '2026-03-02', usage_model: 'standard', workers_dev: false, bindings: requiredRuntimeBindings() });
   }
   if (url === `${workerUrl}/deployments`) {
-    return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
+    return cloudflareResponse({ deployments: [{
+      id: deploymentId,
+      source: 'wrangler',
+      strategy: 'percentage',
+      created_on: '2026-09-07T12:00:00Z',
+      versions: [
+        { version_id: resolverVersionId, percentage: 100 },
+        { version_id: issuerVersionId, percentage: 0 },
+      ],
+    }] });
   }
+  if (url === `${workerUrl}/versions/${resolverVersionId}`) return versionResponse(resolverVersionId, 'R');
+  if (url === `${workerUrl}/versions/${issuerVersionId}`) return versionResponse(issuerVersionId, 'I');
   if (url === `${workerUrl}/secrets`) return cloudflareResponse(requiredSecretInventory());
   if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: previewsEnabled });
   return null;
@@ -125,6 +164,28 @@ test('production defaults are distinct from staging and protocol values are fixe
     IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
     IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: 'crm-api-production-v1',
   });
+});
+
+test('deployment readback uses nested Cloudflare version assignments without inventing a flat version id', () => {
+  const nested = sanitizeDeployments({ deployments: [{
+    id: deploymentId,
+    source: 'wrangler',
+    strategy: 'percentage',
+    versions: [
+      { version_id: resolverVersionId, percentage: 100 },
+      { version_id: issuerVersionId, percentage: 0 },
+    ],
+  }] });
+  assert.deepEqual(nested.active?.roles, {
+    R: { versionId: resolverVersionId, percentage: 100 },
+    I: { versionId: issuerVersionId, percentage: 0 },
+  });
+  assert.equal(sanitizeDeployments({ deployments: [{
+    id: deploymentId,
+    strategy: 'percentage',
+    version_id: resolverVersionId,
+    percentage: 100,
+  }] }).active, null);
 });
 
 test('missing external credentials produces a blocked, non-mutating report', async () => {
@@ -212,8 +273,19 @@ test('complete external readback is eligible only when all attestations are pres
         });
       }
       if (url === `${workerUrl}/deployments`) {
-        return cloudflareResponse([{ id: 'version-20260907', source: 'wrangler', strategy: 'percentage', created_on: '2026-09-07T12:00:00Z' }]);
+        return cloudflareResponse({ deployments: [{
+          id: deploymentId,
+          source: 'wrangler',
+          strategy: 'percentage',
+          created_on: '2026-09-07T12:00:00Z',
+          versions: [
+            { version_id: resolverVersionId, percentage: 100 },
+            { version_id: issuerVersionId, percentage: 0 },
+          ],
+        }] });
       }
+      if (url === `${workerUrl}/versions/${resolverVersionId}`) return versionResponse(resolverVersionId, 'R');
+      if (url === `${workerUrl}/versions/${issuerVersionId}`) return versionResponse(issuerVersionId, 'I');
       if (url === `${workerUrl}/secrets`) {
         return cloudflareResponse(requiredSecretInventory({ value: privateMarker }));
       }
@@ -230,9 +302,61 @@ test('complete external readback is eligible only when all attestations are pres
   assert.equal(report.cloudflare.secretInventory.valuesReadOrEmitted, false);
   assert.deepEqual(report.cloudflare.routeReadback, { zonesInspected: 1, count: 0, patterns: [] });
   assert.deepEqual(report.cloudflare.customDomainReadback, { count: 0 });
+  assert.deepEqual(report.cloudflare.deploymentBaseline.active, {
+    id: deploymentId,
+    source: 'wrangler',
+    strategy: 'percentage',
+    createdOn: '2026-09-07T12:00:00Z',
+    versions: [
+      { versionId: resolverVersionId, percentage: 100 },
+      { versionId: issuerVersionId, percentage: 0 },
+    ],
+    roles: {
+      R: { versionId: resolverVersionId, percentage: 100 },
+      I: { versionId: issuerVersionId, percentage: 0 },
+    },
+  });
+  assert.deepEqual(report.cloudflare.versionBindingAudit.roles, {
+    R: { versionId: resolverVersionId, percentage: 100 },
+    I: { versionId: issuerVersionId, percentage: 0 },
+  });
   assertReadCalls(calls);
   assert.doesNotMatch(JSON.stringify(report), new RegExp(apiToken));
   assert.doesNotMatch(JSON.stringify(report), new RegExp(privateMarker));
+});
+
+test('version-override issuer I must retain an exact zero-percent assignment', async () => {
+  const calls = [];
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment(),
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url === `${workerUrl}/deployments`) {
+        return cloudflareResponse({ deployments: [{
+          id: deploymentId,
+          source: 'wrangler',
+          strategy: 'percentage',
+          created_on: '2026-09-07T12:00:00Z',
+          versions: [
+            { version_id: resolverVersionId, percentage: 99.99 },
+            { version_id: issuerVersionId, percentage: 0.01 },
+          ],
+        }] });
+      }
+      const workerResponse = completeWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'blocked');
+  assert.ok(report.blockers.includes('production Worker must keep resolver R at 100% and issuer I at 0% for the private version override'));
+  assert.deepEqual(report.cloudflare.versionBindingAudit.roles, {
+    R: { versionId: resolverVersionId, percentage: 99.99 },
+    I: { versionId: issuerVersionId, percentage: 0.01 },
+  });
+  assertReadCalls(calls);
 });
 
 test('production readiness requires exact private-caller runtime bindings without emitting their values', async () => {
@@ -363,7 +487,7 @@ test('route readback paginates every account zone and blocks a matching route in
     count: 1,
     patterns: ['private.example/crm/*'],
   });
-  assertReadCalls(calls, [...workerUrls, zonesUrl, zonesSecondPageUrl, domainsUrl, routesUrl, secondRoutesUrl]);
+  assertReadCalls(calls, [...workerReadbackUrls, zonesUrl, zonesSecondPageUrl, domainsUrl, routesUrl, secondRoutesUrl]);
 });
 
 test('custom-domain inventory paginates and blocks a matching production Worker on page two', async () => {
@@ -392,7 +516,7 @@ test('custom-domain inventory paginates and blocks a matching production Worker 
   assert.equal(report.result, 'blocked');
   assert.ok(report.blockers.includes('production Worker has a custom domain; private Identity delivery must not have a public domain'));
   assert.deepEqual(report.cloudflare.customDomainReadback, { count: 1 });
-  assertReadCalls(calls, [...workerUrls, zonesUrl, domainsUrl, routesUrl, domainsSecondPageUrl]);
+  assertReadCalls(calls, [...workerReadbackUrls, zonesUrl, domainsUrl, routesUrl, domainsSecondPageUrl]);
 });
 
 test('custom-domain pagination without total_pages reads through total_count and remains eligible when unmatched', async () => {
@@ -421,7 +545,7 @@ test('custom-domain pagination without total_pages reads through total_count and
   assert.equal(report.result, 'eligible-for-approved-cutover');
   assert.deepEqual(report.blockers, []);
   assert.deepEqual(report.cloudflare.customDomainReadback, { count: 0 });
-  assertReadCalls(calls, [...workerUrls, zonesUrl, domainsUrl, routesUrl, domainsSecondPageUrl]);
+  assertReadCalls(calls, [...workerReadbackUrls, zonesUrl, domainsUrl, routesUrl, domainsSecondPageUrl]);
 });
 
 test('account-zone inventory rejects count-only pagination metadata', async () => {
@@ -443,7 +567,7 @@ test('account-zone inventory rejects count-only pagination metadata', async () =
   assert.equal(report.result, 'blocked');
   assert.equal(report.cloudflare.routeInventory, 'unavailable');
   assert.ok(report.blockers.includes('account-wide production Worker route inventory could not be read'));
-  assertReadCalls(calls, [...workerUrls, zonesUrl]);
+  assertReadCalls(calls, [...workerReadbackUrls, zonesUrl]);
 });
 
 test('unavailable custom-domain inventory fails closed without retaining API error text', async () => {
@@ -556,7 +680,7 @@ for (const configuredZone of ['', 'invalid-zone']) {
         return cloudflareResponse([]);
       },
     });
-    assertReadCalls(calls);
+    assertReadCalls(calls, [...workerUrls, zonesUrl, domainsUrl, routesUrl]);
     assert.equal(report.result, 'blocked');
     assert.equal(report.cloudflare.routeInventory, 'available');
     assert.ok(!report.blockers.includes('account-wide production Worker route inventory could not be read'));
