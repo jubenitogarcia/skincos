@@ -35,6 +35,9 @@
     "migrate-atendimento-staging": "node scripts/migrate-atendimento-staging.mjs",
     "migrate-atendimento-crm-core-projection-delta": "node scripts/migrate-atendimento-crm-core-projection-delta.mjs",
     "prepare-atendimento-crm-core-projection-delta-baseline": "node scripts/prepare-atendimento-crm-core-projection-delta-baseline.mjs",
+    "migrate-atendimento-confirmed-projection-delta-v2": "node scripts/migrate-atendimento-confirmed-projection-delta-v2.mjs",
+    "prepare-atendimento-confirmed-projection-delta-v2-baseline": "node scripts/prepare-atendimento-confirmed-projection-delta-v2-baseline.mjs",
+    "run-atendimento-confirmed-projection-delta-v2-lifecycle": "node scripts/run-atendimento-confirmed-projection-delta-v2-lifecycle.mjs",
     "refresh-commercial-data-quality": "node scripts/refresh-commercial-data-quality.mjs",
     "refresh-commercial-data-quality-staging": "node scripts/refresh-commercial-data-quality-staging.mjs",
     "migrate-harmonia-schema": "node scripts/migrate-harmonia-schema.mjs"
