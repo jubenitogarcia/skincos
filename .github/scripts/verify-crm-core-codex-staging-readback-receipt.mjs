@@ -1,0 +1,682 @@
+#!/usr/bin/env node
+import { execFileSync } from 'node:child_process'
+import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import process from 'node:process'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+export const CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CONTRACT = 'skincos/crm-core-codex-staging-readback-receipt-custody/v1'
+export const CRM_CORE_CODEX_STAGING_READBACK_RECEIPT_CONTRACT = 'skincos-crm/codex-staging-readback-receipt/v1'
+export const CRM_CORE_CODEX_STAGING_READBACK_AUDIT_CONTRACT = 'skincos-crm/codex-staging-readback-private-audit/v1'
+
+const coreRepository = 'jubenitogarcia/skincos-crm-core'
+const coreRepositoryId = '1353934107'
+const coreMainRef = 'refs/heads/main'
+const coreOrigin = 'https://github.com/jubenitogarcia/skincos-crm-core.git'
+const coreVerifierRelativePath = 'scripts/verify-codex-staging-readback-receipt.mjs'
+const custodyContract = 'skincos-crm/codex-local-artifact-custody/v2'
+const readbackOutputContract = 'skincos-crm/codex-staging-readback-output/v1'
+const receiptSignatureContract = 'skincos-crm/codex-staging-readback-receipt-signature-metadata/v1'
+const stagingOrigin = 'https://skincos-crm-core-staging.skincos.workers.dev'
+const auditSigner = 'codex-local-custody'
+const pagesEvidence = 'external-console-readback'
+const maxExternalFileBytes = 64 * 1024
+const shaPattern = /^[0-9a-f]{40}$/
+const digestPattern = /^sha256:[0-9a-f]{64}$/
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const platformIdPattern = /^[A-Za-z0-9._:-]{1,160}$/
+const keyIdPattern = /^crm-core-staging-readback-[A-Za-z0-9._-]{1,120}$/
+const base64urlSignaturePattern = /^[A-Za-z0-9_-]{86}$/
+const base64urlEd25519XPattern = /^[A-Za-z0-9_-]{43}$/
+const forbiddenKeys = new Set([
+  'authorization', 'cookie', 'credential', 'email', 'jws', 'mobile', 'password',
+  'privatekey', 'private_key', 'rawbody', 'raw_body', 'secret', 'session', 'token',
+])
+const expectedChecks = Object.freeze([
+  'artifact-identity',
+  'health',
+  'readiness',
+  'public-health',
+  'public-readiness',
+  'modules-read-only',
+  'projection-route-auth-required',
+  'internal-route-rejected',
+  'inventory-fallback-rejected',
+  'unknown-route-rejected',
+  'write-surface-blocked',
+  'cors-origin-rejected',
+  'backfill-ingestion-disabled',
+  'session-requires-verified-identity',
+])
+const receiptBasename = 'codex-staging-readback-receipt.json'
+const custodyReceiptBasename = 'execution-receipt.json'
+const readbackOutputBasename = 'readback-output.json'
+const auditBasename = 'private-readback-audit.json'
+const validatedPolicy = Symbol('validated-crm-core-codex-staging-readback-custody-policy')
+
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
+const repositoryRoot = path.resolve(scriptDirectory, '..', '..')
+export const DEFAULT_POLICY_FILE = path.resolve(scriptDirectory, '..', 'governance', 'crm-core-codex-staging-readback-receipt-custody.json')
+
+function fail(code) {
+  throw new Error(`CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_${code}`)
+}
+
+function plainRecord(value, code) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail(code)
+  return value
+}
+
+function exactKeys(value, expected, code) {
+  const actual = Object.keys(plainRecord(value, code)).sort()
+  const normalizedExpected = [...expected].sort()
+  if (actual.length !== normalizedExpected.length || actual.some((key, index) => key !== normalizedExpected[index])) fail(code)
+  return value
+}
+
+function optionalKeys(value, allowed, required, code) {
+  const actual = Object.keys(plainRecord(value, code))
+  if (actual.some((key) => !allowed.includes(key)) || required.some((key) => !Object.hasOwn(value, key))) fail(code)
+  return value
+}
+
+function normalized(value, pattern, code, { lowerCase = false } = {}) {
+  const text = String(value || '').trim()
+  const result = lowerCase ? text.toLowerCase() : text
+  if (!pattern.test(result)) fail(code)
+  return result
+}
+
+function normalizedSha(value, code) {
+  return normalized(value, shaPattern, code, { lowerCase: true })
+}
+
+function normalizedDigest(value, code) {
+  return normalized(value, digestPattern, code, { lowerCase: true })
+}
+
+function normalizedUuid(value, code) {
+  return normalized(value, uuidPattern, code, { lowerCase: true })
+}
+
+function normalizedPlatformId(value, code) {
+  return normalized(value, platformIdPattern, code)
+}
+
+function normalizedKeyId(value, code) {
+  return normalized(value, keyIdPattern, code)
+}
+
+function canonicalValue(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) fail('CANONICAL_VALUE_INVALID')
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalValue).join(',')}]`
+  const record = plainRecord(value, 'CANONICAL_VALUE_INVALID')
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalValue(record[key])}`).join(',')}}`
+}
+
+export function canonicalCrmCoreCodexStagingReadbackJson(value) {
+  return canonicalValue(value)
+}
+
+export function canonicalCrmCoreCodexStagingReadbackDigest(value) {
+  return `sha256:${crypto.createHash('sha256').update(canonicalCrmCoreCodexStagingReadbackJson(value), 'utf8').digest('hex')}`
+}
+
+function assertNoSensitiveKeys(value, label = 'value') {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoSensitiveKeys(entry, `${label}[${index}]`))
+    return
+  }
+  if (!value || typeof value !== 'object') return
+  for (const [key, entry] of Object.entries(value)) {
+    if (forbiddenKeys.has(key.toLowerCase())) fail(`SENSITIVE_KEY:${label}.${key}`)
+    assertNoSensitiveKeys(entry, `${label}.${key}`)
+  }
+}
+
+function exactStrings(value, expected, code) {
+  if (!Array.isArray(value) || value.length !== expected.length
+    || value.some((entry, index) => entry !== expected[index])) fail(code)
+  return Object.freeze([...value])
+}
+
+function pathForComparison(value) {
+  const resolved = path.resolve(value)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+function samePath(left, right) {
+  return pathForComparison(left) === pathForComparison(right)
+}
+
+function isWithin(parent, candidate) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate))
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+}
+
+function readJsonFile(filename, code, { maxBytes = maxExternalFileBytes } = {}) {
+  let contents
+  try {
+    contents = fs.readFileSync(path.resolve(filename))
+  } catch {
+    fail(code)
+  }
+  if (contents.length < 2 || contents.length > maxBytes) fail(code)
+  try {
+    return JSON.parse(contents.toString('utf8'))
+  } catch {
+    fail(code)
+  }
+}
+
+function readExternalJson(filename, basename, code) {
+  const requested = path.resolve(filename)
+  if (path.basename(requested) !== basename || isWithin(repositoryRoot, requested)) fail(`${code}_PATH_INVALID`)
+  let stat
+  let absolute
+  let contents
+  try {
+    stat = fs.lstatSync(requested)
+    absolute = fs.realpathSync.native ? fs.realpathSync.native(requested) : fs.realpathSync(requested)
+    contents = fs.readFileSync(absolute)
+  } catch {
+    fail(code)
+  }
+  if (stat.isSymbolicLink() || !stat.isFile() || !samePath(requested, absolute) || isWithin(repositoryRoot, absolute)) {
+    fail(`${code}_PATH_INVALID`)
+  }
+  if (contents.length < 2 || contents.length > maxExternalFileBytes) fail(code)
+  try {
+    return Object.freeze({ absolute, contents, value: JSON.parse(contents.toString('utf8')) })
+  } catch {
+    fail(code)
+  }
+}
+
+function publicKeyEntry(value, code) {
+  exactKeys(value, ['jwk', 'spkiFingerprint'], code)
+  const jwk = exactKeys(value.jwk, ['crv', 'kty', 'x'], code)
+  if (jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || typeof jwk.x !== 'string' || !base64urlEd25519XPattern.test(jwk.x)) fail(code)
+  let verifier
+  try {
+    verifier = crypto.createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: jwk.x }, format: 'jwk' })
+  } catch {
+    fail(code)
+  }
+  if (verifier.asymmetricKeyType !== 'ed25519') fail(code)
+  const spkiFingerprint = `sha256:${crypto.createHash('sha256').update(verifier.export({ type: 'spki', format: 'der' })).digest('hex')}`
+  if (spkiFingerprint !== normalizedDigest(value.spkiFingerprint, code)) fail(code)
+  return Object.freeze({
+    jwk: Object.freeze({ kty: 'OKP', crv: 'Ed25519', x: jwk.x }),
+    verifier,
+    spkiFingerprint,
+  })
+}
+
+function assertAuthority(value, expected, code) {
+  const keys = ['backfillAuthorized', 'deploymentAuthorized', 'domainChangeAuthorized', 'legacyRetirementAuthorized', 'productionAuthorized']
+  exactKeys(value, keys, code)
+  if (keys.some((key) => value[key] !== expected[key])) fail(code)
+  return Object.freeze({
+    deploymentAuthorized: false,
+    productionAuthorized: false,
+    domainChangeAuthorized: false,
+    backfillAuthorized: false,
+    legacyRetirementAuthorized: false,
+  })
+}
+
+function assertPolicySource(value) {
+  exactKeys(value, ['ref', 'repository', 'repositoryId'], 'POLICY_SOURCE_INVALID')
+  if (value.repository !== coreRepository || value.repositoryId !== coreRepositoryId || value.ref !== coreMainRef) fail('POLICY_SOURCE_INVALID')
+  return Object.freeze({ repository: coreRepository, repositoryId: coreRepositoryId, ref: coreMainRef })
+}
+
+function assertPolicyCore(value) {
+  exactKeys(value, ['origin', 'verifier'], 'POLICY_CORE_INVALID')
+  if (value.origin !== coreOrigin || value.verifier !== coreVerifierRelativePath) fail('POLICY_CORE_INVALID')
+  return Object.freeze({ origin: coreOrigin, verifier: coreVerifierRelativePath })
+}
+
+function assertPolicyReceipt(value) {
+  exactKeys(value, [
+    'checks', 'contract', 'custodyContract', 'environment', 'origin', 'pagesEvidence',
+    'readbackOutputContract', 'signatureContract', 'state',
+  ], 'POLICY_RECEIPT_INVALID')
+  if (value.contract !== CRM_CORE_CODEX_STAGING_READBACK_RECEIPT_CONTRACT
+    || value.custodyContract !== custodyContract
+    || value.readbackOutputContract !== readbackOutputContract
+    || value.signatureContract !== receiptSignatureContract
+    || value.state !== 'verified-external-readback'
+    || value.environment !== 'staging'
+    || value.origin !== stagingOrigin
+    || value.pagesEvidence !== pagesEvidence) fail('POLICY_RECEIPT_INVALID')
+  return Object.freeze({
+    contract: CRM_CORE_CODEX_STAGING_READBACK_RECEIPT_CONTRACT,
+    custodyContract,
+    readbackOutputContract,
+    signatureContract: receiptSignatureContract,
+    state: 'verified-external-readback',
+    environment: 'staging',
+    origin: stagingOrigin,
+    pagesEvidence,
+    checks: exactStrings(value.checks, expectedChecks, 'POLICY_RECEIPT_INVALID'),
+  })
+}
+
+function assertPolicyAudit(value) {
+  exactKeys(value, ['contract', 'externalSigner', 'signatureAlgorithm'], 'POLICY_AUDIT_INVALID')
+  if (value.contract !== CRM_CORE_CODEX_STAGING_READBACK_AUDIT_CONTRACT
+    || value.externalSigner !== auditSigner || value.signatureAlgorithm !== 'Ed25519') fail('POLICY_AUDIT_INVALID')
+  return Object.freeze({ contract: CRM_CORE_CODEX_STAGING_READBACK_AUDIT_CONTRACT, externalSigner: auditSigner, signatureAlgorithm: 'Ed25519' })
+}
+
+function assertPolicyKeyRing(value) {
+  exactKeys(value, ['acceptedKeyIds', 'activeKeyId', 'publicKeys'], 'POLICY_KEY_RING_INVALID')
+  const publicKeys = plainRecord(value.publicKeys, 'POLICY_KEY_RING_INVALID')
+  const entries = Object.entries(publicKeys)
+  if (!Array.isArray(value.acceptedKeyIds) || entries.length < 1 || entries.length > 4
+    || new Set(value.acceptedKeyIds).size !== value.acceptedKeyIds.length) fail('POLICY_KEY_RING_INVALID')
+  const activeKeyId = normalizedKeyId(value.activeKeyId, 'POLICY_KEY_RING_INVALID')
+  const acceptedKeyIds = value.acceptedKeyIds.map((keyId) => normalizedKeyId(keyId, 'POLICY_KEY_RING_INVALID'))
+  if (acceptedKeyIds[0] !== activeKeyId || acceptedKeyIds.length !== entries.length) fail('POLICY_KEY_RING_INVALID')
+  const parsed = Object.freeze(Object.fromEntries(entries.map(([keyId, entry]) => [
+    normalizedKeyId(keyId, 'POLICY_KEY_RING_INVALID'), publicKeyEntry(entry, 'POLICY_PUBLIC_KEY_INVALID'),
+  ])))
+  if (acceptedKeyIds.some((keyId) => !Object.hasOwn(parsed, keyId))) fail('POLICY_KEY_RING_INVALID')
+  return Object.freeze({ activeKeyId, acceptedKeyIds: Object.freeze([...acceptedKeyIds]), publicKeys: parsed })
+}
+
+export function assertCrmCoreCodexStagingReadbackCustodyPolicy(value) {
+  if (value && value[validatedPolicy] === true) return value
+  exactKeys(value, ['audit', 'authority', 'contract', 'core', 'keyRing', 'prohibitions', 'receipt', 'source', 'state'], 'POLICY_INVALID')
+  if (value.contract !== CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CONTRACT || value.state !== 'active') fail('POLICY_INVALID')
+  if (!Array.isArray(value.prohibitions) || value.prohibitions.length !== 5
+    || value.prohibitions.some((entry) => typeof entry !== 'string' || !entry.trim())) fail('POLICY_PROHIBITIONS_INVALID')
+  assertNoSensitiveKeys(value, 'policy')
+  const authority = assertAuthority(value.authority, {
+    deploymentAuthorized: false,
+    productionAuthorized: false,
+    domainChangeAuthorized: false,
+    backfillAuthorized: false,
+    legacyRetirementAuthorized: false,
+  }, 'POLICY_AUTHORITY_INVALID')
+  return Object.freeze({
+    [validatedPolicy]: true,
+    contract: CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CONTRACT,
+    state: 'active',
+    source: assertPolicySource(value.source),
+    core: assertPolicyCore(value.core),
+    receipt: assertPolicyReceipt(value.receipt),
+    audit: assertPolicyAudit(value.audit),
+    authority,
+    keyRing: assertPolicyKeyRing(value.keyRing),
+  })
+}
+
+export function readCrmCoreCodexStagingReadbackCustodyPolicy(filename = DEFAULT_POLICY_FILE) {
+  return assertCrmCoreCodexStagingReadbackCustodyPolicy(readJsonFile(filename, 'POLICY_READ_FAILED'))
+}
+
+function assertSource(value, policy, code) {
+  exactKeys(value, ['ref', 'repositoryId', 'sha', 'tree'], code)
+  if (value.repositoryId !== policy.source.repositoryId || value.ref !== policy.source.ref) fail(code)
+  return Object.freeze({
+    repositoryId: policy.source.repositoryId,
+    ref: policy.source.ref,
+    sha: normalizedSha(value.sha, code),
+    tree: normalizedSha(value.tree, code),
+  })
+}
+
+function assertCustody(value, source, policy, code) {
+  exactKeys(value, [
+    'consoleDigest', 'contract', 'executionId', 'manifestDigest', 'profile', 'receiptDigest',
+    'receiptId', 'releaseSetDigest', 'workerDigest',
+  ], code)
+  if (value.contract !== policy.receipt.custodyContract || value.profile !== policy.receipt.environment) fail(code)
+  const executionId = normalizedUuid(value.executionId, code)
+  const receiptId = String(value.receiptId || '').trim()
+  if (receiptId !== `crm-codex-artifact-${source.sha}-${executionId}`) fail(code)
+  return Object.freeze({
+    contract: policy.receipt.custodyContract,
+    receiptId,
+    receiptDigest: normalizedDigest(value.receiptDigest, code),
+    executionId,
+    profile: policy.receipt.environment,
+    manifestDigest: normalizedDigest(value.manifestDigest, code),
+    workerDigest: normalizedDigest(value.workerDigest, code),
+    consoleDigest: normalizedDigest(value.consoleDigest, code),
+    releaseSetDigest: normalizedDigest(value.releaseSetDigest, code),
+  })
+}
+
+function assertWorkerDeployment(value, code) {
+  exactKeys(value, ['deploymentId', 'observedWorkerDigest', 'versionId'], code)
+  return Object.freeze({
+    versionId: normalizedPlatformId(value.versionId, code),
+    deploymentId: normalizedPlatformId(value.deploymentId, code),
+    observedWorkerDigest: normalizedDigest(value.observedWorkerDigest, code),
+  })
+}
+
+function assertPagesDeployment(value, policy, code) {
+  optionalKeys(value, ['deploymentId', 'evidence', 'observedConsoleDigest'], ['evidence', 'observedConsoleDigest'], code)
+  if (value.evidence !== policy.receipt.pagesEvidence) fail(code)
+  const pages = {
+    evidence: policy.receipt.pagesEvidence,
+    observedConsoleDigest: normalizedDigest(value.observedConsoleDigest, code),
+  }
+  if (Object.hasOwn(value, 'deploymentId')) pages.deploymentId = normalizedPlatformId(value.deploymentId, code)
+  return Object.freeze(pages)
+}
+
+function assertDeployment(value, policy, code) {
+  exactKeys(value, ['environment', 'pages', 'worker'], code)
+  if (value.environment !== policy.receipt.environment) fail(code)
+  return Object.freeze({
+    environment: policy.receipt.environment,
+    worker: assertWorkerDeployment(value.worker, code),
+    pages: assertPagesDeployment(value.pages, policy, code),
+  })
+}
+
+function assertReadback(value, policy, code) {
+  exactKeys(value, ['checks', 'executionId', 'origin', 'outputDigest'], code)
+  if (value.origin !== policy.receipt.origin) fail(code)
+  return Object.freeze({
+    origin: policy.receipt.origin,
+    executionId: normalizedUuid(value.executionId, code),
+    checks: exactStrings(value.checks, policy.receipt.checks, code),
+    outputDigest: normalizedDigest(value.outputDigest, code),
+  })
+}
+
+function assertReceiptSignature(value, policy, code) {
+  exactKeys(value, ['algorithm', 'contract', 'externalSigner', 'keyId', 'publicKeyFingerprint', 'signedStatementDigest'], code)
+  if (value.contract !== policy.receipt.signatureContract || value.algorithm !== policy.audit.signatureAlgorithm
+    || value.externalSigner !== policy.audit.externalSigner) fail(code)
+  const keyId = normalizedKeyId(value.keyId, code)
+  const key = policy.keyRing.publicKeys[keyId]
+  if (!key || !policy.keyRing.acceptedKeyIds.includes(keyId)) fail(code)
+  const publicKeyFingerprint = normalizedDigest(value.publicKeyFingerprint, code)
+  if (publicKeyFingerprint !== key.spkiFingerprint) fail(code)
+  return Object.freeze({
+    contract: policy.receipt.signatureContract,
+    algorithm: policy.audit.signatureAlgorithm,
+    externalSigner: policy.audit.externalSigner,
+    keyId,
+    publicKeyFingerprint,
+    signedStatementDigest: normalizedDigest(value.signedStatementDigest, code),
+  })
+}
+
+function statementForReceipt({ authority, contract, custody, deployment, readback, source, state }) {
+  return Object.freeze({ authority, contract, custody, deployment, readback, source, state })
+}
+
+function assertReceiptMetadata(value, policy) {
+  assertNoSensitiveKeys(value, 'receipt')
+  exactKeys(value, ['authority', 'contract', 'custody', 'deployment', 'readback', 'signature', 'source', 'state'], 'RECEIPT_INVALID')
+  if (value.contract !== policy.receipt.contract || value.state !== policy.receipt.state) fail('RECEIPT_INVALID')
+  const source = assertSource(value.source, policy, 'RECEIPT_SOURCE_INVALID')
+  const custody = assertCustody(value.custody, source, policy, 'RECEIPT_CUSTODY_INVALID')
+  const deployment = assertDeployment(value.deployment, policy, 'RECEIPT_DEPLOYMENT_INVALID')
+  const readback = assertReadback(value.readback, policy, 'RECEIPT_READBACK_INVALID')
+  const authority = assertAuthority(value.authority, policy.authority, 'RECEIPT_AUTHORITY_INVALID')
+  const signature = assertReceiptSignature(value.signature, policy, 'RECEIPT_SIGNATURE_INVALID')
+  const statement = statementForReceipt({
+    authority,
+    contract: policy.receipt.contract,
+    custody,
+    deployment,
+    readback,
+    source,
+    state: policy.receipt.state,
+  })
+  if (signature.signedStatementDigest !== canonicalCrmCoreCodexStagingReadbackDigest(statement)) fail('RECEIPT_SIGNATURE_STATEMENT_MISMATCH')
+  if (deployment.worker.observedWorkerDigest !== custody.workerDigest
+    || deployment.pages.observedConsoleDigest !== custody.consoleDigest) fail('RECEIPT_DEPLOYMENT_DIGEST_MISMATCH')
+  return Object.freeze({ authority, contract: policy.receipt.contract, custody, deployment, readback, signature, source, state: policy.receipt.state, statement })
+}
+
+function assertAudit(value, receipt, policy) {
+  assertNoSensitiveKeys(value, 'audit')
+  exactKeys(value, ['contract', 'signature', 'statement', 'verified'], 'AUDIT_INVALID')
+  if (value.contract !== policy.audit.contract || value.verified !== true) fail('AUDIT_INVALID')
+  exactKeys(value.signature, ['algorithm', 'keyId', 'publicKeyFingerprint', 'value'], 'AUDIT_SIGNATURE_INVALID')
+  if (value.signature.algorithm !== policy.audit.signatureAlgorithm) fail('AUDIT_SIGNATURE_INVALID')
+  const keyId = normalizedKeyId(value.signature.keyId, 'AUDIT_SIGNATURE_INVALID')
+  const key = policy.keyRing.publicKeys[keyId]
+  const publicKeyFingerprint = normalizedDigest(value.signature.publicKeyFingerprint, 'AUDIT_SIGNATURE_INVALID')
+  if (!key || !policy.keyRing.acceptedKeyIds.includes(keyId)
+    || keyId !== receipt.signature.keyId || publicKeyFingerprint !== receipt.signature.publicKeyFingerprint
+    || publicKeyFingerprint !== key.spkiFingerprint) fail('AUDIT_SIGNATURE_CUSTODY_MISMATCH')
+  if (canonicalCrmCoreCodexStagingReadbackJson(value.statement) !== canonicalCrmCoreCodexStagingReadbackJson(receipt.statement)) {
+    fail('AUDIT_STATEMENT_MISMATCH')
+  }
+  if (canonicalCrmCoreCodexStagingReadbackDigest(value.statement) !== receipt.signature.signedStatementDigest) {
+    fail('AUDIT_STATEMENT_DIGEST_MISMATCH')
+  }
+  if (typeof value.signature.value !== 'string' || !base64urlSignaturePattern.test(value.signature.value)) fail('AUDIT_SIGNATURE_INVALID')
+  const signature = Buffer.from(value.signature.value, 'base64url')
+  if (signature.length !== 64) fail('AUDIT_SIGNATURE_INVALID')
+  try {
+    if (!crypto.verify(null, Buffer.from(canonicalCrmCoreCodexStagingReadbackJson(receipt.statement), 'utf8'), key.verifier, signature)) {
+      fail('AUDIT_SIGNATURE_MISMATCH')
+    }
+  } finally {
+    signature.fill(0)
+  }
+  return Object.freeze({ keyId, publicKeyFingerprint })
+}
+
+function normalizeCoreOrigin(value) {
+  return String(value || '').trim()
+    .replace(/^git@github\.com:/i, 'https://github.com/')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+}
+
+function isolatedGitEnvironment() {
+  const environment = { ...process.env }
+  for (const name of [
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CEILING_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_DIR',
+    'GIT_DISCOVERY_ACROSS_FILESYSTEM', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_PREFIX', 'GIT_WORK_TREE',
+  ]) delete environment[name]
+  return environment
+}
+
+function gitAt(coreRoot, argumentsValue, code) {
+  try {
+    return execFileSync('git', ['-C', coreRoot, ...argumentsValue], {
+      env: isolatedGitEnvironment(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  } catch {
+    fail(code)
+  }
+}
+
+function assertCoreRepository(coreRootInput, receipt, policy) {
+  const requested = path.resolve(coreRootInput)
+  if (isWithin(repositoryRoot, requested)) fail('CORE_ROOT_PATH_INVALID')
+  let stat
+  let coreRoot
+  try {
+    stat = fs.lstatSync(requested)
+    coreRoot = fs.realpathSync.native ? fs.realpathSync.native(requested) : fs.realpathSync(requested)
+  } catch {
+    fail('CORE_ROOT_INVALID')
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory() || !samePath(requested, coreRoot) || isWithin(repositoryRoot, coreRoot)) {
+    fail('CORE_ROOT_PATH_INVALID')
+  }
+  const topLevel = gitAt(coreRoot, ['rev-parse', '--show-toplevel'], 'CORE_ROOT_NOT_GIT')
+  if (!samePath(topLevel, coreRoot)) fail('CORE_ROOT_NOT_TOP_LEVEL')
+  if (gitAt(coreRoot, ['status', '--porcelain=v1', '--untracked-files=all'], 'CORE_ROOT_STATUS_FAILED')) fail('CORE_ROOT_DIRTY')
+  if (normalizeCoreOrigin(gitAt(coreRoot, ['remote', 'get-url', 'origin'], 'CORE_ROOT_ORIGIN_FAILED')) !== normalizeCoreOrigin(policy.core.origin)) {
+    fail('CORE_ROOT_ORIGIN_INVALID')
+  }
+  const head = normalizedSha(gitAt(coreRoot, ['rev-parse', 'HEAD'], 'CORE_ROOT_HEAD_FAILED'), 'CORE_ROOT_HEAD_INVALID')
+  const tree = normalizedSha(gitAt(coreRoot, ['rev-parse', 'HEAD^{tree}'], 'CORE_ROOT_TREE_FAILED'), 'CORE_ROOT_TREE_INVALID')
+  if (head !== receipt.source.sha || tree !== receipt.source.tree) fail('CORE_ROOT_SOURCE_MISMATCH')
+  if (gitAt(coreRoot, ['ls-files', '--error-unmatch', policy.core.verifier], 'CORE_VERIFIER_NOT_TRACKED') !== policy.core.verifier) {
+    fail('CORE_VERIFIER_NOT_TRACKED')
+  }
+  const verifierPath = path.join(coreRoot, policy.core.verifier)
+  let verifierStat
+  try {
+    verifierStat = fs.lstatSync(verifierPath)
+  } catch {
+    fail('CORE_VERIFIER_MISSING')
+  }
+  if (verifierStat.isSymbolicLink() || !verifierStat.isFile()) fail('CORE_VERIFIER_PATH_INVALID')
+  return Object.freeze({ coreRoot, verifierPath })
+}
+
+function assertCoreVerifierSummary(output, receipt, policy) {
+  if (Buffer.byteLength(output, 'utf8') < 2 || Buffer.byteLength(output, 'utf8') > 8 * 1024) fail('CORE_VERIFIER_OUTPUT_INVALID')
+  let value
+  try {
+    value = JSON.parse(output)
+  } catch {
+    fail('CORE_VERIFIER_OUTPUT_INVALID')
+  }
+  exactKeys(value, [
+    'contract', 'custodyReceiptId', 'externalSigner', 'ok', 'pagesDeploymentId', 'publicKeyFingerprint',
+    'readbackExecutionId', 'sourceSha', 'sourceTree', 'workerDeploymentId',
+  ], 'CORE_VERIFIER_OUTPUT_INVALID')
+  assertNoSensitiveKeys(value, 'core-verifier-output')
+  if (value.ok !== true || value.contract !== policy.receipt.contract
+    || normalizedSha(value.sourceSha, 'CORE_VERIFIER_OUTPUT_INVALID') !== receipt.source.sha
+    || normalizedSha(value.sourceTree, 'CORE_VERIFIER_OUTPUT_INVALID') !== receipt.source.tree
+    || value.custodyReceiptId !== receipt.custody.receiptId
+    || normalizedPlatformId(value.workerDeploymentId, 'CORE_VERIFIER_OUTPUT_INVALID') !== receipt.deployment.worker.deploymentId
+    || normalizedUuid(value.readbackExecutionId, 'CORE_VERIFIER_OUTPUT_INVALID') !== receipt.readback.executionId
+    || value.externalSigner !== policy.audit.externalSigner
+    || normalizedDigest(value.publicKeyFingerprint, 'CORE_VERIFIER_OUTPUT_INVALID') !== receipt.signature.publicKeyFingerprint) {
+    fail('CORE_VERIFIER_OUTPUT_MISMATCH')
+  }
+  const expectedPagesDeploymentId = receipt.deployment.pages.deploymentId || null
+  if (value.pagesDeploymentId !== expectedPagesDeploymentId
+    && (value.pagesDeploymentId !== null || expectedPagesDeploymentId !== null)) fail('CORE_VERIFIER_OUTPUT_MISMATCH')
+  return Object.freeze({
+    workerDeploymentId: receipt.deployment.worker.deploymentId,
+    pagesDeploymentId: expectedPagesDeploymentId,
+    readbackExecutionId: receipt.readback.executionId,
+  })
+}
+
+function runCoreVerifier(core, files, receipt, policy) {
+  let output
+  try {
+    output = execFileSync(process.execPath, [
+      core.verifierPath,
+      '--receipt', files.receipt.absolute,
+      '--custody-receipt', files.custodyReceipt.absolute,
+      '--readback-output', files.readbackOutput.absolute,
+      '--expected-sha', receipt.source.sha,
+      '--expected-tree', receipt.source.tree,
+      '--expected-external-signer', policy.audit.externalSigner,
+      '--expected-public-key-fingerprint', receipt.signature.publicKeyFingerprint,
+    ], {
+      cwd: core.coreRoot,
+      env: isolatedGitEnvironment(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch {
+    fail('CORE_VERIFIER_FAILED')
+  }
+  return assertCoreVerifierSummary(output.trim(), receipt, policy)
+}
+
+function assertDistinctExternalFiles(files) {
+  const paths = Object.values(files).map((file) => pathForComparison(file.absolute))
+  if (new Set(paths).size !== paths.length) fail('EXTERNAL_PATH_COLLISION')
+}
+
+/**
+ * Validates the local-Codex staging evidence lane without changing or accepting
+ * the GitHub v1 receipt lane. This is an evidence-only check: all authority
+ * flags are pinned false and callers still need independent release gates.
+ */
+export function verifyCrmCoreCodexStagingReadbackReceiptFiles(options = {}) {
+  const policy = assertCrmCoreCodexStagingReadbackCustodyPolicy(options.policy)
+  const files = Object.freeze({
+    receipt: readExternalJson(options.receipt, receiptBasename, 'RECEIPT_FILE_INVALID'),
+    custodyReceipt: readExternalJson(options.custodyReceipt, custodyReceiptBasename, 'CUSTODY_RECEIPT_FILE_INVALID'),
+    readbackOutput: readExternalJson(options.readbackOutput, readbackOutputBasename, 'READBACK_OUTPUT_FILE_INVALID'),
+    audit: readExternalJson(options.audit, auditBasename, 'AUDIT_FILE_INVALID'),
+  })
+  assertDistinctExternalFiles(files)
+  const receipt = assertReceiptMetadata(files.receipt.value, policy)
+  const core = assertCoreRepository(options.coreRoot, receipt, policy)
+  const coreSummary = runCoreVerifier(core, files, receipt, policy)
+  const audit = assertAudit(files.audit.value, receipt, policy)
+  return Object.freeze({
+    ok: true,
+    contract: policy.contract,
+    coreReceiptContract: receipt.contract,
+    coreSourceSha: receipt.source.sha,
+    coreSourceTree: receipt.source.tree,
+    custodyReceiptId: receipt.custody.receiptId,
+    workerDeploymentId: coreSummary.workerDeploymentId,
+    pagesDeploymentId: coreSummary.pagesDeploymentId,
+    readbackExecutionId: coreSummary.readbackExecutionId,
+    externalSigner: policy.audit.externalSigner,
+    keyId: audit.keyId,
+    publicKeyFingerprint: audit.publicKeyFingerprint,
+    authority: receipt.authority,
+  })
+}
+
+function parseArguments(argv) {
+  const allowed = new Set(['--receipt', '--custody-receipt', '--readback-output', '--audit', '--core-root', '--policy'])
+  const values = new Map()
+  for (let index = 0; index < argv.length; index += 1) {
+    const name = argv[index]
+    const value = argv[index + 1]
+    if (!allowed.has(name) || values.has(name) || !value || value.startsWith('--')) fail('ARGUMENTS_INVALID')
+    values.set(name, value)
+    index += 1
+  }
+  for (const required of ['--receipt', '--custody-receipt', '--readback-output', '--audit', '--core-root']) {
+    if (!values.has(required)) fail('ARGUMENTS_INVALID')
+  }
+  return Object.freeze({
+    receipt: values.get('--receipt'),
+    custodyReceipt: values.get('--custody-receipt'),
+    readbackOutput: values.get('--readback-output'),
+    audit: values.get('--audit'),
+    coreRoot: values.get('--core-root'),
+    policy: values.get('--policy') || DEFAULT_POLICY_FILE,
+  })
+}
+
+function main() {
+  const argumentsValue = parseArguments(process.argv.slice(2))
+  const result = verifyCrmCoreCodexStagingReadbackReceiptFiles({
+    ...argumentsValue,
+    policy: readCrmCoreCodexStagingReadbackCustodyPolicy(argumentsValue.policy),
+  })
+  process.stdout.write(`${JSON.stringify(result)}\n`)
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  try {
+    main()
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : 'CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_INVALID'}\n`)
+    process.exitCode = 2
+  }
+}
