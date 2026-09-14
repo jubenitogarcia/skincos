@@ -1,0 +1,4 @@
+-- Non-destructive rollback for 20260914_atendimento_crm_core_confirmed_projection_delta_v2.
+-- Retain the v5 membership state, append-only outbox, packets and receipts so
+-- an interrupted custody run can be audited or recovered. The guarded runner
+-- only records rollback state in crm_atendimento.schema_migrations.

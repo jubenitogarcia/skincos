@@ -47,6 +47,32 @@ export const ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS 
     'crm_atendimento.units',
 ])
 
+// The v5 confirmed-membership predicates live in this shared, dependency-free
+// policy so the baseline, delta reconciler and exporter cannot silently fork
+// their meaning while retaining the same relation allowlist. Consumers append
+// their own projection/select wrapper, but may only read these three columns.
+export const ATENDIMENTO_CRM_CORE_CONFIRMED_UNIT_MEMBERSHIP_CTE = `WITH unit_membership_evidence AS (
+    SELECT member.identity_id AS identity_id,
+        unit.slug AS unit_slug,
+        GREATEST(
+            attendance_link.created_at,
+            attendance.created_at
+        ) AS observed_at
+      FROM crm_atendimento.crm_core_identity_members member
+      JOIN crm_atendimento.crm_core_attendance_client_links attendance_link
+        ON attendance_link.canonical_client_id = member.source_id
+      JOIN crm_atendimento.attendances attendance
+        ON attendance.id = attendance_link.attendance_id
+      JOIN crm_atendimento.units unit ON unit.id = attendance.unit_id
+     WHERE member.source_type = 'attendance_client'
+       AND attendance_link.status = 'confirmed'
+       AND attendance.deleted_at IS NULL
+), canonical_memberships AS (
+    SELECT identity_id AS identity_id, unit_slug AS unit_slug, max(observed_at) AS observed_at
+      FROM unit_membership_evidence
+     GROUP BY identity_id, unit_slug
+)`
+
 export const ATENDIMENTO_CRM_CORE_IDENTITY_RECONCILIATION_POLICY = Object.freeze({
     version: ATENDIMENTO_CRM_CORE_IDENTITY_MATERIALIZATION_CONTRACT,
     sourceType: 'attendance_client',

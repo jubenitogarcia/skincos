@@ -3,6 +3,7 @@ import {
   createAtendimentoUnitScopedProjectionSource,
 } from './atendimentoProjectionExporter.mjs'
 import {
+  ATENDIMENTO_CRM_CORE_CONFIRMED_UNIT_MEMBERSHIP_CTE,
   ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS,
   ATENDIMENTO_CRM_CORE_IDENTITY_SOURCE_SEMANTICS_VERSION,
 } from '../../../../shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js'
@@ -35,33 +36,13 @@ export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS = Obj
 // phones, email, and sale/attendance payloads never cross this boundary.
 // Mutable importer/materializer timestamps are deliberately excluded: their
 // idempotent upserts happen on every refresh and are not membership evidence.
-const MEMBERSHIP_CTE = `WITH unit_membership_evidence AS (
-  SELECT member.identity_id,
-    unit.slug AS unit_slug,
-    GREATEST(
-      attendance_link.created_at,
-      attendance.created_at
-    ) AS observed_at
-  FROM crm_atendimento.crm_core_identity_members member
-  JOIN crm_atendimento.crm_core_attendance_client_links attendance_link
-    ON attendance_link.canonical_client_id = member.source_id
-  JOIN crm_atendimento.attendances attendance
-    ON attendance.id = attendance_link.attendance_id
-  JOIN crm_atendimento.units unit ON unit.id = attendance.unit_id
-  WHERE member.source_type = 'attendance_client'
-    AND attendance_link.status = 'confirmed'
-    AND attendance.deleted_at IS NULL
-), unit_memberships AS (
-  SELECT identity_id, unit_slug, max(observed_at) AS observed_at
-  FROM unit_membership_evidence
-  GROUP BY identity_id, unit_slug
-), projection_rows AS (
+const MEMBERSHIP_CTE = `${ATENDIMENTO_CRM_CORE_CONFIRMED_UNIT_MEMBERSHIP_CTE}, projection_rows AS (
   SELECT identity_id,
     observed_at,
     identity_id::text AS id,
     to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
     unit_slug
-  FROM unit_memberships
+  FROM canonical_memberships
 )`
 
 const ROWS_SELECT = `SELECT id, updated_at, unit_slug
