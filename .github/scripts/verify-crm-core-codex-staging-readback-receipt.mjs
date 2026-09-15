@@ -23,6 +23,14 @@ const stagingOrigin = 'https://skincos-crm-core-staging.skincos.workers.dev'
 const auditSigner = 'codex-local-custody'
 const pagesEvidence = 'external-console-readback'
 const maxExternalFileBytes = 64 * 1024
+const maxExternalArtifactBundleBytes = 64 * 1024 * 1024
+const maxExternalArtifactBundleFiles = 4096
+const maxExternalArtifactBundleDepth = 48
+const custodyBundleTopLevelEntries = Object.freeze([
+  'console', 'execution-receipt.json', 'recheck', 'release-artifact.json', 'source-attestation.json', 'worker',
+])
+const custodyBundleRecheckEntries = Object.freeze(['console', 'worker'])
+const custodyBundleDirectoryEntries = new Set(['console', 'recheck', 'worker'])
 const shaPattern = /^[0-9a-f]{40}$/
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -171,8 +179,15 @@ function isWithin(parent, candidate) {
 }
 
 function gitWorktreeRoot(filename) {
+  const target = path.resolve(filename)
+  let workingDirectory = path.dirname(target)
   try {
-    const root = execFileSync('git', ['-C', path.dirname(path.resolve(filename)), 'rev-parse', '--show-toplevel'], {
+    if (fs.lstatSync(target).isDirectory()) workingDirectory = target
+  } catch {
+    // A non-existent path is checked from its existing parent directory.
+  }
+  try {
+    const root = execFileSync('git', ['-C', workingDirectory, 'rev-parse', '--show-toplevel'], {
       cwd: os.tmpdir(),
       env: isolatedGitEnvironment(),
       encoding: 'utf8',
@@ -229,6 +244,115 @@ function readExternalJson(filename, basename, code) {
   } catch {
     fail(code)
   }
+}
+
+function readExternalDirectory(filename, code) {
+  const requested = path.resolve(filename)
+  if (isWithin(repositoryRoot, requested) || isInsideGitWorktree(requested)) fail(`${code}_PATH_INVALID`)
+  let stat
+  let absolute
+  try {
+    stat = fs.lstatSync(requested)
+    absolute = fs.realpathSync.native ? fs.realpathSync.native(requested) : fs.realpathSync(requested)
+  } catch {
+    fail(code)
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory() || !samePath(requested, absolute)
+    || isWithin(repositoryRoot, absolute) || isInsideGitWorktree(absolute)) {
+    fail(`${code}_PATH_INVALID`)
+  }
+  return Object.freeze({ requested, absolute })
+}
+
+function exactEntryNames(entries, expected, code) {
+  const actual = entries.map((entry) => entry.name).sort()
+  const normalizedExpected = [...expected].sort()
+  if (actual.length !== normalizedExpected.length || actual.some((name, index) => name !== normalizedExpected[index])) fail(code)
+}
+
+function bundleRelativePath(parent, name) {
+  return parent ? `${parent}/${name}` : name
+}
+
+function bundleEntryPath(root, relative) {
+  const resolved = path.resolve(root, ...relative.split('/'))
+  if (!isWithin(root, resolved)) fail('EXTERNAL_SNAPSHOT_PATH_INVALID')
+  return resolved
+}
+
+function readExternalCustodyArtifactBundle(custodyReceipt, code) {
+  const directory = readExternalDirectory(path.dirname(custodyReceipt.absolute), code)
+  const expectedReceiptPath = path.join(directory.absolute, custodyReceiptBasename)
+  if (!samePath(expectedReceiptPath, custodyReceipt.absolute)) fail(`${code}_LAYOUT_INVALID`)
+  const entries = []
+  let totalBytes = 0
+  let totalFiles = 0
+
+  function visit(current, relative = '', depth = 0) {
+    if (depth > maxExternalArtifactBundleDepth) fail(`${code}_LAYOUT_INVALID`)
+    let children
+    try {
+      children = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      fail(code)
+    }
+    if (!relative) exactEntryNames(children, custodyBundleTopLevelEntries, `${code}_LAYOUT_INVALID`)
+    if (relative === 'recheck') exactEntryNames(children, custodyBundleRecheckEntries, `${code}_LAYOUT_INVALID`)
+    for (const child of children.sort((left, right) => left.name.localeCompare(right.name))) {
+      const childRelative = bundleRelativePath(relative, child.name)
+      const requested = path.join(current, child.name)
+      let stat
+      let absolute
+      try {
+        stat = fs.lstatSync(requested)
+        absolute = fs.realpathSync.native ? fs.realpathSync.native(requested) : fs.realpathSync(requested)
+      } catch {
+        fail(code)
+      }
+      if (child.name === '.git' || stat.isSymbolicLink() || !samePath(requested, absolute)
+        || !isWithin(directory.absolute, absolute) || isWithin(repositoryRoot, absolute) || isInsideGitWorktree(absolute)) {
+        fail(`${code}_PATH_INVALID`)
+      }
+      const shouldBeDirectory = (!relative && custodyBundleDirectoryEntries.has(child.name))
+        || (relative === 'recheck' && custodyBundleRecheckEntries.includes(child.name))
+      if (shouldBeDirectory && !stat.isDirectory()) fail(`${code}_LAYOUT_INVALID`)
+      if (stat.isDirectory()) {
+        entries.push(Object.freeze({ kind: 'directory', relative: childRelative }))
+        visit(absolute, childRelative, depth + 1)
+        continue
+      }
+      if (!stat.isFile()) fail(`${code}_LAYOUT_INVALID`)
+      let contents
+      try {
+        contents = fs.readFileSync(absolute)
+      } catch {
+        fail(code)
+      }
+      totalFiles += 1
+      totalBytes += contents.length
+      if (totalFiles > maxExternalArtifactBundleFiles || totalBytes > maxExternalArtifactBundleBytes) fail(`${code}_TOO_LARGE`)
+      entries.push(Object.freeze({ kind: 'file', relative: childRelative, contents: Buffer.from(contents) }))
+    }
+  }
+
+  visit(directory.absolute)
+  const receipt = entries.find((entry) => entry.kind === 'file' && entry.relative === custodyReceiptBasename)
+  if (!receipt || !receipt.contents.equals(custodyReceipt.contents)) fail(`${code}_CHANGED`)
+  return Object.freeze({ directory, entries: Object.freeze(entries), receipt: Object.freeze({ ...custodyReceipt }) })
+}
+
+function sameCustodyBundle(left, right, { requireSameDirectory = false } = {}) {
+  return (!requireSameDirectory || samePath(left.directory.absolute, right.directory.absolute))
+    && left.entries.length === right.entries.length
+    && left.entries.every((entry, index) => entry.kind === right.entries[index].kind
+      && entry.relative === right.entries[index].relative
+      && (entry.kind !== 'file' || entry.contents.equals(right.entries[index].contents)))
+}
+
+function assertExternalCustodyBundleUnchanged(bundle, code) {
+  const currentReceipt = readExternalJson(bundle.receipt.requested, custodyReceiptBasename, code)
+  const current = readExternalCustodyArtifactBundle(currentReceipt, code)
+  if (!sameCustodyBundle(bundle, current, { requireSameDirectory: true })) fail(`${code}_CHANGED`)
 }
 
 function publicKeyEntry(value, code) {
@@ -661,20 +785,50 @@ function assertExternalFileUnchanged(file, code) {
   if (!samePath(current.absolute, file.absolute) || !current.contents.equals(file.contents)) fail(`${code}_CHANGED`)
 }
 
-function createExternalSnapshots(files) {
+function writeExternalJsonSnapshot(directory, file, code) {
+  const absolute = path.join(directory, path.basename(file.absolute))
+  try {
+    fs.writeFileSync(absolute, file.contents, { flag: 'wx', mode: 0o600 })
+  } catch {
+    fail('EXTERNAL_SNAPSHOT_INVALID')
+  }
+  return readExternalJson(absolute, path.basename(file.absolute), code)
+}
+
+function writeExternalCustodyBundleSnapshot(directory, bundle) {
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 })
+    const directories = bundle.entries
+      .filter((entry) => entry.kind === 'directory')
+      .sort((left, right) => left.relative.split('/').length - right.relative.split('/').length
+        || left.relative.localeCompare(right.relative))
+    for (const entry of directories) fs.mkdirSync(bundleEntryPath(directory, entry.relative), { mode: 0o700 })
+    for (const entry of bundle.entries.filter((entry) => entry.kind === 'file')) {
+      fs.writeFileSync(bundleEntryPath(directory, entry.relative), entry.contents, { flag: 'wx', mode: 0o600 })
+    }
+  } catch {
+    fail('EXTERNAL_SNAPSHOT_INVALID')
+  }
+  const receipt = readExternalJson(path.join(directory, custodyReceiptBasename), custodyReceiptBasename, 'EXTERNAL_SNAPSHOT_INVALID')
+  const snapshot = readExternalCustodyArtifactBundle(receipt, 'EXTERNAL_SNAPSHOT_INVALID')
+  if (!sameCustodyBundle(bundle, snapshot)) fail('EXTERNAL_SNAPSHOT_INVALID')
+  return snapshot
+}
+
+function createExternalSnapshots(files, custodyBundle) {
   let directory
   try {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'skincos-crm-core-custody-'))
     fs.chmodSync(directory, 0o700)
     if (isInsideGitWorktree(directory)) fail('EXTERNAL_SNAPSHOT_PATH_INVALID')
-    const snapshots = Object.fromEntries(Object.entries(files).map(([name, file]) => {
-      const absolute = path.join(directory, path.basename(file.absolute))
-      fs.writeFileSync(absolute, file.contents, { flag: 'wx', mode: 0o600 })
-      const stat = fs.lstatSync(absolute)
-      if (!stat.isFile() || stat.isSymbolicLink()) fail('EXTERNAL_SNAPSHOT_INVALID')
-      return [name, Object.freeze({ ...file, absolute })]
-    }))
-    return Object.freeze({ directory, files: Object.freeze(snapshots) })
+    const snapshotBundle = writeExternalCustodyBundleSnapshot(path.join(directory, 'custody'), custodyBundle)
+    const snapshots = Object.freeze({
+      receipt: writeExternalJsonSnapshot(directory, files.receipt, 'EXTERNAL_SNAPSHOT_INVALID'),
+      custodyReceipt: snapshotBundle.receipt,
+      readbackOutput: writeExternalJsonSnapshot(directory, files.readbackOutput, 'EXTERNAL_SNAPSHOT_INVALID'),
+      audit: writeExternalJsonSnapshot(directory, files.audit, 'EXTERNAL_SNAPSHOT_INVALID'),
+    })
+    return Object.freeze({ directory, files: snapshots, custodyBundle: snapshotBundle })
   } catch {
     if (directory) fs.rmSync(directory, { recursive: true, force: true })
     fail('EXTERNAL_SNAPSHOT_INVALID')
@@ -706,13 +860,19 @@ export function verifyCrmCoreCodexStagingReadbackReceiptFiles(options = {}) {
   assertDistinctExternalFiles(files)
   const receipt = assertReceiptMetadata(files.receipt.value, policy)
   assertCustodyCanonicalMain(files.custodyReceipt.value, receipt)
+  const custodyBundle = readExternalCustodyArtifactBundle(files.custodyReceipt, 'CUSTODY_BUNDLE_INVALID')
   const core = assertCoreRepository(options.coreRoot, receipt, policy)
-  const snapshot = createExternalSnapshots(files)
+  const snapshot = createExternalSnapshots(files, custodyBundle)
   try {
     const coreSummary = runCoreVerifier(core, snapshot.files, receipt, policy)
-    for (const [name, file] of Object.entries(files)) {
-      assertExternalFileUnchanged(file, `${name.toUpperCase()}_FILE_INVALID`)
-    }
+    assertExternalFileUnchanged(snapshot.files.receipt, 'EXTERNAL_SNAPSHOT_RECEIPT_FILE_INVALID')
+    assertExternalCustodyBundleUnchanged(snapshot.custodyBundle, 'EXTERNAL_SNAPSHOT_CUSTODY_BUNDLE_INVALID')
+    assertExternalFileUnchanged(snapshot.files.readbackOutput, 'EXTERNAL_SNAPSHOT_READBACK_OUTPUT_FILE_INVALID')
+    assertExternalFileUnchanged(snapshot.files.audit, 'EXTERNAL_SNAPSHOT_AUDIT_FILE_INVALID')
+    assertExternalFileUnchanged(files.receipt, 'RECEIPT_FILE_INVALID')
+    assertExternalCustodyBundleUnchanged(custodyBundle, 'CUSTODY_BUNDLE_INVALID')
+    assertExternalFileUnchanged(files.readbackOutput, 'READBACK_OUTPUT_FILE_INVALID')
+    assertExternalFileUnchanged(files.audit, 'AUDIT_FILE_INVALID')
     const audit = assertAudit(files.audit.value, receipt, policy)
     return Object.freeze({
       ok: true,

@@ -124,11 +124,18 @@ function policyFor(keyPair, keyId) {
   }
 }
 
-function createCoreRoot(root, { failVerifier = false, mutateOriginalFile = false } = {}) {
+function createCoreRoot(root, {
+  failVerifier = false,
+  mutateOriginalFile = false,
+  mutateOriginalBundleFile = false,
+  mutateSnapshotFile = false,
+  mutateSnapshotBundleFile = false,
+} = {}) {
   const coreRoot = path.join(root, 'core')
   fs.mkdirSync(path.join(coreRoot, 'scripts'), { recursive: true })
   const verifier = `
 import fs from 'node:fs'
+import path from 'node:path'
 import process from 'node:process'
 
 const values = new Map()
@@ -140,12 +147,26 @@ if (${failVerifier ? 'true' : 'false'}) process.exit(23)
 for (const name of ['--receipt', '--custody-receipt', '--readback-output', '--expected-sha', '--expected-tree', '--expected-external-signer', '--expected-public-key-fingerprint']) {
   if (!values.get(name)) process.exit(24)
 }
+const custodyDirectory = path.dirname(values.get('--custody-receipt'))
+const expectedBundleEntries = ['console', 'execution-receipt.json', 'recheck', 'release-artifact.json', 'source-attestation.json', 'worker']
+const actualBundleEntries = fs.readdirSync(custodyDirectory).sort()
+if (actualBundleEntries.length !== expectedBundleEntries.length || actualBundleEntries.some((entry, index) => entry !== expectedBundleEntries[index])) process.exit(26)
+for (const name of ['console', 'recheck', 'worker']) {
+  if (!fs.statSync(path.join(custodyDirectory, name)).isDirectory()) process.exit(27)
+}
+const actualRecheckEntries = fs.readdirSync(path.join(custodyDirectory, 'recheck')).sort()
+if (actualRecheckEntries.length !== 2 || actualRecheckEntries[0] !== 'console' || actualRecheckEntries[1] !== 'worker'
+  || !fs.existsSync(path.join(custodyDirectory, 'worker', 'crmCoreStagingWorker.js'))
+  || !fs.existsSync(path.join(custodyDirectory, 'console', 'index.html'))) process.exit(28)
 const receipt = JSON.parse(fs.readFileSync(values.get('--receipt'), 'utf8'))
 if (values.get('--expected-sha') !== receipt.source.sha
   || values.get('--expected-tree') !== receipt.source.tree
   || values.get('--expected-external-signer') !== receipt.signature.externalSigner
   || values.get('--expected-public-key-fingerprint') !== receipt.signature.publicKeyFingerprint) process.exit(25)
 if (${mutateOriginalFile ? 'true' : 'false'}) fs.appendFileSync(process.env.CRM_CORE_TEST_MUTATE_RECEIPT, '\\n', 'utf8')
+if (${mutateOriginalBundleFile ? 'true' : 'false'}) fs.appendFileSync(process.env.CRM_CORE_TEST_MUTATE_BUNDLE_FILE, '\\n', 'utf8')
+if (${mutateSnapshotFile ? 'true' : 'false'}) fs.appendFileSync(values.get('--receipt'), '\\n', 'utf8')
+if (${mutateSnapshotBundleFile ? 'true' : 'false'}) fs.appendFileSync(path.join(custodyDirectory, 'worker', 'crmCoreStagingWorker.js'), '\\n', 'utf8')
 process.stdout.write(JSON.stringify({
   ok: true,
   contract: receipt.contract,
@@ -174,7 +195,9 @@ process.stdout.write(JSON.stringify({
 function createFixture(options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-core-codex-readback-'))
   const externalRoot = path.join(root, 'runtime')
+  const custodyRoot = path.join(root, 'artifact-custody')
   fs.mkdirSync(externalRoot, { recursive: true })
+  fs.mkdirSync(custodyRoot, { recursive: true })
   const coreRoot = createCoreRoot(root, options)
   const sourceSha = git(coreRoot, ['rev-parse', 'HEAD'])
   const sourceTree = git(coreRoot, ['rev-parse', 'HEAD^{tree}'])
@@ -189,7 +212,7 @@ function createFixture(options = {}) {
   const workerDigest = `sha256:${'1'.repeat(64)}`
   const consoleDigest = `sha256:${'2'.repeat(64)}`
   const custodyReceiptId = `crm-codex-artifact-${sourceSha}-${executionId}`
-  const custodyReceiptFile = path.join(externalRoot, 'execution-receipt.json')
+  const custodyReceiptFile = path.join(custodyRoot, 'execution-receipt.json')
   writeJson(custodyReceiptFile, {
     contract: 'skincos-crm/codex-local-artifact-custody/v2',
     state: 'verified-build-only',
@@ -211,6 +234,15 @@ function createFixture(options = {}) {
     authority: { deploymentAuthorized: false, productionAuthorized: false, domainChangeAuthorized: false, backfillAuthorized: false, legacyRetirementAuthorized: false },
     sensitiveValuesIncluded: false,
   })
+  writeJson(path.join(custodyRoot, 'release-artifact.json'), { fixture: 'release-artifact' })
+  writeJson(path.join(custodyRoot, 'source-attestation.json'), { fixture: 'source-attestation' })
+  for (const directory of ['worker', 'console', 'recheck/worker', 'recheck/console']) {
+    fs.mkdirSync(path.join(custodyRoot, ...directory.split('/')), { recursive: true })
+  }
+  fs.writeFileSync(path.join(custodyRoot, 'worker', 'crmCoreStagingWorker.js'), 'export default {}\n', 'utf8')
+  fs.writeFileSync(path.join(custodyRoot, 'console', 'index.html'), '<!doctype html>\n', 'utf8')
+  fs.writeFileSync(path.join(custodyRoot, 'recheck', 'worker', 'crmCoreStagingWorker.js'), 'export default {}\n', 'utf8')
+  fs.writeFileSync(path.join(custodyRoot, 'recheck', 'console', 'index.html'), '<!doctype html>\n', 'utf8')
 
   const source = { repositoryId: '1353934107', ref: 'refs/heads/main', sha: sourceSha, tree: sourceTree }
   const custody = {
@@ -280,10 +312,12 @@ function createFixture(options = {}) {
   return {
     root,
     coreRoot,
+    custodyRoot,
     policy,
     policyFile,
     receiptFile,
     custodyReceiptFile,
+    custodyBundleWorkerFile: path.join(custodyRoot, 'worker', 'crmCoreStagingWorker.js'),
     readbackOutputFile,
     auditFile,
     metadata,
@@ -441,6 +475,29 @@ test('pins the clean-clone main tuple and detects replacement after the Core ver
   } finally {
     delete process.env.CRM_CORE_TEST_MUTATE_RECEIPT
     removeFixture(replaced)
+  }
+
+  const bundleReplaced = createFixture({ mutateOriginalBundleFile: true })
+  try {
+    process.env.CRM_CORE_TEST_MUTATE_BUNDLE_FILE = bundleReplaced.custodyBundleWorkerFile
+    assert.match(failure(verifyFixture(bundleReplaced)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CUSTODY_BUNDLE_INVALID_CHANGED/)
+  } finally {
+    delete process.env.CRM_CORE_TEST_MUTATE_BUNDLE_FILE
+    removeFixture(bundleReplaced)
+  }
+
+  const snapshotReplaced = createFixture({ mutateSnapshotFile: true })
+  try {
+    assert.match(failure(verifyFixture(snapshotReplaced)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_EXTERNAL_SNAPSHOT_RECEIPT_FILE_INVALID_CHANGED/)
+  } finally {
+    removeFixture(snapshotReplaced)
+  }
+
+  const snapshotBundleReplaced = createFixture({ mutateSnapshotBundleFile: true })
+  try {
+    assert.match(failure(verifyFixture(snapshotBundleReplaced)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_EXTERNAL_SNAPSHOT_CUSTODY_BUNDLE_INVALID_CHANGED/)
+  } finally {
+    removeFixture(snapshotBundleReplaced)
   }
 })
 

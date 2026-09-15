@@ -40,21 +40,30 @@ JWK canônica usado pela trilha GitHub v1.
 Use também um checkout limpo do Core no SHA e na árvore declarados pelo recibo.
 O verificador exige que `refs/remotes/origin/main` do checkout limpo seja o
 mesmo SHA e que o recibo de custódia, gerado no clone limpo, registre aquele SHA
-antes e depois da revalidação de `main`. Ele recebe cópias temporárias imutáveis
-dos quatro arquivos e falha se qualquer original mudar durante a verificação. O
-`observedAt` UTC no statement assinado do audit registra quando o readback foi
-observado.
+antes e depois da revalidação de `main`. A cadeia de custódia do Core consulta a
+identidade do repositório e `refs/heads/main` via `origin` antes e depois do build; o
+audit Ed25519 externo fixa o digest exato desse recibo. Esta etapa não tenta um
+`fetch` sem credencial durante a leitura: se a cadeia assinada ou o ref de
+rastreamento limpo não existirem, ela falha fechada. Ele recebe um snapshot do
+bundle completo de artefato de custódia (incluindo `worker`, `console` e
+`recheck`) e cópias temporárias dos outros três arquivos, e falha se qualquer
+original ou snapshot mudar durante a verificação. O `observedAt` UTC no statement
+assinado do audit registra quando o readback foi observado.
 
 No Windows, execute pelo gateway tipado WSL:
+
+Use os caminhos Linux visíveis no WSL nos argumentos do Node — por exemplo,
+`/mnt/c/CodexRuntime/...` e `/mnt/c/CodexShared/...` — em vez de um caminho
+`C:\...` literal.
 
 ```powershell
 $arguments = @(
   '.github/scripts/verify-crm-core-codex-staging-readback-receipt.mjs',
-  '--receipt', '<runtime>/codex-staging-readback-receipt.json',
-  '--custody-receipt', '<runtime>/execution-receipt.json',
-  '--readback-output', '<runtime>/readback-output.json',
-  '--audit', '<runtime>/private-readback-audit.json',
-  '--core-root', '<checkout-limpo-do-skincos-crm-core>'
+  '--receipt', '<runtime-wsl>/codex-staging-readback-receipt.json',
+  '--custody-receipt', '<runtime-wsl>/execution-receipt.json',
+  '--readback-output', '<runtime-wsl>/readback-output.json',
+  '--audit', '<runtime-wsl>/private-readback-audit.json',
+  '--core-root', '<checkout-limpo-do-skincos-crm-core-wsl>'
 )
 & .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -Executable node -Argument $arguments
 ```
