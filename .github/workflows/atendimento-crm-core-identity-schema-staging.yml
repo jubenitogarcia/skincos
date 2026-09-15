@@ -1,0 +1,160 @@
+name: Atendimento CRM Core identity schema (staging)
+run-name: Atendimento identity schema ${{ inputs.action }} at ${{ inputs.source_sha }}
+
+# This is a dispatch-only custody boundary. The root-owned helper, rather than
+# GitHub, owns the database capability, immutable release binding, checkpoint,
+# and private full receipt.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact current main SHA that contains the staged custody source.
+        required: true
+        type: string
+      action:
+        description: Read-only verification or the one-time additive schema application.
+        required: true
+        type: choice
+        options:
+          - verify
+          - apply
+      confirmation:
+        description: Type verify-exact-atendimento-crm-core-identity-schema-staging or apply-exact-atendimento-crm-core-identity-schema-staging.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atendimento-crm-core-identity-schema-staging-custody
+  cancel-in-progress: false
+
+jobs:
+  custody:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'jubenitogarcia/skincos' &&
+      github.repository_id == '1060913632' &&
+      github.repository_owner == 'jubenitogarcia' &&
+      github.repository_owner_id == '199169872' &&
+      github.ref == 'refs/heads/main' &&
+      github.ref_type == 'branch' &&
+      github.event.repository.default_branch == 'main' &&
+      github.actor == github.repository_owner &&
+      github.actor_id == '199169872' &&
+      github.triggering_actor == github.repository_owner &&
+      github.event.sender.id == 199169872 &&
+      github.run_attempt == 1 &&
+      inputs.source_sha == github.sha &&
+      (
+        (inputs.action == 'verify' && inputs.confirmation == 'verify-exact-atendimento-crm-core-identity-schema-staging') ||
+        (inputs.action == 'apply' && inputs.confirmation == 'apply-exact-atendimento-crm-core-identity-schema-staging')
+      )
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    environment: crm-atendimento-identity-schema-staging
+    timeout-minutes: 12
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      CUSTODY_ACTION: ${{ inputs.action }}
+      RAW_RECEIPT: ${{ runner.temp }}/atendimento-crm-core-identity-schema/${{ github.run_id }}/receipt.raw.json
+      SAFE_RECEIPT: ${{ runner.temp }}/atendimento-crm-core-identity-schema/${{ github.run_id }}/receipt.json
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Bind the request to the exact current main source
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$SOURCE_SHA" == "$GITHUB_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_SOURCE_SHA_INVALID'; exit 78; }
+          [[ "$CUSTODY_ACTION" == 'verify' || "$CUSTODY_ACTION" == 'apply' ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_ACTION_INVALID'; exit 78; }
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_CHECKOUT_MISMATCH'; exit 78; }
+          git fetch --no-tags --force origin main:refs/remotes/origin/main
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_MAIN_ADVANCED'; exit 78; }
+
+      - name: Reconfirm exact main source immediately before custody
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force origin main:refs/remotes/origin/main
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_CHECKOUT_MISMATCH_BEFORE_CUSTODY'; exit 78; }
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_MAIN_ADVANCED_BEFORE_CUSTODY'; exit 78; }
+          umask 077
+          mkdir -p "$(dirname "$RAW_RECEIPT")"
+
+      - name: Verify only through the fixed root-owned staging helper
+        if: ${{ inputs.action == 'verify' }}
+        run: |
+          set -euo pipefail
+          timeout --foreground --kill-after=15s 420s sudo -n /usr/local/sbin/skincos-run-atendimento-crm-core-identity-schema-staging verify > "$RAW_RECEIPT"
+          [[ -s "$RAW_RECEIPT" ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_RECEIPT_MISSING'; exit 78; }
+
+      - name: Apply only through the fixed root-owned staging helper
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+          set -euo pipefail
+          timeout --foreground --kill-after=15s 420s sudo -n /usr/local/sbin/skincos-run-atendimento-crm-core-identity-schema-staging apply > "$RAW_RECEIPT"
+          [[ -s "$RAW_RECEIPT" ]] || { echo 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_RECEIPT_MISSING'; exit 78; }
+
+      - name: Validate and retain only the sanitized custody receipt
+        run: |
+          set -euo pipefail
+          umask 077
+          node --input-type=module <<'NODE'
+          import crypto from 'node:crypto';
+          import fs from 'node:fs';
+
+          const rawPath = process.env.RAW_RECEIPT || '';
+          const safePath = process.env.SAFE_RECEIPT || '';
+          const sourceSha = process.env.SOURCE_SHA || '';
+          const action = process.env.CUSTODY_ACTION || '';
+          const invalid = () => { throw new Error('ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_RECEIPT_INVALID'); };
+          const exact = (value, keys) => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
+            const actual = Object.keys(value).sort();
+            const expected = [...keys].sort();
+            if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) invalid();
+          };
+          const canonical = (value) => {
+            if (value === null || typeof value !== 'object') return JSON.stringify(value);
+            if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+            return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+          };
+          const summary = (value) => {
+            exact(value, ['prerequisitesReady', 'currentMigrationRecorded', 'currentMigrationActive', 'relationCollision', 'migrationReceiptCollision', 'schemaCompatible', 'schemaContractReady', 'applyEligible', 'schemaReady', 'runtimeReady', 'targetRelationsPresent', 'targetRelationsAbsent']);
+            for (const key of ['prerequisitesReady', 'currentMigrationRecorded', 'currentMigrationActive', 'relationCollision', 'migrationReceiptCollision', 'schemaCompatible', 'schemaContractReady', 'applyEligible', 'schemaReady', 'runtimeReady']) if (typeof value[key] !== 'boolean') invalid();
+            for (const key of ['targetRelationsPresent', 'targetRelationsAbsent']) if (!Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 16) invalid();
+          };
+          if (!/^[0-9a-f]{40}$/.test(sourceSha) || !['verify', 'apply'].includes(action) || !rawPath || !safePath) invalid();
+          const stat = fs.statSync(rawPath, { throwIfNoEntry: false });
+          if (!stat || !stat.isFile() || stat.size < 2 || stat.size > 16384) invalid();
+          const receipt = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+          exact(receipt, ['schemaVersion', 'contract', 'receiptId', 'action', 'releaseSha', 'target', 'migrationId', 'schemaOnly', 'statementsApplied', 'backupSha256', 'before', 'after', 'writerInvocation', 'backfillInvocation', 'deliveryInvocation', 'productionMutationAllowed', 'recordedAt', 'receiptDigest']);
+          if (receipt.schemaVersion !== 1 || receipt.contract !== 'skincos/atendimento/crm-core-identity-schema-custody/v1' || receipt.action !== action || receipt.releaseSha !== sourceSha || receipt.target !== 'staging' || receipt.migrationId !== '20260910_atendimento_crm_core_identity_materialization_v1' || receipt.schemaOnly !== true || receipt.writerInvocation !== false || receipt.backfillInvocation !== false || receipt.deliveryInvocation !== false || receipt.productionMutationAllowed !== false) invalid();
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(receipt.receiptId) || !/^sha256:[0-9a-f]{64}$/.test(receipt.receiptDigest) || Number.isNaN(Date.parse(receipt.recordedAt))) invalid();
+          if (!Number.isSafeInteger(receipt.statementsApplied) || receipt.statementsApplied < 0 || (action === 'verify' && receipt.statementsApplied !== 0) || (action === 'apply' && receipt.statementsApplied < 1)) invalid();
+          if ((action === 'verify' && receipt.backupSha256 !== null) || (action === 'apply' && !/^sha256:[0-9a-f]{64}$/.test(receipt.backupSha256))) invalid();
+          summary(receipt.before);
+          summary(receipt.after);
+          if (action === 'apply' && (!receipt.after.runtimeReady || !receipt.after.currentMigrationActive || receipt.after.targetRelationsAbsent !== 0)) invalid();
+          const unsigned = { ...receipt };
+          delete unsigned.receiptDigest;
+          if (`sha256:${crypto.createHash('sha256').update(canonical(unsigned)).digest('hex')}` !== receipt.receiptDigest) invalid();
+          fs.writeFileSync(safePath, `${JSON.stringify(receipt)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+          NODE
+          rm -f -- "$RAW_RECEIPT"
+
+      - name: Upload the sanitized custody receipt only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atendimento-crm-core-identity-schema-${{ inputs.action }}-${{ inputs.source_sha }}-${{ github.run_id }}
+          path: ${{ env.SAFE_RECEIPT }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove temporary custody output
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          rm -f -- "$RAW_RECEIPT" "$SAFE_RECEIPT"

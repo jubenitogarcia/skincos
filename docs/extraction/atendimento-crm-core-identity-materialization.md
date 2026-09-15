@@ -16,6 +16,18 @@ Ele aceita somente uma conexão de migrator dedicada por loopback TLS e retorna
 metadados de esquema e de registry; não tem modo de aplicar, rollback, backfill
 ou entrega.
 
+## Executor custodiado de schema em staging
+
+O catálogo permanece com `automaticApplicationAllowed: false`: esta migration
+não é aplicada por CI, por push ou por uma rota da aplicação. Quando o schema
+novo estiver pronto para o ambiente isolado, a única via de aplicação é o
+executor root-owned, preso a um release imutável, documentado no
+[runbook de custódia](../runbooks/atendimento-crm-core-identity-schema-custody.md).
+Ele aceita somente `verify` e `apply` em staging, exige manutenção e runtime
+inativo para o segundo caso, cria um checkpoint privado e devolve apenas um
+recibo sanitizado. Não concede o principal do materializador, não cria links,
+não materializa clientes, não faz backfill e não altera o corte de produção.
+
 ## Política de identidade
 
 - A identidade é ancorada em um UUID de cliente canônico que foi explicitamente
