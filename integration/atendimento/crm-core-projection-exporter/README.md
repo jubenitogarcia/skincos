@@ -82,7 +82,7 @@ carga exceder isso, ele não cria um backfill parcial.
 
 `src/atendimentoConfirmedUnitScopedProjectionSource.mjs` fornece o descritor
 canônico `ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE` (semântica
-`v4`). Ele não reproduz todos os sinais do runtime comercial legado: a
+`v5`). Ele não reproduz todos os sinais do runtime comercial legado: a
 projeção CRM Core é limitada a relações cujo lifecycle pertence a Atendimento.
 Uma identidade tem escopo em cada unidade comprovada pelo canal abaixo, e o
 slug só é aceito após resolver contra `crm_atendimento.units`.
@@ -230,6 +230,30 @@ Nenhuma migration, reconciliação, drenagem de outbox ou cópia de dados reais 
 executada por estes módulos automaticamente. O grant do principal
 `crm_core_projection_exporter` deve ser concedido pelo operador de banco com
 menor privilégio e registrado no recibo operacional antes de qualquer ativação.
+
+## Candidato de custódia da fonte de produção, sem execução
+
+`crm/api/server/atendimento/confirmedProjectionProductionCandidateCustody.js`
+é uma guarda **somente de evidência** para a futura integração root-owned. Ela
+não é um runner, não possui CLI, não recebe pool PostgreSQL, URL, transporte,
+HMAC, chave privada, variável de ambiente ou caminho de arquivo. Antes de
+emitir um candidato, exige um baseline v2 `delta-ready` cujo receptor continua
+em `staging` e cinco evidências externas Ed25519, em ordem fixa:
+
+1. identidade de fonte de produção e perfil v5 permitido;
+2. cursor derivado do snapshot/manifesto opacos;
+3. checkpoint selado fora do checkout;
+4. reconciliação e readback do mesmo artefato Core de staging;
+5. rollback distinto que desabilita ingestão sem apagar ledger.
+
+A chave pública já pinada pelo helper root-owned é injetada na factory; o
+envelope nunca escolhe sua própria chave de confiança. O resultado contém
+somente hashes/metadados sanitizados e fixa `sourceReadAllowed`,
+`deliveryAllowed`, `productionMutationAllowed`, `publicRouteMutationAllowed` e
+`legacyPublisherMutationAllowed` como `false`. Portanto ele não muda a
+admissão v3, não habilita backfill de produção e não pode chamar o executor que
+materializa memberships/outbox. O procedimento operacional completo está em
+[`docs/runbooks/atendimento-crm-core-production-candidate-custody.md`](../../../docs/runbooks/atendimento-crm-core-production-candidate-custody.md).
 
 ## Preflight reutilizável e preparação sintética
 
