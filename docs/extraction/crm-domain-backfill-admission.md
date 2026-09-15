@@ -84,3 +84,21 @@ habilitar produção ou o corte do shell legado por edição desse plano.
 
 Uma entrega posterior, inclusive para staging, exige contrato, PR e recibo de
 admissão próprios; esta versão não autoriza essa etapa.
+
+## Candidato de fonte de produção, ainda desligado
+
+O módulo
+`crm/api/server/atendimento/confirmedProjectionProductionCandidateCustody.js`
+permite validar fora de linha uma cadeia de evidências de custódia para o mesmo
+domínio de Atendimento. Ele exige um baseline v2 `delta-ready` que continua
+apontando para um artefato Core de **staging**, além de evidências externas
+assinadas de identidade da fonte, cursor, checkpoint, reconciliação e rollback.
+Não abre PostgreSQL, não lê linhas de origem, não chama Worker e produz um
+objeto com todas as capacidades de execução explicitamente `false`.
+
+Isso não altera `crm-domain-backfill-admission.json`: produção, rotas, entrega
+e aposentadoria do publisher legado continuam `false`. A integração root-owned
+posterior deve pinçar a chave pública de confiança fora do envelope e só pode
+consumir esse candidato depois de cumprir os gates próprios de Core, Identity,
+gateway, cutover e readback. Veja o
+[runbook de candidato de custódia](../runbooks/atendimento-crm-core-production-candidate-custody.md).
