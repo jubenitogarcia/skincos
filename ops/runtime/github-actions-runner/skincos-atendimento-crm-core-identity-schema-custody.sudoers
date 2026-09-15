@@ -1,0 +1,5 @@
+# Deliberately literal: the native runner may inspect or apply only the fixed,
+# immutable-release-bound Atendimento identity schema helper. It cannot select
+# a release, database, file, shell, route, writer, batch, or rollback action.
+Cmnd_Alias SKINCOS_ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_CUSTODY = /usr/local/sbin/skincos-run-atendimento-crm-core-identity-schema-staging verify, /usr/local/sbin/skincos-run-atendimento-crm-core-identity-schema-staging apply
+skincos-actions ALL=(root) NOPASSWD: SKINCOS_ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_CUSTODY
