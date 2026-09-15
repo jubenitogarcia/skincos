@@ -86,6 +86,15 @@ fi
 
 [[ "$(/usr/bin/id -u)" == '0' ]] || { echo '--apply requires root' >&2; exit 78; }
 
+mode_is_non_writable() {
+  local mode="$1"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  # Keep the octal permission digits textual: group and other must not carry
+  # the write bit, while the optional special digit and owner digit are
+  # intentionally preserved.
+  [[ "${mode: -2:1}" != [2367] && "${mode: -1}" != [2367] ]]
+}
+
 assert_root_owned_immutable() {
   local path="$1"
   local label="$2"
@@ -93,7 +102,11 @@ assert_root_owned_immutable() {
   [[ -f "$path" && ! -L "$path" ]] || { echo "$label must be a regular non-symlink file: $path" >&2; exit 78; }
   metadata="$(/usr/bin/stat -c '%u:%g:%a:%h' -- "$path")"
   IFS=':' read -r uid gid mode links <<<"$metadata"
-  [[ "$uid" == '0' && "$gid" == '0' && "$links" == '1' && "$mode" =~ ^[0-7]{3,4}$ && $((8#$mode & 18)) == 0 ]] || {
+  # Immutable native releases are root-owned and never writable by their
+  # runtime group. The canonical staging preparer deliberately assigns
+  # root:skincos with group read/traverse so the service can consume the
+  # release; requiring GID 0 here would reject that safe, non-writable form.
+  [[ "$uid" == '0' && "$links" == '1' ]] && mode_is_non_writable "$mode" || {
     echo "$label is not root-owned immutable source: $path" >&2
     exit 78
   }
@@ -106,7 +119,7 @@ assert_root_owned_directory() {
   [[ -d "$path" && ! -L "$path" ]] || { echo "$label must be a real directory: $path" >&2; exit 78; }
   metadata="$(/usr/bin/stat -c '%u:%g:%a' -- "$path")"
   IFS=':' read -r uid gid mode <<<"$metadata"
-  [[ "$uid" == '0' && "$gid" == '0' && "$mode" =~ ^[0-7]{3,4}$ && $((8#$mode & 18)) == 0 ]] || {
+  [[ "$uid" == '0' ]] && mode_is_non_writable "$mode" || {
     echo "$label is not root-owned and non-writable: $path" >&2
     exit 78
   }
@@ -134,14 +147,19 @@ readonly ACTION='$HELPER_ACTION'
 readonly CLI="\$RELEASE_SOURCE/crm/api/scripts/preflight-atendimento-crm-core-projection-source.mjs"
 
 fail() { echo "\$1" >&2; exit 78; }
+mode_is_non_writable() {
+  local mode="\$1"
+  [[ "\$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  [[ "\${mode: -2:1}" != [2367] && "\${mode: -1}" != [2367] ]]
+}
 [[ \$# == 1 && "\${1:-}" == "\$ACTION" ]] || { echo 'CRM projection custody action is invalid' >&2; exit 64; }
 [[ -d "\$RELEASE_SOURCE" && ! -L "\$RELEASE_SOURCE" && -f "\$CLI" && ! -L "\$CLI" ]] || fail 'CRM projection custody release is unavailable'
 release_metadata="\$(/usr/bin/stat -c '%u:%g:%a' -- "\$RELEASE_SOURCE" 2>/dev/null || true)"
 IFS=':' read -r release_uid release_gid release_mode <<<"\$release_metadata"
-[[ "\$release_uid" == '0' && "\$release_gid" == '0' && "\$release_mode" =~ ^[0-7]{3,4}$ && \$((8#\$release_mode & 18)) == 0 ]] || fail 'CRM projection custody release is not immutable'
+[[ "\$release_uid" == '0' ]] && mode_is_non_writable "\$release_mode" || fail 'CRM projection custody release is not immutable'
 cli_metadata="\$(/usr/bin/stat -c '%u:%g:%a:%h' -- "\$CLI" 2>/dev/null || true)"
 IFS=':' read -r cli_uid cli_gid cli_mode cli_links <<<"\$cli_metadata"
-[[ "\$cli_uid" == '0' && "\$cli_gid" == '0' && "\$cli_links" == '1' && "\$cli_mode" =~ ^[0-7]{3,4}$ && \$((8#\$cli_mode & 18)) == 0 ]] || fail 'CRM projection custody release is not immutable'
+[[ "\$cli_uid" == '0' && "\$cli_links" == '1' ]] && mode_is_non_writable "\$cli_mode" || fail 'CRM projection custody release is not immutable'
 [[ -f "\$CONFIG_FILE" && ! -L "\$CONFIG_FILE" ]] || fail 'CRM projection exporter config must be a regular file'
 metadata="\$(/usr/bin/stat -c '%u:%g:%a:%h' -- "\$CONFIG_FILE" 2>/dev/null || true)"
 [[ "\$metadata" == '0:0:600:1' ]] || fail 'CRM projection exporter config must be root:root mode 0600'
