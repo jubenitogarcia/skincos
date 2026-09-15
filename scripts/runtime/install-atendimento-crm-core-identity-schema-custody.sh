@@ -100,7 +100,7 @@ if [[ "$APPLY" == '1' ]]; then
   done
 fi
 
-for binary in /usr/bin/bash /usr/bin/node /usr/bin/install /usr/bin/mktemp /usr/bin/stat /usr/bin/chmod /usr/bin/chown /usr/bin/env /usr/bin/timeout /usr/bin/sed /usr/bin/systemctl /usr/sbin/visudo; do
+for binary in /usr/bin/bash /usr/bin/node /usr/bin/install /usr/bin/mktemp /usr/bin/stat /usr/bin/chmod /usr/bin/chown /usr/bin/env /usr/bin/timeout /usr/bin/sed /usr/bin/rm /usr/bin/systemctl /usr/sbin/visudo; do
   [[ -x "$binary" ]] || { echo "Required binary is missing: $binary" >&2; exit 78; }
 done
 
@@ -155,8 +155,15 @@ for required in "${APPLY_REQUIRED_SOURCE_FILES[@]}"; do
 done
 
 for target in "$STATE_ROOT" "$BACKUP_ROOT"; do
-  /usr/bin/install -d -o root -g root -m 0700 "$target"
-  [[ "$(/usr/bin/stat -c '%u:%g:%a' -- "$target")" == '0:0:700' ]] || {
+  if [[ -e "$target" || -L "$target" ]]; then
+    [[ -d "$target" && ! -L "$target" ]] || {
+      echo "Private custody directory is not a real directory: $target" >&2
+      exit 78
+    }
+  else
+    /usr/bin/install -d -o root -g root -m 0700 "$target"
+  fi
+  [[ -d "$target" && ! -L "$target" && "$(/usr/bin/stat -c '%u:%g:%a' -- "$target")" == '0:0:700' ]] || {
     echo "Private custody directory metadata is unsafe: $target" >&2
     exit 78
   }
@@ -167,8 +174,61 @@ release_sha="${release_sha%/source}"
 [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Immutable release SHA could not be derived' >&2; exit 78; }
 
 helper_stage="$(/usr/bin/mktemp /var/tmp/skincos-run-atendimento-crm-core-identity-schema-staging.XXXXXX)"
-cleanup_helper_stage() { /usr/bin/rm -f -- "$helper_stage"; }
-trap cleanup_helper_stage EXIT INT TERM
+rollback_dir="$(/usr/bin/mktemp -d /var/tmp/skincos-atendimento-identity-schema-custody-rollback.XXXXXX)"
+[[ "$rollback_dir" =~ ^/var/tmp/skincos-atendimento-identity-schema-custody-rollback\.[A-Za-z0-9]+$ ]] || {
+  echo 'Identity schema installer rollback target is invalid' >&2
+  exit 78
+}
+/usr/bin/chmod 0700 "$rollback_dir"
+
+snapshot_target() {
+  local target="$1" snapshot="$2" expected_mode="$3" metadata
+  if [[ ! -e "$target" && ! -L "$target" ]]; then
+    printf '0'
+    return 0
+  fi
+  [[ -f "$target" && ! -L "$target" ]] || {
+    echo "Existing identity schema custody target is unsafe: $target" >&2
+    exit 78
+  }
+  metadata="$(/usr/bin/stat -c '%u:%g:%a:%h' -- "$target")"
+  [[ "$metadata" == "0:0:$expected_mode:1" ]] || {
+    echo "Existing identity schema custody target has unsafe metadata: $target" >&2
+    exit 78
+  }
+  /usr/bin/install -o root -g root -m "$expected_mode" "$target" "$rollback_dir/$snapshot"
+  printf '1'
+}
+
+restore_target() {
+  local target="$1" snapshot="$2" expected_mode="$3" existed="$4"
+  if [[ "$existed" == '1' ]]; then
+    /usr/bin/install -o root -g root -m "$expected_mode" "$rollback_dir/$snapshot" "$target"
+  else
+    /usr/bin/rm -f -- "$target"
+  fi
+}
+
+helper_existed=0
+sudoers_existed=0
+unit_existed=0
+rollback_required=0
+cleanup_install() {
+  local status="$?"
+  trap - EXIT INT TERM
+  set +e
+  if [[ "$rollback_required" == '1' ]]; then
+    restore_target "$HELPER" helper 0700 "$helper_existed"
+    restore_target "$SUDOERS_FILE" sudoers 0440 "$sudoers_existed"
+    restore_target "/etc/systemd/system/$RUNNER_UNIT" unit 0644 "$unit_existed"
+    /usr/bin/systemctl daemon-reload
+    /usr/bin/systemctl restart "$RUNNER_UNIT"
+  fi
+  /usr/bin/rm -f -- "$helper_stage"
+  /usr/bin/rm -rf -- "$rollback_dir"
+  exit "$status"
+}
+trap cleanup_install EXIT INT TERM
 
 /usr/bin/sed \
   -e "s|__RELEASE_SOURCE__|$SOURCE_ROOT|g" \
@@ -177,6 +237,15 @@ trap cleanup_helper_stage EXIT INT TERM
 /usr/bin/chmod 0700 "$helper_stage"
 /usr/bin/bash -n "$helper_stage"
 
+/usr/bin/systemctl is-active --quiet "$RUNNER_UNIT" || {
+  echo 'Native custody runner must already be active before installing the identity schema helper' >&2
+  exit 78
+}
+helper_existed="$(snapshot_target "$HELPER" helper 0700)"
+sudoers_existed="$(snapshot_target "$SUDOERS_FILE" sudoers 0440)"
+unit_existed="$(snapshot_target "/etc/systemd/system/$RUNNER_UNIT" unit 0644)"
+rollback_required=1
+
 /usr/bin/install -o root -g root -m 0700 "$helper_stage" "$HELPER"
 /usr/bin/install -o root -g root -m 0440 "$SUDOERS_SOURCE" "$SUDOERS_FILE"
 /usr/bin/install -o root -g root -m 0644 "$UNIT_SOURCE" "/etc/systemd/system/$RUNNER_UNIT"
@@ -184,7 +253,9 @@ trap cleanup_helper_stage EXIT INT TERM
 /usr/bin/systemctl daemon-reload
 /usr/bin/systemctl restart "$RUNNER_UNIT"
 /usr/bin/systemctl is-active --quiet "$RUNNER_UNIT"
+rollback_required=0
 /usr/bin/rm -f -- "$helper_stage"
+/usr/bin/rm -rf -- "$rollback_dir"
 trap - EXIT INT TERM
 
-printf 'atendimento_crm_core_identity_schema_custody=installed release_sha=%s runtime_changed=false\n' "$release_sha"
+printf 'atendimento_crm_core_identity_schema_custody=installed release_sha=%s crm_runtime_changed=false custody_runner_restarted=true\n' "$release_sha"

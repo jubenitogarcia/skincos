@@ -24,6 +24,7 @@ grep -Fx "readonly RUNNER_UNIT='skincos-native-custody-runner.service'" "$INSTAL
 grep -Fx 'readonly CONFIG_FILE='\''/etc/skincos/crm-atendimento-staging-migrator.env'\''' "$TEMPLATE" >/dev/null
 grep -Fx 'readonly COORDINATION_ENV_FILE='\''/etc/skincos/global-coordination/native-runtime.env'\''' "$TEMPLATE" >/dev/null
 grep -Fx 'readonly STATE_ROOT='\''/var/lib/skincos-runtime/crm-core-identity-schema-custody'\''' "$TEMPLATE" >/dev/null
+grep -Fx 'readonly BACKUP_ROOT='\''/var/backups/skincos/clientes/staging'\''' "$TEMPLATE" >/dev/null
 grep -Fx 'readonly SERVICE='\''crm-atendimento-staging.service'\''' "$TEMPLATE" >/dev/null
 grep -Fx 'ReadWritePaths=/var/lib/skincos-runtime/crm-core-identity-schema-custody' "$UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/var/backups/skincos/clientes/staging' "$UNIT" >/dev/null
@@ -39,6 +40,10 @@ grep -F 'deliveryInvocation: false' "$RUNNER" >/dev/null
 grep -F 'productionMutationAllowed: false' "$RUNNER" >/dev/null
 grep -F 'assertAtendimentoStagingMigratorConnectionLimit' "$RUNNER" >/dev/null
 grep -F 'acquireAtendimentoStagingMutationLock' "$RUNNER" >/dev/null
+grep -F "NODE_ENV)" "$TEMPLATE" >/dev/null
+grep -F "Identity schema migrator NODE_ENV must be production" "$TEMPLATE" >/dev/null
+grep -F "Identity schema migrator config is missing NODE_ENV=production" "$TEMPLATE" >/dev/null
+grep -F 'Identity schema checkpoint root has unsafe metadata' "$TEMPLATE" >/dev/null
 
 # The installed wrapper may source only its immutable coordination adapter; it
 # must parse both private env files as data and never evaluate them as shell.
@@ -50,14 +55,24 @@ if grep -Eq 'systemctl[[:space:]]+(start|stop|restart|enable|disable)|wrangler|c
   echo 'identity schema helper must not operate services, Cloudflare, roles, or rollback' >&2
   exit 1
 fi
-if grep -Eq 'wrangler|cloudflare|(^|[^A-Za-z])d1([^A-Za-z]|$)|create[[:space:]]+role|grant[[:space:]]|rollback' "$INSTALLER"; then
+if grep -Eq 'wrangler|cloudflare|(^|[^A-Za-z])d1([^A-Za-z]|$)|create[[:space:]]+role|grant[[:space:]]' "$INSTALLER"; then
   echo 'identity schema installer must not operate infrastructure or database privileges' >&2
   exit 1
 fi
 grep -Fx '  source "$COORDINATION_ADAPTER"' "$TEMPLATE" >/dev/null
 grep -F 'native_coordination_acquire "mini-pc:deploy:atendimento:staging:identity-schema:$RELEASE_SHA:$$"' "$TEMPLATE" >/dev/null
 grep -F 'Identity schema apply requires matching maintenance control' "$TEMPLATE" >/dev/null
-grep -F 'Identity schema apply requires the isolated staging runtime to be inactive' "$TEMPLATE" >/dev/null
+grep -F 'systemctl show --property=LoadState --value "$SERVICE"' "$TEMPLATE" >/dev/null
+grep -F 'systemctl show --property=ActiveState --value "$SERVICE"' "$TEMPLATE" >/dev/null
+grep -F 'systemctl show --property=SubState --value "$SERVICE"' "$TEMPLATE" >/dev/null
+grep -F 'Identity schema apply requires the isolated staging runtime to be loaded and inactive' "$TEMPLATE" >/dev/null
+grep -F 'Private custody directory is not a real directory' "$INSTALLER" >/dev/null
+grep -F 'Existing identity schema custody target has unsafe metadata' "$INSTALLER" >/dev/null
+grep -F 'Native custody runner must already be active before installing the identity schema helper' "$INSTALLER" >/dev/null
+grep -F 'restore_target "$HELPER" helper 0700 "$helper_existed"' "$INSTALLER" >/dev/null
+grep -F 'restore_target "$SUDOERS_FILE" sudoers 0440 "$sudoers_existed"' "$INSTALLER" >/dev/null
+grep -F 'restore_target "/etc/systemd/system/$RUNNER_UNIT" unit 0644 "$unit_existed"' "$INSTALLER" >/dev/null
+grep -F 'custody_runner_restarted=true' "$INSTALLER" >/dev/null
 grep -F 'backup_created=true\ database=skincos_staging\ sha256=' "$TEMPLATE" >/dev/null
 
 render_root="$(mktemp -d -t skincos-identity-schema-render-XXXXXXXX)"

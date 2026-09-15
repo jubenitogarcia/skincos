@@ -21,6 +21,7 @@ readonly COORDINATION_CLOSURE="$RELEASE_SOURCE/.skincos-global-coordination-aten
 readonly CONFIG_FILE='/etc/skincos/crm-atendimento-staging-migrator.env'
 readonly COORDINATION_ENV_FILE='/etc/skincos/global-coordination/native-runtime.env'
 readonly STATE_ROOT='/var/lib/skincos-runtime/crm-core-identity-schema-custody'
+readonly BACKUP_ROOT='/var/backups/skincos/clientes/staging'
 readonly SERVICE='crm-atendimento-staging.service'
 readonly ACTION="${1:-}"
 
@@ -55,8 +56,15 @@ assert_private_state_root() {
   [[ "$metadata" == '0:0:700' ]] || fail 'Identity schema custody state root has unsafe metadata'
 }
 
+assert_private_backup_root() {
+  local metadata
+  [[ -d "$BACKUP_ROOT" && ! -L "$BACKUP_ROOT" ]] || fail 'Identity schema checkpoint root is unavailable'
+  metadata="$(/usr/bin/stat -c '%u:%g:%a' -- "$BACKUP_ROOT" 2>/dev/null || true)"
+  [[ "$metadata" == '0:0:700' ]] || fail 'Identity schema checkpoint root has unsafe metadata'
+}
+
 assert_private_migrator_config() {
-  local metadata raw line value seen=0
+  local metadata raw line key value database_seen=0 node_env_seen=0
   [[ -f "$CONFIG_FILE" && ! -L "$CONFIG_FILE" ]] || fail 'Identity schema migrator config must be a regular file'
   metadata="$(/usr/bin/stat -c '%u:%g:%a:%h' -- "$CONFIG_FILE" 2>/dev/null || true)"
   [[ "$metadata" == '0:0:600:1' ]] || fail 'Identity schema migrator config must be root:root mode 0600'
@@ -65,16 +73,28 @@ assert_private_migrator_config() {
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" || "$line" == \#* ]] && continue
-    [[ "$line" =~ ^DATABASE_URL=(.*)$ ]] || fail 'Identity schema migrator config contains an unsupported key'
-    (( seen == 0 )) || fail 'Identity schema migrator config repeats DATABASE_URL'
-    value="${BASH_REMATCH[1]}"
+    [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || fail 'Identity schema migrator config contains an unsupported key'
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
     if [[ "$value" =~ ^\".*\"$ || "$value" =~ ^\'.*\'$ ]]; then value="${value:1:-1}"; fi
-    [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || fail 'Identity schema migrator DATABASE_URL is invalid'
-    seen=1
+    [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || fail 'Identity schema migrator config contains an invalid value'
+    case "$key" in
+      NODE_ENV)
+        (( node_env_seen == 0 )) || fail 'Identity schema migrator config repeats NODE_ENV'
+        [[ "$value" == 'production' ]] || fail 'Identity schema migrator NODE_ENV must be production'
+        node_env_seen=1
+        ;;
+      DATABASE_URL)
+        (( database_seen == 0 )) || fail 'Identity schema migrator config repeats DATABASE_URL'
+        database_seen=1
+        ;;
+      *) fail 'Identity schema migrator config contains an unsupported key' ;;
+    esac
   done < "$CONFIG_FILE"
-  [[ "$seen" == '1' ]] || fail 'Identity schema migrator config is missing DATABASE_URL'
+  [[ "$node_env_seen" == '1' ]] || fail 'Identity schema migrator config is missing NODE_ENV=production'
+  [[ "$database_seen" == '1' ]] || fail 'Identity schema migrator config is missing DATABASE_URL'
 }
 
 load_private_coordination_environment() {
@@ -176,6 +196,7 @@ for required in "$RUNNER" "$RELEASE_VALIDATOR" "$CONTROL_VALIDATOR" "$BACKUP_SCR
   assert_immutable_file "$required"
 done
 assert_private_state_root
+assert_private_backup_root
 assert_private_migrator_config
 validate_release
 
@@ -200,7 +221,12 @@ trap cleanup EXIT INT TERM
 if [[ "$ACTION" == 'apply' ]]; then
   control_report="$(/usr/bin/env -i HOME=/root PATH="$SAFE_PATH" NODE_ENV=production /usr/bin/timeout --signal=KILL 60s /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA")"
   [[ "$control_report" == *'"state":"maintenance"'* && "$control_report" == *'"readOnly":true'* && "$control_report" == *'"syntheticOnly":true'* ]] || fail 'Identity schema apply requires matching maintenance control'
-  if /usr/bin/systemctl is-active --quiet "$SERVICE"; then fail 'Identity schema apply requires the isolated staging runtime to be inactive'; fi
+  service_load_state="$(/usr/bin/systemctl show --property=LoadState --value "$SERVICE" 2>/dev/null || true)"
+  service_active_state="$(/usr/bin/systemctl show --property=ActiveState --value "$SERVICE" 2>/dev/null || true)"
+  service_sub_state="$(/usr/bin/systemctl show --property=SubState --value "$SERVICE" 2>/dev/null || true)"
+  [[ "$service_load_state" == 'loaded' && "$service_active_state" == 'inactive' && "$service_sub_state" == 'dead' ]] || {
+    fail 'Identity schema apply requires the isolated staging runtime to be loaded and inactive'
+  }
   load_private_coordination_environment
   unset GLOBAL_COORDINATION_MISSION_ID GLOBAL_COORDINATION_THREAD_ID GLOBAL_COORDINATION_ACTOR
   export GLOBAL_COORDINATION_MISSION_ID='codex:skincos:atendimento-crm-core-identity-schema-staging'

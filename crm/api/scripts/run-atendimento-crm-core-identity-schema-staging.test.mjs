@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { parseLiteralEnvironment } from '../server/atendimento/runtimeEnv.js'
 import {
     ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_ENV_FILE,
     ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_LOCK_UNAVAILABLE,
@@ -59,6 +60,15 @@ test('identity schema runner accepts only literal staging actions', () => {
     for (const args of [[], ['--apply'], ['verify', 'extra'], ['rollback'], ['apply', '--target', 'production']]) {
         assert.throws(() => parseAtendimentoCrmCoreIdentitySchemaStagingInvocation(args), /ACTION_INVALID/)
     }
+})
+
+test('the fixed runner accepts the canonical two-key staging migrator configuration', () => {
+    assert.deepEqual(
+        parseLiteralEnvironment('NODE_ENV=production\nDATABASE_URL="' + databaseUrl + '"\n', {
+            allowedKeys: ['DATABASE_URL'],
+        }),
+        { DATABASE_URL: databaseUrl },
+    )
 })
 
 test('identity schema runner rejects an unsafe destination before creating a pool', async () => {
