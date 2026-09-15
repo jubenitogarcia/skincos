@@ -5,16 +5,20 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INSTALLER="$ROOT_DIR/scripts/runtime/install-atendimento-crm-core-projection-custody.sh"
 CLI="$ROOT_DIR/crm/api/scripts/preflight-atendimento-crm-core-projection-source.mjs"
 PREFLIGHT="$ROOT_DIR/crm/api/server/atendimento/projectionSourceMetadataPreflight.js"
+SOURCE_CONTRACT="$ROOT_DIR/shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js"
 
 bash -n "$INSTALLER"
 node --check "$CLI"
 node --check "$PREFLIGHT"
+node --check "$SOURCE_CONTRACT"
 
 contract_output="$(bash "$INSTALLER")"
 grep -F -- 'atendimento_crm_core_projection_custody_contract=valid' <<<"$contract_output" >/dev/null
 grep -F -- "readonly HELPER='/usr/local/sbin/skincos-preflight-atendimento-crm-core-source-metadata'" "$INSTALLER" >/dev/null
 grep -F -- "readonly HELPER_ACTION='preflight-source-metadata'" "$INSTALLER" >/dev/null
 grep -F -- "readonly CONFIG_FILE='/etc/skincos/crm-core-projection-exporter.env'" "$INSTALLER" >/dev/null
+grep -F -- 'readonly SOURCE_CONTRACT_MODULE="$SOURCE_ROOT/shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js"' "$INSTALLER" >/dev/null
+grep -F -- '"$SOURCE_CONTRACT_MODULE"' "$INSTALLER" >/dev/null
 grep -F -- '/usr/bin/chmod 0700 "$helper_stage"' "$INSTALLER" >/dev/null
 grep -F -- '/usr/bin/install -o root -g root -m 0700 "$helper_stage" "$HELPER"' "$INSTALLER" >/dev/null
 grep -F -- 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY' "$PREFLIGHT" >/dev/null

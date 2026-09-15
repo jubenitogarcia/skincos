@@ -11,7 +11,7 @@ import {
 import {
     ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL,
     ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL,
-} from '../../../../../integration/atendimento/crm-core-projection-exporter/src/atendimentoProjectionExporter.mjs'
+} from '../../../../../shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js'
 import { ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS } from '../../../../../shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js'
 
 const relationColumn = (relation) => relation.replace(/^crm_atendimento\./, '').replace(/[^a-z0-9]+/gi, '_')
