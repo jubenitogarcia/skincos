@@ -58,6 +58,18 @@ It writes a sanitized JSON artifact containing no token, key, secret value or
 PII. `strict=false` records a blocked result without failing the workflow;
 `strict=true` fails unless every gate is externally attested.
 
+The regular readiness workflow evaluates the default `activation-ready` target.
+The CRM private-candidate preflight instead sets
+`IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE=candidate-inert`. That target
+requires the delivery, issuer and resolver runtime switches to remain
+disabled and reports `candidateState=candidate-inert` with
+`activationState=not-authorized`. It is a distinct read-only custody state,
+not a deployment or activation authorization: it requires no deployment and
+no route-receipt secret. It does not evaluate `R`, `I`, caller, signing-key,
+replay or receipt evidence, which are all gates of `activation-ready`. A
+report that is `activation-ready` is intentionally rejected by the
+private-candidate preflight.
+
 The inventory names checked by the report are scoped to the future production
 Worker and are not provisioning instructions:
 

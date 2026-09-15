@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+  CANDIDATE_INERT_PRODUCTION_RUNTIME_BINDINGS,
   IDENTITY_CRM_DELIVERY_PROTOCOL,
+  IDENTITY_CRM_PRODUCTION_READINESS_STATES,
   CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE,
   PRODUCTION_WORKER_NAME,
   PRODUCTION_ROLE_FORBIDDEN_SECRET_NAMES,
@@ -58,6 +60,15 @@ function roleSecretInventory(role, overrides = {}) {
 
 function requiredRuntimeBindings(overrides = {}) {
   return Object.entries(REQUIRED_PRODUCTION_RUNTIME_BINDINGS).map(([name, text]) => ({
+    name,
+    type: 'plain_text',
+    text,
+    ...overrides,
+  }));
+}
+
+function candidateInertRuntimeBindings(overrides = {}) {
+  return Object.entries(CANDIDATE_INERT_PRODUCTION_RUNTIME_BINDINGS).map(([name, text]) => ({
     name,
     type: 'plain_text',
     text,
@@ -121,9 +132,9 @@ function cloudflareResponse(result, status = 200, resultInfo = null) {
   });
 }
 
-function completeWorkerResponse(url, { previewsEnabled = false } = {}) {
+function completeWorkerResponse(url, { previewsEnabled = false, runtimeBindings = requiredRuntimeBindings() } = {}) {
   if (url === `${workerUrl}/settings`) {
-    return cloudflareResponse({ compatibility_date: '2026-03-02', usage_model: 'standard', workers_dev: false, bindings: requiredRuntimeBindings() });
+    return cloudflareResponse({ compatibility_date: '2026-03-02', usage_model: 'standard', workers_dev: false, bindings: runtimeBindings });
   }
   if (url === `${workerUrl}/deployments`) {
     return cloudflareResponse({ deployments: [{
@@ -141,6 +152,21 @@ function completeWorkerResponse(url, { previewsEnabled = false } = {}) {
   if (url === `${workerUrl}/versions/${issuerVersionId}`) return versionResponse(issuerVersionId, 'I');
   if (url === `${workerUrl}/secrets`) return cloudflareResponse(requiredSecretInventory());
   if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: previewsEnabled });
+  return null;
+}
+
+function candidateInertWorkerResponse(url, { secrets = [] } = {}) {
+  if (url === `${workerUrl}/settings`) {
+    return cloudflareResponse({
+      compatibility_date: '2026-03-02',
+      usage_model: 'standard',
+      workers_dev: false,
+      bindings: candidateInertRuntimeBindings(),
+    });
+  }
+  if (url === `${workerUrl}/deployments`) return cloudflareResponse({ deployments: [] });
+  if (url === `${workerUrl}/secrets`) return cloudflareResponse(secrets);
+  if (url === `${workerUrl}/subdomain`) return cloudflareResponse({ enabled: false, previews_enabled: false });
   return null;
 }
 
@@ -194,6 +220,14 @@ test('production defaults are distinct from staging and protocol values are fixe
     IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'production',
     IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
     IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: 'crm-api-production-v1',
+  });
+  assert.equal(IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT, 'candidate-inert');
+  assert.equal(IDENTITY_CRM_PRODUCTION_READINESS_STATES.ACTIVATION_READY, 'activation-ready');
+  assert.deepEqual(CANDIDATE_INERT_PRODUCTION_RUNTIME_BINDINGS, {
+    IDENTITY_CRM_DELIVERY_ENABLED: 'false',
+    IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'production',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED: 'false',
+    IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED: 'false',
   });
 });
 
@@ -279,9 +313,122 @@ test('dedicated CRM readback credentials are used only when explicitly selected'
     },
   });
   assert.equal(report.result, 'eligible-for-approved-cutover');
+  assert.equal(report.targetState, 'activation-ready');
+  assert.equal(report.candidateState, null);
+  assert.equal(report.activationState, 'activation-ready');
   assert.equal(report.cloudflare.credentials.source, CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE);
   assertReadCalls(calls, completeReadUrls, dedicatedToken);
   assert.doesNotMatch(JSON.stringify(report), /generic-token-that-must-not-be-used/);
+});
+
+test('candidate-inert target proves disabled Identity delivery bindings without becoming activation-ready', async () => {
+  const calls = [];
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment({
+      IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE: IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT,
+    }),
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      const workerResponse = candidateInertWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'candidate-inert');
+  assert.equal(report.state, 'candidate-inert');
+  assert.equal(report.targetState, 'candidate-inert');
+  assert.equal(report.candidateState, 'candidate-inert');
+  assert.equal(report.activationState, 'not-authorized');
+  assert.equal(report.candidateInertEvidence.deploymentAbsent, true);
+  assert.equal(report.candidateInertEvidence.routeReceiptAbsent, true);
+  assert.equal(report.candidateInertEvidence.proven, true);
+  assert.deepEqual(report.blockers, []);
+  assertReadCalls(calls, [...workerUrls, zonesUrl, domainsUrl, routesUrl]);
+});
+
+test('candidate-inert accepts a verified absent Worker only when account-wide public exposure is empty', async () => {
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment({
+      IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE: IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT,
+    }),
+    fetchImpl: async (url) => {
+      if (workerUrls.includes(url)) return cloudflareResponse([], 404);
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'candidate-inert');
+  assert.equal(report.candidateState, 'candidate-inert');
+  assert.equal(report.candidateInertEvidence.settingsAbsentOrDisabled, true);
+  assert.equal(report.candidateInertEvidence.deploymentAbsent, true);
+  assert.equal(report.candidateInertEvidence.publicSubdomainAbsentOrDisabled, true);
+  assert.equal(report.candidateInertEvidence.proven, true);
+});
+
+test('candidate-inert rejects public traffic and activation-ready runtime state', async () => {
+  const publicTraffic = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment({
+      IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE: IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT,
+    }),
+    fetchImpl: async (url) => {
+      const workerResponse = candidateInertWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl) return cloudflareResponse([{ script: PRODUCTION_WORKER_NAME, pattern: 'crm.example/*' }]);
+      if (url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(publicTraffic.result, 'blocked');
+  assert.equal(publicTraffic.candidateInertEvidence.publicRoutesAbsent, false);
+  assert.ok(publicTraffic.blockers.includes('candidate-inert Worker has a route; private custody must not have public traffic'));
+
+  const activationState = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment({
+      IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE: IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT,
+    }),
+    fetchImpl: async (url) => {
+      const workerResponse = completeWorkerResponse(url);
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(activationState.result, 'blocked');
+  assert.equal(activationState.candidateState, null);
+  assert.equal(activationState.activationState, 'not-authorized');
+  assert.equal(activationState.candidateInertEvidence.deploymentAbsent, false);
+  assert.ok(activationState.blockers.some((blocker) => blocker.startsWith('candidate-inert Worker has runtime bindings that are missing or not disabled:')));
+});
+
+test('candidate-inert rejects route-receipt custody without emitting its value', async () => {
+  const routeReceiptValue = 'route-receipt-secret-that-must-not-escape';
+  const report = await runIdentityCrmProductionReadiness({
+    env: completeEnvironment({
+      IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE: IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT,
+    }),
+    fetchImpl: async (url) => {
+      const workerResponse = candidateInertWorkerResponse(url, {
+        secrets: [{
+          name: 'IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT',
+          type: 'secret_text',
+          value: routeReceiptValue,
+        }],
+      });
+      if (workerResponse) return workerResponse;
+      if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+      if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+  assert.equal(report.result, 'blocked');
+  assert.equal(report.candidateInertEvidence.routeReceiptAbsent, false);
+  assert.ok(report.blockers.includes('candidate-inert Worker already has route-receipt material; resolver R is activation-only'));
+  assert.doesNotMatch(JSON.stringify(report), new RegExp(routeReceiptValue));
 });
 
 test('complete external readback is eligible only when all attestations are present', async () => {

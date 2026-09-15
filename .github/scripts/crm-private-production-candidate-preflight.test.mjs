@@ -54,12 +54,16 @@ jobs:
       CRM_IDENTITY_READBACK_ACCOUNT_ID: \${{ secrets.CRM_IDENTITY_READBACK_ACCOUNT_ID }}
 `;
 
-function identityReadback() {
+function identityReadback(overrides = {}) {
   return {
     owner: 'Identity',
     workerName: 'skincos-identity-crm-delivery-production',
-    result: 'eligible-for-approved-cutover',
-    state: 'eligible',
+    result: 'candidate-inert',
+    state: 'candidate-inert',
+    targetState: 'candidate-inert',
+    candidateState: 'candidate-inert',
+    activationState: 'not-authorized',
+    candidateInertEvidence: { proven: true },
     readOnly: {
       mutationsAttempted: false,
       productionDeploymentAttempted: false,
@@ -93,6 +97,7 @@ function identityReadback() {
         },
       },
     },
+    ...overrides,
   };
 }
 
@@ -129,7 +134,10 @@ test('preflight produces a sanitized source-only plan and never admits a publish
   assert.equal(report.readOnly.mutationsAttempted, false);
   assert.equal(report.singleWriterPolicy.classification, 'non-publishing-preflight');
   assert.equal(report.singleWriterPolicy.futurePublisherRequiresPolicyAdmission, true);
+  assert.equal(report.identityCustody.candidateState, 'candidate-inert');
+  assert.equal(report.identityCustody.activationState, 'not-authorized');
   assert.equal(report.candidateRoles.I.publicTraffic, 'forbidden');
+  assert.equal(report.candidateRoles.I.state, 'candidate-inert');
   assert.equal(report.candidateRoles.C.owner, 'jubenitogarcia/skincos-crm-core');
   assert.equal(report.core.provenanceVerified, false);
   assert.equal(report.core.publisherEligible, false);
@@ -187,16 +195,36 @@ test('workflow contract rejects generic Cloudflare credentials and missing dedic
   assert.ok(missingReport.blockers.includes('candidate preflight workflow is missing the dedicated Identity readback credential CRM_IDENTITY_READBACK_API_TOKEN'));
 });
 
-test('Identity custody must retain the existing readiness eligibility', () => {
+test('Identity custody accepts only the candidate-inert state, never activation-ready', () => {
   const report = evaluateCrmPrivateProductionCandidatePreflight({
     env: environment(),
-    identityReadiness: { ...identityReadback(), state: 'blocked' },
+    identityReadiness: identityReadback({
+      result: 'eligible-for-approved-cutover',
+      state: 'eligible',
+      targetState: 'activation-ready',
+      candidateState: null,
+      activationState: 'activation-ready',
+      candidateInertEvidence: { proven: false },
+    }),
     identityManifest,
     apiManifest,
     workflowSource,
   });
   assert.equal(report.result, 'blocked');
-  assert.ok(report.blockers.includes('Identity production readiness is not eligible for the source-only candidate preflight'));
+  assert.ok(report.blockers.includes('Identity custody report does not prove the candidate-inert state required by the source-only preflight'));
+  assert.ok(report.blockers.includes('Identity custody report is activation-ready; this source-only preflight admits only candidate-inert custody'));
+});
+
+test('Identity custody rejects an unproven candidate-inert claim', () => {
+  const report = evaluateCrmPrivateProductionCandidatePreflight({
+    env: environment(),
+    identityReadiness: identityReadback({ candidateInertEvidence: { proven: false } }),
+    identityManifest,
+    apiManifest,
+    workflowSource,
+  });
+  assert.equal(report.result, 'blocked');
+  assert.ok(report.blockers.includes('Identity custody report does not prove the candidate-inert state required by the source-only preflight'));
 });
 
 test('a request for private candidates cannot become a publisher', () => {
@@ -284,6 +312,7 @@ test('the checked-in workflow is manual, dedicated-environment-gated and has no 
   assert.match(workflow, /CRM_IDENTITY_READBACK_ACCOUNT_ID:\s*\$\{\{\s*secrets\.CRM_IDENTITY_READBACK_ACCOUNT_ID\s*\}\}/);
   assert.match(workflow, /IDENTITY_CRM_PRODUCTION_READBACK_CREDENTIAL_SOURCE:\s*crm-identity-readback/);
   assert.match(workflow, /IDENTITY_CRM_PRODUCTION_READINESS_REPORT:\s*\$\{\{\s*runner\.temp\s*\}\}\/crm-private-production-candidate\/identity-readback\.json/);
+  assert.match(workflow, /IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE:\s*candidate-inert/);
   assert.match(workflow, /CRM_PRIVATE_CANDIDATE_CHECKED_OUT_SHA:\s*\$\{\{\s*steps\.source\.outputs\.checked_out_sha\s*\}\}/);
   assert.doesNotMatch(workflow, /^\s*(?:push|pull_request|schedule):/m);
   assert.doesNotMatch(workflow, /deploy-core-workers\.yml|deploy-crm-pages\.yml/);

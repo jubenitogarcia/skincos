@@ -54,6 +54,24 @@ export const REQUIRED_PRODUCTION_RUNTIME_BINDINGS = Object.freeze({
   IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED: 'true',
   IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ID: 'crm-api-production-v1',
 });
+// A private production candidate must remain materially different from an
+// activation-ready issuer. It keeps delivery, issuer and resolver switches
+// disabled; a readback of that inert condition does not grant publishing or
+// activation authority.
+export const IDENTITY_CRM_PRODUCTION_READINESS_STATES = Object.freeze({
+  CANDIDATE_INERT: 'candidate-inert',
+  ACTIVATION_READY: 'activation-ready',
+});
+export const CANDIDATE_INERT_PRODUCTION_RUNTIME_BINDINGS = Object.freeze({
+  IDENTITY_CRM_DELIVERY_ENABLED: 'false',
+  IDENTITY_CRM_DELIVERY_ENVIRONMENT: 'production',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED: 'false',
+  IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED: 'false',
+});
+const RUNTIME_BINDINGS_BY_READINESS_STATE = Object.freeze({
+  [IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT]: CANDIDATE_INERT_PRODUCTION_RUNTIME_BINDINGS,
+  [IDENTITY_CRM_PRODUCTION_READINESS_STATES.ACTIVATION_READY]: REQUIRED_PRODUCTION_RUNTIME_BINDINGS,
+});
 
 export const IDENTITY_CRM_DELIVERY_PROTOCOL = Object.freeze({
   version: 'identity-crm-delivery/v1',
@@ -85,6 +103,7 @@ const PRODUCTION_ROLE_BINDINGS = Object.freeze({
   issuer: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED',
   resolver: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED',
 });
+const ROUTE_RECEIPT_SECRET_NAME = 'IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT';
 
 function string(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -101,6 +120,13 @@ function booleanEnv(value) {
 function safeIdentifier(value) {
   const normalized = string(value);
   return IDENTIFIER_PATTERN.test(normalized) ? normalized : null;
+}
+
+function readinessState(value) {
+  const normalized = string(value).toLowerCase();
+  return Object.values(IDENTITY_CRM_PRODUCTION_READINESS_STATES).includes(normalized)
+    ? normalized
+    : null;
 }
 
 function safeUuid(value) {
@@ -174,9 +200,9 @@ function sanitizeBindings(settings) {
     .sort((left, right) => `${left.name}:${left.type}`.localeCompare(`${right.name}:${right.type}`));
 }
 
-function sanitizeRequiredRuntimeBindings(settings) {
+function sanitizeRequiredRuntimeBindings(settings, requirements = REQUIRED_PRODUCTION_RUNTIME_BINDINGS) {
   const bindings = Array.isArray(settings?.bindings) ? settings.bindings : [];
-  return Object.fromEntries(Object.entries(REQUIRED_PRODUCTION_RUNTIME_BINDINGS).map(([name, expected]) => {
+  return Object.fromEntries(Object.entries(requirements).map(([name, expected]) => {
     const matches = bindings.filter((binding) => binding?.name === name);
     const isExact = matches.length === 1
       && matches[0]?.type === 'plain_text'
@@ -186,7 +212,7 @@ function sanitizeRequiredRuntimeBindings(settings) {
   }));
 }
 
-export function sanitizeWorkerSettings(settings) {
+export function sanitizeWorkerSettings(settings, runtimeRequirements = REQUIRED_PRODUCTION_RUNTIME_BINDINGS) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
     return { compatibilityDate: null, usageModel: null, workersDev: null, bindings: [], requiredRuntimeBindings: {} };
   }
@@ -197,7 +223,7 @@ export function sanitizeWorkerSettings(settings) {
       : null,
     workersDev: typeof settings.workers_dev === 'boolean' ? settings.workers_dev : null,
     bindings: sanitizeBindings(settings),
-    requiredRuntimeBindings: sanitizeRequiredRuntimeBindings(settings),
+    requiredRuntimeBindings: sanitizeRequiredRuntimeBindings(settings, runtimeRequirements),
   };
 }
 
@@ -646,9 +672,107 @@ async function readProductionWorker({ reader, accountId, workerName }) {
   return workerReadback({ settings, deployments, secrets, subdomain, versionBindings });
 }
 
+function candidateInertEvidence({
+  worker,
+  routes,
+  domains,
+  sanitizedSettings,
+  deploymentReadback,
+  secretReadback,
+  subdomain,
+  routeReadback,
+  domainReadback,
+}) {
+  const settingsAbsentOrDisabled = worker?.settings?.state === 'not-found'
+    || (hasAvailableEndpoint(worker?.settings)
+      && Object.values(sanitizedSettings?.requiredRuntimeBindings || {}).every((state) => state === 'matches'));
+  const deploymentAbsent = worker?.deployments?.state === 'not-found'
+    || (hasAvailableEndpoint(worker?.deployments) && deploymentReadback.count === 0);
+  const routeReceiptAbsent = worker?.secrets?.state === 'not-found'
+    || (hasAvailableEndpoint(worker?.secrets) && !secretReadback.names.includes(ROUTE_RECEIPT_SECRET_NAME));
+  const publicSubdomainAbsentOrDisabled = worker?.subdomain?.state === 'not-found'
+    || (hasAvailableEndpoint(worker?.subdomain)
+      && subdomain?.enabled === false
+      && subdomain?.previews_enabled === false);
+  const publicRoutesAbsent = hasAvailableEndpoint(routes)
+    && routeReadback.zonesInspected > 0
+    && routeReadback.count === 0;
+  const publicDomainsAbsent = hasAvailableEndpoint(domains)
+    && domainReadback.count === 0;
+  return Object.freeze({
+    settingsAbsentOrDisabled,
+    deploymentAbsent,
+    routeReceiptAbsent,
+    publicSubdomainAbsentOrDisabled,
+    publicRoutesAbsent,
+    publicDomainsAbsent,
+    proven: settingsAbsentOrDisabled
+      && deploymentAbsent
+      && routeReceiptAbsent
+      && publicSubdomainAbsentOrDisabled
+      && publicRoutesAbsent
+      && publicDomainsAbsent,
+  });
+}
+
+function candidateInertBlockers({
+  worker,
+  routes,
+  domains,
+  sanitizedSettings,
+  deploymentReadback,
+  secretReadback,
+  subdomain,
+  routeReadback,
+  domainReadback,
+}) {
+  const blockers = [];
+  if (!hasAvailableEndpoint(worker?.settings) && worker?.settings?.state !== 'not-found') {
+    blockers.push('candidate-inert Worker settings could not be read');
+  }
+  const wrongRuntimeBindings = Object.keys(CANDIDATE_INERT_PRODUCTION_RUNTIME_BINDINGS)
+    .filter((name) => sanitizedSettings?.requiredRuntimeBindings?.[name] !== 'matches');
+  if (hasAvailableEndpoint(worker?.settings) && wrongRuntimeBindings.length > 0) {
+    blockers.push(`candidate-inert Worker has runtime bindings that are missing or not disabled: ${wrongRuntimeBindings.join(', ')}`);
+  }
+  if (hasAvailableEndpoint(worker?.deployments)) {
+    if (deploymentReadback.count !== 0) {
+      blockers.push('candidate-inert Worker has a deployment baseline; activation-ready custody is required after deployment');
+    }
+  } else if (worker?.deployments?.state !== 'not-found') {
+    blockers.push('candidate-inert Worker deployment state is not proven absent');
+  }
+  if (hasAvailableEndpoint(worker?.secrets)) {
+    if (secretReadback.names.includes(ROUTE_RECEIPT_SECRET_NAME)) {
+      blockers.push('candidate-inert Worker already has route-receipt material; resolver R is activation-only');
+    }
+  } else if (worker?.secrets?.state !== 'not-found') {
+    blockers.push('candidate-inert Worker secret inventory could not be read');
+  }
+  if (hasAvailableEndpoint(worker?.subdomain)) {
+    if (subdomain?.enabled !== false || subdomain?.previews_enabled !== false) {
+      blockers.push('candidate-inert Worker public workers.dev access is not proven disabled');
+    }
+  } else if (worker?.subdomain?.state !== 'not-found') {
+    blockers.push('candidate-inert Worker public subdomain state is not proven absent');
+  }
+  if (!hasAvailableEndpoint(routes) || routeReadback.zonesInspected < 1) {
+    blockers.push('candidate-inert Worker account-wide route inventory could not be read');
+  } else if (routeReadback.count > 0) {
+    blockers.push('candidate-inert Worker has a route; private custody must not have public traffic');
+  }
+  if (!hasAvailableEndpoint(domains)) {
+    blockers.push('candidate-inert Worker custom-domain inventory could not be read');
+  } else if (domainReadback.count > 0) {
+    blockers.push('candidate-inert Worker has a custom domain; private custody must not have public traffic');
+  }
+  return blockers;
+}
+
 export function evaluateIdentityCrmProductionReadiness({
   workerName = PRODUCTION_WORKER_NAME,
   stagingWorkerName = STAGING_WORKER_NAME,
+  targetState = IDENTITY_CRM_PRODUCTION_READINESS_STATES.ACTIVATION_READY,
   cloudflareCredentials,
   worker,
   routes,
@@ -662,8 +786,12 @@ export function evaluateIdentityCrmProductionReadiness({
   const blockers = [];
   const productionWorker = string(workerName);
   const stagingWorker = string(stagingWorkerName);
+  const requestedState = readinessState(targetState);
+  const runtimeRequirements = requestedState
+    ? RUNTIME_BINDINGS_BY_READINESS_STATE[requestedState]
+    : REQUIRED_PRODUCTION_RUNTIME_BINDINGS;
   const settings = worker?.settings?.state === 'available' ? worker.settings.result : null;
-  const sanitizedSettings = settings ? sanitizeWorkerSettings(settings) : null;
+  const sanitizedSettings = settings ? sanitizeWorkerSettings(settings, runtimeRequirements) : null;
   const deploymentReadback = worker?.deployments?.state === 'available'
     ? sanitizeDeployments(worker.deployments.result)
     : { count: 0, entries: [], active: null };
@@ -678,9 +806,23 @@ export function evaluateIdentityCrmProductionReadiness({
   const domainReadback = domains?.state === 'available'
     ? sanitizeCustomDomains(domains.result, productionWorker)
     : { count: 0 };
+  const candidateEvidence = candidateInertEvidence({
+    worker,
+    routes,
+    domains,
+    sanitizedSettings,
+    deploymentReadback,
+    secretReadback,
+    subdomain,
+    routeReadback,
+    domainReadback,
+  });
 
   if (productionWorker !== PRODUCTION_WORKER_NAME) {
     blockers.push('production worker name is not the canonical Identity owner');
+  }
+  if (!requestedState) {
+    blockers.push('Identity production readiness target state is not recognized');
   }
   if (!stagingWorker || stagingWorker === productionWorker) {
     blockers.push('staging and production worker names must be distinct');
@@ -688,10 +830,23 @@ export function evaluateIdentityCrmProductionReadiness({
   if (!cloudflareCredentials?.usable) {
     blockers.push(cloudflareCredentials?.reason || 'Cloudflare read credentials are unavailable');
   }
+  if (requestedState === IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT) {
+    blockers.push(...candidateInertBlockers({
+      worker,
+      routes,
+      domains,
+      sanitizedSettings,
+      deploymentReadback,
+      secretReadback,
+      subdomain,
+      routeReadback,
+      domainReadback,
+    }));
+  } else if (requestedState === IDENTITY_CRM_PRODUCTION_READINESS_STATES.ACTIVATION_READY) {
   if (!hasAvailableEndpoint(worker?.settings)) {
     blockers.push('production Worker settings could not be read');
   }
-  const wrongRuntimeBindings = Object.keys(REQUIRED_PRODUCTION_RUNTIME_BINDINGS)
+  const wrongRuntimeBindings = Object.keys(runtimeRequirements)
     .filter((name) => sanitizedSettings?.requiredRuntimeBindings?.[name] !== 'matches');
   if (wrongRuntimeBindings.length > 0) {
     blockers.push(`production Worker has required runtime bindings that are missing or incorrect: ${wrongRuntimeBindings.join(', ')}`);
@@ -776,11 +931,27 @@ export function evaluateIdentityCrmProductionReadiness({
   if (!rotationAttested) {
     blockers.push('key rotation, overlap and rollback window are not externally attested');
   }
+  }
 
+  const candidateInert = blockers.length === 0
+    && requestedState === IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT;
+  const activationReady = blockers.length === 0
+    && requestedState === IDENTITY_CRM_PRODUCTION_READINESS_STATES.ACTIVATION_READY;
   const report = {
     schemaVersion: 1,
-    result: blockers.length === 0 ? 'eligible-for-approved-cutover' : 'blocked',
-    state: blockers.length === 0 ? 'eligible' : 'blocked',
+    result: blockers.length === 0
+      ? candidateInert ? IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT : 'eligible-for-approved-cutover'
+      : 'blocked',
+    state: blockers.length === 0
+      ? candidateInert ? IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT : 'eligible'
+      : 'blocked',
+    targetState: requestedState,
+    candidateState: candidateInert ? IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT : null,
+    activationState: activationReady ? IDENTITY_CRM_PRODUCTION_READINESS_STATES.ACTIVATION_READY : 'not-authorized',
+    candidateInertEvidence: {
+      ...candidateEvidence,
+      proven: candidateInert,
+    },
     owner: 'Identity',
     workerName: productionWorker || null,
     stagingWorkerName: stagingWorker || null,
@@ -854,6 +1025,7 @@ export async function runIdentityCrmProductionReadiness({ env = process.env, fet
   const report = evaluateIdentityCrmProductionReadiness({
     workerName,
     stagingWorkerName,
+    targetState: env.IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE,
     cloudflareCredentials: credentials,
     worker,
     routes,
@@ -886,6 +1058,9 @@ async function main() {
       schemaVersion: 1,
       result: 'blocked',
       state: 'blocked',
+      targetState: readinessState(process.env.IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE),
+      candidateState: null,
+      activationState: 'not-authorized',
       owner: 'Identity',
       readOnly: {
         mutationsAttempted: false,
@@ -899,7 +1074,11 @@ async function main() {
   }
   await writeReport(reportPath, report);
   process.stdout.write(`${JSON.stringify(report)}\n`);
-  if (booleanEnv(process.env.IDENTITY_CRM_PRODUCTION_READINESS_STRICT) && report.result !== 'eligible-for-approved-cutover') {
+  const expectedResult = readinessState(process.env.IDENTITY_CRM_PRODUCTION_READINESS_TARGET_STATE)
+    === IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT
+    ? IDENTITY_CRM_PRODUCTION_READINESS_STATES.CANDIDATE_INERT
+    : 'eligible-for-approved-cutover';
+  if (booleanEnv(process.env.IDENTITY_CRM_PRODUCTION_READINESS_STRICT) && report.result !== expectedResult) {
     process.exitCode = 1;
   }
 }
