@@ -154,7 +154,10 @@ while IFS= read -r raw || [[ -n "\$raw" ]]; do
   if [[ "\$database_url" =~ ^\".*\"$ || "\$database_url" =~ ^\'.*\'$ ]]; then
     database_url="\${database_url:1:-1}"
   fi
-  [[ -n "\$database_url" && "\$database_url" != *\$'\\n'* && "\$database_url" != *\$'\\r'* && "\$database_url" != *\$'\\0'* ]] || fail 'CRM projection exporter database URL is invalid'
+  # Bash variables cannot carry NUL bytes. Reject the line-breaking controls
+  # that could change this one-key custody format without testing an empty
+  # NUL pattern, which would otherwise reject every valid value.
+  [[ -n "\$database_url" && "\$database_url" != *\$'\\n'* && "\$database_url" != *\$'\\r'* ]] || fail 'CRM projection exporter database URL is invalid'
   seen=1
 done < "\$CONFIG_FILE"
 [[ \$seen == 1 ]] || fail 'CRM projection exporter config is missing its database key'

@@ -21,6 +21,7 @@ grep -F -- 'CRM_CORE_PROJECTION_EXPORTER_DATABASE_URL' "$INSTALLER" >/dev/null
 grep -F -- 'CRM_CORE_PROJECTION_EXPORTER_DATABASE_URL' "$CLI" >/dev/null
 grep -F -- 'CRM projection exporter config must be a regular file' "$INSTALLER" >/dev/null
 grep -F -- 'CRM projection custody release is not immutable' "$INSTALLER" >/dev/null
+grep -F -- 'Bash variables cannot carry NUL bytes.' "$INSTALLER" >/dev/null
 grep -F -- 'sourceReadExecutionAllowed: false' "$PREFLIGHT" >/dev/null
 grep -F -- 'deliveryAllowed: false' "$PREFLIGHT" >/dev/null
 grep -F -- 'productionMutationAllowed: false' "$PREFLIGHT" >/dev/null
@@ -29,6 +30,11 @@ grep -F -- 'legacyPublisherMutationAllowed: false' "$PREFLIGHT" >/dev/null
 
 if grep -Fq -- '0755 "$helper_stage"' "$INSTALLER"; then
   echo 'projection custody helper must not be world executable' >&2
+  exit 1
+fi
+
+if grep -Fq -- "\$'\\\\0'" "$INSTALLER"; then
+  echo 'projection custody helper must not test a Bash NUL pattern' >&2
   exit 1
 fi
 
