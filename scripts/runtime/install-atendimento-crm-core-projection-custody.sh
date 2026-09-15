@@ -8,7 +8,10 @@ export PATH="$SAFE_PATH"
 unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
   HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
 
-readonly HELPER='/usr/local/sbin/skincos-prepare-atendimento-crm-core-baseline'
+# This is deliberately distinct from the externally-custodied staging baseline
+# helper.  The preflight installer must never replace the helper invoked by
+# atendimento-crm-core-projection-backfill.yml with `prepare-staging-baseline`.
+readonly HELPER='/usr/local/sbin/skincos-preflight-atendimento-crm-core-source-metadata'
 readonly CONFIG_FILE='/etc/skincos/crm-core-projection-exporter.env'
 readonly HELPER_ACTION='preflight-source-metadata'
 
@@ -59,8 +62,9 @@ readonly PREFLIGHT_MODULE="$SOURCE_ROOT/crm/api/server/atendimento/projectionSou
 readonly EXPORTER_MODULE="$SOURCE_ROOT/integration/atendimento/crm-core-projection-exporter/src/atendimentoProjectionExporter.mjs"
 readonly SOURCE_MODULE="$SOURCE_ROOT/integration/atendimento/crm-core-projection-exporter/src/atendimentoConfirmedUnitScopedProjectionSource.mjs"
 readonly POLICY_MODULE="$SOURCE_ROOT/shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js"
+readonly SOURCE_CONTRACT_MODULE="$SOURCE_ROOT/shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js"
 readonly INSTALLER_SOURCE="$ROOT_DIR/scripts/runtime/install-atendimento-crm-core-projection-custody.sh"
-readonly REQUIRED_SOURCE_FILES=("$CLI" "$PREFLIGHT_MODULE" "$EXPORTER_MODULE" "$SOURCE_MODULE" "$POLICY_MODULE")
+readonly REQUIRED_SOURCE_FILES=("$CLI" "$PREFLIGHT_MODULE" "$EXPORTER_MODULE" "$SOURCE_MODULE" "$POLICY_MODULE" "$SOURCE_CONTRACT_MODULE")
 
 for required in "${REQUIRED_SOURCE_FILES[@]}"; do
   [[ -f "$required" && ! -L "$required" ]] || { echo "Required CRM projection preflight source is missing: $required" >&2; exit 78; }
@@ -73,6 +77,7 @@ done
 /usr/bin/bash -n "$INSTALLER_SOURCE"
 /usr/bin/node --check "$CLI"
 /usr/bin/node --check "$PREFLIGHT_MODULE"
+/usr/bin/node --check "$SOURCE_CONTRACT_MODULE"
 
 if [[ "$APPLY" != '1' ]]; then
   printf 'atendimento_crm_core_projection_custody_contract=valid action=%s config=%s apply=false\n' "$HELPER_ACTION" "$CONFIG_FILE"
@@ -112,7 +117,7 @@ for required in "${REQUIRED_SOURCE_FILES[@]}"; do
   assert_root_owned_immutable "$required" 'CRM projection preflight source'
 done
 
-helper_stage="$(/usr/bin/mktemp /var/tmp/skincos-prepare-atendimento-crm-core-baseline.XXXXXX)"
+helper_stage="$(/usr/bin/mktemp /var/tmp/skincos-preflight-atendimento-crm-core-source-metadata.XXXXXX)"
 cleanup_helper_stage() { /usr/bin/rm -f -- "$helper_stage"; }
 trap cleanup_helper_stage EXIT INT TERM
 
