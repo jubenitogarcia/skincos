@@ -25,30 +25,30 @@ Mantenha todos os quatro arquivos no runtime privado do operador, fora de
 qualquer repositório ou worktree. Eles devem ser arquivos regulares, sem links
 simbólicos:
 
-- `codex-staging-readback-receipt.json` — metadata sanitizada;
+- `codex-staging-readback-receipt.json` — recibo v2 sanitizado, incluindo a assinatura Ed25519 destacada no próprio recibo;
 - `execution-receipt.json` — recibo local do artefato;
 - `readback-output.json` — resultado sanitizado do readback;
 - `private-readback-audit.json` — assinatura Ed25519 bruta, apenas externa.
 
-Nenhum desses arquivos, assinatura bruta, chave privada, token, sessão, dado de
-cliente ou resposta bruta entra no Git. A política fixa a JWK pública do signer
-local e o fingerprint SHA-256 do SPKI; este fingerprint não é o fingerprint de
-JWK canônica usado pela trilha GitHub v1.
+Nenhum desses arquivos, bundle de artefato, assinatura destacada, chave privada,
+token, sessão, dado de cliente ou resposta bruta entra no Git. A política fixa a
+JWK pública do signer local e o fingerprint SHA-256 do SPKI; este fingerprint não
+é o fingerprint de JWK canônica usado pela trilha GitHub v1.
 
 ## Verificação local
 
-Use também um checkout limpo do Core no SHA e na árvore declarados pelo recibo.
-O verificador exige que `refs/remotes/origin/main` do checkout limpo seja o
-mesmo SHA e que o recibo de custódia, gerado no clone limpo, registre aquele SHA
-antes e depois da revalidação de `main`. A cadeia de custódia do Core consulta a
-identidade do repositório e `refs/heads/main` via `origin` antes e depois do build; o
-audit Ed25519 externo fixa o digest exato desse recibo. Esta etapa não tenta um
-`fetch` sem credencial durante a leitura: se a cadeia assinada ou o ref de
-rastreamento limpo não existirem, ela falha fechada. Ele recebe um snapshot do
-bundle completo de artefato de custódia (incluindo `worker`, `console` e
-`recheck`) e cópias temporárias dos outros três arquivos, e falha se qualquer
-original ou snapshot mudar durante a verificação. O `observedAt` UTC no statement
-assinado do audit registra quando o readback foi observado.
+Use também um checkout limpo do Core, em `HEAD` destacado, no SHA e na árvore
+declarados pelo recibo. `refs/remotes/origin/main` deve existir e ser descendente
+desse SHA — ele pode ter avançado após o candidato ter sido validado. O recibo de
+custódia, gerado no clone limpo, continua registrando aquele SHA antes e depois da
+revalidação de `main`. A cadeia de custódia do Core consulta a identidade do
+repositório e `refs/heads/main` via `origin` antes e depois do build; a assinatura
+Ed25519 v2 do próprio recibo fixa o statement exato, e o audit externo registra o
+`observedAt` UTC. Esta etapa não tenta um `fetch` sem credencial durante a leitura:
+se a cadeia assinada ou o ref de rastreamento limpo não existirem, ela falha
+fechada. Ele recebe um snapshot do bundle completo de artefato de custódia
+(incluindo `worker`, `console` e `recheck`) e cópias temporárias dos outros três
+arquivos, e falha se qualquer original ou snapshot mudar durante a verificação.
 
 No Windows, execute pelo gateway tipado WSL:
 
