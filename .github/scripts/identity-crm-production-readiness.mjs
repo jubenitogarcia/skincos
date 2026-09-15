@@ -23,6 +23,28 @@ export const REQUIRED_PRODUCTION_SECRET_KEY_METADATA = Object.freeze({
     usages: Object.freeze(['sign']),
   }),
 });
+// The immutable production versions deliberately have different custody
+// surfaces. R resolves the externally signed route receipt and cannot carry
+// delivery signing material. I issues delivery envelopes and cannot carry the
+// route receipt. Do not infer either role from the script-wide secret list:
+// only the immutable version binding readback can prove this separation.
+export const PRODUCTION_ROLE_SECRET_TYPES = Object.freeze({
+  R: Object.freeze({
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+    IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT: 'secret_text',
+  }),
+  I: REQUIRED_PRODUCTION_SECRET_TYPES,
+});
+export const PRODUCTION_ROLE_FORBIDDEN_SECRET_NAMES = Object.freeze({
+  R: Object.freeze([
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
+  ]),
+  I: Object.freeze([
+    'IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT',
+  ]),
+});
 // These deployment-owned vars are non-secret, but the readiness report never
 // emits their actual values. Each one must appear exactly once as a plain-text
 // binding with the fixed runtime value below before cutover can be approved.
@@ -343,22 +365,28 @@ function hasExactKeyMetadata(actual, expected) {
     && actual.usages.every((usage, index) => usage === expected.usages[index]);
 }
 
-function requiredVersionBindingFailures(audit) {
+function requiredVersionBindingFailures(audit, role) {
   const requiredRuntimeBindings = audit?.requiredRuntimeBindings || {};
   const secretInventory = audit?.secretInventory || {
     names: [], types: {}, keyMetadata: {},
   };
+  const requiredSecretTypes = PRODUCTION_ROLE_SECRET_TYPES[role] || {};
+  const requiredSecretNames = Object.keys(requiredSecretTypes);
+  const requiredSecretKeyMetadata = Object.fromEntries(Object.entries(REQUIRED_PRODUCTION_SECRET_KEY_METADATA)
+    .filter(([name]) => Object.prototype.hasOwnProperty.call(requiredSecretTypes, name)));
   return {
     wrongRuntimeBindings: Object.keys(REQUIRED_PRODUCTION_RUNTIME_BINDINGS)
       .filter((name) => requiredRuntimeBindings[name] !== 'matches'),
-    missingSecretNames: REQUIRED_PRODUCTION_SECRET_NAMES
+    missingSecretNames: requiredSecretNames
       .filter((name) => !secretInventory.names.includes(name)),
-    wrongSecretTypes: Object.entries(REQUIRED_PRODUCTION_SECRET_TYPES)
+    wrongSecretTypes: Object.entries(requiredSecretTypes)
       .filter(([name, expectedType]) => secretInventory.types[name] !== expectedType)
       .map(([name, expectedType]) => `${name} (expected ${expectedType})`),
-    wrongSecretKeyMetadata: Object.entries(REQUIRED_PRODUCTION_SECRET_KEY_METADATA)
+    wrongSecretKeyMetadata: Object.entries(requiredSecretKeyMetadata)
       .filter(([name, expected]) => !hasExactKeyMetadata(secretInventory.keyMetadata[name], expected))
       .map(([name, expected]) => `${name} (expected ${expected.algorithm} with usages ${expected.usages.join(', ')})`),
+    forbiddenSecretNames: (PRODUCTION_ROLE_FORBIDDEN_SECRET_NAMES[role] || [])
+      .filter((name) => secretInventory.names.includes(name)),
   };
 }
 
@@ -681,7 +709,7 @@ export function evaluateIdentityCrmProductionReadiness({
       const assignment = versionBindingAudit.roles[role];
       const entry = versionBindingAudit.entries.find((candidate) => candidate.versionId === assignment.versionId
         && candidate.audit?.role === role && candidate.audit.versionIdMatches);
-      const failures = requiredVersionBindingFailures(entry?.audit);
+      const failures = requiredVersionBindingFailures(entry?.audit, role);
       if (failures.wrongRuntimeBindings.length > 0) {
         blockers.push(`production Worker ${label} version has required runtime bindings that are missing or incorrect: ${failures.wrongRuntimeBindings.join(', ')}`);
       }
@@ -693,6 +721,9 @@ export function evaluateIdentityCrmProductionReadiness({
       }
       if (failures.wrongSecretKeyMetadata.length > 0) {
         blockers.push(`production Worker ${label} version has required secret-key metadata: ${failures.wrongSecretKeyMetadata.join(', ')}`);
+      }
+      if (failures.forbiddenSecretNames.length > 0) {
+        blockers.push(`production Worker ${label} version carries forbidden Identity CRM secret names: ${failures.forbiddenSecretNames.join(', ')}`);
       }
     }
   }

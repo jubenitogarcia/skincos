@@ -5,6 +5,8 @@ import {
   IDENTITY_CRM_DELIVERY_PROTOCOL,
   CRM_IDENTITY_READBACK_CREDENTIAL_SOURCE,
   PRODUCTION_WORKER_NAME,
+  PRODUCTION_ROLE_FORBIDDEN_SECRET_NAMES,
+  PRODUCTION_ROLE_SECRET_TYPES,
   REQUIRED_PRODUCTION_SECRET_NAMES,
   REQUIRED_PRODUCTION_SECRET_KEY_METADATA,
   REQUIRED_PRODUCTION_RUNTIME_BINDINGS,
@@ -43,6 +45,17 @@ function requiredSecretInventory(overrides = {}) {
   }));
 }
 
+function roleSecretInventory(role, overrides = {}) {
+  return Object.entries(PRODUCTION_ROLE_SECRET_TYPES[role]).map(([name, type]) => ({
+    name,
+    type,
+    ...(name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+      ? { algorithm: { name: 'Ed25519' }, usages: ['sign'], format: 'jwk' }
+      : {}),
+    ...overrides,
+  }));
+}
+
 function requiredRuntimeBindings(overrides = {}) {
   return Object.entries(REQUIRED_PRODUCTION_RUNTIME_BINDINGS).map(([name, text]) => ({
     name,
@@ -65,7 +78,7 @@ function roleBindings(role) {
   // Cloudflare exposes each active version's complete binding set. Keep the
   // fixture representative so a version-level audit cannot inherit proof from
   // the mutable Worker-wide settings or secret inventory.
-  return [...requiredRuntimeBindings(), ...requiredSecretInventory(), ...roleFlags];
+  return [...requiredRuntimeBindings(), ...roleSecretInventory(role), ...roleFlags];
 }
 
 function versionResponse(versionId, role, bindings = roleBindings(role)) {
@@ -160,6 +173,21 @@ test('production defaults are distinct from staging and protocol values are fixe
       algorithm: 'Ed25519',
       usages: ['sign'],
     },
+  });
+  assert.deepEqual(PRODUCTION_ROLE_SECRET_TYPES, {
+    R: {
+      IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+      IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT: 'secret_text',
+    },
+    I: REQUIRED_PRODUCTION_SECRET_TYPES,
+  });
+  assert.deepEqual(PRODUCTION_ROLE_FORBIDDEN_SECRET_NAMES, {
+    R: [
+      'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
+      'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
+      'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
+    ],
+    I: ['IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT'],
   });
   assert.deepEqual(REQUIRED_PRODUCTION_RUNTIME_BINDINGS, {
     IDENTITY_CRM_DELIVERY_ENABLED: 'true',
@@ -447,6 +475,58 @@ test('production readiness verifies required runtime and secret bindings on each
     verifyAudit(entry.audit);
     assert.equal(JSON.stringify(report).includes('incorrect-caller'), false);
     assert.equal(entry.audit.secretInventory.valuesReadOrEmitted, false);
+  }
+});
+
+test('production readiness keeps resolver and issuer secret custody separated by immutable version', async () => {
+  for (const { versionId, role, mutate, expectedBlocker } of [
+    {
+      versionId: resolverVersionId,
+      role: 'R',
+      mutate: (bindings) => bindings.filter((binding) => binding.name !== 'IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT'),
+      expectedBlocker: 'production Worker resolver R version is missing required secret names: IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT',
+    },
+    {
+      versionId: issuerVersionId,
+      role: 'I',
+      mutate: (bindings) => bindings.filter((binding) => binding.name !== 'IDENTITY_CRM_DELIVERY_PRODUCTION_KID'),
+      expectedBlocker: 'production Worker issuer I version is missing required secret names: IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
+    },
+    {
+      versionId: resolverVersionId,
+      role: 'R',
+      mutate: (bindings) => [...bindings, {
+        name: 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
+        type: 'secret_key',
+        algorithm: { name: 'Ed25519' },
+        usages: ['sign'],
+      }],
+      expectedBlocker: 'production Worker resolver R version carries forbidden Identity CRM secret names: IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
+    },
+    {
+      versionId: issuerVersionId,
+      role: 'I',
+      mutate: (bindings) => [...bindings, {
+        name: 'IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT',
+        type: 'secret_text',
+      }],
+      expectedBlocker: 'production Worker issuer I version carries forbidden Identity CRM secret names: IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT',
+    },
+  ]) {
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment(),
+      fetchImpl: async (url) => {
+        if (url === `${workerUrl}/versions/${versionId}`) return versionResponse(versionId, role, mutate(roleBindings(role)));
+        const workerResponse = completeWorkerResponse(url);
+        if (workerResponse) return workerResponse;
+        if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+        if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+        throw new Error(`unexpected URL ${url}`);
+      },
+    });
+    assert.equal(report.result, 'blocked');
+    assert.ok(report.blockers.includes(expectedBlocker));
+    assert.equal(report.readOnly.secretValuesReadOrEmitted, false);
   }
 });
 
