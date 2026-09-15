@@ -68,6 +68,8 @@ grep -F 'systemctl show --property=SubState --value "$SERVICE"' "$TEMPLATE" >/de
 grep -F 'Identity schema apply requires the isolated staging runtime to be loaded and inactive' "$TEMPLATE" >/dev/null
 grep -F 'Private custody directory is not a real directory' "$INSTALLER" >/dev/null
 grep -F 'Existing identity schema custody target has unsafe metadata' "$INSTALLER" >/dev/null
+grep -Fx '  expected_stat_mode="${expected_mode#0}"' "$INSTALLER" >/dev/null
+grep -Fx '  [[ "$metadata" == "0:0:$expected_stat_mode:1" ]] || {' "$INSTALLER" >/dev/null
 grep -F 'Native custody runner must already be active before installing the identity schema helper' "$INSTALLER" >/dev/null
 grep -F 'restore_target "$HELPER" helper 0700 "$helper_existed"' "$INSTALLER" >/dev/null
 grep -F 'restore_target "$SUDOERS_FILE" sudoers 0440 "$sudoers_existed"' "$INSTALLER" >/dev/null
@@ -78,6 +80,16 @@ grep -F 'backup_created=true\ database=skincos_staging\ sha256=' "$TEMPLATE" >/d
 render_root="$(mktemp -d -t skincos-identity-schema-render-XXXXXXXX)"
 cleanup() { rm -rf -- "$render_root"; }
 trap cleanup EXIT INT TERM
+
+# `install -m` accepts a leading zero while GNU stat %a does not print one.
+# Keep the regression visible independently of the host's existing unit.
+for requested_mode in 0700 0440 0644; do
+  mode_probe="$render_root/mode-$requested_mode"
+  : > "$mode_probe"
+  chmod "$requested_mode" "$mode_probe"
+  [[ "$(stat -c '%a' "$mode_probe")" == "${requested_mode#0}" ]]
+done
+
 release_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 rendered="$render_root/skincos-run-atendimento-crm-core-identity-schema-staging"
 sed \
