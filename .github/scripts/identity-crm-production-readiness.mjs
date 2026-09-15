@@ -23,6 +23,28 @@ export const REQUIRED_PRODUCTION_SECRET_KEY_METADATA = Object.freeze({
     usages: Object.freeze(['sign']),
   }),
 });
+// The immutable production versions deliberately have different custody
+// surfaces. R resolves the externally signed route receipt and cannot carry
+// delivery signing material. I issues delivery envelopes and cannot carry the
+// route receipt. Do not infer either role from the script-wide secret list:
+// only the immutable version binding readback can prove this separation.
+export const PRODUCTION_ROLE_SECRET_TYPES = Object.freeze({
+  R: Object.freeze({
+    IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_HMAC: 'secret_text',
+    IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT: 'secret_text',
+  }),
+  I: REQUIRED_PRODUCTION_SECRET_TYPES,
+});
+export const PRODUCTION_ROLE_FORBIDDEN_SECRET_NAMES = Object.freeze({
+  R: Object.freeze([
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_KID',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY',
+    'IDENTITY_CRM_DELIVERY_PRODUCTION_PUBLIC_JWK',
+  ]),
+  I: Object.freeze([
+    'IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT',
+  ]),
+});
 // These deployment-owned vars are non-secret, but the readiness report never
 // emits their actual values. Each one must appear exactly once as a plain-text
 // binding with the fixed runtime value below before cutover can be approved.
@@ -46,6 +68,7 @@ export const IDENTITY_CRM_DELIVERY_PROTOCOL = Object.freeze({
 const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const ZONE_ID_PATTERN = /^[0-9a-f]{32}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const READ_METHOD = 'GET';
 const MAX_READ_PAGES = 100;
 // Cloudflare's zone-list endpoint accepts at most 50 entries per page.
@@ -57,6 +80,10 @@ const PRODUCTION_ATTESTATION_ENV = Object.freeze({
   caller: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ATTESTED',
   replay: 'IDENTITY_CRM_DELIVERY_PRODUCTION_REPLAY_ATTESTED',
   rotation: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROTATION_ATTESTED',
+});
+const PRODUCTION_ROLE_BINDINGS = Object.freeze({
+  issuer: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED',
+  resolver: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED',
 });
 
 function string(value) {
@@ -74,6 +101,17 @@ function booleanEnv(value) {
 function safeIdentifier(value) {
   const normalized = string(value);
   return IDENTIFIER_PATTERN.test(normalized) ? normalized : null;
+}
+
+function safeUuid(value) {
+  const normalized = string(value).toLowerCase();
+  return UUID_PATTERN.test(normalized) ? normalized : null;
+}
+
+function safePercentage(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100
+    ? value
+    : null;
 }
 
 function safeDate(value) {
@@ -163,22 +201,120 @@ export function sanitizeWorkerSettings(settings) {
   };
 }
 
+function sanitizeDeploymentVersion(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const versionId = safeUuid(value.version_id || value.id);
+  const percentage = safePercentage(value.percentage);
+  return versionId && percentage !== null ? { versionId, percentage } : null;
+}
+
+function sanitizeDeployment(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const id = safeUuid(value.id);
+  const source = safeIdentifier(value.source || value.last_deployed_from);
+  const strategy = safeIdentifier(value.strategy);
+  const createdOn = safeDate(value.created_on || value.createdOn);
+  const rawVersions = Array.isArray(value.versions) ? value.versions : null;
+  if (!id || strategy !== 'percentage' || !rawVersions || rawVersions.length < 1 || rawVersions.length > 2) return null;
+  const versions = rawVersions.map(sanitizeDeploymentVersion);
+  if (versions.some((version) => version === null)
+    || new Set(versions.map((version) => version.versionId)).size !== versions.length
+    || versions.reduce((sum, version) => sum + version.percentage, 0) !== 100) {
+    return null;
+  }
+  return { id, source, strategy, createdOn, versions };
+}
+
+function deploymentRoleAssignments(deployment) {
+  const versions = Array.isArray(deployment?.versions) ? deployment.versions : [];
+  const resolver = versions.filter((version) => version.percentage === 100);
+  const issuer = versions.filter((version) => version.percentage === 0);
+  return {
+    R: resolver.length === 1 ? resolver[0] : null,
+    I: issuer.length === 1 ? issuer[0] : null,
+  };
+}
+
 export function sanitizeDeployments(value) {
   const entries = resultArray(value, 'deployments');
+  const active = entries.length > 0 ? sanitizeDeployment(entries[0]) : null;
   const sanitized = entries
-    .map((deployment) => {
-      if (!deployment || typeof deployment !== 'object' || Array.isArray(deployment)) return null;
-      const id = safeIdentifier(deployment.id || deployment.version_id);
-      const versionId = safeIdentifier(deployment.version_id || deployment.id);
-      const source = safeIdentifier(deployment.source || deployment.last_deployed_from);
-      const strategy = safeIdentifier(deployment.strategy);
-      const createdOn = safeDate(deployment.created_on || deployment.createdOn);
-      const percentage = Number.isFinite(deployment.percentage) ? deployment.percentage : null;
-      return { id, versionId, source, strategy, createdOn, percentage };
-    })
+    .map(sanitizeDeployment)
     .filter(Boolean)
     .slice(0, 20);
-  return { count: entries.length, entries: sanitized };
+  return {
+    count: entries.length,
+    entries: sanitized,
+    active: active
+      ? { ...active, roles: deploymentRoleAssignments(active) }
+      : null,
+  };
+}
+
+function booleanPlainTextBinding(bindings, name) {
+  const matches = bindings.filter((binding) => binding?.name === name);
+  if (matches.length !== 1 || matches[0]?.type !== 'plain_text') return null;
+  if (matches[0]?.text === 'true') return true;
+  if (matches[0]?.text === 'false') return false;
+  return null;
+}
+
+function sanitizeVersionBindingAudit(value, expectedVersionId) {
+  const versionId = safeUuid(value?.id);
+  const bindings = Array.isArray(value?.resources?.bindings) ? value.resources.bindings : [];
+  const issuerEnabled = booleanPlainTextBinding(bindings, PRODUCTION_ROLE_BINDINGS.issuer);
+  const resolverEnabled = booleanPlainTextBinding(bindings, PRODUCTION_ROLE_BINDINGS.resolver);
+  const role = issuerEnabled === false && resolverEnabled === true
+    ? 'R'
+    : issuerEnabled === true && resolverEnabled === false
+      ? 'I'
+      : null;
+  return {
+    versionId: expectedVersionId,
+    versionIdMatches: versionId === expectedVersionId,
+    role,
+    requiredRuntimeBindings: sanitizeRequiredRuntimeBindings({ bindings }),
+    secretInventory: sanitizeSecretInventory(bindings.filter((binding) =>
+      binding?.type === 'secret_text' || binding?.type === 'secret_key')),
+  };
+}
+
+function sanitizeVersionBindingAudits(value, activeDeployment) {
+  const assignments = Array.isArray(activeDeployment?.versions) ? activeDeployment.versions : [];
+  const readbacks = Array.isArray(value) ? value : [];
+  const byVersionId = new Map(readbacks.map((entry) => [entry?.versionId, entry?.readback]));
+  const entries = assignments.map((assignment) => {
+    const readback = byVersionId.get(assignment.versionId);
+    if (!hasAvailableEndpoint(readback)) {
+      return {
+        versionId: assignment.versionId,
+        percentage: assignment.percentage,
+        state: readback?.state || 'not-read',
+        audit: null,
+      };
+    }
+    return {
+      versionId: assignment.versionId,
+      percentage: assignment.percentage,
+      state: 'available',
+      audit: sanitizeVersionBindingAudit(readback.result, assignment.versionId),
+    };
+  });
+  const roleEntries = (role) => entries.filter((entry) => entry.audit?.role === role && entry.audit.versionIdMatches);
+  const roleAssignment = (role) => {
+    const matches = roleEntries(role);
+    return matches.length === 1
+      ? { versionId: matches[0].versionId, percentage: matches[0].percentage }
+      : null;
+  };
+  return {
+    state: entries.length > 0 && entries.every((entry) => entry.state === 'available') ? 'available' : 'unavailable',
+    entries,
+    roles: {
+      R: roleAssignment('R'),
+      I: roleAssignment('I'),
+    },
+  };
 }
 
 export function sanitizeSecretInventory(value) {
@@ -229,6 +365,31 @@ function hasExactKeyMetadata(actual, expected) {
     && actual.usages.every((usage, index) => usage === expected.usages[index]);
 }
 
+function requiredVersionBindingFailures(audit, role) {
+  const requiredRuntimeBindings = audit?.requiredRuntimeBindings || {};
+  const secretInventory = audit?.secretInventory || {
+    names: [], types: {}, keyMetadata: {},
+  };
+  const requiredSecretTypes = PRODUCTION_ROLE_SECRET_TYPES[role] || {};
+  const requiredSecretNames = Object.keys(requiredSecretTypes);
+  const requiredSecretKeyMetadata = Object.fromEntries(Object.entries(REQUIRED_PRODUCTION_SECRET_KEY_METADATA)
+    .filter(([name]) => Object.prototype.hasOwnProperty.call(requiredSecretTypes, name)));
+  return {
+    wrongRuntimeBindings: Object.keys(REQUIRED_PRODUCTION_RUNTIME_BINDINGS)
+      .filter((name) => requiredRuntimeBindings[name] !== 'matches'),
+    missingSecretNames: requiredSecretNames
+      .filter((name) => !secretInventory.names.includes(name)),
+    wrongSecretTypes: Object.entries(requiredSecretTypes)
+      .filter(([name, expectedType]) => secretInventory.types[name] !== expectedType)
+      .map(([name, expectedType]) => `${name} (expected ${expectedType})`),
+    wrongSecretKeyMetadata: Object.entries(requiredSecretKeyMetadata)
+      .filter(([name, expected]) => !hasExactKeyMetadata(secretInventory.keyMetadata[name], expected))
+      .map(([name, expected]) => `${name} (expected ${expected.algorithm} with usages ${expected.usages.join(', ')})`),
+    forbiddenSecretNames: (PRODUCTION_ROLE_FORBIDDEN_SECRET_NAMES[role] || [])
+      .filter((name) => secretInventory.names.includes(name)),
+  };
+}
+
 export function sanitizeRoutes(value, workerName, zoneCount = 0) {
   const entries = resultArray(value, 'routes');
   const matches = entries
@@ -252,12 +413,13 @@ export function sanitizeCustomDomains(value, workerName) {
   };
 }
 
-function workerReadback({ settings, deployments, secrets, subdomain }) {
+function workerReadback({ settings, deployments, secrets, subdomain, versionBindings = [] }) {
   return {
     settings,
     deployments,
     secrets,
     subdomain,
+    versionBindings,
   };
 }
 
@@ -473,7 +635,15 @@ async function readProductionWorker({ reader, accountId, workerName }) {
     reader(`${workerPath}/secrets`),
     reader(`${workerPath}/subdomain`),
   ]);
-  return workerReadback({ settings, deployments, secrets, subdomain });
+  const activeVersions = deployments.state === 'available'
+    ? sanitizeDeployments(deployments.result).active?.versions || []
+    : [];
+  const versionBindings = await Promise.all(activeVersions.map(async ({ versionId, percentage }) => ({
+    versionId,
+    percentage,
+    readback: await reader(`${workerPath}/versions/${encodeURIComponent(versionId)}`),
+  })));
+  return workerReadback({ settings, deployments, secrets, subdomain, versionBindings });
 }
 
 export function evaluateIdentityCrmProductionReadiness({
@@ -496,7 +666,8 @@ export function evaluateIdentityCrmProductionReadiness({
   const sanitizedSettings = settings ? sanitizeWorkerSettings(settings) : null;
   const deploymentReadback = worker?.deployments?.state === 'available'
     ? sanitizeDeployments(worker.deployments.result)
-    : { count: 0, entries: [] };
+    : { count: 0, entries: [], active: null };
+  const versionBindingAudit = sanitizeVersionBindingAudits(worker?.versionBindings, deploymentReadback.active);
   const secretReadback = worker?.secrets?.state === 'available'
     ? sanitizeSecretInventory(worker.secrets.result)
     : { count: 0, names: [], types: {}, keyMetadata: {}, valuesReadOrEmitted: false };
@@ -525,8 +696,36 @@ export function evaluateIdentityCrmProductionReadiness({
   if (wrongRuntimeBindings.length > 0) {
     blockers.push(`production Worker has required runtime bindings that are missing or incorrect: ${wrongRuntimeBindings.join(', ')}`);
   }
-  if (!hasAvailableEndpoint(worker?.deployments) || deploymentReadback.count < 1) {
+  if (!hasAvailableEndpoint(worker?.deployments) || deploymentReadback.count < 1 || !deploymentReadback.active) {
     blockers.push('production Worker has no externally verified deployment baseline');
+  } else if (versionBindingAudit.state !== 'available') {
+    blockers.push('production Worker version-level binding audit could not be read');
+  } else if (!versionBindingAudit.roles.R || !versionBindingAudit.roles.I) {
+    blockers.push('production Worker does not identify exactly one resolver R and issuer I version');
+  } else if (versionBindingAudit.roles.R.percentage !== 100 || versionBindingAudit.roles.I.percentage !== 0) {
+    blockers.push('production Worker must keep resolver R at 100% and issuer I at 0% for the private version override');
+  } else {
+    for (const [role, label] of [['R', 'resolver R'], ['I', 'issuer I']]) {
+      const assignment = versionBindingAudit.roles[role];
+      const entry = versionBindingAudit.entries.find((candidate) => candidate.versionId === assignment.versionId
+        && candidate.audit?.role === role && candidate.audit.versionIdMatches);
+      const failures = requiredVersionBindingFailures(entry?.audit, role);
+      if (failures.wrongRuntimeBindings.length > 0) {
+        blockers.push(`production Worker ${label} version has required runtime bindings that are missing or incorrect: ${failures.wrongRuntimeBindings.join(', ')}`);
+      }
+      if (failures.missingSecretNames.length > 0) {
+        blockers.push(`production Worker ${label} version is missing required secret names: ${failures.missingSecretNames.join(', ')}`);
+      }
+      if (failures.wrongSecretTypes.length > 0) {
+        blockers.push(`production Worker ${label} version has required secret bindings with incorrect types: ${failures.wrongSecretTypes.join(', ')}`);
+      }
+      if (failures.wrongSecretKeyMetadata.length > 0) {
+        blockers.push(`production Worker ${label} version has required secret-key metadata: ${failures.wrongSecretKeyMetadata.join(', ')}`);
+      }
+      if (failures.forbiddenSecretNames.length > 0) {
+        blockers.push(`production Worker ${label} version carries forbidden Identity CRM secret names: ${failures.forbiddenSecretNames.join(', ')}`);
+      }
+    }
   }
   if (!hasAvailableEndpoint(worker?.secrets)) {
     blockers.push('production Worker secret inventory could not be read');
@@ -610,6 +809,7 @@ export function evaluateIdentityCrmProductionReadiness({
         previewsEnabled: typeof subdomain?.previews_enabled === 'boolean' ? subdomain.previews_enabled : null,
       },
       deploymentBaseline: deploymentReadback,
+      versionBindingAudit,
       secretInventory: secretReadback,
       routeReadback: routeReadback,
       customDomainReadback: domainReadback,

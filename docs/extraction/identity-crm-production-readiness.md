@@ -101,11 +101,13 @@ If both role flags are `true` (or both are `false` on an otherwise enabled
 version), the runtime exposes neither surface. Browser headers never select
 either version.
 
-No one version should be supplied every value in the inventory above: `R`
-does not need a signing key or public JWK ring, and `I` does not need
-`IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT`. The audit must report the role,
-exact immutable version id, secret-name presence and the inverse capability as
-part of the same-artifact readback.
+No one version should be supplied every value in the inventory above. From the
+CRM delivery secret set, `R` carries only the caller HMAC and
+`IDENTITY_CRM_CORE_PRODUCTION_ROUTE_RECEIPT`; it must not carry a KID, signing
+key or public JWK ring. `I` carries the KID, non-extractable signing key,
+public JWK ring and caller HMAC; it must not carry the route receipt. The audit
+must report the role, exact immutable version id, role-specific secret-name
+presence and the inverse capability as part of the same-artifact readback.
 
 ## Gates before any production cutover
 
