@@ -345,12 +345,14 @@ function signedEvidence(value, { kind, publicKey, keyId, now }) {
   if (
     signature.algorithm !== 'Ed25519'
     || signature.keyId !== keyId
-    || !SIGNATURE_PATTERN.test(String(signature.valueBase64url || ''))
+    || typeof signature.valueBase64url !== 'string'
+    || !SIGNATURE_PATTERN.test(signature.valueBase64url)
   ) fail('EVIDENCE_SIGNATURE_INVALID')
   const signatureBytes = Buffer.from(signature.valueBase64url, 'base64url')
   try {
     if (
       signatureBytes.length !== 64
+      || signatureBytes.toString('base64url') !== signature.valueBase64url
       || !verifySignature(null, Buffer.from(canonicalAtendimentoConfirmedProjectionProductionCandidateCustodyEvidence(unsigned), 'utf8'), publicKey, signatureBytes)
     ) fail('EVIDENCE_SIGNATURE_INVALID')
   } finally {

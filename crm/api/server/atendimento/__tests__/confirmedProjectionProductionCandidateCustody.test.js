@@ -39,6 +39,7 @@ const SOURCE_SHA = 'a'.repeat(40)
 const TARGET = Object.freeze({ environment: 'staging', release: 'b'.repeat(40), artifactDigest: `sha256:${'c'.repeat(64)}` })
 const ROLLBACK_TARGET = Object.freeze({ environment: 'staging', release: 'd'.repeat(40), artifactDigest: `sha256:${'e'.repeat(64)}` })
 const HMAC_KEY = `confirmed-production-candidate-test-${'x'.repeat(40)}`
+const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
 const ROW = Object.freeze({
   identity_id: '22222222-2222-4222-8222-222222222222',
   unit_slug: 'jardins',
@@ -134,6 +135,13 @@ function resign(evidence) {
     issuedAt: evidence.issuedAt,
     expiresAt: evidence.expiresAt,
   })
+}
+
+function nonCanonicalBase64urlSpelling(value) {
+  const last = BASE64URL_ALPHABET.indexOf(value.at(-1))
+  assert.notEqual(last, -1)
+  assert.equal(last & 0b1111, 0, 'fixture signature must start from a canonical base64url spelling')
+  return `${value.slice(0, -1)}${BASE64URL_ALPHABET[(last & 0b110000) | 1]}`
 }
 
 function candidateInput() {
@@ -293,6 +301,19 @@ test('rejects PII claims, stale evidence, and a tampered detached signature befo
     signature: { ...tampered.evidence[0].signature, valueBase64url: 'A'.repeat(86) },
   }
   assert.throws(() => verifier().prepare(tampered), /EVIDENCE_SIGNATURE_INVALID/)
+})
+
+test('rejects a valid Ed25519 signature when its base64url spelling is noncanonical', () => {
+  const input = candidateInput()
+  const canonical = input.evidence[0].signature.valueBase64url
+  const nonCanonical = nonCanonicalBase64urlSpelling(canonical)
+  assert.notEqual(nonCanonical, canonical)
+  assert.deepEqual(Buffer.from(nonCanonical, 'base64url'), Buffer.from(canonical, 'base64url'))
+  input.evidence[0] = {
+    ...input.evidence[0],
+    signature: { ...input.evidence[0].signature, valueBase64url: nonCanonical },
+  }
+  assert.throws(() => verifier().prepare(input), /EVIDENCE_SIGNATURE_INVALID/)
 })
 
 test('requires the signed checkpoint, reconciliation and rollback chain to stay anchored to the same source snapshot', () => {
