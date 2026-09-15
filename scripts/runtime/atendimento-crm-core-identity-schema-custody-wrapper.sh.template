@@ -1,0 +1,241 @@
+#!/usr/bin/bash -p
+set -euo pipefail
+
+readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH="$SAFE_PATH"
+unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy \
+  GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+  GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_ATTR_NOSYSTEM GIT_EXEC_PATH \
+  NODE_OPTIONS NODE_PATH NPM_CONFIG_USERCONFIG NPM_CONFIG_GLOBALCONFIG \
+  npm_config_userconfig npm_config_globalconfig
+
+readonly RELEASE_SOURCE='__RELEASE_SOURCE__'
+readonly RELEASE_SHA='__RELEASE_SHA__'
+readonly RUNNER="$RELEASE_SOURCE/crm/api/scripts/run-atendimento-crm-core-identity-schema-staging.mjs"
+readonly RELEASE_VALIDATOR="$RELEASE_SOURCE/crm/api/scripts/validate-atendimento-release.mjs"
+readonly CONTROL_VALIDATOR="$RELEASE_SOURCE/crm/api/scripts/validate-atendimento-staging-control.mjs"
+readonly BACKUP_SCRIPT="$RELEASE_SOURCE/scripts/backup-atendimento-staging.sh"
+readonly COORDINATION_ADAPTER="$RELEASE_SOURCE/scripts/runtime/global-coordination-native.sh"
+readonly COORDINATION_CLOSURE="$RELEASE_SOURCE/.skincos-global-coordination-atendimento.json"
+readonly CONFIG_FILE='/etc/skincos/crm-atendimento-staging-migrator.env'
+readonly COORDINATION_ENV_FILE='/etc/skincos/global-coordination/native-runtime.env'
+readonly STATE_ROOT='/var/lib/skincos-runtime/crm-core-identity-schema-custody'
+readonly SERVICE='crm-atendimento-staging.service'
+readonly ACTION="${1:-}"
+
+fail() { echo "$1" >&2; exit 78; }
+
+mode_is_non_writable() {
+  local mode="$1"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  [[ "${mode: -2:1}" != [2367] && "${mode: -1}" != [2367] ]]
+}
+
+assert_immutable_directory() {
+  local target="$1" metadata uid gid mode
+  [[ -d "$target" && ! -L "$target" ]] || fail 'Identity schema release is unavailable'
+  metadata="$(/usr/bin/stat -c '%u:%g:%a' -- "$target" 2>/dev/null || true)"
+  IFS=':' read -r uid gid mode <<<"$metadata"
+  [[ "$uid" == '0' ]] && mode_is_non_writable "$mode" || fail 'Identity schema release is not immutable'
+}
+
+assert_immutable_file() {
+  local target="$1" metadata uid gid mode links
+  [[ -f "$target" && ! -L "$target" ]] || fail 'Identity schema release source is unavailable'
+  metadata="$(/usr/bin/stat -c '%u:%g:%a:%h' -- "$target" 2>/dev/null || true)"
+  IFS=':' read -r uid gid mode links <<<"$metadata"
+  [[ "$uid" == '0' && "$links" == '1' ]] && mode_is_non_writable "$mode" || fail 'Identity schema release source is not immutable'
+}
+
+assert_private_state_root() {
+  local metadata
+  [[ -d "$STATE_ROOT" && ! -L "$STATE_ROOT" ]] || fail 'Identity schema custody state root is unavailable'
+  metadata="$(/usr/bin/stat -c '%u:%g:%a' -- "$STATE_ROOT" 2>/dev/null || true)"
+  [[ "$metadata" == '0:0:700' ]] || fail 'Identity schema custody state root has unsafe metadata'
+}
+
+assert_private_migrator_config() {
+  local metadata raw line value seen=0
+  [[ -f "$CONFIG_FILE" && ! -L "$CONFIG_FILE" ]] || fail 'Identity schema migrator config must be a regular file'
+  metadata="$(/usr/bin/stat -c '%u:%g:%a:%h' -- "$CONFIG_FILE" 2>/dev/null || true)"
+  [[ "$metadata" == '0:0:600:1' ]] || fail 'Identity schema migrator config must be root:root mode 0600'
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    line="${raw%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^DATABASE_URL=(.*)$ ]] || fail 'Identity schema migrator config contains an unsupported key'
+    (( seen == 0 )) || fail 'Identity schema migrator config repeats DATABASE_URL'
+    value="${BASH_REMATCH[1]}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "$value" =~ ^\".*\"$ || "$value" =~ ^\'.*\'$ ]]; then value="${value:1:-1}"; fi
+    [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || fail 'Identity schema migrator DATABASE_URL is invalid'
+    seen=1
+  done < "$CONFIG_FILE"
+  [[ "$seen" == '1' ]] || fail 'Identity schema migrator config is missing DATABASE_URL'
+}
+
+load_private_coordination_environment() {
+  local metadata raw line key value has_url=0 has_shared=0 has_active=0 has_key_id=0
+  [[ -f "$COORDINATION_ENV_FILE" && ! -L "$COORDINATION_ENV_FILE" ]] || fail 'Identity schema global coordination custody is unavailable'
+  metadata="$(/usr/bin/stat -c '%u:%a:%h' -- "$COORDINATION_ENV_FILE" 2>/dev/null || true)"
+  [[ "$metadata" == 0:600:1 || "$metadata" == 0:640:1 ]] || fail 'Identity schema global coordination custody has unsafe metadata'
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    line="${raw%$'\r'}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || fail 'Identity schema global coordination custody contains an invalid record'
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$key" in
+      SKINCOS_GLOBAL_COORDINATOR_URL) has_url=1 ;;
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET) has_shared=1 ;;
+      SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY) has_active=1 ;;
+      SKINCOS_GLOBAL_COORDINATION_KEY_ID) has_key_id=1 ;;
+      *) fail 'Identity schema global coordination custody contains an unsupported key' ;;
+    esac
+    [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || fail 'Identity schema global coordination custody contains an empty value'
+    export "$key=$value"
+  done < "$COORDINATION_ENV_FILE"
+  [[ "$has_url" == '1' && -n "${SKINCOS_GLOBAL_COORDINATOR_URL:-}" ]] || fail 'Identity schema global coordination URL is unavailable'
+  if [[ "$has_active" == '1' || "$has_key_id" == '1' ]]; then
+    [[ "$has_active" == '1' && "$has_key_id" == '1' && -n "${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-}" && "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" != 'legacy-v1' && "$has_shared" == '0' ]] || fail 'Identity schema active global coordination custody is incomplete'
+  else
+    [[ "$has_shared" == '1' && -n "${SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:-}" ]] || fail 'Identity schema global coordination secret is unavailable'
+  fi
+}
+
+validate_release() {
+  /usr/bin/env -i HOME=/root PATH="$SAFE_PATH" NODE_ENV=production \
+    /usr/bin/timeout --signal=KILL 60s /usr/bin/node "$RELEASE_VALIDATOR" \
+      --source-root "$RELEASE_SOURCE" --release-sha "$RELEASE_SHA" --target staging >/dev/null
+}
+
+run_schema() {
+  /usr/bin/env -i HOME=/root PATH="$SAFE_PATH" NODE_ENV=production \
+    /usr/bin/timeout --signal=KILL 120s /usr/bin/node "$RUNNER" "$1"
+}
+
+assert_fresh_preflight() {
+  /usr/bin/node - "$1" <<'NODE'
+const fs = require('node:fs');
+const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const before = report?.before;
+if (report?.action !== 'verify' || report?.target !== 'staging' || report?.migrationId !== '20260910_atendimento_crm_core_identity_materialization_v1'
+  || report?.schemaOnly !== true || report?.writerInvocation !== false || report?.backfillInvocation !== false || report?.deliveryInvocation !== false
+  || !before || before.applyEligible !== true || before.currentMigrationRecorded !== false || before.currentMigrationActive !== false
+  || before.targetRelationsPresent !== 0 || !Number.isSafeInteger(before.targetRelationsAbsent) || before.targetRelationsAbsent < 1) {
+  throw new Error('ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_ADMISSION_DENIED');
+}
+NODE
+}
+
+sanitize_receipt() {
+  /usr/bin/node - "$1" "$2" "$3" "$RELEASE_SHA" "$4" <<'NODE'
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const [rawPath, receiptId, action, releaseSha, backupSha256] = process.argv.slice(2);
+const exact = (value, keys, code) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(code);
+  const actual = Object.keys(value).sort(); const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) throw new Error(code);
+};
+const summary = (value, code) => {
+  exact(value, ['prerequisitesReady','currentMigrationRecorded','currentMigrationActive','relationCollision','migrationReceiptCollision','schemaCompatible','schemaContractReady','applyEligible','schemaReady','runtimeReady','targetRelationsPresent','targetRelationsAbsent'], code);
+  for (const key of ['prerequisitesReady','currentMigrationRecorded','currentMigrationActive','relationCollision','migrationReceiptCollision','schemaCompatible','schemaContractReady','applyEligible','schemaReady','runtimeReady']) if (typeof value[key] !== 'boolean') throw new Error(code);
+  for (const key of ['targetRelationsPresent','targetRelationsAbsent']) if (!Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 16) throw new Error(code);
+  return value;
+};
+const canonical = (value) => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+};
+const report = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+exact(report, ['schemaVersion','action','target','migrationId','schemaOnly','writerInvocation','backfillInvocation','deliveryInvocation','productionMutationAllowed','statementsApplied','before','after'], 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_RECEIPT_INVALID');
+if (report.schemaVersion !== 1 || report.action !== action || report.target !== 'staging' || report.migrationId !== '20260910_atendimento_crm_core_identity_materialization_v1'
+  || report.schemaOnly !== true || report.writerInvocation !== false || report.backfillInvocation !== false || report.deliveryInvocation !== false || report.productionMutationAllowed !== false
+  || !Number.isSafeInteger(report.statementsApplied) || report.statementsApplied < 0 || (action === 'verify' && report.statementsApplied !== 0) || (action === 'apply' && report.statementsApplied < 1)) {
+  throw new Error('ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_RECEIPT_INVALID');
+}
+summary(report.before, 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_RECEIPT_INVALID');
+summary(report.after, 'ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_RECEIPT_INVALID');
+if (action === 'apply' && (!report.after.runtimeReady || !report.after.currentMigrationActive || report.after.targetRelationsAbsent !== 0)) throw new Error('ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_RECEIPT_INVALID');
+if (action === 'verify' && backupSha256 !== 'none') throw new Error('ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_RECEIPT_INVALID');
+if (action === 'apply' && !/^[0-9a-f]{64}$/.test(backupSha256)) throw new Error('ATENDIMENTO_CRM_CORE_IDENTITY_SCHEMA_STAGING_RECEIPT_INVALID');
+const unsigned = { schemaVersion: 1, contract: 'skincos/atendimento/crm-core-identity-schema-custody/v1', receiptId, action, releaseSha, target: 'staging', migrationId: report.migrationId, schemaOnly: true, statementsApplied: report.statementsApplied, backupSha256: backupSha256 === 'none' ? null : `sha256:${backupSha256}`, before: report.before, after: report.after, writerInvocation: false, backfillInvocation: false, deliveryInvocation: false, productionMutationAllowed: false, recordedAt: new Date().toISOString() };
+const receiptDigest = crypto.createHash('sha256').update(canonical(unsigned)).digest('hex');
+process.stdout.write(`${JSON.stringify({ ...unsigned, receiptDigest: `sha256:${receiptDigest}` })}\n`);
+NODE
+}
+
+[[ $# == 1 && ("$ACTION" == 'verify' || "$ACTION" == 'apply') ]] || { echo 'Identity schema custody action is invalid' >&2; exit 64; }
+assert_immutable_directory "$RELEASE_SOURCE"
+for required in "$RUNNER" "$RELEASE_VALIDATOR" "$CONTROL_VALIDATOR" "$BACKUP_SCRIPT" "$COORDINATION_ADAPTER" "$COORDINATION_CLOSURE"; do
+  assert_immutable_file "$required"
+done
+assert_private_state_root
+assert_private_migrator_config
+validate_release
+
+receipt_id="$(/usr/bin/node -e "const {randomUUID}=require('node:crypto'); process.stdout.write(randomUUID())")"
+[[ "$receipt_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || fail 'Identity schema receipt identifier is invalid'
+receipt_dir="$STATE_ROOT/$RELEASE_SHA"
+/usr/bin/install -d -o root -g root -m 0700 "$receipt_dir"
+receipt_raw="$(/usr/bin/mktemp "$receipt_dir/.identity-schema-raw.XXXXXX")"
+receipt_stage="$(/usr/bin/mktemp "$receipt_dir/.identity-schema-receipt.XXXXXX")"
+receipt_final="$receipt_dir/$receipt_id.json"
+coordination_acquired=0
+verify_raw=''
+cleanup() {
+  local status="$?"
+  trap - EXIT INT TERM
+  if [[ "$coordination_acquired" == '1' ]]; then native_coordination_cleanup || true; fi
+  /usr/bin/rm -f -- "$receipt_raw" "$receipt_stage" "$verify_raw"
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+if [[ "$ACTION" == 'apply' ]]; then
+  control_report="$(/usr/bin/env -i HOME=/root PATH="$SAFE_PATH" NODE_ENV=production /usr/bin/timeout --signal=KILL 60s /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA")"
+  [[ "$control_report" == *'"state":"maintenance"'* && "$control_report" == *'"readOnly":true'* && "$control_report" == *'"syntheticOnly":true'* ]] || fail 'Identity schema apply requires matching maintenance control'
+  if /usr/bin/systemctl is-active --quiet "$SERVICE"; then fail 'Identity schema apply requires the isolated staging runtime to be inactive'; fi
+  load_private_coordination_environment
+  unset GLOBAL_COORDINATION_MISSION_ID GLOBAL_COORDINATION_THREAD_ID GLOBAL_COORDINATION_ACTOR
+  export GLOBAL_COORDINATION_MISSION_ID='codex:skincos:atendimento-crm-core-identity-schema-staging'
+  export GLOBAL_COORDINATION_THREAD_ID="identity-schema-staging:$RELEASE_SHA"
+  export GLOBAL_COORDINATION_ACTOR='native-identity-schema-custody'
+  # shellcheck disable=SC1090
+  source "$COORDINATION_ADAPTER"
+  native_coordination_init deploy:atendimento:staging atendimento "$RELEASE_SHA" "$COORDINATION_CLOSURE" mutation
+  native_coordination_acquire "mini-pc:deploy:atendimento:staging:identity-schema:$RELEASE_SHA:$$" >/dev/null
+  coordination_acquired=1
+  native_coordination_check
+  verify_raw="$(/usr/bin/mktemp "$receipt_dir/.identity-schema-verify.XXXXXX")"
+  /usr/bin/chmod 0600 "$verify_raw"
+  run_schema verify > "$verify_raw"
+  assert_fresh_preflight "$verify_raw"
+  native_coordination_check
+  backup_report="$(/usr/bin/timeout --signal=KILL 300s /usr/bin/bash -p "$BACKUP_SCRIPT")"
+  [[ "$backup_report" =~ ^backup_created=true\ database=skincos_staging\ sha256=([0-9a-f]{64})\ private=true\ unique=true$ ]] || fail 'Identity schema backup did not satisfy the private checkpoint contract'
+  backup_sha256="${BASH_REMATCH[1]}"
+  native_coordination_check
+  run_schema apply > "$receipt_raw"
+  native_coordination_check
+else
+  backup_sha256='none'
+  run_schema verify > "$receipt_raw"
+fi
+
+/usr/bin/chmod 0600 "$receipt_raw"
+sanitize_receipt "$receipt_raw" "$receipt_id" "$ACTION" "$backup_sha256" > "$receipt_stage"
+/usr/bin/chown root:root "$receipt_stage"
+/usr/bin/chmod 0600 "$receipt_stage"
+[[ ! -e "$receipt_final" && ! -L "$receipt_final" ]] || fail 'Identity schema receipt collision'
+/usr/bin/mv -- "$receipt_stage" "$receipt_final"
+/usr/bin/rm -f -- "$receipt_raw" "$verify_raw"
+if [[ "$ACTION" == 'apply' ]]; then native_coordination_cleanup || fail 'Unable to release identity schema global coordination lease'; fi
+coordination_acquired=0
+trap - EXIT INT TERM
+/usr/bin/cat "$receipt_final"
