@@ -3,26 +3,28 @@ import {
   ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS as SHARED_ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS,
   createAtendimentoProjectionBackfillBatch as createSharedAtendimentoProjectionBackfillBatch,
 } from '../../../../shared/crm-auth/atendimentoProjectionBackfillBatch.js'
+import {
+  assertAtendimentoUnitScopedProjectionSource,
+  preflightAtendimentoProjectionSource,
+} from '../../../../shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js'
+
+// Keep the established exporter API stable while the neutral source-preflight
+// contract is owned by the registered shared CRM boundary.
+export {
+  ATENDIMENTO_CRM_PROJECTION_MAX_ROWS,
+  ATENDIMENTO_PROJECTION_EXPORTER_DATABASE,
+  ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL,
+  ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL,
+  ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
+  assertAtendimentoUnitScopedProjectionSource,
+  createAtendimentoUnitScopedProjectionSource,
+  preflightAtendimentoProjectionSource,
+} from '../../../../shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js'
 
 export const ATENDIMENTO_CRM_PROJECTION_EXPORTER_VERSION = 'atendimento/crm-core-projection-exporter/v2'
 export const CRM_PROJECTION_BACKFILL_BATCH_VERSION = 'skincos-crm/projection-backfill-batch/v2'
 export const ATENDIMENTO_PROJECTION_SCOPE = 'global-client-identities/v1'
-export const ATENDIMENTO_CRM_PROJECTION_MAX_ROWS = 10_000
 export const ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS = SHARED_ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS
-export const ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT = 'atendimento/crm-core/unit-scoped-projection-source/v1'
-
-export const ATENDIMENTO_PROJECTION_EXPORTER_DATABASE = Object.freeze({
-  database: 'skincos_clientes_production',
-  user: 'crm_core_projection_exporter',
-})
-
-export const ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL = `SELECT
-  current_database() AS database_name,
-  current_user AS current_user,
-  session_user AS session_user,
-  current_setting('transaction_read_only') AS transaction_read_only`
-
-export const ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL = 'SELECT transaction_timestamp()::timestamptz AS captured_at'
 
 // These retired v1 queries deliberately remain named as legacy evidence only.
 // They are never selected by this exporter: a v2 caller must inject an owner
@@ -52,13 +54,6 @@ const RELEASE_PATTERN = /^[0-9a-f]{40}$/
 const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{3,96}$/
 const UNIT_SLUG_PATTERN = /^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const SOURCE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{1,6})Z$/
-const SOURCE_QUERY_FORBIDDEN = /\b(?:alter|call|copy|create|delete|drop|grant|insert|merge|offset|revoke|truncate|update|vacuum)\b/i
-const REQUIRED_SOURCE_ALIAS_PATTERNS = Object.freeze({
-  id: /\bas\s+(?:"id"|id)\b/i,
-  updated_at: /\bas\s+(?:"updated_at"|updated_at)\b/i,
-  unit_slug: /\bas\s+(?:"unit_slug"|unit_slug)\b/i,
-  row_count: /\bas\s+(?:"row_count"|row_count)\b/i,
-})
 
 function fail(code) {
   throw new Error(code)
@@ -117,14 +112,6 @@ function keyId(value) {
   return normalized
 }
 
-function maximumRows(value) {
-  const normalized = value === undefined ? ATENDIMENTO_CRM_PROJECTION_MAX_ROWS : Number(value)
-  if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > ATENDIMENTO_CRM_PROJECTION_MAX_ROWS) {
-    fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_MAX_ROWS_INVALID')
-  }
-  return normalized
-}
-
 function maximumBatchRows(value) {
   const normalized = value === undefined ? ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS : Number(value)
   if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS) {
@@ -139,77 +126,6 @@ function unitSlug(value, code) {
   return normalized
 }
 
-function startsReadOnlyQuery(sql) {
-  let cursor = 0
-  while (cursor < sql.length) {
-    while (cursor < sql.length && /\s/.test(sql[cursor])) cursor += 1
-    if (!sql.startsWith('/*', cursor)) break
-    const commentEnd = sql.indexOf('*/', cursor + 2)
-    if (commentEnd < 0) return false
-    cursor = commentEnd + 2
-  }
-  return /^(?:select|with)\b/i.test(sql.slice(cursor))
-}
-
-function sourceQuery(value, code, requiredAliases = []) {
-  const sql = text(value, code)
-  if (
-    sql.length > 32_768
-    || sql.includes(';')
-    || SOURCE_QUERY_FORBIDDEN.test(sql)
-    || !startsReadOnlyQuery(sql)
-  ) fail(code)
-  for (const alias of requiredAliases) {
-    const pattern = REQUIRED_SOURCE_ALIAS_PATTERNS[alias]
-    if (!pattern || !pattern.test(sql)) fail(code)
-  }
-  return sql
-}
-
-function sourcePageQuery(value, code, { parameters, keyset = false } = {}) {
-  const sql = sourceQuery(value, code, ['id', 'updated_at', 'unit_slug'])
-  const actualParameters = [...sql.matchAll(/\$(\d+)\b/g)].map((match) => Number(match[1]))
-  const orderedTuple = /\border\s+by\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?updated_at\s+asc\s*,\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?id\s+asc\s*,\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?unit_slug\s+asc\s*\blimit\b/i
-  const keysetTuple = /\bwhere\b[\s\S]*?\bupdated_at\b[\s\S]*?\bid\b[\s\S]*?\bunit_slug\b/i
-  if (
-    !orderedTuple.test(sql)
-    || actualParameters.length === 0
-    || new Set(actualParameters).size !== actualParameters.length
-    || actualParameters.some((parameter) => !parameters.includes(parameter))
-    || parameters.some((parameter) => !actualParameters.includes(parameter))
-    || (keyset && !keysetTuple.test(sql))
-  ) fail(code)
-  return sql
-}
-
-/**
- * Validates a source owned by Atendimento. The export adapter does not know
- * how a global identity maps to units and intentionally offers no default SQL.
- * The owner must attest an immutable read-only query family that emits exactly
- * one row per canonical identity/unit membership.
- */
-export function assertAtendimentoUnitScopedProjectionSource(value) {
-  const source = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_REQUIRED')
-  exactKeys(source, ['contract', 'countSql', 'rowsSql', 'firstPageSql', 'nextPageSql'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID')
-  if (source.contract !== ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT) {
-    fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID')
-  }
-  return Object.freeze({
-    contract: ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
-    countSql: sourceQuery(source.countSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', ['row_count']),
-    rowsSql: sourcePageQuery(source.rowsSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', { parameters: [1] }),
-    firstPageSql: sourcePageQuery(source.firstPageSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', { parameters: [1] }),
-    nextPageSql: sourcePageQuery(source.nextPageSql, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_INVALID', {
-      parameters: [1, 2, 3, 4],
-      keyset: true,
-    }),
-  })
-}
-
-export function createAtendimentoUnitScopedProjectionSource(value) {
-  return assertAtendimentoUnitScopedProjectionSource(value)
-}
-
 export function assertAtendimentoProjectionExportTarget(value) {
   const target = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
   exactKeys(target, ['environment', 'release', 'artifactDigest'], 'ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
@@ -220,23 +136,6 @@ export function assertAtendimentoProjectionExportTarget(value) {
     fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_TARGET_INVALID')
   }
   return Object.freeze({ environment, release, artifactDigest })
-}
-
-function sourceIdentity(value) {
-  const identity = object(value, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_IDENTITY_INVALID')
-  const database = text(identity.database_name, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_IDENTITY_INVALID')
-  const currentUser = text(identity.current_user, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_IDENTITY_INVALID')
-  const sessionUser = text(identity.session_user, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_IDENTITY_INVALID')
-  const readOnly = text(identity.transaction_read_only, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_IDENTITY_INVALID').toLowerCase()
-  if (
-    database !== ATENDIMENTO_PROJECTION_EXPORTER_DATABASE.database
-    || currentUser !== ATENDIMENTO_PROJECTION_EXPORTER_DATABASE.user
-    || sessionUser !== ATENDIMENTO_PROJECTION_EXPORTER_DATABASE.user
-    || readOnly !== 'on'
-  ) {
-    fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_SOURCE_IDENTITY_UNSAFE')
-  }
-  return Object.freeze({ database, currentUser, sessionUser, readOnly })
 }
 
 export function assertAtendimentoProjectionSourceRow(value) {
@@ -292,30 +191,6 @@ function sourceRows(value, expectedCount) {
     identities.add(key)
   }
   return Object.freeze(rows)
-}
-
-/**
- * Attests an already-open source transaction before the owner-defined unit
- * mapping is selected. A missing source or a legacy two-column query fails
- * closed before any domain row is requested.
- */
-export async function preflightAtendimentoProjectionSource(client, { maxRows, source } = {}) {
-  if (!client || typeof client.query !== 'function') fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_CLIENT_INVALID')
-  const limit = maximumRows(maxRows)
-  const sourceDefinition = assertAtendimentoUnitScopedProjectionSource(source)
-
-  const identityResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL)
-  const identity = sourceIdentity(identityResult?.rows?.[0])
-
-  const snapshotResult = await client.query(ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL)
-  const capturedAt = timestamp(snapshotResult?.rows?.[0]?.captured_at, 'ATENDIMENTO_CRM_PROJECTION_EXPORT_SNAPSHOT_INVALID')
-
-  const countResult = await client.query(sourceDefinition.countSql)
-  const rowCount = Number(countResult?.rows?.[0]?.row_count)
-  if (!Number.isSafeInteger(rowCount) || rowCount < 0) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_COUNT_INVALID')
-  if (rowCount > limit) fail('ATENDIMENTO_CRM_PROJECTION_EXPORT_LIMIT_EXCEEDED')
-
-  return Object.freeze({ identity, capturedAt, rowCount, source: sourceDefinition })
 }
 
 function assertProjectionEvent(value) {

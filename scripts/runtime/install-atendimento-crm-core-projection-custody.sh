@@ -59,8 +59,9 @@ readonly PREFLIGHT_MODULE="$SOURCE_ROOT/crm/api/server/atendimento/projectionSou
 readonly EXPORTER_MODULE="$SOURCE_ROOT/integration/atendimento/crm-core-projection-exporter/src/atendimentoProjectionExporter.mjs"
 readonly SOURCE_MODULE="$SOURCE_ROOT/integration/atendimento/crm-core-projection-exporter/src/atendimentoConfirmedUnitScopedProjectionSource.mjs"
 readonly POLICY_MODULE="$SOURCE_ROOT/shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js"
+readonly SOURCE_CONTRACT_MODULE="$SOURCE_ROOT/shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js"
 readonly INSTALLER_SOURCE="$ROOT_DIR/scripts/runtime/install-atendimento-crm-core-projection-custody.sh"
-readonly REQUIRED_SOURCE_FILES=("$CLI" "$PREFLIGHT_MODULE" "$EXPORTER_MODULE" "$SOURCE_MODULE" "$POLICY_MODULE")
+readonly REQUIRED_SOURCE_FILES=("$CLI" "$PREFLIGHT_MODULE" "$EXPORTER_MODULE" "$SOURCE_MODULE" "$POLICY_MODULE" "$SOURCE_CONTRACT_MODULE")
 
 for required in "${REQUIRED_SOURCE_FILES[@]}"; do
   [[ -f "$required" && ! -L "$required" ]] || { echo "Required CRM projection preflight source is missing: $required" >&2; exit 78; }
@@ -73,6 +74,7 @@ done
 /usr/bin/bash -n "$INSTALLER_SOURCE"
 /usr/bin/node --check "$CLI"
 /usr/bin/node --check "$PREFLIGHT_MODULE"
+/usr/bin/node --check "$SOURCE_CONTRACT_MODULE"
 
 if [[ "$APPLY" != '1' ]]; then
   printf 'atendimento_crm_core_projection_custody_contract=valid action=%s config=%s apply=false\n' "$HELPER_ACTION" "$CONFIG_FILE"

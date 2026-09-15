@@ -2,14 +2,12 @@ import { createHash } from 'node:crypto'
 
 import {
     ATENDIMENTO_CRM_PROJECTION_MAX_ROWS,
-    ATENDIMENTO_PROJECTION_EXPORTER_DATABASE,
-    preflightAtendimentoProjectionSource,
-} from '../../../../integration/atendimento/crm-core-projection-exporter/src/atendimentoProjectionExporter.mjs'
-import {
     ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE,
     ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS,
     ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION,
-} from '../../../../integration/atendimento/crm-core-projection-exporter/src/atendimentoConfirmedUnitScopedProjectionSource.mjs'
+    ATENDIMENTO_PROJECTION_EXPORTER_DATABASE,
+    preflightAtendimentoProjectionSource,
+} from '../../../../shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js'
 import {
     ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS,
 } from '../../../../shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js'
