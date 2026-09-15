@@ -131,6 +131,13 @@ readonly CLI="\$RELEASE_SOURCE/crm/api/scripts/preflight-atendimento-crm-core-pr
 fail() { echo "\$1" >&2; exit 78; }
 [[ \$# == 1 && "\${1:-}" == "\$ACTION" ]] || { echo 'CRM projection custody action is invalid' >&2; exit 64; }
 [[ -d "\$RELEASE_SOURCE" && ! -L "\$RELEASE_SOURCE" && -f "\$CLI" && ! -L "\$CLI" ]] || fail 'CRM projection custody release is unavailable'
+release_metadata="\$(/usr/bin/stat -c '%u:%g:%a' -- "\$RELEASE_SOURCE" 2>/dev/null || true)"
+IFS=':' read -r release_uid release_gid release_mode <<<"\$release_metadata"
+[[ "\$release_uid" == '0' && "\$release_gid" == '0' && "\$release_mode" =~ ^[0-7]{3,4}$ && \$((8#\$release_mode & 18)) == 0 ]] || fail 'CRM projection custody release is not immutable'
+cli_metadata="\$(/usr/bin/stat -c '%u:%g:%a:%h' -- "\$CLI" 2>/dev/null || true)"
+IFS=':' read -r cli_uid cli_gid cli_mode cli_links <<<"\$cli_metadata"
+[[ "\$cli_uid" == '0' && "\$cli_gid" == '0' && "\$cli_links" == '1' && "\$cli_mode" =~ ^[0-7]{3,4}$ && \$((8#\$cli_mode & 18)) == 0 ]] || fail 'CRM projection custody release is not immutable'
+[[ -f "\$CONFIG_FILE" && ! -L "\$CONFIG_FILE" ]] || fail 'CRM projection exporter config must be a regular file'
 metadata="\$(/usr/bin/stat -c '%u:%g:%a:%h' -- "\$CONFIG_FILE" 2>/dev/null || true)"
 [[ "\$metadata" == '0:0:600:1' ]] || fail 'CRM projection exporter config must be root:root mode 0600'
 

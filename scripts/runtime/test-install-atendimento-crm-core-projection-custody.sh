@@ -17,6 +17,8 @@ grep -F -- "readonly CONFIG_FILE='/etc/skincos/crm-core-projection-exporter.env'
 grep -F -- 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY' "$PREFLIGHT" >/dev/null
 grep -F -- 'CRM_CORE_PROJECTION_EXPORTER_DATABASE_URL' "$INSTALLER" >/dev/null
 grep -F -- 'CRM_CORE_PROJECTION_EXPORTER_DATABASE_URL' "$CLI" >/dev/null
+grep -F -- 'CRM projection exporter config must be a regular file' "$INSTALLER" >/dev/null
+grep -F -- 'CRM projection custody release is not immutable' "$INSTALLER" >/dev/null
 grep -F -- 'sourceReadExecutionAllowed: false' "$PREFLIGHT" >/dev/null
 grep -F -- 'deliveryAllowed: false' "$PREFLIGHT" >/dev/null
 grep -F -- 'productionMutationAllowed: false' "$PREFLIGHT" >/dev/null
