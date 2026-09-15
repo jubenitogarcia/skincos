@@ -14,6 +14,7 @@ node --check "$SOURCE_CONTRACT"
 
 contract_output="$(bash "$INSTALLER")"
 grep -F -- 'atendimento_crm_core_projection_custody_contract=valid' <<<"$contract_output" >/dev/null
+grep -F -- "readonly HELPER='/usr/local/sbin/skincos-preflight-atendimento-crm-core-source-metadata'" "$INSTALLER" >/dev/null
 grep -F -- "readonly HELPER_ACTION='preflight-source-metadata'" "$INSTALLER" >/dev/null
 grep -F -- "readonly CONFIG_FILE='/etc/skincos/crm-core-projection-exporter.env'" "$INSTALLER" >/dev/null
 grep -F -- 'readonly SOURCE_CONTRACT_MODULE="$SOURCE_ROOT/shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.js"' "$INSTALLER" >/dev/null
@@ -34,6 +35,11 @@ grep -F -- 'legacyPublisherMutationAllowed: false' "$PREFLIGHT" >/dev/null
 
 if grep -Fq -- '0755 "$helper_stage"' "$INSTALLER"; then
   echo 'projection custody helper must not be world executable' >&2
+  exit 1
+fi
+
+if grep -Fq -- 'skincos-prepare-atendimento-crm-core-baseline' "$INSTALLER"; then
+  echo 'projection source preflight installer must not replace the staging baseline helper' >&2
   exit 1
 fi
 

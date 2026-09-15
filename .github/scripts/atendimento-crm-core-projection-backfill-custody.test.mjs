@@ -4,6 +4,10 @@ import fs from "node:fs";
 import test from "node:test";
 
 const workflow = fs.readFileSync(new URL("../workflows/atendimento-crm-core-projection-backfill.yml", import.meta.url), "utf8");
+const preflightInstaller = fs.readFileSync(new URL("../../scripts/runtime/install-atendimento-crm-core-projection-custody.sh", import.meta.url), "utf8");
+
+const BASELINE_HELPER = "/usr/local/sbin/skincos-prepare-atendimento-crm-core-baseline";
+const PREFLIGHT_HELPER = "/usr/local/sbin/skincos-preflight-atendimento-crm-core-source-metadata";
 
 const readLiteralRunBlock = (source, stepName) => {
   const stepMarker = `      - name: ${stepName}\n`;
@@ -68,6 +72,13 @@ test("backfill binds a short-lived signed authorization, a finite staging target
     "ATENDIMENTO_CRM_BACKFILL_CUSTODY_RECEIPT_SIGNING_PUBLIC_KEY",
   ]) assert.ok(workflow.includes(marker), marker);
   assert.doesNotMatch(workflow, /\bwrangler\b|pages deploy|workers deploy|d1 |secret put|systemctl|DATABASE_URL|ATENDIMENTO_CRM_BACKFILL_HMAC_KEY|CRM_STAGING_READBACK_RECEIPT_SIGNING_KEY/i);
+});
+
+test("the source metadata preflight installer cannot replace the external staging baseline helper", () => {
+  assert.ok(workflow.includes(`${BASELINE_HELPER} prepare-staging-baseline`));
+  assert.ok(preflightInstaller.includes(`readonly HELPER='${PREFLIGHT_HELPER}'`));
+  assert.ok(!preflightInstaller.includes(BASELINE_HELPER));
+  assert.doesNotMatch(preflightInstaller, /readonly HELPER_ACTION='prepare-staging-baseline'/);
 });
 
 test("only the validated sanitized receipt can be uploaded", () => {

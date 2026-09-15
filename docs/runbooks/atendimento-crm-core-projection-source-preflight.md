@@ -11,12 +11,24 @@ O único helper instalado é fixo e `root:root 0700`; somente o operador
 autorizado via `sudo` pode executá-lo:
 
 ```text
-sudo -n /usr/local/sbin/skincos-prepare-atendimento-crm-core-baseline preflight-source-metadata
+sudo -n /usr/local/sbin/skincos-preflight-atendimento-crm-core-source-metadata preflight-source-metadata
 ```
 
 Ele não aceita URL, arquivo, SQL, ambiente, target ou ação selecionável pelo
 chamador. A execução usa apenas o release imutável fixado na instalação e o
 arquivo privado root-only `/etc/skincos/crm-core-projection-exporter.env`.
+
+O helper de preflight tem um caminho próprio e nunca substitui
+`/usr/local/sbin/skincos-prepare-atendimento-crm-core-baseline`, reservado ao
+helper externo de custódia que o workflow de baseline chama com
+`prepare-staging-baseline`. O preflight não implementa essa ação, não consome
+autorizações de baseline e não pode preparar ou entregar pacotes.
+
+Se um host já tiver o caminho antigo apontando para o preflight, não o remova
+ou substitua automaticamente: a recuperação é um rollout root-owned separado
+que primeiro confirma a proveniência do helper de baseline externo e só então
+restaura sua ação literal. O instalador abaixo passa a escrever apenas o
+helper exclusivo de preflight.
 
 ## Fonte admitida
 
