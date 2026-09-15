@@ -29,6 +29,20 @@ backfill e o corte de produção continuam não autorizados e nenhum domínio es
 admitido para entrega agora. A disponibilidade de schema não substitui fonte
 canônica, recibos de lote, reconciliação ou rollback.
 
+## Rehearsal local sem GitHub Actions
+
+Quando não houver cota de Actions, execute `npm run
+atendimento:crm-core:synthetic-rehearsal` no checkout do monorepo. O comando
+roda apenas o fixture em memória de Atendimento e valida o contrato de
+admissão vigente. Ele não recebe credencial, endpoint, variável de ambiente,
+cliente PostgreSQL, payload real ou capacidade de publicar/deliver; produção e
+rota pública continuam recusadas antes de qualquer provider ser lido.
+
+O resultado é uma validação de ensaio, não um snapshot da fonte nem um recibo
+de backfill, switch de publisher ou aposentadoria do legado. O preflight real
+permanece dependente do principal PostgreSQL externo, somente leitura e
+atestado pelo owner.
+
 ## Limite por domínio
 
 | Domínio | Limite atual |
