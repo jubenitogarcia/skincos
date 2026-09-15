@@ -529,12 +529,14 @@ async function ensureRegistry(client) {
     )`)
 }
 
-export async function assertAtendimentoCrmCoreIdentityMaterializationDestination(client, databaseUrl, target) {
+export async function assertAtendimentoCrmCoreIdentityMaterializationDestination(client, databaseUrl, target, {
+    allowReadOnly = false,
+} = {}) {
     if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) {
         throw migrationError('ATENDIMENTO_CRM_CORE_IDENTITY_MATERIALIZATION_DESTINATION_UNSAFE')
     }
     try {
-        return await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+        return await assertAtendimentoMigrationDestination(client, databaseUrl, target, { allowReadOnly })
     } catch {
         throw migrationError('ATENDIMENTO_CRM_CORE_IDENTITY_MATERIALIZATION_DESTINATION_UNSAFE')
     }
@@ -569,7 +571,9 @@ export async function preflightAtendimentoCrmCoreIdentityMaterialization({
     try {
         await client.query('begin read only')
         transactionOpen = true
-        const destination = await assertAtendimentoCrmCoreIdentityMaterializationDestination(client, databaseUrl, target)
+        const destination = await assertAtendimentoCrmCoreIdentityMaterializationDestination(client, databaseUrl, target, {
+            allowReadOnly: true,
+        })
         const preflight = await inspectAtendimentoCrmCoreIdentityMaterializationPreflight(client)
         await client.query('commit')
         transactionOpen = false

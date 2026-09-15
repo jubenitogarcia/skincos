@@ -16,10 +16,13 @@ import {
     atendimentoCrmCoreIdentityComponentKey,
     atendimentoCrmCoreIdentityMaterializationMigrationPlan,
     evaluateAtendimentoCrmCoreIdentityMaterializationPreflight,
+    preflightAtendimentoCrmCoreIdentityMaterialization,
     reconcileAtendimentoCrmCoreIdentityLinks,
 } from '../crmCoreIdentityMaterializationMigration.js'
+import { assertAtendimentoMigrationDestination } from '../migrationDestination.js'
 
 const LOCAL_SOCKET_URL = 'postgresql:///skincos_crm_local?host=/var/run/postgresql'
+const PRODUCTION_MIGRATOR_URL = 'postgresql://skincos_clientes_migrator_login:test-password@127.0.0.1/skincos_clientes_production?sslmode=require&uselibpqcompat=true'
 const CLIENT_A = '11111111-1111-4111-8111-111111111111'
 const CLIENT_B = '22222222-2222-4222-8222-222222222222'
 const ATTENDANCE_A = '33333333-3333-4333-8333-333333333333'
@@ -281,6 +284,85 @@ test('applies only guarded schema DDL before recording the migration', async () 
     assert.match(source, /foreign key \(identity_id, source_id\)[\s\S]*crm_core_identities\(id, canonical_client_id\)/i)
     assert.match(source, /insert into crm_atendimento\.schema_migrations/i)
     assert.match(source, /commit/i)
+})
+
+test('admits the production migrator inside a read-only identity preflight without weakening migration applies', async () => {
+    const calls = []
+    let roleSwitched = false
+    let released = false
+    const client = {
+        async query(sql, params = []) {
+            calls.push({ sql, params })
+            if (sql === 'set role skincos_clientes_owner') {
+                roleSwitched = true
+                return { rows: [] }
+            }
+            if (/current_database\(\)/i.test(sql)) {
+                return {
+                    rows: [{
+                        database_name: 'skincos_clientes_production',
+                        database_user: roleSwitched ? 'skincos_clientes_owner' : 'skincos_clientes_migrator_login',
+                        session_user: 'skincos_clientes_migrator_login',
+                        read_only: 'on',
+                    }],
+                }
+            }
+            if (/select to_regclass\(\$1\)/i.test(sql)) {
+                return {
+                    rows: [Object.fromEntries(params.map((relation, index) => [
+                        `relation_${index}`,
+                        ATENDIMENTO_CRM_CORE_IDENTITY_PREREQUISITE_RELATIONS.includes(relation) || relation === 'crm_atendimento.schema_migrations'
+                            ? relation
+                            : null,
+                    ]))],
+                }
+            }
+            if (/from crm_atendimento\.schema_migrations/i.test(sql)) return { rows: [] }
+            return { rows: [], rowCount: 0 }
+        },
+        release() { released = true },
+    }
+    const pool = {
+        connect: async () => client,
+    }
+
+    const report = await preflightAtendimentoCrmCoreIdentityMaterialization({
+        pool,
+        databaseUrl: PRODUCTION_MIGRATOR_URL,
+        target: 'production',
+    })
+    assert.equal(report.destination.database, 'skincos_clientes_production')
+    assert.equal(report.destination.user, 'skincos_clientes_owner')
+    assert.equal(report.destination.sessionUser, 'skincos_clientes_migrator_login')
+    assert.equal(report.preflight.applyEligible, true)
+    assert.equal(released, true)
+    assert.deepEqual(calls.slice(0, 3).map(({ sql }) => sql), [
+        'begin read only',
+        "select current_database() as database_name, current_user as database_user,\n        session_user as session_user, current_setting('transaction_read_only') as read_only",
+        'set role skincos_clientes_owner',
+    ])
+    assert.ok(calls.some(({ sql }) => sql === 'commit'))
+
+    const writeClient = {
+        async query(sql) {
+            if (/current_database\(\)/i.test(sql)) {
+                return {
+                    rows: [{
+                        database_name: 'skincos_clientes_production',
+                        database_user: 'skincos_clientes_owner',
+                        session_user: 'skincos_clientes_migrator_login',
+                        read_only: 'on',
+                    }],
+                }
+            }
+            if (sql === 'set role skincos_clientes_owner') return { rows: [] }
+            return { rows: [] }
+        },
+    }
+    await assert.rejects(
+        () => assertAtendimentoMigrationDestination(writeClient, PRODUCTION_MIGRATOR_URL, 'production'),
+        /ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE/,
+    )
 })
 
 test('migration source and SQL companion contain neither broad-domain references nor name-derived identity shortcuts', async () => {
