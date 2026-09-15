@@ -57,7 +57,9 @@ export function isStrictAtendimentoMigrationDestination(databaseUrl, target = AT
     }
 }
 
-export async function assertAtendimentoMigrationDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+export async function assertAtendimentoMigrationDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL, {
+    allowReadOnly = false,
+} = {}) {
     if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) {
         throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE')
     }
@@ -89,7 +91,11 @@ export async function assertAtendimentoMigrationDestination(client, databaseUrl,
             session_user as session_user, current_setting('transaction_read_only') as read_only`)
     }
     const current = result.rows[0] || {}
-    if (current.database_name !== expected.database || current.database_user !== expected.user || current.session_user !== (managedTarget ? migratorUser : expected.user) || String(current.read_only).toLowerCase() === 'on') {
+    // Applying a migration must retain the write-capable guard. A caller that
+    // performs only admission inspection may opt into an explicit read-only
+    // transaction; the URL, authenticated session and controlled owner-role
+    // transition remain mandatory in both modes.
+    if (current.database_name !== expected.database || current.database_user !== expected.user || current.session_user !== (managedTarget ? migratorUser : expected.user) || (!allowReadOnly && String(current.read_only).toLowerCase() === 'on')) {
         throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE')
     }
     return { database: current.database_name, user: current.database_user, sessionUser: current.session_user, target }
