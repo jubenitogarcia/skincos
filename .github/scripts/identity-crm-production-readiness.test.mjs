@@ -62,14 +62,17 @@ function roleBindings(role) {
       { name: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ISSUER_ENABLED', type: 'plain_text', text: 'true' },
       { name: 'IDENTITY_CRM_DELIVERY_PRODUCTION_ROUTE_RECEIPT_RESOLVER_ENABLED', type: 'plain_text', text: 'false' },
     ];
-  return [...requiredRuntimeBindings(), ...roleFlags];
+  // Cloudflare exposes each active version's complete binding set. Keep the
+  // fixture representative so a version-level audit cannot inherit proof from
+  // the mutable Worker-wide settings or secret inventory.
+  return [...requiredRuntimeBindings(), ...requiredSecretInventory(), ...roleFlags];
 }
 
-function versionResponse(versionId, role) {
+function versionResponse(versionId, role, bindings = roleBindings(role)) {
   return cloudflareResponse({
     id: versionId,
     resources: {
-      bindings: roleBindings(role),
+      bindings,
     },
   });
 }
@@ -403,6 +406,47 @@ test('production readiness requires exact private-caller runtime bindings withou
     assert.ok(report.blockers.some((blocker) => blocker.startsWith('production Worker has required runtime bindings that are missing or incorrect:')));
     assert.doesNotMatch(JSON.stringify(report), /incorrect-caller/);
     assert.equal(report.cloudflare.workerSettings.requiredRuntimeBindings[expectedName], expectedStatus);
+  }
+});
+
+test('production readiness verifies required runtime and secret bindings on each active version', async () => {
+  for (const { versionId, role, mutate, expectedBlocker, verifyAudit } of [
+    {
+      versionId: resolverVersionId,
+      role: 'R',
+      mutate: (bindings) => bindings.filter((binding) => binding.name !== 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED'),
+      expectedBlocker: 'production Worker resolver R version has required runtime bindings that are missing or incorrect: IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED',
+      verifyAudit: (audit) => assert.equal(audit.requiredRuntimeBindings.IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ENABLED, 'missing'),
+    },
+    {
+      versionId: issuerVersionId,
+      role: 'I',
+      mutate: (bindings) => bindings.map((binding) => binding.name === 'IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY'
+        ? { ...binding, type: 'secret_text' }
+        : binding),
+      expectedBlocker: 'production Worker issuer I version has required secret bindings with incorrect types: IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY (expected secret_key)',
+      verifyAudit: (audit) => assert.equal(audit.secretInventory.types.IDENTITY_CRM_DELIVERY_PRODUCTION_SIGNING_KEY, 'secret_text'),
+    },
+  ]) {
+    const report = await runIdentityCrmProductionReadiness({
+      env: completeEnvironment(),
+      fetchImpl: async (url) => {
+        if (url === `${workerUrl}/versions/${versionId}`) return versionResponse(versionId, role, mutate(roleBindings(role)));
+        const workerResponse = completeWorkerResponse(url);
+        if (workerResponse) return workerResponse;
+        if (url === zonesUrl) return cloudflareResponse([{ id: zoneId, account: { id: accountId } }]);
+        if (url === routesUrl || url === domainsUrl) return cloudflareResponse([]);
+        throw new Error(`unexpected URL ${url}`);
+      },
+    });
+    assert.equal(report.result, 'blocked');
+    assert.ok(report.blockers.includes(expectedBlocker));
+    const entry = report.cloudflare.versionBindingAudit.entries.find((candidate) => candidate.versionId === versionId);
+    assert.equal(entry.state, 'available');
+    assert.equal(entry.audit.role, role);
+    verifyAudit(entry.audit);
+    assert.equal(JSON.stringify(report).includes('incorrect-caller'), false);
+    assert.equal(entry.audit.secretInventory.valuesReadOrEmitted, false);
   }
 });
 

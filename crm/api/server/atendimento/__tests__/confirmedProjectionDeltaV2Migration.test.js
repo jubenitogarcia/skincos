@@ -9,8 +9,12 @@ import {
   CONFIRMED_PROJECTION_DELTA_V2_MEMBERSHIP_RELATION,
   CONFIRMED_PROJECTION_DELTA_V2_OUTBOX_RELATION,
   ATENDIMENTO_CONFIRMED_PROJECTION_DELTA_V2_SOURCE_SQL,
+  __testables as migrationTestables,
+  acceptConfirmedProjectionDeltaV2Baseline,
   applyConfirmedProjectionDeltaV2Migration,
   confirmedProjectionDeltaV2MigrationPlan,
+  loadConfirmedProjectionDeltaV2BaselineCustody,
+  markConfirmedProjectionDeltaV2Ready,
   reconcileConfirmedProjectionDeltaV2,
 } from '../confirmedProjectionDeltaV2Migration.js'
 import {
@@ -20,6 +24,7 @@ import {
 import {
   ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_READBACK_CONTRACT,
   ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_RECEIPT_CONTRACT,
+  ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_STATES,
   acceptAtendimentoConfirmedProjectionBaselineV2,
   createAtendimentoConfirmedProjectionBaselineV2Backfill,
   createAtendimentoConfirmedProjectionBaselineV2Batch,
@@ -36,6 +41,7 @@ import {
 } from '../../../../../shared/crm-auth/atendimentoConfirmedProjectionDeltaV2.js'
 
 const PRODUCTION_URL = 'postgresql://skincos_clientes_migrator_login:test-only-password@127.0.0.1:5432/skincos_clientes_production?sslmode=require&uselibpqcompat=true'
+const STAGING_URL = 'postgresql://skincos_staging_migrator_login:test-only-password@127.0.0.1:5432/skincos_staging?sslmode=require&uselibpqcompat=true'
 const TARGET = Object.freeze({ environment: 'staging', release: 'a'.repeat(40), artifactDigest: `sha256:${'b'.repeat(64)}` })
 const HMAC_KEY = `confirmed-projection-migration-v2-test-${'x'.repeat(40)}`
 const SOURCE_ROW = Object.freeze({ identity_id: '22222222-2222-4222-8222-222222222222', unit_slug: 'jardins', observed_at: '2026-09-14T12:00:00.000Z' })
@@ -53,6 +59,28 @@ function productionDestinationClient(handler) {
           database_name: 'skincos_clientes_production',
           database_user: ownerActive ? 'skincos_clientes_owner' : 'skincos_clientes_migrator_login',
           session_user: 'skincos_clientes_migrator_login',
+          read_only: 'off',
+        }] }
+      }
+      return handler(sql, params)
+    },
+    release() {},
+  }
+}
+
+function stagingDestinationClient(handler) {
+  let ownerActive = false
+  return {
+    async query(sql, params = []) {
+      if (/set role skincos_staging_crm_owner/i.test(sql)) {
+        ownerActive = true
+        return { rows: [] }
+      }
+      if (/current_database\(\)/i.test(sql)) {
+        return { rows: [{
+          database_name: 'skincos_staging',
+          database_user: ownerActive ? 'skincos_staging_crm_owner' : 'skincos_staging_migrator_login',
+          session_user: 'skincos_staging_migrator_login',
           read_only: 'off',
         }] }
       }
@@ -98,7 +126,7 @@ function readyBaseline() {
     sourceProfileDigest: digestAtendimentoConfirmedProjectionDeltaV2SourceProfile(),
     target: TARGET,
   })
-  return { baseline, packets: [packet] }
+  return { source, prepared, accepted, baseline, packets: [packet] }
 }
 
 function storedHandoff({ baseline, packets }) {
@@ -150,6 +178,70 @@ test('applies only additive state plus read-only exporter grants in a guarded pr
   assert.ok(calls.some(({ sql }) => new RegExp(`create table if not exists ${CONFIRMED_PROJECTION_DELTA_V2_OUTBOX_RELATION.replace('.', '\\.')}\\b`, 'i').test(sql)))
   assert.ok(calls.some(({ sql }) => /grant select .*crm_core_confirmed_projection_delta_v2_outbox to crm_core_projection_exporter/i.test(sql)))
   assert.equal(calls.some(({ sql }) => /grant (?:insert|update|delete|all)/i.test(sql)), false)
+})
+
+test('permits the same schema-only migration through the strict staging destination', async () => {
+  const client = stagingDestinationClient(async (sql) => {
+    if (/to_regclass/i.test(sql)) return { rows: [{ relation_0: true, relation_1: true, relation_2: true, relation_3: true, relation_4: true }] }
+    return { rows: [], rowCount: 0 }
+  })
+  const report = await applyConfirmedProjectionDeltaV2Migration({ pool: { connect: async () => client }, databaseUrl: STAGING_URL, target: 'staging' })
+  assert.equal(report.applied, true)
+  assert.equal(report.target, 'staging')
+  assert.equal(report.database, 'skincos_staging')
+  assert.equal(report.runtimeRole, 'skincos_staging_crm_app')
+})
+
+test('pins the canonical source profile while deriving packets and preserves transitioned baseline custody', async () => {
+  const { source, prepared, accepted, baseline: ready, packets } = readyBaseline()
+  const derived = migrationTestables.deriveBatches({
+    rows: [{ identityId: SOURCE_ROW.identity_id, unitSlug: SOURCE_ROW.unit_slug, observedAt: SOURCE_ROW.observed_at }],
+    capturedAt: '2026-09-14T12:01:00.000Z',
+    source,
+    target: TARGET,
+    hmacKey: HMAC_KEY,
+  })
+  assert.equal(derived.packets[0].sourceProfile.digest, digestAtendimentoConfirmedProjectionDeltaV2SourceProfile())
+
+  const acceptedResult = await acceptConfirmedProjectionDeltaV2Baseline({
+    pool: { connect: async () => productionDestinationClient(async (sql) => {
+      if (new RegExp(`from ${CONFIRMED_PROJECTION_DELTA_V2_HANDOFF_RELATION.replace('.', '\\.')}`, 'i').test(sql)) return { rows: [storedHandoff({ baseline: prepared, packets })] }
+      return { rows: [], rowCount: 0 }
+    }) },
+    databaseUrl: PRODUCTION_URL,
+    target: 'production',
+    baseline: prepared,
+    receipt: accepted.receipts,
+  })
+  assert.equal(acceptedResult.baseline.state, ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_STATES.ACCEPTED)
+  assert.equal(Object.hasOwn(acceptedResult, 'packets'), false)
+  assert.equal(acceptedResult.binding.baselineDigest, digestAtendimentoConfirmedProjectionBaselineV2(acceptedResult.baseline))
+
+  const readyResult = await markConfirmedProjectionDeltaV2Ready({
+    pool: { connect: async () => productionDestinationClient(async (sql) => {
+      if (new RegExp(`from ${CONFIRMED_PROJECTION_DELTA_V2_HANDOFF_RELATION.replace('.', '\\.')}`, 'i').test(sql)) return { rows: [storedHandoff({ baseline: accepted, packets })] }
+      return { rows: [], rowCount: 0 }
+    }) },
+    databaseUrl: PRODUCTION_URL,
+    target: 'production',
+    baseline: acceptedResult.baseline,
+    readback: ready.readback,
+  })
+  assert.equal(readyResult.baseline.state, ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_STATES.READY)
+  assert.equal(Object.hasOwn(readyResult, 'packets'), false)
+
+  for (const baseline of [prepared, acceptedResult.baseline, readyResult.baseline]) {
+    const loaded = await loadConfirmedProjectionDeltaV2BaselineCustody({
+      pool: { connect: async () => productionDestinationClient(async (sql) => {
+        if (new RegExp(`from ${CONFIRMED_PROJECTION_DELTA_V2_HANDOFF_RELATION.replace('.', '\\.')}`, 'i').test(sql)) return { rows: [storedHandoff({ baseline, packets })] }
+        return { rows: [], rowCount: 0 }
+      }) },
+      databaseUrl: PRODUCTION_URL,
+      target: 'production',
+    })
+    assert.equal(loaded.baseline.state, baseline.state)
+    assert.deepEqual(loaded.packets, packets)
+  }
 })
 
 test('refuses an unadmitted new unit before writing membership or outbox state', async () => {

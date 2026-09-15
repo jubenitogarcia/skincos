@@ -112,8 +112,13 @@ function requestId(value, code) {
   return normalized
 }
 
-function nextRequestId(batchCount) {
-  const sequence = nonNegativeInteger(batchCount, 'ATENDIMENTO_CONFIRMED_PROJECTION_DELTA_V2_REQUEST_ID_INVALID') + 1
+function nextRequestId(toInclusive) {
+  // A source event-order is monotonic and each submitted batch closes at a
+  // distinct order. Unlike the per-run batch counter, it survives reopening a
+  // completed checkpoint, so a recipient never sees the same request ID for a
+  // later source batch.
+  const sequence = nonNegativeInteger(toInclusive, 'ATENDIMENTO_CONFIRMED_PROJECTION_DELTA_V2_REQUEST_ID_INVALID')
+  if (sequence < 1) fail('ATENDIMENTO_CONFIRMED_PROJECTION_DELTA_V2_REQUEST_ID_INVALID')
   return requestId(`${REQUEST_ID_PREFIX}${String(sequence).padStart(6, '0')}`, 'ATENDIMENTO_CONFIRMED_PROJECTION_DELTA_V2_REQUEST_ID_INVALID')
 }
 
@@ -281,7 +286,7 @@ export function createPaginatedAtendimentoConfirmedProjectionDeltaV2Runner({ poo
           if (delivery.keyId !== deltaKeyId
             || delivery.batchDigest !== digestAtendimentoConfirmedProjectionDeltaV2Batch(batch)
             || delivery.sourceProfileDigest !== binding.sourceProfile.digest) fail('ATENDIMENTO_CONFIRMED_PROJECTION_DELTA_V2_DELIVERY_MISMATCH')
-          const pending = Object.freeze({ batch, delivery, requestId: nextRequestId(state.progress.batchCount) })
+          const pending = Object.freeze({ batch, delivery, requestId: nextRequestId(batch.sourceDelta.toInclusive) })
           state = checkpointWithFingerprint({ checkpoint: state, hmacKey: hmacKeyValue, pending })
           await write(store, state)
           const receipt = await deliveryTransport.deliver(pending)

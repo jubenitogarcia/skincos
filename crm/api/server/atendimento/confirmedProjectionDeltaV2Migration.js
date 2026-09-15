@@ -388,7 +388,25 @@ function deriveBatches({ rows, capturedAt, source, target, hmacKey }) {
         eventCount: ordered.length,
         unitSlugs: [...new Set(ordered.map((row) => row.unitSlug))].sort(),
     })
-    return Object.freeze({ backfill, packets: assertBaselinePackets({ baseline: { backfill, source, target, snapshot: { capturedAt } }, packets }) })
+    return Object.freeze({
+        backfill,
+        // Packet validation is part of the same custody boundary as the
+        // prepared baseline. Keep the canonical v2 source-profile pin here;
+        // omitting it made a newly derived packet fail closed before it could
+        // be persisted, even though the packet itself was correctly pinned.
+        packets: assertBaselinePackets({
+            baseline: {
+                backfill,
+                source,
+                sourceProfile: createAtendimentoConfirmedProjectionDeltaV2SourceProfilePin(
+                    ATENDIMENTO_CONFIRMED_PROJECTION_DELTA_V2_SOURCE_PROFILE,
+                ),
+                target,
+                snapshot: { capturedAt },
+            },
+            packets,
+        }),
+    })
 }
 
 async function readHandoff(client, { forUpdate = false } = {}) {
@@ -532,7 +550,18 @@ export async function loadConfirmedProjectionDeltaV2BaselineCustody({ pool, data
         transactionOpen = true
         await client.query('select pg_advisory_xact_lock(hashtext($1))', ['crm-core-confirmed-projection-delta:v2'])
         await assertDestination(client, databaseUrl, target)
-        const stored = storedHandoff(await readHandoff(client, { forUpdate: true }), ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_STATES.PREPARED)
+        const handoff = await readHandoff(client, { forUpdate: true })
+        const custodyState = handoff?.state
+        if (![ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_STATES.PREPARED,
+            ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_STATES.ACCEPTED,
+            ATENDIMENTO_CONFIRMED_PROJECTION_BASELINE_V2_STATES.READY].includes(custodyState)) {
+            throw migrationError('CONFIRMED_PROJECTION_DELTA_V2_BASELINE_STATE_CONFLICT')
+        }
+        // An accepted or ready baseline remains the exact same custodial
+        // artifact, with additive receipt/readback evidence. Operators must
+        // be able to reload it without reconstructing a baseline from a
+        // stale prior command result.
+        const stored = storedHandoff(handoff, custodyState)
         await client.query('commit')
         transactionOpen = false
         return Object.freeze({ baseline: stored.baseline, packets: stored.packets, binding: baselineBinding(stored.baseline, stored.profile), pii: false })
@@ -564,7 +593,16 @@ export async function acceptConfirmedProjectionDeltaV2Baseline({ pool, databaseU
                 accepted_at = $6::timestamptz, updated_at = clock_timestamp() where handoff_key = $7`, [accepted.state, digestAtendimentoConfirmedProjectionBaselineV2(accepted), JSON.stringify(accepted), `accepted=${accepted.receipts.filter((entry) => entry.status === 'accepted').length};idempotent=${accepted.receipts.filter((entry) => entry.status === 'idempotent').length}`, accepted.receipts.length, now instanceof Date ? now.toISOString() : String(now), CONFIRMED_PROJECTION_DELTA_V2_HANDOFF_KEY])
         await client.query('commit')
         transactionOpen = false
-        return Object.freeze({ baseline: baselineBinding(accepted, stored.profile), atomic: true, pii: false })
+        // Return the transitioned baseline, rather than only its opaque
+        // binding, so this accepted result can be supplied directly to the
+        // following --ready transition. Packets remain available through the
+        // custody loader without unnecessarily widening transition output.
+        return Object.freeze({
+            baseline: accepted,
+            binding: baselineBinding(accepted, stored.profile),
+            atomic: true,
+            pii: false,
+        })
     } catch (error) {
         if (transactionOpen) {
             try { await client.query('rollback') } catch { /* preserve the primary failure */ }
@@ -593,7 +631,12 @@ export async function markConfirmedProjectionDeltaV2Ready({ pool, databaseUrl, t
                 readback_watermark = $5, ready_at = $6::timestamptz, updated_at = clock_timestamp() where handoff_key = $7`, [ready.state, digestAtendimentoConfirmedProjectionBaselineV2(ready), JSON.stringify(ready), ready.readback.membershipDigest, ready.readback.watermark, now instanceof Date ? now.toISOString() : String(now), CONFIRMED_PROJECTION_DELTA_V2_HANDOFF_KEY])
         await client.query('commit')
         transactionOpen = false
-        return Object.freeze({ baseline: baselineBinding(ready, stored.profile), atomic: true, pii: false })
+        return Object.freeze({
+            baseline: ready,
+            binding: baselineBinding(ready, stored.profile),
+            atomic: true,
+            pii: false,
+        })
     } catch (error) {
         if (transactionOpen) {
             try { await client.query('rollback') } catch { /* preserve the primary failure */ }

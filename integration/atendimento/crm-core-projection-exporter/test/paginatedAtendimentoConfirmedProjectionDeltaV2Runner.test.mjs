@@ -179,6 +179,10 @@ test('starts a fresh high-watermark after a completed checkpoint and only emits 
   assert.equal(delivered[1].batch.sourceDelta.fromExclusive, 1)
   assert.equal(delivered[1].batch.sourceDelta.toInclusive, 2)
   assert.equal(delivered[1].batch.events[0].revision, 3)
+  assert.deepEqual(delivered.map((pending) => pending.requestId), [
+    'crm-atendimento-confirmed-delta-v2-000001',
+    'crm-atendimento-confirmed-delta-v2-000002',
+  ])
 })
 
 test('replays a persisted pending packet exactly once after interrupted delivery', async () => {

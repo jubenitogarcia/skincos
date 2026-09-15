@@ -343,6 +343,25 @@ function hasExactKeyMetadata(actual, expected) {
     && actual.usages.every((usage, index) => usage === expected.usages[index]);
 }
 
+function requiredVersionBindingFailures(audit) {
+  const requiredRuntimeBindings = audit?.requiredRuntimeBindings || {};
+  const secretInventory = audit?.secretInventory || {
+    names: [], types: {}, keyMetadata: {},
+  };
+  return {
+    wrongRuntimeBindings: Object.keys(REQUIRED_PRODUCTION_RUNTIME_BINDINGS)
+      .filter((name) => requiredRuntimeBindings[name] !== 'matches'),
+    missingSecretNames: REQUIRED_PRODUCTION_SECRET_NAMES
+      .filter((name) => !secretInventory.names.includes(name)),
+    wrongSecretTypes: Object.entries(REQUIRED_PRODUCTION_SECRET_TYPES)
+      .filter(([name, expectedType]) => secretInventory.types[name] !== expectedType)
+      .map(([name, expectedType]) => `${name} (expected ${expectedType})`),
+    wrongSecretKeyMetadata: Object.entries(REQUIRED_PRODUCTION_SECRET_KEY_METADATA)
+      .filter(([name, expected]) => !hasExactKeyMetadata(secretInventory.keyMetadata[name], expected))
+      .map(([name, expected]) => `${name} (expected ${expected.algorithm} with usages ${expected.usages.join(', ')})`),
+  };
+}
+
 export function sanitizeRoutes(value, workerName, zoneCount = 0) {
   const entries = resultArray(value, 'routes');
   const matches = entries
@@ -657,6 +676,25 @@ export function evaluateIdentityCrmProductionReadiness({
     blockers.push('production Worker does not identify exactly one resolver R and issuer I version');
   } else if (versionBindingAudit.roles.R.percentage !== 100 || versionBindingAudit.roles.I.percentage !== 0) {
     blockers.push('production Worker must keep resolver R at 100% and issuer I at 0% for the private version override');
+  } else {
+    for (const [role, label] of [['R', 'resolver R'], ['I', 'issuer I']]) {
+      const assignment = versionBindingAudit.roles[role];
+      const entry = versionBindingAudit.entries.find((candidate) => candidate.versionId === assignment.versionId
+        && candidate.audit?.role === role && candidate.audit.versionIdMatches);
+      const failures = requiredVersionBindingFailures(entry?.audit);
+      if (failures.wrongRuntimeBindings.length > 0) {
+        blockers.push(`production Worker ${label} version has required runtime bindings that are missing or incorrect: ${failures.wrongRuntimeBindings.join(', ')}`);
+      }
+      if (failures.missingSecretNames.length > 0) {
+        blockers.push(`production Worker ${label} version is missing required secret names: ${failures.missingSecretNames.join(', ')}`);
+      }
+      if (failures.wrongSecretTypes.length > 0) {
+        blockers.push(`production Worker ${label} version has required secret bindings with incorrect types: ${failures.wrongSecretTypes.join(', ')}`);
+      }
+      if (failures.wrongSecretKeyMetadata.length > 0) {
+        blockers.push(`production Worker ${label} version has required secret-key metadata: ${failures.wrongSecretKeyMetadata.join(', ')}`);
+      }
+    }
   }
   if (!hasAvailableEndpoint(worker?.secrets)) {
     blockers.push('production Worker secret inventory could not be read');
