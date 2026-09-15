@@ -41,6 +41,27 @@ que a custódia externa apresenta os nomes e tipos esperados. A chave de emissã
 precisa ser Ed25519 somente para assinatura; seu valor nunca é lido nem salvo
 no GitHub.
 
+### Estado obrigatório: `candidate-inert`
+
+O readback de Identity usado por este workflow recebe explicitamente o alvo
+`candidate-inert`. Para ser aceito, ele precisa devolver
+`result`, `state`, `targetState` e `candidateState` como `candidate-inert`, e
+`activationState=not-authorized`. Além das superfícies públicas vazias, isso
+prova que os switches de entrega, issuer e resolvedor continuam
+desligados no candidato privado. Esse é um estado de custódia e configuração;
+não cria versão, deployment, rota, tráfego nem autorização de publisher.
+
+Esse estado também exige ausência de deployment e do segredo de recibo de rota.
+Ele não tenta inferir `R`, `I`, caller, chave de emissão, replay ou receipt a
+partir de um candidato inerte: essas evidências pertencem exclusivamente ao
+gate posterior `activation-ready`. Uma versão já em deployment ou com o
+recibo de rota presente deixa de ser `candidate-inert` e bloqueia o preflight.
+
+`activation-ready` é um estado diferente, reservado a uma mudança futura e
+revisada de publisher. Mesmo se um readback de Identity disser que está
+`activation-ready`, este preflight falha fechado: ele não pode transformar
+prontidão de ativação em permissão de ativar ou publicar.
+
 O novo workflow aceita exclusivamente `CRM_IDENTITY_READBACK_API_TOKEN` e
 `CRM_IDENTITY_READBACK_ACCOUNT_ID`, ambos como segredos do ambiente dedicado
 `crm-production-candidate-preflight` e destinados somente ao readback GET de
@@ -59,9 +80,9 @@ gravar o relatório sanitizado; não há modo permissivo.
 
 | Papel | Dono | Estado permitido por este preflight |
 | --- | --- | --- |
-| `I` | Identity no monorepo | Apenas plano para uma versão privada e inerta, sem rota ou tráfego. |
+| `I` | Identity no monorepo | `candidate-inert`: versão privada com switches desligados, sem rota ou tráfego. |
 | `C` | `jubenitogarcia/skincos-crm-core` | Deve ser criado e atestado pelo repositório independente; o monorepo não empacota nem publica Core. |
-| `G` | gateway `skincos-api` no monorepo | Apenas plano para versão privada e inerta, com os flags CRM ainda desligados. |
+| `G` | gateway `skincos-api` no monorepo | `candidate-inert`: plano para versão privada com os flags CRM ainda desligados. |
 
 O produtor que um dia criar `I` e `G` precisa ser uma mudança separada,
 revisada e protegida por ambiente de produção. Ele deve exigir uma fonte

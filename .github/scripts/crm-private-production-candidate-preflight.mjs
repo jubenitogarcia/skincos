@@ -11,6 +11,8 @@ export const SINGLE_WRITER_POLICY_PATH = '.github/governance/cloudflare-single-w
 export const IDENTITY_MANIFEST_PATH = 'identity/wrangler.production.toml';
 export const API_MANIFEST_PATH = 'api/wrangler.toml';
 export const PRIVATE_CANDIDATE_REQUEST_CONFIRMATION = 'request-private-inert-crm-candidates';
+export const IDENTITY_CANDIDATE_INERT_STATE = 'candidate-inert';
+export const IDENTITY_ACTIVATION_READY_STATE = 'activation-ready';
 
 const SHA = /^[0-9a-f]{40}$/i;
 const DIGEST = /^(?:sha256:)?[0-9a-f]{64}$/i;
@@ -184,6 +186,9 @@ function summarizeIdentityReadback(report) {
     : {};
   const secretTypes = inventory.types && typeof inventory.types === 'object' ? inventory.types : {};
   const keyMetadata = inventory.keyMetadata && typeof inventory.keyMetadata === 'object' ? inventory.keyMetadata : {};
+  const candidateEvidence = source.candidateInertEvidence && typeof source.candidateInertEvidence === 'object'
+    ? source.candidateInertEvidence
+    : {};
   const subdomain = cloudflare.subdomainReadback && typeof cloudflare.subdomainReadback === 'object'
     ? cloudflare.subdomainReadback
     : {};
@@ -202,6 +207,10 @@ function summarizeIdentityReadback(report) {
   return Object.freeze({
     readinessResult: safeIdentifier(source.result),
     readinessState: safeIdentifier(source.state),
+    targetState: safeIdentifier(source.targetState),
+    candidateState: safeIdentifier(source.candidateState),
+    activationState: safeIdentifier(source.activationState),
+    candidateInertProven: candidateEvidence.proven === true,
     owner: safeIdentifier(source.owner),
     readbackAvailable: source?.cloudflare?.credentials?.accountIdPresent === true
       && source?.cloudflare?.credentials?.apiTokenPresent === true,
@@ -234,24 +243,21 @@ function summarizeIdentityReadback(report) {
 
 function identityCustodyBlockers(summary) {
   const blockers = [];
-  if (summary.readinessResult !== 'eligible-for-approved-cutover' || summary.readinessState !== 'eligible') {
-    blockers.push('Identity production readiness is not eligible for the source-only candidate preflight');
+  if (summary.targetState !== IDENTITY_CANDIDATE_INERT_STATE
+    || summary.readinessResult !== IDENTITY_CANDIDATE_INERT_STATE
+    || summary.readinessState !== IDENTITY_CANDIDATE_INERT_STATE
+    || summary.candidateState !== IDENTITY_CANDIDATE_INERT_STATE
+    || !summary.candidateInertProven) {
+    blockers.push('Identity custody report does not prove the candidate-inert state required by the source-only preflight');
+  }
+  if (summary.activationState === IDENTITY_ACTIVATION_READY_STATE) {
+    blockers.push('Identity custody report is activation-ready; this source-only preflight admits only candidate-inert custody');
   }
   if (summary.owner !== 'Identity') blockers.push('Identity custody report does not identify the Identity owner');
   if (!summary.readbackAvailable) blockers.push('Identity Cloudflare custody readback is unavailable');
   if (summary.workerName !== 'skincos-identity-crm-delivery-production') {
     blockers.push('Identity readback is not for the canonical production Worker');
   }
-  for (const state of ['settings', 'secrets', 'subdomain', 'routeInventory', 'customDomains']) {
-    if (summary[state] !== 'available') blockers.push(`Identity ${state} readback is unavailable`);
-  }
-  if (!summary.workersDevDisabled) blockers.push('Identity workers.dev state is not proven disabled');
-  if (summary.routes !== 0) blockers.push('Identity route inventory is not proven empty');
-  if (summary.customDomainCount !== 0) blockers.push('Identity custom-domain inventory is not proven empty');
-  for (const [name, state] of Object.entries(summary.requiredSecrets)) {
-    if (state !== 'matches') blockers.push(`Identity custody lacks the required secret metadata for ${name}`);
-  }
-  if (!summary.signingKeyMetadataMatches) blockers.push('Identity signing key is not proven Ed25519 sign-only');
   if (summary.resolverReceiptSecretPresent) {
     blockers.push('Identity resolver receipt material is already present; I and R must remain separate');
   }
@@ -402,7 +408,8 @@ export function evaluateCrmPrivateProductionCandidatePreflight({
       I: {
         owner: 'monorepo/Identity',
         worker: 'skincos-identity-crm-delivery-production',
-        state: 'future-private-inert-version-only',
+        state: IDENTITY_CANDIDATE_INERT_STATE,
+        activationState: 'not-authorized',
         publicTraffic: 'forbidden',
       },
       C: {
@@ -414,7 +421,8 @@ export function evaluateCrmPrivateProductionCandidatePreflight({
       G: {
         owner: 'monorepo/API',
         worker: 'skincos-api',
-        state: 'future-private-inert-version-only',
+        state: IDENTITY_CANDIDATE_INERT_STATE,
+        activationState: 'not-authorized',
         publicTraffic: 'forbidden',
       },
     },
