@@ -168,9 +168,9 @@ exec /usr/bin/env -i \\
   /usr/bin/node "\$CLI"
 EOF
 
-/usr/bin/chmod 0755 "$helper_stage"
+/usr/bin/chmod 0700 "$helper_stage"
 /usr/bin/bash -n "$helper_stage"
-/usr/bin/install -o root -g root -m 0755 "$helper_stage" "$HELPER"
+/usr/bin/install -o root -g root -m 0700 "$helper_stage" "$HELPER"
 /usr/bin/rm -f -- "$helper_stage"
 trap - EXIT INT TERM
 

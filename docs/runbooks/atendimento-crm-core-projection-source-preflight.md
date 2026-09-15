@@ -7,10 +7,11 @@ Atendimento antes de qualquer baseline. Ele não é um backfill, não entrega
 eventos, não cria credenciais, não altera PostgreSQL, D1, Cloudflare, Pages,
 rotas, flags, serviços ou writers legados.
 
-O único helper instalado é fixo:
+O único helper instalado é fixo e `root:root 0700`; somente o operador
+autorizado via `sudo` pode executá-lo:
 
 ```text
-/usr/local/sbin/skincos-prepare-atendimento-crm-core-baseline preflight-source-metadata
+sudo -n /usr/local/sbin/skincos-prepare-atendimento-crm-core-baseline preflight-source-metadata
 ```
 
 Ele não aceita URL, arquivo, SQL, ambiente, target ou ação selecionável pelo
@@ -64,7 +65,8 @@ CRM_CORE_PROJECTION_EXPORTER_DATABASE_URL=<credencial dedicada>
 ```
 
 O valor nunca entra em Git, log, recibo ou conversa. A execução local do Codex
-é então feita pelo helper fixo acima; não depende de GitHub Actions.
+é então feita pelo helper fixo acima, exclusivamente pelo operador com `sudo`;
+não depende de GitHub Actions.
 
 Se o preflight gerar recibo válido, ainda faltam a custódia de assinatura,
 baseline por unidade para staging, entrega/reconciliação, candidatos imutáveis
