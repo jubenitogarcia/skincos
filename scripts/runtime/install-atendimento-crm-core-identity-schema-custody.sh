@@ -182,7 +182,7 @@ rollback_dir="$(/usr/bin/mktemp -d /var/tmp/skincos-atendimento-identity-schema-
 /usr/bin/chmod 0700 "$rollback_dir"
 
 snapshot_target() {
-  local target="$1" snapshot="$2" expected_mode="$3" metadata
+  local target="$1" snapshot="$2" expected_mode="$3" expected_stat_mode metadata
   if [[ ! -e "$target" && ! -L "$target" ]]; then
     printf '0'
     return 0
@@ -191,8 +191,15 @@ snapshot_target() {
     echo "Existing identity schema custody target is unsafe: $target" >&2
     exit 78
   }
+  # GNU stat renders an octal mode without the leading zero accepted by
+  # install(1), so normalize the fixed installer literal before comparing it.
+  expected_stat_mode="${expected_mode#0}"
+  [[ "$expected_stat_mode" =~ ^[0-7]{3,4}$ ]] || {
+    echo "Expected identity schema custody mode is invalid: $expected_mode" >&2
+    exit 78
+  }
   metadata="$(/usr/bin/stat -c '%u:%g:%a:%h' -- "$target")"
-  [[ "$metadata" == "0:0:$expected_mode:1" ]] || {
+  [[ "$metadata" == "0:0:$expected_stat_mode:1" ]] || {
     echo "Existing identity schema custody target has unsafe metadata: $target" >&2
     exit 78
   }
