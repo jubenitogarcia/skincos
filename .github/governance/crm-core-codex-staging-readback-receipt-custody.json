@@ -1,0 +1,74 @@
+{
+  "contract": "skincos/crm-core-codex-staging-readback-receipt-custody/v1",
+  "state": "active",
+  "source": {
+    "repository": "jubenitogarcia/skincos-crm-core",
+    "repositoryId": "1353934107",
+    "ref": "refs/heads/main"
+  },
+  "core": {
+    "origin": "https://github.com/jubenitogarcia/skincos-crm-core.git",
+    "verifier": "scripts/verify-codex-staging-readback-receipt.mjs"
+  },
+  "receipt": {
+    "contract": "skincos-crm/codex-staging-readback-receipt/v1",
+    "custodyContract": "skincos-crm/codex-local-artifact-custody/v2",
+    "readbackOutputContract": "skincos-crm/codex-staging-readback-output/v1",
+    "signatureContract": "skincos-crm/codex-staging-readback-receipt-signature-metadata/v1",
+    "state": "verified-external-readback",
+    "environment": "staging",
+    "origin": "https://skincos-crm-core-staging.skincos.workers.dev",
+    "pagesEvidence": "external-console-readback",
+    "checks": [
+      "artifact-identity",
+      "health",
+      "readiness",
+      "public-health",
+      "public-readiness",
+      "modules-read-only",
+      "projection-route-auth-required",
+      "internal-route-rejected",
+      "inventory-fallback-rejected",
+      "unknown-route-rejected",
+      "write-surface-blocked",
+      "cors-origin-rejected",
+      "backfill-ingestion-disabled",
+      "session-requires-verified-identity"
+    ]
+  },
+  "audit": {
+    "contract": "skincos-crm/codex-staging-readback-private-audit/v1",
+    "externalSigner": "codex-local-custody",
+    "signatureAlgorithm": "Ed25519"
+  },
+  "authority": {
+    "deploymentAuthorized": false,
+    "productionAuthorized": false,
+    "domainChangeAuthorized": false,
+    "backfillAuthorized": false,
+    "legacyRetirementAuthorized": false
+  },
+  "keyRing": {
+    "activeKeyId": "crm-core-staging-readback-20260914",
+    "acceptedKeyIds": [
+      "crm-core-staging-readback-20260914"
+    ],
+    "publicKeys": {
+      "crm-core-staging-readback-20260914": {
+        "jwk": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "PUeFfAijyhaiQxjD1om5Ty7pv1k-HMiIgcjWRfh3Qi0"
+        },
+        "spkiFingerprint": "sha256:9b66592a07770d91cc1078e83879a9ef6a0fbf6c8c4b8a80ba9301b6106e37e7"
+      }
+    }
+  },
+  "prohibitions": [
+    "This Codex-local receipt is staging evidence only and never authorizes deployment, production, domain changes, data backfill, or legacy retirement.",
+    "All four receipt inputs remain regular files outside every Git worktree and are retained only in the private operator runtime.",
+    "The raw Ed25519 signature remains only in the external private audit file; no private key, raw signature, customer data, token, session, or credential enters Git.",
+    "The independent CRM Core verifier must revalidate the custody receipt and readback output from a clean Core checkout at the exact source SHA and tree.",
+    "This policy pins a public JWK and its SHA-256 SPKI fingerprint; GitHub Actions v1 custody remains a separate contract with separate key material."
+  ]
+}
