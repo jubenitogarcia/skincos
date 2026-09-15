@@ -124,7 +124,7 @@ function policyFor(keyPair, keyId) {
   }
 }
 
-function createCoreRoot(root, { failVerifier = false } = {}) {
+function createCoreRoot(root, { failVerifier = false, mutateOriginalFile = false } = {}) {
   const coreRoot = path.join(root, 'core')
   fs.mkdirSync(path.join(coreRoot, 'scripts'), { recursive: true })
   const verifier = `
@@ -145,6 +145,7 @@ if (values.get('--expected-sha') !== receipt.source.sha
   || values.get('--expected-tree') !== receipt.source.tree
   || values.get('--expected-external-signer') !== receipt.signature.externalSigner
   || values.get('--expected-public-key-fingerprint') !== receipt.signature.publicKeyFingerprint) process.exit(25)
+if (${mutateOriginalFile ? 'true' : 'false'}) fs.appendFileSync(process.env.CRM_CORE_TEST_MUTATE_RECEIPT, '\\n', 'utf8')
 process.stdout.write(JSON.stringify({
   ok: true,
   contract: receipt.contract,
@@ -165,11 +166,8 @@ process.stdout.write(JSON.stringify({
   git(coreRoot, ['config', 'commit.gpgSign', 'false'])
   git(coreRoot, ['add', '.'])
   git(coreRoot, ['commit', '-m', 'fixture core verifier'])
-  if (git(coreRoot, ['remote']).split(/\s+/).includes('origin')) {
-    git(coreRoot, ['remote', 'set-url', 'origin', 'https://github.com/jubenitogarcia/skincos-crm-core.git'])
-  } else {
-    git(coreRoot, ['remote', 'add', 'origin', 'https://github.com/jubenitogarcia/skincos-crm-core.git'])
-  }
+  git(coreRoot, ['remote', 'add', 'origin', 'https://github.com/jubenitogarcia/skincos-crm-core.git'])
+  git(coreRoot, ['update-ref', 'refs/remotes/origin/main', 'HEAD'])
   return coreRoot
 }
 
@@ -196,7 +194,10 @@ function createFixture(options = {}) {
     contract: 'skincos-crm/codex-local-artifact-custody/v2',
     state: 'verified-build-only',
     receiptId: custodyReceiptId,
-    source: { repository: 'jubenitogarcia/skincos-crm-core', repositoryId: '1353934107', ref: 'refs/heads/main', sha: sourceSha, tree: sourceTree },
+    source: {
+      repository: 'jubenitogarcia/skincos-crm-core', repositoryId: '1353934107', ref: 'refs/heads/main',
+      sha: sourceSha, tree: sourceTree, mainShaBefore: sourceSha, mainShaAfter: sourceSha,
+    },
     execution: { authority: 'codex-local', executionId, profile: 'staging', node: 'v22.12.0', npm: '10.9.0', fullHistory: true, cleanCheckout: true, reproducible: true },
     artifact: {
       manifest: 'release-artifact.json',
@@ -261,14 +262,16 @@ function createFixture(options = {}) {
   }
   const receiptFile = path.join(externalRoot, 'codex-staging-readback-receipt.json')
   writeJson(receiptFile, metadata)
+  const observedAt = '2026-09-14T22:00:00.000Z'
+  const auditStatement = { ...statement, observedAt }
   const audit = {
     contract: CRM_CORE_CODEX_STAGING_READBACK_AUDIT_CONTRACT,
-    statement: JSON.parse(JSON.stringify(statement)),
+    statement: JSON.parse(JSON.stringify(auditStatement)),
     signature: {
       algorithm: 'Ed25519',
       keyId,
       publicKeyFingerprint: policy.keyRing.publicKeys[keyId].spkiFingerprint,
-      value: crypto.sign(null, Buffer.from(canonicalCrmCoreCodexStagingReadbackJson(statement), 'utf8'), signing.privateKey).toString('base64url'),
+      value: crypto.sign(null, Buffer.from(canonicalCrmCoreCodexStagingReadbackJson(auditStatement), 'utf8'), signing.privateKey).toString('base64url'),
     },
     verified: true,
   }
@@ -285,6 +288,7 @@ function createFixture(options = {}) {
     auditFile,
     metadata,
     audit,
+    observedAt,
   }
 }
 
@@ -325,6 +329,7 @@ test('accepts the isolated Codex receipt only after the exact clean Core verifie
       workerDeploymentId: fixture.metadata.deployment.worker.deploymentId,
       pagesDeploymentId: null,
       readbackExecutionId: fixture.metadata.readback.executionId,
+      observationAt: fixture.observedAt,
       externalSigner: 'codex-local-custody',
       keyId: fixture.metadata.signature.keyId,
       publicKeyFingerprint: fixture.metadata.signature.publicKeyFingerprint,
@@ -383,6 +388,14 @@ test('rejects authority, metadata, audit, public-key, and raw-signature tamperin
       },
       code: 'SENSITIVE_KEY:audit.secret',
     },
+    {
+      name: 'audit observation time',
+      apply: (fixture) => {
+        fixture.audit.statement.observedAt = 'not-a-timestamp'
+        writeJson(fixture.auditFile, fixture.audit)
+      },
+      code: 'AUDIT_OBSERVED_AT_INVALID',
+    },
   ]
   const fixture = createFixture()
   try {
@@ -398,6 +411,36 @@ test('rejects authority, metadata, audit, public-key, and raw-signature tamperin
     }
   } finally {
     removeFixture(fixture)
+  }
+})
+
+test('pins the clean-clone main tuple and detects replacement after the Core verifier reads snapshots', () => {
+  const custodyMismatch = createFixture()
+  try {
+    const custody = JSON.parse(fs.readFileSync(custodyMismatch.custodyReceiptFile, 'utf8'))
+    custody.source.mainShaAfter = 'a'.repeat(40)
+    writeJson(custodyMismatch.custodyReceiptFile, custody)
+    assert.match(failure(verifyFixture(custodyMismatch)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CUSTODY_RECEIPT_MAIN_REF_INVALID/)
+  } finally {
+    removeFixture(custodyMismatch)
+  }
+
+  const trackedRefMismatch = createFixture()
+  try {
+    const tree = git(trackedRefMismatch.coreRoot, ['rev-parse', 'HEAD^{tree}'])
+    git(trackedRefMismatch.coreRoot, ['update-ref', 'refs/remotes/origin/main', tree])
+    assert.match(failure(verifyFixture(trackedRefMismatch)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CORE_ROOT_CANONICAL_MAIN_MISMATCH/)
+  } finally {
+    removeFixture(trackedRefMismatch)
+  }
+
+  const replaced = createFixture({ mutateOriginalFile: true })
+  try {
+    process.env.CRM_CORE_TEST_MUTATE_RECEIPT = replaced.receiptFile
+    assert.match(failure(verifyFixture(replaced)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_RECEIPT_FILE_INVALID_CHANGED/)
+  } finally {
+    delete process.env.CRM_CORE_TEST_MUTATE_RECEIPT
+    removeFixture(replaced)
   }
 })
 
@@ -427,6 +470,19 @@ test('rejects in-repository or mislabeled receipt paths instead of accepting a G
     )
     assert.match(
       failure(verifyFixture(fixture, { receiptFile: DEFAULT_POLICY_FILE })),
+      /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_RECEIPT_FILE_INVALID_PATH_INVALID/,
+    )
+  } finally {
+    removeFixture(fixture)
+  }
+})
+
+test('rejects receipt inputs retained in a separate Git worktree', () => {
+  const fixture = createFixture()
+  try {
+    git(path.dirname(fixture.receiptFile), ['init', '--initial-branch=evidence'])
+    assert.match(
+      failure(verifyFixture(fixture)),
       /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_RECEIPT_FILE_INVALID_PATH_INVALID/,
     )
   } finally {

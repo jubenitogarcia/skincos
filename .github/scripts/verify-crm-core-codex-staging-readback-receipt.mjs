@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -29,6 +30,7 @@ const platformIdPattern = /^[A-Za-z0-9._:-]{1,160}$/
 const keyIdPattern = /^crm-core-staging-readback-[A-Za-z0-9._-]{1,120}$/
 const base64urlSignaturePattern = /^[A-Za-z0-9_-]{86}$/
 const base64urlEd25519XPattern = /^[A-Za-z0-9_-]{43}$/
+const utcTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const forbiddenKeys = new Set([
   'authorization', 'cookie', 'credential', 'email', 'jws', 'mobile', 'password',
   'privatekey', 'private_key', 'rawbody', 'raw_body', 'secret', 'session', 'token',
@@ -109,6 +111,14 @@ function normalizedKeyId(value, code) {
   return normalized(value, keyIdPattern, code)
 }
 
+function normalizedUtcTimestamp(value, code) {
+  const text = String(value || '').trim()
+  if (!utcTimestampPattern.test(text)) fail(code)
+  const instant = new Date(text)
+  if (Number.isNaN(instant.getTime()) || instant.toISOString() !== text) fail(code)
+  return text
+}
+
 function canonicalValue(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value)
   if (typeof value === 'number') {
@@ -160,6 +170,25 @@ function isWithin(parent, candidate) {
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
+function gitWorktreeRoot(filename) {
+  try {
+    const root = execFileSync('git', ['-C', path.dirname(path.resolve(filename)), 'rev-parse', '--show-toplevel'], {
+      cwd: os.tmpdir(),
+      env: isolatedGitEnvironment(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+    return root ? path.resolve(root) : null
+  } catch {
+    return null
+  }
+}
+
+function isInsideGitWorktree(filename) {
+  const root = gitWorktreeRoot(filename)
+  return Boolean(root && isWithin(root, filename))
+}
+
 function readJsonFile(filename, code, { maxBytes = maxExternalFileBytes } = {}) {
   let contents
   try {
@@ -177,7 +206,9 @@ function readJsonFile(filename, code, { maxBytes = maxExternalFileBytes } = {}) 
 
 function readExternalJson(filename, basename, code) {
   const requested = path.resolve(filename)
-  if (path.basename(requested) !== basename || isWithin(repositoryRoot, requested)) fail(`${code}_PATH_INVALID`)
+  if (path.basename(requested) !== basename || isWithin(repositoryRoot, requested) || isInsideGitWorktree(requested)) {
+    fail(`${code}_PATH_INVALID`)
+  }
   let stat
   let absolute
   let contents
@@ -188,12 +219,13 @@ function readExternalJson(filename, basename, code) {
   } catch {
     fail(code)
   }
-  if (stat.isSymbolicLink() || !stat.isFile() || !samePath(requested, absolute) || isWithin(repositoryRoot, absolute)) {
+  if (stat.isSymbolicLink() || !stat.isFile() || !samePath(requested, absolute)
+    || isWithin(repositoryRoot, absolute) || isInsideGitWorktree(absolute)) {
     fail(`${code}_PATH_INVALID`)
   }
   if (contents.length < 2 || contents.length > maxExternalFileBytes) fail(code)
   try {
-    return Object.freeze({ absolute, contents, value: JSON.parse(contents.toString('utf8')) })
+    return Object.freeze({ requested, absolute, contents, value: JSON.parse(contents.toString('utf8')) })
   } catch {
     fail(code)
   }
@@ -421,6 +453,10 @@ function statementForReceipt({ authority, contract, custody, deployment, readbac
   return Object.freeze({ authority, contract, custody, deployment, readback, source, state })
 }
 
+function statementForAudit(receipt, observedAt) {
+  return Object.freeze({ ...receipt.statement, observedAt })
+}
+
 function assertReceiptMetadata(value, policy) {
   assertNoSensitiveKeys(value, 'receipt')
   exactKeys(value, ['authority', 'contract', 'custody', 'deployment', 'readback', 'signature', 'source', 'state'], 'RECEIPT_INVALID')
@@ -458,23 +494,22 @@ function assertAudit(value, receipt, policy) {
   if (!key || !policy.keyRing.acceptedKeyIds.includes(keyId)
     || keyId !== receipt.signature.keyId || publicKeyFingerprint !== receipt.signature.publicKeyFingerprint
     || publicKeyFingerprint !== key.spkiFingerprint) fail('AUDIT_SIGNATURE_CUSTODY_MISMATCH')
-  if (canonicalCrmCoreCodexStagingReadbackJson(value.statement) !== canonicalCrmCoreCodexStagingReadbackJson(receipt.statement)) {
+  const observedAt = normalizedUtcTimestamp(value.statement?.observedAt, 'AUDIT_OBSERVED_AT_INVALID')
+  const statement = statementForAudit(receipt, observedAt)
+  if (canonicalCrmCoreCodexStagingReadbackJson(value.statement) !== canonicalCrmCoreCodexStagingReadbackJson(statement)) {
     fail('AUDIT_STATEMENT_MISMATCH')
-  }
-  if (canonicalCrmCoreCodexStagingReadbackDigest(value.statement) !== receipt.signature.signedStatementDigest) {
-    fail('AUDIT_STATEMENT_DIGEST_MISMATCH')
   }
   if (typeof value.signature.value !== 'string' || !base64urlSignaturePattern.test(value.signature.value)) fail('AUDIT_SIGNATURE_INVALID')
   const signature = Buffer.from(value.signature.value, 'base64url')
   if (signature.length !== 64) fail('AUDIT_SIGNATURE_INVALID')
   try {
-    if (!crypto.verify(null, Buffer.from(canonicalCrmCoreCodexStagingReadbackJson(receipt.statement), 'utf8'), key.verifier, signature)) {
+    if (!crypto.verify(null, Buffer.from(canonicalCrmCoreCodexStagingReadbackJson(statement), 'utf8'), key.verifier, signature)) {
       fail('AUDIT_SIGNATURE_MISMATCH')
     }
   } finally {
     signature.fill(0)
   }
-  return Object.freeze({ keyId, publicKeyFingerprint })
+  return Object.freeze({ keyId, publicKeyFingerprint, observedAt })
 }
 
 function normalizeCoreOrigin(value) {
@@ -490,7 +525,14 @@ function isolatedGitEnvironment() {
   for (const name of [
     'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CEILING_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_DIR',
     'GIT_DISCOVERY_ACROSS_FILESYSTEM', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_PREFIX', 'GIT_WORK_TREE',
+    'GIT_ASKPASS', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_SSH_COMMAND', 'GIT_TERMINAL_PROMPT',
   ]) delete environment[name]
+  for (const name of Object.keys(environment)) {
+    if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/i.test(name)) delete environment[name]
+  }
+  environment.GIT_CONFIG_GLOBAL = os.devNull
+  environment.GIT_CONFIG_NOSYSTEM = '1'
+  environment.GIT_TERMINAL_PROMPT = '0'
   return environment
 }
 
@@ -529,6 +571,8 @@ function assertCoreRepository(coreRootInput, receipt, policy) {
   const head = normalizedSha(gitAt(coreRoot, ['rev-parse', 'HEAD'], 'CORE_ROOT_HEAD_FAILED'), 'CORE_ROOT_HEAD_INVALID')
   const tree = normalizedSha(gitAt(coreRoot, ['rev-parse', 'HEAD^{tree}'], 'CORE_ROOT_TREE_FAILED'), 'CORE_ROOT_TREE_INVALID')
   if (head !== receipt.source.sha || tree !== receipt.source.tree) fail('CORE_ROOT_SOURCE_MISMATCH')
+  const trackedMain = normalizedSha(gitAt(coreRoot, ['rev-parse', '--verify', 'refs/remotes/origin/main'], 'CORE_ROOT_CANONICAL_MAIN_UNAVAILABLE'), 'CORE_ROOT_CANONICAL_MAIN_UNAVAILABLE')
+  if (trackedMain !== head) fail('CORE_ROOT_CANONICAL_MAIN_MISMATCH')
   if (gitAt(coreRoot, ['ls-files', '--error-unmatch', policy.core.verifier], 'CORE_VERIFIER_NOT_TRACKED') !== policy.core.verifier) {
     fail('CORE_VERIFIER_NOT_TRACKED')
   }
@@ -541,6 +585,18 @@ function assertCoreRepository(coreRootInput, receipt, policy) {
   }
   if (verifierStat.isSymbolicLink() || !verifierStat.isFile()) fail('CORE_VERIFIER_PATH_INVALID')
   return Object.freeze({ coreRoot, verifierPath })
+}
+
+function assertCustodyCanonicalMain(value, receipt) {
+  const source = plainRecord(value.source, 'CUSTODY_RECEIPT_MAIN_REF_INVALID')
+  exactKeys(source, ['mainShaAfter', 'mainShaBefore', 'ref', 'repository', 'repositoryId', 'sha', 'tree'], 'CUSTODY_RECEIPT_MAIN_REF_INVALID')
+  if (source.repository !== coreRepository || source.repositoryId !== receipt.source.repositoryId || source.ref !== coreMainRef
+    || normalizedSha(source.sha, 'CUSTODY_RECEIPT_MAIN_REF_INVALID') !== receipt.source.sha
+    || normalizedSha(source.tree, 'CUSTODY_RECEIPT_MAIN_REF_INVALID') !== receipt.source.tree
+    || normalizedSha(source.mainShaBefore, 'CUSTODY_RECEIPT_MAIN_REF_INVALID') !== receipt.source.sha
+    || normalizedSha(source.mainShaAfter, 'CUSTODY_RECEIPT_MAIN_REF_INVALID') !== receipt.source.sha) {
+    fail('CUSTODY_RECEIPT_MAIN_REF_INVALID')
+  }
 }
 
 function assertCoreVerifierSummary(output, receipt, policy) {
@@ -600,6 +656,35 @@ function runCoreVerifier(core, files, receipt, policy) {
   return assertCoreVerifierSummary(output.trim(), receipt, policy)
 }
 
+function assertExternalFileUnchanged(file, code) {
+  const current = readExternalJson(file.requested, path.basename(file.requested), code)
+  if (!samePath(current.absolute, file.absolute) || !current.contents.equals(file.contents)) fail(`${code}_CHANGED`)
+}
+
+function createExternalSnapshots(files) {
+  let directory
+  try {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'skincos-crm-core-custody-'))
+    fs.chmodSync(directory, 0o700)
+    if (isInsideGitWorktree(directory)) fail('EXTERNAL_SNAPSHOT_PATH_INVALID')
+    const snapshots = Object.fromEntries(Object.entries(files).map(([name, file]) => {
+      const absolute = path.join(directory, path.basename(file.absolute))
+      fs.writeFileSync(absolute, file.contents, { flag: 'wx', mode: 0o600 })
+      const stat = fs.lstatSync(absolute)
+      if (!stat.isFile() || stat.isSymbolicLink()) fail('EXTERNAL_SNAPSHOT_INVALID')
+      return [name, Object.freeze({ ...file, absolute })]
+    }))
+    return Object.freeze({ directory, files: Object.freeze(snapshots) })
+  } catch {
+    if (directory) fs.rmSync(directory, { recursive: true, force: true })
+    fail('EXTERNAL_SNAPSHOT_INVALID')
+  }
+}
+
+function removeExternalSnapshots(snapshot) {
+  fs.rmSync(snapshot.directory, { recursive: true, force: true })
+}
+
 function assertDistinctExternalFiles(files) {
   const paths = Object.values(files).map((file) => pathForComparison(file.absolute))
   if (new Set(paths).size !== paths.length) fail('EXTERNAL_PATH_COLLISION')
@@ -620,24 +705,34 @@ export function verifyCrmCoreCodexStagingReadbackReceiptFiles(options = {}) {
   })
   assertDistinctExternalFiles(files)
   const receipt = assertReceiptMetadata(files.receipt.value, policy)
+  assertCustodyCanonicalMain(files.custodyReceipt.value, receipt)
   const core = assertCoreRepository(options.coreRoot, receipt, policy)
-  const coreSummary = runCoreVerifier(core, files, receipt, policy)
-  const audit = assertAudit(files.audit.value, receipt, policy)
-  return Object.freeze({
-    ok: true,
-    contract: policy.contract,
-    coreReceiptContract: receipt.contract,
-    coreSourceSha: receipt.source.sha,
-    coreSourceTree: receipt.source.tree,
-    custodyReceiptId: receipt.custody.receiptId,
-    workerDeploymentId: coreSummary.workerDeploymentId,
-    pagesDeploymentId: coreSummary.pagesDeploymentId,
-    readbackExecutionId: coreSummary.readbackExecutionId,
-    externalSigner: policy.audit.externalSigner,
-    keyId: audit.keyId,
-    publicKeyFingerprint: audit.publicKeyFingerprint,
-    authority: receipt.authority,
-  })
+  const snapshot = createExternalSnapshots(files)
+  try {
+    const coreSummary = runCoreVerifier(core, snapshot.files, receipt, policy)
+    for (const [name, file] of Object.entries(files)) {
+      assertExternalFileUnchanged(file, `${name.toUpperCase()}_FILE_INVALID`)
+    }
+    const audit = assertAudit(files.audit.value, receipt, policy)
+    return Object.freeze({
+      ok: true,
+      contract: policy.contract,
+      coreReceiptContract: receipt.contract,
+      coreSourceSha: receipt.source.sha,
+      coreSourceTree: receipt.source.tree,
+      custodyReceiptId: receipt.custody.receiptId,
+      workerDeploymentId: coreSummary.workerDeploymentId,
+      pagesDeploymentId: coreSummary.pagesDeploymentId,
+      readbackExecutionId: coreSummary.readbackExecutionId,
+      observationAt: audit.observedAt,
+      externalSigner: policy.audit.externalSigner,
+      keyId: audit.keyId,
+      publicKeyFingerprint: audit.publicKeyFingerprint,
+      authority: receipt.authority,
+    })
+  } finally {
+    removeExternalSnapshots(snapshot)
+  }
 }
 
 function parseArguments(argv) {

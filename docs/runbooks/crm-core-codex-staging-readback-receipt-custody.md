@@ -38,18 +38,25 @@ JWK canônica usado pela trilha GitHub v1.
 ## Verificação local
 
 Use também um checkout limpo do Core no SHA e na árvore declarados pelo recibo.
-O comando verifica o Core contra seu `origin`, confere que o checkout está limpo
-e executa primeiro o verificador proprietário do Core. Só depois compara o
-statement canônico da metadata ao audit privado, recalcula seu digest e verifica
-a assinatura Ed25519.
+O verificador exige que `refs/remotes/origin/main` do checkout limpo seja o
+mesmo SHA e que o recibo de custódia, gerado no clone limpo, registre aquele SHA
+antes e depois da revalidação de `main`. Ele recebe cópias temporárias imutáveis
+dos quatro arquivos e falha se qualquer original mudar durante a verificação. O
+`observedAt` UTC no statement assinado do audit registra quando o readback foi
+observado.
 
-```text
-node .github/scripts/verify-crm-core-codex-staging-readback-receipt.mjs \
-  --receipt <runtime>/codex-staging-readback-receipt.json \
-  --custody-receipt <runtime>/execution-receipt.json \
-  --readback-output <runtime>/readback-output.json \
-  --audit <runtime>/private-readback-audit.json \
-  --core-root <checkout-limpo-do-skincos-crm-core>
+No Windows, execute pelo gateway tipado WSL:
+
+```powershell
+$arguments = @(
+  '.github/scripts/verify-crm-core-codex-staging-readback-receipt.mjs',
+  '--receipt', '<runtime>/codex-staging-readback-receipt.json',
+  '--custody-receipt', '<runtime>/execution-receipt.json',
+  '--readback-output', '<runtime>/readback-output.json',
+  '--audit', '<runtime>/private-readback-audit.json',
+  '--core-root', '<checkout-limpo-do-skincos-crm-core>'
+)
+& .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -Executable node -Argument $arguments
 ```
 
 A saída contém somente SHA, árvore, IDs de deployment/execução, key ID e
