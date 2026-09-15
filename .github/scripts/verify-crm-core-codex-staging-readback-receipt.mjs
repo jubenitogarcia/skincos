@@ -8,7 +8,7 @@ import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export const CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CONTRACT = 'skincos/crm-core-codex-staging-readback-receipt-custody/v1'
-export const CRM_CORE_CODEX_STAGING_READBACK_RECEIPT_CONTRACT = 'skincos-crm/codex-staging-readback-receipt/v1'
+export const CRM_CORE_CODEX_STAGING_READBACK_RECEIPT_CONTRACT = 'skincos-crm/codex-staging-readback-receipt/v2'
 export const CRM_CORE_CODEX_STAGING_READBACK_AUDIT_CONTRACT = 'skincos-crm/codex-staging-readback-private-audit/v1'
 
 const coreRepository = 'jubenitogarcia/skincos-crm-core'
@@ -18,7 +18,7 @@ const coreOrigin = 'https://github.com/jubenitogarcia/skincos-crm-core.git'
 const coreVerifierRelativePath = 'scripts/verify-codex-staging-readback-receipt.mjs'
 const custodyContract = 'skincos-crm/codex-local-artifact-custody/v2'
 const readbackOutputContract = 'skincos-crm/codex-staging-readback-output/v1'
-const receiptSignatureContract = 'skincos-crm/codex-staging-readback-receipt-signature-metadata/v1'
+const receiptSignatureContract = 'skincos-crm/codex-staging-readback-receipt-signature/v2'
 const stagingOrigin = 'https://skincos-crm-core-staging.skincos.workers.dev'
 const auditSigner = 'codex-local-custody'
 const pagesEvidence = 'external-console-readback'
@@ -555,7 +555,7 @@ function assertReadback(value, policy, code) {
 }
 
 function assertReceiptSignature(value, policy, code) {
-  exactKeys(value, ['algorithm', 'contract', 'externalSigner', 'keyId', 'publicKeyFingerprint', 'signedStatementDigest'], code)
+  exactKeys(value, ['algorithm', 'contract', 'externalSigner', 'keyId', 'publicKeyFingerprint', 'signedStatementDigest', 'value'], code)
   if (value.contract !== policy.receipt.signatureContract || value.algorithm !== policy.audit.signatureAlgorithm
     || value.externalSigner !== policy.audit.externalSigner) fail(code)
   const keyId = normalizedKeyId(value.keyId, code)
@@ -563,6 +563,10 @@ function assertReceiptSignature(value, policy, code) {
   if (!key || !policy.keyRing.acceptedKeyIds.includes(keyId)) fail(code)
   const publicKeyFingerprint = normalizedDigest(value.publicKeyFingerprint, code)
   if (publicKeyFingerprint !== key.spkiFingerprint) fail(code)
+  const signatureValue = String(value.value || '').trim()
+  if (!base64urlSignaturePattern.test(signatureValue)) fail(code)
+  const signature = Buffer.from(signatureValue, 'base64url')
+  if (signature.length !== 64 || signature.toString('base64url') !== signatureValue) fail(code)
   return Object.freeze({
     contract: policy.receipt.signatureContract,
     algorithm: policy.audit.signatureAlgorithm,
@@ -570,6 +574,7 @@ function assertReceiptSignature(value, policy, code) {
     keyId,
     publicKeyFingerprint,
     signedStatementDigest: normalizedDigest(value.signedStatementDigest, code),
+    value: signatureValue,
   })
 }
 
@@ -601,6 +606,14 @@ function assertReceiptMetadata(value, policy) {
     state: policy.receipt.state,
   })
   if (signature.signedStatementDigest !== canonicalCrmCoreCodexStagingReadbackDigest(statement)) fail('RECEIPT_SIGNATURE_STATEMENT_MISMATCH')
+  const signatureValue = Buffer.from(signature.value, 'base64url')
+  try {
+    if (!crypto.verify(null, Buffer.from(canonicalCrmCoreCodexStagingReadbackJson(statement), 'utf8'), policy.keyRing.publicKeys[signature.keyId].verifier, signatureValue)) {
+      fail('RECEIPT_SIGNATURE_MISMATCH')
+    }
+  } finally {
+    signatureValue.fill(0)
+  }
   if (deployment.worker.observedWorkerDigest !== custody.workerDigest
     || deployment.pages.observedConsoleDigest !== custody.consoleDigest) fail('RECEIPT_DEPLOYMENT_DIGEST_MISMATCH')
   return Object.freeze({ authority, contract: policy.receipt.contract, custody, deployment, readback, signature, source, state: policy.receipt.state, statement })
@@ -654,7 +667,11 @@ function isolatedGitEnvironment() {
   for (const name of Object.keys(environment)) {
     if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/i.test(name)) delete environment[name]
   }
-  environment.GIT_CONFIG_GLOBAL = os.devNull
+  // Git for Windows rejects Node's `\\\\.\\nul` spelling of `os.devNull` as a
+  // config path. `NUL` is the supported null-device spelling for Git there;
+  // use it so the isolated verifier remains able to inspect an external Core
+  // checkout without inheriting a user-level Git configuration.
+  environment.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : os.devNull
   environment.GIT_CONFIG_NOSYSTEM = '1'
   environment.GIT_TERMINAL_PROMPT = '0'
   return environment
@@ -695,8 +712,9 @@ function assertCoreRepository(coreRootInput, receipt, policy) {
   const head = normalizedSha(gitAt(coreRoot, ['rev-parse', 'HEAD'], 'CORE_ROOT_HEAD_FAILED'), 'CORE_ROOT_HEAD_INVALID')
   const tree = normalizedSha(gitAt(coreRoot, ['rev-parse', 'HEAD^{tree}'], 'CORE_ROOT_TREE_FAILED'), 'CORE_ROOT_TREE_INVALID')
   if (head !== receipt.source.sha || tree !== receipt.source.tree) fail('CORE_ROOT_SOURCE_MISMATCH')
-  const trackedMain = normalizedSha(gitAt(coreRoot, ['rev-parse', '--verify', 'refs/remotes/origin/main'], 'CORE_ROOT_CANONICAL_MAIN_UNAVAILABLE'), 'CORE_ROOT_CANONICAL_MAIN_UNAVAILABLE')
-  if (trackedMain !== head) fail('CORE_ROOT_CANONICAL_MAIN_MISMATCH')
+  if (gitAt(coreRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], 'CORE_ROOT_HEAD_STATE_FAILED') !== 'HEAD') fail('CORE_ROOT_NOT_DETACHED')
+  normalizedSha(gitAt(coreRoot, ['rev-parse', '--verify', 'refs/remotes/origin/main'], 'CORE_ROOT_CANONICAL_MAIN_UNAVAILABLE'), 'CORE_ROOT_CANONICAL_MAIN_UNAVAILABLE')
+  gitAt(coreRoot, ['merge-base', '--is-ancestor', receipt.source.sha, 'refs/remotes/origin/main'], 'CORE_ROOT_CANONICAL_MAIN_NOT_DESCENDANT')
   if (gitAt(coreRoot, ['ls-files', '--error-unmatch', policy.core.verifier], 'CORE_VERIFIER_NOT_TRACKED') !== policy.core.verifier) {
     fail('CORE_VERIFIER_NOT_TRACKED')
   }
@@ -766,8 +784,6 @@ function runCoreVerifier(core, files, receipt, policy) {
       '--readback-output', files.readbackOutput.absolute,
       '--expected-sha', receipt.source.sha,
       '--expected-tree', receipt.source.tree,
-      '--expected-external-signer', policy.audit.externalSigner,
-      '--expected-public-key-fingerprint', receipt.signature.publicKeyFingerprint,
     ], {
       cwd: core.coreRoot,
       env: isolatedGitEnvironment(),

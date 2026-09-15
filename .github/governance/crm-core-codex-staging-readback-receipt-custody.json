@@ -11,10 +11,10 @@
     "verifier": "scripts/verify-codex-staging-readback-receipt.mjs"
   },
   "receipt": {
-    "contract": "skincos-crm/codex-staging-readback-receipt/v1",
+    "contract": "skincos-crm/codex-staging-readback-receipt/v2",
     "custodyContract": "skincos-crm/codex-local-artifact-custody/v2",
     "readbackOutputContract": "skincos-crm/codex-staging-readback-output/v1",
-    "signatureContract": "skincos-crm/codex-staging-readback-receipt-signature-metadata/v1",
+    "signatureContract": "skincos-crm/codex-staging-readback-receipt-signature/v2",
     "state": "verified-external-readback",
     "environment": "staging",
     "origin": "https://skincos-crm-core-staging.skincos.workers.dev",
@@ -49,12 +49,12 @@
     "legacyRetirementAuthorized": false
   },
   "keyRing": {
-    "activeKeyId": "crm-core-staging-readback-20260914",
+    "activeKeyId": "crm-core-staging-readback-operator-v1",
     "acceptedKeyIds": [
-      "crm-core-staging-readback-20260914"
+      "crm-core-staging-readback-operator-v1"
     ],
     "publicKeys": {
-      "crm-core-staging-readback-20260914": {
+      "crm-core-staging-readback-operator-v1": {
         "jwk": {
           "kty": "OKP",
           "crv": "Ed25519",
@@ -66,8 +66,8 @@
   },
   "prohibitions": [
     "This Codex-local receipt is staging evidence only and never authorizes deployment, production, domain changes, data backfill, or legacy retirement.",
-    "All four receipt inputs remain regular files outside every Git worktree and are retained only in the private operator runtime.",
-    "The raw Ed25519 signature remains only in the external private audit file; no private key, raw signature, customer data, token, session, or credential enters Git.",
+    "All four receipt inputs, including the v2 receipt with its inline detached Ed25519 signature, remain regular files outside every Git worktree and are retained only in the private operator runtime.",
+    "No artifact bundle, detached signature, private key, customer data, token, session, or credential enters Git; the private audit remains external-only.",
     "The independent CRM Core verifier must revalidate the custody receipt and readback output from a clean Core checkout at the exact source SHA and tree.",
     "This policy pins a public JWK and its SHA-256 SPKI fingerprint; GitHub Actions v1 custody remains a separate contract with separate key material."
   ]
