@@ -75,4 +75,3 @@ legado.
 Sem um lote revisado admissível, o executor falha fechado. Registros sem
 vínculo comprovado permanecem na fila externa de reconciliação e não podem ser
 incluídos por aproximação de nome, telefone ou e-mail.
-
