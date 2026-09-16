@@ -111,7 +111,7 @@ test('isolated Pages mode keeps shared files immutable and binds the full local 
     'LOCAL_AUTH_ALLOWED_UNITS=unit-a',
     'AUTH_API_TARGET=http://127.0.0.1:8110',
     'AUTH_PATH_PREFIX=/insumos/auth',
-    'CRM_API_TARGET=http://127.0.0.1:8112',
+    'CRM_API_TARGET=http://127.0.0.1:8111',
     'TRACKING_API_TARGET=http://127.0.0.1:8113',
     'UNIT_MONITOR_API_TARGET=http://127.0.0.1:8114',
     'ESCALA_API_TARGET=https://escala-api.skincos.com.br',
@@ -123,6 +123,10 @@ test('isolated Pages mode keeps shared files immutable and binds the full local 
   ]) {
     assert.ok(wranglerArguments.includes(binding), `missing binding: ${binding}`);
   }
+  assert.ok(
+    !wranglerArguments.includes('CRM_API_TARGET=http://127.0.0.1:8112'),
+    'the local Users adapter must override the generic CRM target in isolated mode',
+  );
 });
 
 test('isolated Pages mode refuses implicit or source-tree persistence', async (t) => {

@@ -83,7 +83,7 @@ test('Codex App and Windows expose stable CRM actions plus the isolated thread p
     },
     {
       name: 'CRM – Prévia Usuários Equipe Thread',
-      command: 'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmUsersThreadPreview',
+      command: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/resolve-codex-thread-worktree.ps1 -Intent preview -SurfaceType crm-module -SurfaceId users -SkipGitHub',
     },
     {
       name: 'CRM – Prévia Insumos Thread',

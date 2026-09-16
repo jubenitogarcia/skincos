@@ -3781,6 +3781,7 @@ function Invoke-ShortcutActionInternal {
             } else {
                 $CrmThreadPreviewSourceRoot
             }
+            $threadPreviewSource = Resolve-CrmThreadPreviewSourceCheckout -SourceRoot $threadPreviewSource
             Invoke-CrmThreadPreviewAction -Role Gestor -Module "users" -SourceRoot $threadPreviewSource
         }
         "CrmModule" {

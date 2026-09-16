@@ -36,9 +36,14 @@ icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmThreadPreview"
 
 [[actions]]
+name = "Thread – Resolver Worktree"
+icon = "tool"
+command = "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/resolve-codex-thread-worktree.ps1 -Interactive"
+
+[[actions]]
 name = "CRM – Prévia Usuários Equipe Thread"
-icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmUsersThreadPreview"
+icon = "tool"
+command = "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/resolve-codex-thread-worktree.ps1 -Intent preview -SurfaceType crm-module -SurfaceId users -SkipGitHub"
 
 [[actions]]
 name = "CRM – Prévia Insumos Thread"

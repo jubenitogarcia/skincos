@@ -144,15 +144,35 @@ pertencente àquele worktree.
 
 ### CRM – Prévia Usuários Equipe Thread
 
-Atalho direto para a prévia isolada do módulo `Usuários`, já com a persona
-Gestor e a flag local de equipe unificada habilitadas. Ele reutiliza a mesma
-proveniência e a mesma faixa privada da prévia da thread, mas não envia
-convites reais nem altera o banco remoto.
+Atalho de roteamento para a prévia isolada do módulo `Usuários`, já com a
+superfície `crm-module/users` identificada. Ele resolve o worktree atual e
+emite o contrato JSON que a camada nativa do Codex App usa para abrir a thread
+correta; a execução da prévia ocorre somente depois que essa thread estiver
+pronta. Nenhum convite real é enviado e nenhum banco remoto é alterado.
+
+Quando a ação é acionada pelo Codex App com a thread aberta no worktree correto,
+o resolver usa diretamente esse worktree pelo caminho relativo da ação. Não é
+necessário informar `threadId`, escolher outro worktree ou usar um checkout
+fixo; a ação não abre picker. Não execute `Set-Location` para o clone
+compartilhado antes do clique.
+
+Para tasks criadas automaticamente, configure **Settings > Worktrees** com o
+root `C:\CodexShared\Worktrees\skincos\admin\managed`. O vínculo da task nova
+é privado e efêmero: inclui somente checkout, superfície, SHA e nonce; nunca
+armazena `threadId`, cookies ou segredos. A criação, espera, navegação e
+arquivamento pertencem à camada nativa do Codex App; o hook apenas fornece a
+decisão e bloqueia escrita na origem enquanto a substituição estiver pendente.
+
+Se o cwd for `C:\CodexShared\Projetos\skincos`, a ação falha de forma
+controlada e orienta abrir o worktree da thread. O clone compartilhado não
+recebe o `threadId` do Codex App e não pode inferir com segurança qual thread
+deve ser executada.
 
 A implementação UX validada nesta missão está no worktree
 `C:\CodexShared\Worktrees\skincos\admin\users-production-flag-20260810`, no
 commit `ca1e1dab82616f1804b91d0ecd87e355f065e2d2`. Esta referência é evidência
 histórica da versão integrada e não é um destino fixo do launcher.
+
 ### EF App
 
 - `Setup`
