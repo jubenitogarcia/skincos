@@ -9,6 +9,8 @@
     "atendimento:crm-core:source-preflight:test": "node --test shared/crm-auth/atendimentoCrmCoreProjectionSourceContract.test.mjs crm/api/server/atendimento/__tests__/projectionSourceMetadataPreflight.test.js crm/api/scripts/preflight-atendimento-crm-core-projection-source.test.mjs && bash scripts/runtime/test-install-atendimento-crm-core-projection-custody.sh",
     "atendimento:crm-core:identity-materialization:test": "node --test shared/crm-auth/atendimentoCrmCoreIdentityReviewBatch.test.mjs scripts/tests/verify-atendimento-crm-core-identity-review-batch.test.mjs crm/api/server/atendimento/__tests__/crmCoreIdentityMaterializationMigration.test.js crm/api/server/atendimento/__tests__/crmCoreIdentityMaterializationWriter.test.js crm/api/scripts/preflight-atendimento-crm-core-identity-materialization.test.mjs scripts/tests/verify-atendimento-crm-core-identity-materialization.test.mjs crm/api/scripts/run-atendimento-crm-core-identity-schema-staging.test.mjs .github/scripts/atendimento-crm-core-identity-schema-staging-custody.test.mjs && bash scripts/runtime/test-install-atendimento-crm-core-identity-schema-custody.sh",
     "atendimento:crm-core:identity-review-batch:verify": "node scripts/verify-atendimento-crm-core-identity-review-batch.mjs",
+    "crm:production:custody": "node scripts/crm/crm-production-custody-executor.mjs",
+    "crm:production:custody:test": "node --test scripts/tests/crm-production-custody-executor.test.mjs",
     "architecture:test": "npm run architecture:validate",
     "module-catalog:validate": "node ./.github/scripts/validate-module-catalog.mjs",
     "module-maturity:validate": "node ./.github/scripts/validate-module-maturity.mjs",
