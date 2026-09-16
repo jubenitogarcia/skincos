@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'finance/**'
+      - 'finance/ui/**'
       - 'api/src/gateway.js'
       - 'api/src/router.js'
       - 'api/test/gateway.test.mjs'
@@ -13,20 +14,9 @@ on:
       - 'api/package-lock.json'
       - '.github/scripts/finance-production-preflight.mjs'
       - 'scripts/run-local-finance.sh'
-      - 'shared/finance-contracts/**'
-      - 'shared/crm-auth/**'
-      - 'shared/identity-contract/**'
-      - 'shared/module-availability/**'
-      - 'shared/module-sdk/**'
-      - 'shared/observability/**'
-      - 'shared/service-adapters/**'
       - 'crm/console/App.tsx'
-      - 'crm/console/Finance*.tsx'
-      - 'crm/console/finance-remote/**'
-      - 'crm/console/financeApi.ts'
       - 'crm/console/financeBootstrap.ts'
       - 'crm/console/functions/api/finance/**'
-      - 'crm/console/main.css'
       - 'crm/console/modules/RemoteFinanceModule.tsx'
       - 'crm/console/modules/registry.tsx'
       - 'crm/console/tests/finance*.test.ts'
@@ -34,11 +24,12 @@ on:
       - 'crm/console/package.json'
       - 'crm/console/package-lock.json'
       - 'crm/console/tsconfig*.json'
-      - 'crm/console/vite.finance.config.ts'
       - '.github/workflows/finance-boundary-ci.yml'
+      - '.github/workflows/deploy-finance-ui.yml'
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   finance-domain:
@@ -52,14 +43,36 @@ jobs:
           cache: npm
           cache-dependency-path: |
             finance/package-lock.json
+            finance/ui/package-lock.json
             api/package-lock.json
             crm/console/package-lock.json
       - name: Install pinned Finance toolchain without lifecycle scripts
-        run: npm --prefix finance ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: npx --yes npm@11.17.0 --prefix finance ci --ignore-scripts
       - name: Check Finance worker sources
         run: npm --prefix finance run check
       - name: Test Finance domain contracts
         run: npm --prefix finance test
+
+  finance-ui:
+    name: Finance UI build and transport contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: '22.23.1'
+          cache: npm
+          cache-dependency-path: finance/ui/package-lock.json
+      - name: Install pinned Finance UI toolchain without lifecycle scripts
+        run: npm --prefix finance/ui ci --ignore-scripts
+      - name: Check independent Finance UI types
+        run: npm --prefix finance/ui run typecheck
+      - name: Build independent Finance UI artifact
+        run: npm --prefix finance/ui run build
+      - name: Test Finance UI artifact and transport contracts
+        run: npm --prefix finance/ui test
 
   direct-contracts:
     name: Finance gateway and CRM direct contracts
@@ -81,14 +94,11 @@ jobs:
         run: npm --prefix crm/console ci --ignore-scripts
       - name: Check CRM Finance contract types
         run: npm --prefix crm/console run typecheck
-      - name: Build the dedicated Finance artifact
-        working-directory: crm/console
-        run: npx vite build --config vite.finance.config.ts
       - name: Test CRM Finance loader, fallback and proxy contracts
         run: >-
           npm --prefix crm/console run test --
           tests/financeBootstrap.test.ts
-          tests/financeApi.test.ts
           tests/financeProxy.test.ts
           tests/financeRemote.test.ts
+          tests/financeShell.test.ts
           tests/moduleRegistry.test.ts

@@ -2,10 +2,10 @@ import {
   FINANCE_ACCOUNT_TYPES, FINANCE_CONTRACT_VERSION, FINANCE_MODULE_KEY, FINANCE_OBLIGATION_KINDS, FINANCE_OBLIGATION_STATUSES, FINANCE_RECURRENCE_FREQUENCIES,
   FINANCE_MOVEMENT_TYPES, FinanceContractError, asCurrency, asExchangeRatePpm, asIsoDate,
   asMinorAmount, asNonNegativeMinorAmount, asSignedMinorAmount, asTrimmedString,
-} from '../../shared/finance-contracts/index.js';
-import { analyseCsvImport, importNameKey as nameKey, normalizeImportRow } from '../../shared/finance-contracts/csv.js';
-import { prepareMoneyWizImport } from '../../shared/finance-contracts/moneywiz.js';
-import { prepareEfCaixaImport } from '../../shared/finance-contracts/ef-caixa.js';
+} from '@jubenitogarcia/skincos-finance-contracts';
+import { analyseCsvImport, importNameKey as nameKey, normalizeImportRow } from '@jubenitogarcia/skincos-finance-contracts/csv';
+import { prepareMoneyWizImport } from '@jubenitogarcia/skincos-finance-contracts/moneywiz';
+import { prepareEfCaixaImport } from '@jubenitogarcia/skincos-finance-contracts/ef-caixa';
 import { buildPostedJournal } from '../domain.js';
 
 const json = (status, body, requestId) => new Response(JSON.stringify({ contractVersion: FINANCE_CONTRACT_VERSION, ...body }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-request-id': requestId } });

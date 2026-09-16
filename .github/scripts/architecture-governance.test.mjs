@@ -45,6 +45,13 @@ test("architecture and shared contract changes retain global closure and only re
   assert.equal(financeContract.jobs.includes("influencer"), false);
 });
 
+test("Finance UI and its remote CRM host select the Finance governance gate", () => {
+  for (const file of ["finance/ui/src/entry.tsx", "crm/console/modules/RemoteFinanceModule.tsx"]) {
+    const plan = buildArchitectureGovernancePlan(report([file]));
+    assert.equal(plan.jobs.includes("finance"), true, `${file} must select the Finance gate`);
+  }
+});
+
 test("unknown paths fail closed into global closure and every domain gate", () => {
   const plan = buildArchitectureGovernancePlan(report(["new-root-runtime/input.bin"]));
 
