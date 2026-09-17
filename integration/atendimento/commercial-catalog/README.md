@@ -7,9 +7,8 @@ sessions or another product's database.
 
 The service reads only active, date-valid offers from the Atendimento-owned
 `crm_atendimento` schema. It binds to loopback by default, requires a dedicated
-bearer secret, exposes `/health` and `/readiness`, and has no write route. The
-Meta Ads path is a temporary response-shape alias for the inactive workflow and
-must be removed after that workflow is migrated to the generic path.
+bearer secret, exposes `/health` and `/readiness`, and has no write route. Both
+Orb consumers use the same generic path; no product-specific aliases are kept.
 
 Install dependencies with `npm ci` in this directory. Run `npm test` before
 installing the accompanying systemd unit. Production credentials are supplied

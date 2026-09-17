@@ -133,7 +133,3 @@ export function createCatalogStore({ pool, clock = () => new Date() } = {}) {
     },
   }
 }
-
-export function legacyMetaAdsOfferContext(catalog) {
-  return { unitSlug: catalog.unitSlug, asOf: catalog.asOf, offers: catalog.offers }
-}

@@ -2,7 +2,7 @@ import http from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import express from 'express'
 import pg from 'pg'
-import { createCatalogStore, legacyMetaAdsOfferContext } from './src/catalog.mjs'
+import { createCatalogStore } from './src/catalog.mjs'
 
 const LOOPBACK = '127.0.0.1'
 
@@ -63,15 +63,6 @@ export function createCommercialCatalogApp({ store, token = '', logger = console
     if (!authorized(req, res)) return
     try { return res.status(200).json({ ok: true, ...(await store.commercialCatalog(req.query || {})) }) }
     catch (error) { return errorResponse(res, error) }
-  })
-  // Kept only while the inactive Meta Ads workflow is migrated to the generic
-  // contract. It reads the same source and never writes or redirects cookies.
-  app.get('/api/atendimento/internal/meta-ads/offer-context', async (req, res) => {
-    if (!authorized(req, res)) return
-    try {
-      const catalog = await store.commercialCatalog(req.query || {})
-      return res.status(200).json({ ok: true, ...legacyMetaAdsOfferContext(catalog) })
-    } catch (error) { return errorResponse(res, error) }
   })
   return app
 }
