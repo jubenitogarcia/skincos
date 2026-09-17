@@ -118,7 +118,7 @@ test("configuration derives the transient release-probe key without delegated ch
     GH_TOKEN: "github-token",
     PONTO_IDEMPOTENCY_KEY: idempotencyKey,
     PONTO_MODULE_CONTROL_STAGING_KV_ID: "e".repeat(32),
-    PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING: "skincos-staging",
+    PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING: "skincos-ponto-staging",
     TIMEKEEPING_STAGING_WRANGLER_CONFIG: "/tmp/ponto-timekeeping-staging-wrangler.toml",
     RUNNER_TEMP: "/tmp",
     TIMEKEEPING_CANDIDATE_VERSION_ID: ids.timekeeping.candidate,
@@ -334,7 +334,7 @@ class FakeRuntime {
         : phase === "restoration"
           ? "a1111111-1111-4111-8111-111111111111"
           : "b1111111-1111-4111-8111-111111111111",
-      url: `https://${phase}.skincos-staging.pages.dev/`,
+      url: `https://${phase}.skincos-ponto-staging.pages.dev/`,
       commitHash,
     };
   }

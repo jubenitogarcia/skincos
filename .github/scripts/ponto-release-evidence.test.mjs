@@ -84,7 +84,7 @@ const liveSurfaces = (stage) => {
     deploymentId: uuid,
     rollbackDeploymentId: uuid2,
     candidateTag: `ponto:pontoPages:${sha}`,
-    url: "https://crm.skincos.com.br",
+    url: "https://skincos-ponto.pages.dev",
   },
   });
 };

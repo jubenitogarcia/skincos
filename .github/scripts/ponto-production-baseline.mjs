@@ -45,11 +45,11 @@ const validate = (baseline) => {
       && baseline.surfaces?.pontoPages?.isSkipped === false,
     "Pages baseline must be an unskipped completed deploy success",
   );
-  assert(baseline.surfaces?.pontoPages?.project === "skincos", "Pages baseline project is not canonical production");
+  assert(baseline.surfaces?.pontoPages?.project === "skincos-ponto", "Pages baseline project is not canonical production");
   assert(baseline.surfaces?.pontoPages?.environment === "production", "Pages baseline environment is not production");
   assert(baseline.surfaces?.pontoPages?.canonical === true, "Pages baseline deployment is not canonical");
   assert(
-    baseline.surfaces?.pontoPages?.alias === "https://crm.skincos.com.br",
+    baseline.surfaces?.pontoPages?.alias === "https://skincos-ponto.pages.dev",
     "Pages baseline canonical alias is invalid",
   );
   assert(
@@ -94,7 +94,7 @@ if (mode === "capture") {
   const apiToken = required("CLOUDFLARE_API_TOKEN");
   const pagesProject = required("CLOUDFLARE_PAGES_PROJECT");
   assert(SHA.test(releaseSha) && /^[0-9]+$/.test(stagingRunId) && /^[0-9]+$/.test(runId) && /^[0-9]+$/.test(orchestratorRunId), "invalid baseline provenance");
-  assert(/^[0-9a-f]{32}$/.test(accountId) && pagesProject === "skincos", "invalid production Cloudflare target");
+  assert(/^[0-9a-f]{32}$/.test(accountId) && pagesProject === "skincos-ponto", "invalid production Cloudflare target");
 
   const runWranglerJson = (args) => {
     const result = spawnSync("npx", ["--yes", "wrangler@4.112.0", ...args], {
@@ -142,10 +142,10 @@ if (mode === "capture") {
   const aliases = Array.isArray(pages?.aliases) ? pages.aliases.map(value => String(value)) : [];
   const sourceConfig = project?.source?.config;
   const canonicalAlias = aliases.find(value =>
-    value === "https://crm.skincos.com.br" || value === "crm.skincos.com.br");
+    value === "https://skincos-ponto.pages.dev" || value === "skincos-ponto.pages.dev");
   assert(
     project?.name === pagesProject
-      && project?.subdomain === "skincos.pages.dev"
+      && project?.subdomain === "skincos-ponto.pages.dev"
       && project?.production_branch === "main"
       && UUID.test(pages?.id)
       && pages?.environment === "production"
@@ -168,7 +168,7 @@ if (mode === "capture") {
     accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
     accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
   }
-  const healthResponse = await fetch("https://crm.skincos.com.br/api/ponto/health", {
+  const healthResponse = await fetch("https://skincos-ponto.pages.dev/api/ponto/health", {
     redirect: "manual",
     signal: AbortSignal.timeout(15_000),
     headers: { accept: "application/json", ...accessHeaders },
@@ -244,7 +244,7 @@ if (mode === "capture") {
       ready: healthAssessment.ready,
       gatewayAffinityBridge: healthAssessment.gatewayAffinityBridge,
       changedAt: String(health?.availability?.changedAt || ""),
-      crmStatus: healthResponse.status,
+      pontoPagesStatus: healthResponse.status,
       identityStatus: identityResponse.status,
       observation: "external-production",
     },

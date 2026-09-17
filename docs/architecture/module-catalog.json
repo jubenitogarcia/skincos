@@ -137,15 +137,15 @@
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
       "dataOwnership": ["Ledger, accounts, obligations, movements, imports, access grants and finance audit trail"],
       "dependencies": { "hard": ["shared"], "optional": ["integration"] },
-    "services": ["Dedicated Finance Worker reached through the API gateway service binding", "Independently published Finance Pages bundle"],
+    "services": ["Dedicated Finance Worker reached through the API gateway service binding"],
     "datastores": ["Dedicated Finance D1 with finance_settings and finance_access_grants", "Dedicated Finance module-control KV per environment"],
     "routes": ["api.skincos.com.br/finance/*", "api.skincos.com.br/finance/health", "api.skincos.com.br/finance/readiness"],
       "healthChecks": [{ "name": "Finance Worker health/readiness", "command": "curl --fail https://api-staging.skincos.com.br/finance/readiness" }],
-      "testCommands": ["npm --prefix finance test", "npm run finance:staging:import-smoke"],
+      "testCommands": ["npm --prefix finance test", "npm --prefix finance run check"],
       "featureFlag": { "key": "finance_settings.module_enabled and module-control:finance", "defaultState": "false", "enforcement": "The Finance Worker requires an explicit consumer allowedModules grant, a finance_access_grant and module_enabled=true; its module-control KV can disable, maintain or limit canary actors without publishing the UI." },
-    "fallback": "Return FINANCE_DISABLED, FINANCE_MODULE_DENIED or isolated module maintenance without exposing data; a failed remote bundle renders only the shell unavailable state, while navigation and other modules continue.",
-      "slo": { "availability": "99.5% during approved pilot windows", "latency": "p95 <= 1 s for bootstrap and reads", "measurement": "Authenticated staging smoke with explicit acknowledgement" },
-    "rollback": "Set module-control to maintenance or disabled, deploy the previously uploaded Finance Worker version and republish only the previous Finance UI SHA; restore D1 only through the Finance recovery runbook. Migrations remain additive."
+    "fallback": "Return FINANCE_DISABLED, FINANCE_MODULE_DENIED or isolated module maintenance without exposing data; the independent CRM console renders its own unavailable state while navigation and other modules continue.",
+    "slo": { "availability": "99.5% during approved pilot windows", "latency": "p95 <= 1 s for health/readiness and gateway reads", "measurement": "Worker release smoke, gateway contract tests and private operational telemetry" },
+    "rollback": "Set module-control to maintenance or disabled, deploy the previously uploaded Finance Worker version and restore D1 only through the Finance recovery runbook. The independent CRM console rolls back its own artifact; migrations remain additive."
     },
     {
       "id": "identity",

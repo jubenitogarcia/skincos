@@ -39,7 +39,7 @@ export const VALIDATION_COMMANDS = Object.freeze({
     "node .github/scripts/validate-staging-postgres.mjs",
   ]),
   finance: Object.freeze([
-    "node .github/scripts/validate-finance-canary-policy.mjs",
+    "node --check finance/worker.js && node --check finance/api/worker.js",
   ]),
 });
 

@@ -25,7 +25,7 @@ const PACKAGE_ROOT = path.resolve(__dirname, '..')
 const ARTIFACT_DIR = path.join(PACKAGE_ROOT, 'output', 'playwright')
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true })
 
-const URL = process.env.PONTO_URL || 'https://crm.skincos.com.br'
+const URL = process.env.PONTO_URL || 'https://skincos-ponto.pages.dev'
 const HEADED = process.env.HEADED === '1' || process.env.HEADED === 'true'
 const LOGIN_WAIT_MS = Math.max(
   5_000,

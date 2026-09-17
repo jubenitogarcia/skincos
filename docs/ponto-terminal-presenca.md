@@ -3,8 +3,8 @@
 ## Checklist de ativação
 
 - [ ] Cadastrar a unidade e os vínculos dos funcionários com matrícula única.
-- [ ] Criar um dispositivo do modo **Terminal** no CRM, escolher a política de rede e guardar o token uma única vez no navegador administrado do terminal.
-- [ ] Abrir `https://crm.skincos.com.br/ponto-terminal.html` no aparelho físico, emparelhar e bloquear o perfil/navegador do sistema operacional.
+- [ ] Criar um dispositivo do modo **Terminal** no Ponto dedicado, escolher a política de rede e guardar o token uma única vez no navegador administrado do terminal.
+- [ ] Abrir `https://skincos-ponto.pages.dev/ponto-terminal.html` no aparelho físico, emparelhar e bloquear o perfil/navegador do sistema operacional.
 - [ ] Para `REQUIRE`, cadastrar os CIDRs IPv4 públicos de saída da clínica (não SSID) e configurar `PONTO_NETWORK_CONTEXT_KEY` com o mesmo valor secreto no Pages e no Worker Timekeeping.
 - [ ] Para trabalho externo, configurar a política da unidade como **Trabalho externo com revisão** e a geocerca autorizada; comunicar a finalidade ao colaborador.
 - [ ] Testar entrada, intervalo, retorno e saída com uma conta sintética; confirmar auditoria e revogar o token em caso de perda do dispositivo.
@@ -19,7 +19,7 @@
 
 ## Variáveis e recuperação
 
-- `PONTO_NETWORK_CONTEXT_KEY`: segredo HMAC compartilhado exclusivamente entre a Pages Function do CRM e o Worker Timekeeping. Configure via `wrangler secret put`; nunca em `.env`, Git, URL ou QR code.
+- `PONTO_NETWORK_CONTEXT_KEY`: segredo HMAC compartilhado exclusivamente entre a Pages Function dedicada do Ponto e o Worker Timekeeping. Configure via `wrangler secret put`; nunca em `.env`, Git, URL ou QR code.
 - Revogar um dispositivo invalida o token imediatamente. Para trocar a rede, altere somente os CIDRs na tela de Dispositivos e preserve a auditoria.
 - Uma perda de token, terminal desbloqueado, CIDR incorreto ou indisponibilidade de geolocalização deve seguir contingência auditada e correção formal, não edição direta de evento.
 

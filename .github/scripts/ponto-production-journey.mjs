@@ -21,7 +21,7 @@ const controlPlaneAttestationFile = String(process.env.PONTO_SLO_CONTROL_PLANE_A
 const releaseProbeCapabilityFile = String(process.env.PONTO_RELEASE_PROBE_CAPABILITY || "").trim();
 const orchestratorRunId = String(process.env.PONTO_ORCHESTRATOR_RUN_ID || "").trim();
 const workflowRunId = String(process.env.GITHUB_RUN_ID || "").trim();
-const base = new URL(String(process.env.PONTO_RELEASE_PONTO_URL || "https://crm.skincos.com.br"));
+const base = new URL(String(process.env.PONTO_RELEASE_PONTO_URL || "https://skincos-ponto.pages.dev"));
 const identityBase = new URL(String(process.env.PONTO_RELEASE_IDENTITY_URL || "https://api.skincos.com.br"));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const policy = {
@@ -33,7 +33,7 @@ const policy = {
 if ([base, identityBase].some((url) => url.protocol !== "https:" || url.username || url.password || url.search || url.hash)) throw new Error("invalid release origin");
 if (!/^[0-9a-f]{40}$/.test(expectedSha) || !policy[expectedStage]) throw new Error("invalid release identity");
 if (!reportFile) throw new Error("PONTO_RELEASE_SLO_REPORT is required");
-if (pagesProject !== "skincos") throw new Error("Ponto production Pages project custody is invalid");
+if (pagesProject !== "skincos-ponto") throw new Error("Ponto production Pages project custody is invalid");
 if (![expectedCoreVersionId, expectedTimekeepingVersionId, expectedIdentityVersionId, expectedPagesDeploymentId].every((value) => UUID.test(value))) {
   throw new Error("expected immutable surface version IDs are required");
 }
@@ -65,7 +65,7 @@ if (testModeAllowed) {
   pagesControlPlaneCommitSha = expectedSha;
   pagesControlPlaneDigest = crypto.createHash("sha256").update(`test:${expectedSha}`).digest("hex");
 } else if (expectedStage === "rollback") {
-  if (!/^[0-9a-f]{32}$/.test(cloudflareAccountId) || !cloudflareApiToken || pagesProject !== "skincos") {
+  if (!/^[0-9a-f]{32}$/.test(cloudflareAccountId) || !cloudflareApiToken || pagesProject !== "skincos-ponto") {
     throw new Error("production Pages control-plane custody is unavailable");
   }
   const response = await fetch(
@@ -89,13 +89,13 @@ if (testModeAllowed) {
   pagesControlPlaneMatched = response.status === 200
     && payload?.success === true
     && String(deployment?.id || "").toLowerCase() === expectedPagesDeploymentId
-    && deployment?.project_name === "skincos"
+    && deployment?.project_name === "skincos-ponto"
     && deployment?.environment === "production"
     && metadata.branch === "main"
     && isTerminalPagesDeployment(deployment)
-    && aliasHosts.has("crm.skincos.com.br")
+    && aliasHosts.has("skincos-ponto.pages.dev")
     && (expectedStage === "rollback" || pagesControlPlaneCommitSha === expectedSha);
-  if (!pagesControlPlaneMatched) throw new Error("public CRM domain is not linked to the expected Pages deployment");
+  if (!pagesControlPlaneMatched) throw new Error("dedicated Ponto Pages origin is not linked to the expected Pages deployment");
   pagesControlPlaneDigest = crypto.createHash("sha256").update(JSON.stringify({
     expectedPagesDeploymentId,
     pagesControlPlaneCommitSha,
@@ -122,12 +122,12 @@ if (testModeAllowed) {
     && String(controlPlane?.timekeepingVersionId || "").toLowerCase() === expectedTimekeepingVersionId
     && String(controlPlane?.identityVersionId || "").toLowerCase() === expectedIdentityVersionId
     && String(controlPlane?.pagesDeploymentId || "").toLowerCase() === expectedPagesDeploymentId
-    && controlPlane?.pagesProject === "skincos"
+    && controlPlane?.pagesProject === "skincos-ponto"
     && controlPlane?.pagesEnvironment === "production"
     && controlPlane?.pagesBranch === "main"
     && String(controlPlane?.pagesCommitSha || "").toLowerCase() === expectedSha
     && controlPlane?.pagesTerminal === true
-    && controlPlane?.crmAliasMatched === true
+    && controlPlane?.pontoAliasMatched === true
     && (
       !["pilot", "canary"].includes(expectedStage)
       || (

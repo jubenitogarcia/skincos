@@ -102,14 +102,12 @@ Use least privilege, but do not split tokens unless there is a concrete security
 
 The preflight checks these endpoints:
 
-- `https://crm.skincos.com.br/?module=meta-ads`
-- `https://crm.skincos.com.br/api/health`
+- `https://crm.skincos.com.br/health`
+- `https://crm.skincos.com.br/readiness`
+- `https://api.skincos.com.br/crm/health`
 - `https://api.skincos.com.br/insumos/health`
 - `https://api.skincos.com.br/health`
 - `https://skincos-meta-ads-performance-report.skincos.workers.dev/health`
-- `https://crm.skincos.com.br/api/meta-ads/status`
-
-`/api/meta-ads/status` may return `401` without a CRM session; this is treated as healthy because it proves the route is alive and enforcing auth.
 
 ## Human-only responsibilities
 

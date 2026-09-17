@@ -17,11 +17,14 @@ credencial, cookie ou base remota é copiada. A autenticação é exercitada pel
 contrato de Identity e o acesso Financeiro continua condicionado a
 `allowedModules`, `finance_settings` e `finance_access_grants`.
 
-## Staging
+## Staging e produção
 
-Use `npm run finance:staging:import-smoke` somente contra o ambiente de
-staging explicitamente selecionado. O script é somente leitura até a etapa de
-commit indicada no próprio cenário e nunca habilita a flag de produção.
+O deploy do Financeiro usa somente `deploy-finance.yml` e o smoke do Worker
+(`finance/scripts/worker-release-smoke.mjs`) contra a URL de Worker explicitamente
+configurada por ambiente. O smoke verifica `health`, `readiness`, versão, D1,
+module-control e o estado de disponibilidade sem criar identidade, sessão,
+cookie, dado financeiro ou página dentro deste monorepo.
 
 Para uma falha, preserve o artefato e o recibo fora do Git e siga o rollback do
-Worker Financeiro; não redirecione o tráfego para uma implementação CRM.
+Worker Financeiro; o console independente do CRM faz seu próprio rollback e não
+é publicado por este repositório.

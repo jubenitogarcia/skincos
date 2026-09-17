@@ -31,10 +31,9 @@ on:
       pages_surface:
         description: Pages surface owning pages_url; dedicated Ponto Pages requires its exact staging origin
         required: false
-        default: legacy
+        default: dedicated-ponto-pages
         type: choice
         options:
-          - legacy
           - dedicated-ponto-pages
       timekeeping_version_id:
         description: Exact staging Timekeeping candidate version
@@ -122,14 +121,8 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
           [[ "$TIMEKEEPING_RUN" =~ ^[0-9]+$ && "$CORE_API_RUN" =~ ^[0-9]+$ && "$IDENTITY_RUN" =~ ^[0-9]+$ && "$PONTO_PAGES_RUN" =~ ^[0-9]+$ ]] || { echo 'canonical run IDs must be numeric'; exit 1; }
-          if [[ "$PAGES_SURFACE" == 'legacy' ]]; then
-            [[ "$PAGES_URL" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'legacy pages_url must be an immutable skincos-staging.pages.dev URL'; exit 1; }
-          elif [[ "$PAGES_SURFACE" == 'dedicated-ponto-pages' ]]; then
-            [[ "$PAGES_URL" =~ ^https://skincos-ponto-staging\.pages\.dev/?$ ]] || { echo 'dedicated Ponto pages_url must be https://skincos-ponto-staging.pages.dev/'; exit 1; }
-          else
-            echo 'pages_surface must be legacy or dedicated-ponto-pages'
-            exit 1
-          fi
+          [[ "$PAGES_SURFACE" == 'dedicated-ponto-pages' ]] || { echo 'pages_surface must be dedicated-ponto-pages'; exit 1; }
+          [[ "$PAGES_URL" =~ ^https://skincos-ponto-staging\.pages\.dev/?$ ]] || { echo 'dedicated Ponto pages_url must be https://skincos-ponto-staging.pages.dev/'; exit 1; }
           mkdir -p "$RUNNER_TEMP/promotion-evidence/timekeeping" "$RUNNER_TEMP/promotion-evidence/core-api" "$RUNNER_TEMP/promotion-evidence/identity" "$RUNNER_TEMP/promotion-evidence/ponto-pages"
           gh run download "$TIMEKEEPING_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-timekeeping --dir "$RUNNER_TEMP/promotion-evidence/timekeeping"
           gh run download "$CORE_API_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-api --dir "$RUNNER_TEMP/promotion-evidence/core-api"
@@ -413,11 +406,8 @@ jobs:
             && origin.pathname === "/"
             && !origin.search
             && !origin.hash;
-          const allowedOrigin = pagesSurface === "legacy"
-            ? origin.hostname.endsWith(".skincos-staging.pages.dev")
-            : pagesSurface === "dedicated-ponto-pages"
-              ? origin.origin === "https://skincos-ponto-staging.pages.dev"
-              : false;
+          const allowedOrigin = pagesSurface === "dedicated-ponto-pages"
+            && origin.origin === "https://skincos-ponto-staging.pages.dev";
           if (!originIsWellFormed || !allowedOrigin) {
             throw new Error("protected contract requires the declared immutable staging Pages origin");
           }

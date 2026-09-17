@@ -47,9 +47,9 @@ const moduleControlNamespaceId = String(process.env.MODULE_CONTROL_KV_ID || "");
 const moduleHealthUrl = String(process.env.PONTO_MODULE_HEALTH_URL || "").trim();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const staging = stage === "staging";
-const expectedPagesProject = staging ? "skincos-staging" : "skincos";
+const expectedPagesProject = staging ? "skincos-ponto-staging" : "skincos-ponto";
 const expectedPagesBranch = staging ? "staging" : "main";
-const expectedPagesAlias = staging ? "crm-staging.skincos.com.br" : "crm.skincos.com.br";
+const expectedPagesAlias = staging ? "skincos-ponto-staging.pages.dev" : "skincos-ponto.pages.dev";
 const expectedModuleHealthUrl = staging
   ? "https://api-staging.skincos.com.br/api/ponto/health"
   : "https://api.skincos.com.br/api/ponto/health";
@@ -1101,8 +1101,8 @@ const EXTERNAL_COMPOSITE_RETRY_DELAY_MS = 5_000;
 const waitForPropagation = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const attestExternalComposite = async () => {
   const origin = staging
-    ? "https://crm-staging.skincos.com.br/api/ponto/health"
-    : "https://crm.skincos.com.br/api/ponto/health";
+    ? "https://skincos-ponto-staging.pages.dev/api/ponto/health"
+    : "https://skincos-ponto.pages.dev/api/ponto/health";
   let latest = { passed: false, status: 0, reason: "external-composite-probe-not-attempted" };
   for (let attempt = 1; attempt <= EXTERNAL_COMPOSITE_MAX_ATTEMPTS; attempt += 1) {
     try {

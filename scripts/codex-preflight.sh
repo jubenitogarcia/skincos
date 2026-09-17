@@ -237,9 +237,10 @@ check_http() {
 
   local checks=(
     "https://crm.skincos.com.br/|200|CRM independent Pages"
+    "https://crm.skincos.com.br/health|200|CRM independent Worker health"
+    "https://crm.skincos.com.br/readiness|200|CRM independent Worker readiness"
     "https://api.skincos.com.br/health|200|Core worker health"
     "https://skincos-meta-ads-performance-report.skincos.workers.dev/health|200|Meta Ads report worker health"
-    "https://crm.skincos.com.br/api/meta-ads/status|200,401|Meta Ads status endpoint"
   )
   local spec url expected label code
   for spec in "${checks[@]}"; do

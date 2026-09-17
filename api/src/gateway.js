@@ -33,8 +33,8 @@ const CRM_IDENTITY_DELIVERY_HEADER_MAX_LENGTH = 16_384;
 const EMPTY_CRM_SESSION_ORIGINS = new Set();
 const CRM_SESSION_ORIGINS_BY_ENVIRONMENT = Object.freeze({
     staging: new Set([
-        'https://crm-core-staging.skincos.com.br',
-        'https://crm-staging.skincos.com.br',
+        'https://staging-core.invalid',
+        'https://staging-console.invalid',
     ]),
     production: new Set(['https://crm.skincos.com.br']),
 });

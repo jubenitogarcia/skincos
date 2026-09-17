@@ -738,7 +738,7 @@ test("staging Pages incumbent capture retries and requires exact terminal proven
   const block = source.slice(start, end);
   assert.match(block, /for attempt in \{1\.\.12\}; do/);
   assert.match(block, /deployments\?env=production&page=\$page&per_page=25/);
-  assert.match(block, /PAGES_STAGING_ALIAS: crm-staging\.skincos\.com\.br/);
+  assert.match(block, /PAGES_STAGING_ALIAS: skincos-ponto-staging\.pages\.dev/);
   assert.match(block, /result_info\?\.total_pages/);
   assert.match(block, /totalPages > 100/);
   assert.match(block, /item\?\.environment === "production" \|\| item\?\.environment == null/);

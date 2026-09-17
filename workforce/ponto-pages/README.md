@@ -72,15 +72,14 @@ production URL. Local auth is limited to an explicit loopback-only bypass.
 
 ## Compatibility
 
-This package does not own or publish `crm.skincos.com.br`; that host belongs to
-the independent CRM repository. The former Ponto URLs on that origin are
-historical compatibility references, not an active Ponto publisher. No Ponto
-domain, redirect, API route or cookie is created by this source-only package.
+This package does not own or publish the independent CRM origin. Ponto is
+published only through the dedicated `skincos-ponto-staging` and
+`skincos-ponto` Pages projects by the governed publisher. No redirect, cookie
+or legacy CRM route is created here. Terminal device tokens are origin-local
+and must be deliberately paired on the selected dedicated origin.
 
 See [docs/compatibility-handoff.md](docs/compatibility-handoff.md) for the
-requirements for a future dedicated host. In particular, terminal device
-tokens are origin-local and must be deliberately re-paired after a new host is
-live.
+dedicated-origin and rollback contract.
 
 Facial identification remains disabled in the copied Ponto source. If it is
 later deliberately enabled, run `npm run fetch-face-models` and keep the

@@ -6,7 +6,6 @@
 const fs = require('fs')
 const path = require('path')
 
-const LEGACY_PAGES_SURFACE = 'legacy'
 const DEDICATED_PONTO_PAGES_SURFACE = 'dedicated-ponto-pages'
 const DEDICATED_PONTO_STAGING_ORIGIN = 'https://skincos-ponto-staging.pages.dev'
 
@@ -14,23 +13,14 @@ const validatedStagingOrigin = (value, pagesSurface) => {
   let candidate
   try { candidate = new URL(String(value || '')) } catch { throw new Error('PONTO_STAGING_URL must be a valid immutable staging URL.') }
   if (candidate.protocol !== 'https:' || candidate.port || candidate.username || candidate.password || candidate.pathname !== '/' || candidate.search || candidate.hash) {
-    throw new Error('PONTO_STAGING_URL must be an immutable skincos-staging.pages.dev HTTPS origin.')
+    throw new Error('PONTO_STAGING_URL must be the exact dedicated Ponto Pages staging origin.')
   }
-  if (pagesSurface === LEGACY_PAGES_SURFACE) {
-    if (!candidate.hostname.endsWith('.skincos-staging.pages.dev')) {
-      throw new Error('PONTO_STAGING_URL must be an immutable skincos-staging.pages.dev HTTPS origin.')
-    }
-    return candidate
+  if (pagesSurface !== DEDICATED_PONTO_PAGES_SURFACE || candidate.origin !== DEDICATED_PONTO_STAGING_ORIGIN) {
+    throw new Error('PONTO_STAGING_PAGES_SURFACE must be dedicated-ponto-pages and PONTO_STAGING_URL must be the exact dedicated Ponto Pages staging origin.')
   }
-  if (pagesSurface === DEDICATED_PONTO_PAGES_SURFACE) {
-    if (candidate.origin !== DEDICATED_PONTO_STAGING_ORIGIN) {
-      throw new Error('PONTO_STAGING_URL must be the exact dedicated Ponto Pages staging origin.')
-    }
-    return candidate
-  }
-  throw new Error('PONTO_STAGING_PAGES_SURFACE must be either legacy or dedicated-ponto-pages.')
+  return candidate
 }
-const pagesSurface = String(process.env.PONTO_STAGING_PAGES_SURFACE || LEGACY_PAGES_SURFACE).trim().toLowerCase()
+const pagesSurface = String(process.env.PONTO_STAGING_PAGES_SURFACE || '').trim().toLowerCase()
 const base = validatedStagingOrigin(process.env.PONTO_STAGING_URL, pagesSurface)
 const expectedReleaseSha = String(process.env.PONTO_STAGING_EXPECTED_RELEASE_SHA || '').trim().toLowerCase()
 const expectedTimekeepingVersionId = String(process.env.PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID || '').trim().toLowerCase()

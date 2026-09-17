@@ -19,9 +19,9 @@ on:
       pages_surface:
         description: Select the Pages surface. Only the dedicated surface can execute this producer.
         required: true
-        default: legacy
+        default: dedicated-ponto-pages
         type: choice
-        options: [legacy, dedicated-ponto-pages]
+        options: [dedicated-ponto-pages]
       execute:
         description: Explicitly authorize a real staging-only synthetic fixture, smoke, cleanup, and receipt.
         required: true

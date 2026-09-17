@@ -14,7 +14,7 @@ Cloudflare, deploy an artifact, move a domain, or change a browser URL.
 | Legacy source | Inventory finding | Phase 2 treatment |
 | --- | --- | --- |
 | workforce/ponto-pages/wrangler.toml | Ponto Core, Ponto Identity and module control coexist with unrelated CRM integrations and shared storage. | Retain only Ponto roles. The dedicated contract pins the Ponto service identities but copies no unrelated CRM storage, integration or value. |
-| `.github/workflows/ponto-pages-governed-publisher.yml` | Historical composite CRM publisher for the old `skincos` and `skincos-staging` Pages projects. | Retired and explicitly excluded; it must never be pointed at the dedicated Ponto projects. |
+| `.github/workflows/ponto-pages-governed-publisher.yml` | Dedicated Ponto Pages publisher. | Retained as the sole publisher for `skincos-ponto` and `skincos-ponto-staging`; it rejects the old composite projects. |
 | .github/workflows/ponto-pages-secret-bridge.yml | Existing Ponto secret custody is coupled to the legacy composite Pages projects. | Not reused. The successor uses separate protected environments. |
 | .github/workflows/ponto-progressive-release.yml | Existing Ponto rollout and rollback governance is domain-wide. | It remains the evidence source for later release decisions; Phase 2 does not replace it. |
 
@@ -221,5 +221,5 @@ already proven equal.
    staging login, CSRF, Ponto read/write, terminal pairing and cleanup, then
    perform the same-deployment-source rollback drill before any production
    staging run is used.
-6. Approve host, cookie and terminal re-pairing plans before any domain or
-   redirect change. The current CRM host remains untouched.
+6. Approve host, cookie and terminal pairing plans before any domain or
+   redirect change. No CRM-hosted Ponto compatibility route is retained.

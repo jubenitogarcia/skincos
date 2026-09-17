@@ -11,7 +11,7 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/i;
 const WORKER_SURFACES = ["timekeeping", "identityWorkforce", "coreApi"];
-const STAGING_PAGES_ALIAS = "crm-staging.skincos.com.br";
+const STAGING_PAGES_ALIAS = "skincos-ponto-staging.pages.dev";
 const SURFACE_SOURCE_PATTERNS = {
   timekeeping: /ponto:timekeeping:([0-9a-f]{40})/i,
   identityWorkforce: /ponto:identityWorkforce:([0-9a-f]{40})/i,
@@ -737,7 +737,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
     throw new DrillFailure("STAGING_CUSTODY_INVALID");
   }
   if (Buffer.byteLength(idempotencyKey, "utf8") < 32) throw new DrillFailure("IDEMPOTENCY_KEY_INVALID");
-  if (pagesProject !== "skincos-staging") throw new DrillFailure("PAGES_PROJECT_INVALID");
+  if (pagesProject !== "skincos-ponto-staging") throw new DrillFailure("PAGES_PROJECT_INVALID");
   for (const [surface, identity] of Object.entries(ids)) {
     if (
       !UUID.test(identity.candidate)
@@ -927,7 +927,7 @@ function createRealRuntime(config, env = process.env) {
       || deployment?.environment !== "production"
       || (!terminal && !(allowPending && pending))
       || origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash
@@ -1241,7 +1241,7 @@ function createRealRuntime(config, env = process.env) {
     const origin = new URL(pages?.url || "");
     if (
       origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash
@@ -1317,7 +1317,7 @@ function createRealRuntime(config, env = process.env) {
     const origin = new URL(pages?.url || "");
     if (
       origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash
@@ -1480,7 +1480,7 @@ function createRealRuntime(config, env = process.env) {
     const origin = new URL(url);
     if (
       origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash

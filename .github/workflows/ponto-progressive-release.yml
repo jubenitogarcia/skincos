@@ -1264,7 +1264,7 @@ jobs:
           pages_url="$(node -e "process.stdout.write(require(process.argv[1]).url)" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json")"
           timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
           core_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
-          [[ "$pages_url" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'staging Pages affinity probe requires the immutable Pages origin'; exit 1; }
+          [[ "$pages_url" =~ ^https://([a-z0-9-]+\.)?skincos-ponto-staging\.pages\.dev/?$ ]] || { echo 'staging Pages affinity probe requires the immutable dedicated Ponto Pages origin'; exit 1; }
           [[ "$timekeeping_id" =~ ^[0-9a-fA-F-]{36}$ && "$core_id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'staging Pages affinity probe requires exact Worker version identities'; exit 1; }
           [[ -n "${PONTO_IDEMPOTENCY_KEY:-}" ]] || { echo 'Staging PONTO_IDEMPOTENCY_KEY is required for the protected affinity probe'; exit 1; }
           PAGES_URL="$pages_url" \
@@ -1284,7 +1284,7 @@ jobs:
             || !/^[0-9a-f-]{36}$/.test(timekeepingVersionId)
             || !/^[0-9a-f-]{36}$/.test(coreVersionId)
             || origin.protocol !== "https:"
-            || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+            || !(/^(?:[a-z0-9-]+\.)?skincos-ponto-staging\.pages\.dev$/.test(origin.hostname))
             || origin.pathname !== "/"
             || origin.search
             || origin.hash

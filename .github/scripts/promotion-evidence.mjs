@@ -29,7 +29,7 @@ const releaseSurfacesByUnit = {
   "public-website-release": ["website"],
   "beauty-movement-production-activation": ["website"],
   "beauty-movement-campaign-copy-update": ["website"],
-  // Atendimento is promoted as an isolated native CRM runtime.  Its release
+  // Atendimento is promoted as a read-only commercial-catalog release.  Its
   // identity spans the external product contract, API gateway and the
   // main-custodied workflow validators; keeping all three inputs in the
   // digest prevents a predecessor evidence record from being reused after a

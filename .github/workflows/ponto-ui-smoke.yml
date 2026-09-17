@@ -84,7 +84,7 @@ jobs:
         id: smoke
         continue-on-error: true
         env:
-          PONTO_URL: https://crm.skincos.com.br
+          PONTO_URL: https://skincos-ponto.pages.dev
           EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
           AUTO_LOGIN: "1"
           SMOKE_EMAIL: ${{ secrets.PONTO_PILOT_LOGIN }}
@@ -102,7 +102,7 @@ jobs:
       - name: Re-run UI smoke with trace (on failure)
         if: ${{ steps.smoke.outcome != 'success' }}
         env:
-          PONTO_URL: https://crm.skincos.com.br
+          PONTO_URL: https://skincos-ponto.pages.dev
           EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
           AUTO_LOGIN: "1"
           SMOKE_EMAIL: ${{ secrets.PONTO_PILOT_LOGIN }}

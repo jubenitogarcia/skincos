@@ -84,6 +84,7 @@
         ".github/scripts/ponto-source-closure.mjs",
         ".github/scripts/ponto-root-custody.mjs",
         ".github/workflows/ponto-orchestrator-gate.yml",
+        "workforce/ponto-pages/scripts/ponto-staging-journey.cjs",
         "inventory/wrangler.toml",
         "workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs",
         "workforce/timekeeping/security.js",
@@ -130,7 +131,7 @@
       "sharedInputs": true
     },
     "finance": {
-      "patterns": ["finance/**", ".github/workflows/deploy-finance*.yml", ".github/workflows/finance-staging-*.yml", ".github/scripts/finance-*.mjs", ".github/scripts/validate-finance-canary-policy.mjs"],
+      "patterns": ["finance/**", ".github/workflows/deploy-finance.yml", ".github/scripts/finance-production-preflight.mjs"],
       "sharedInputs": true
     },
     "clientes-readonly": {

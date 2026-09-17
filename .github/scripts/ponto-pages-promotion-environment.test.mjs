@@ -169,7 +169,7 @@ test('Ponto Pages staging smoke is an executable dedicated-only synthetic produc
   assert.match(smoke, /^name: Ponto Pages staging synthetic smoke$/m)
   assert.match(smoke, /^\s+workflow_dispatch:$/m)
   assert.doesNotMatch(smoke, /^\s+(?:push|pull_request|schedule):$/m)
-  assert.match(smoke, /pages_surface:[\s\S]*?default: legacy[\s\S]*?options: \[legacy, dedicated-ponto-pages\]/)
+  assert.match(smoke, /pages_surface:[\s\S]*?default: dedicated-ponto-pages[\s\S]*?options: \[dedicated-ponto-pages\]/)
   assert.match(smoke, /execute:[\s\S]*?default: false[\s\S]*?type: boolean/)
   assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_EXECUTION_NOT_AUTHORIZED/)
   assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_SURFACE_NOT_DEDICATED/)
@@ -203,11 +203,11 @@ test('canonical journey accepts only the exact dedicated Pages origin when selec
   assert.notEqual(dedicated.status, 0)
   assert.match(dedicated.stderr, /ponto-staging-harness-fixture-missing\.json/)
 
-  const legacy = runPontoStagingHarness({
+  const missingSurface = runPontoStagingHarness({
     origin: 'https://skincos-ponto-staging.pages.dev/',
   })
-  assert.notEqual(legacy.status, 0)
-  assert.match(legacy.stderr, /skincos-staging\.pages\.dev HTTPS origin/)
+  assert.notEqual(missingSurface.status, 0)
+  assert.match(missingSurface.stderr, /PONTO_STAGING_PAGES_SURFACE must be dedicated-ponto-pages/)
 
   const nonCanonicalDedicated = runPontoStagingHarness({
     pagesSurface: 'dedicated-ponto-pages',

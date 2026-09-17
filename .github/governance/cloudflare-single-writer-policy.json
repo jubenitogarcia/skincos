@@ -230,9 +230,7 @@
       "canonicalDeployWorkflow": ".github/workflows/deploy-finance.yml",
       "coordinationGroup": "finance-writer",
       "mutationWorkflows": [
-        ".github/workflows/deploy-finance.yml",
-        ".github/workflows/finance-staging-canary.yml",
-        ".github/workflows/finance-staging-smoke-identity.yml"
+        ".github/workflows/deploy-finance.yml"
       ]
     },
     {
