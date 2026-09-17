@@ -30,8 +30,11 @@ const errors = [];
 const fail = (message) => errors.push(message);
 const nonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-const graphNodeId = (moduleId) => `module_${moduleId.replaceAll(/[^a-zA-Z0-9]/g, "_")}`;
-const graphLabel = (module) => `${module.id}\\n${module.maturity}`;
+const graphNodeId = (module) => {
+  const boundary = module.executionBoundary === "external" ? "external_" : "";
+  return `module_${boundary}${module.id.replaceAll(/[^a-zA-Z0-9]/g, "_")}`;
+};
+const graphLabel = (module) => `${module.id}\\n${module.executionBoundary === "external" ? "external" : module.maturity}`;
 
 function validateStringArray(value, label, { min = 1 } = {}) {
   if (!Array.isArray(value) || value.length < min || value.some((item) => !nonEmptyString(item))) {
@@ -40,22 +43,23 @@ function validateStringArray(value, label, { min = 1 } = {}) {
 }
 
 function generateGraph(modules) {
+  const modulesById = new Map(modules.map((module) => [module.id, module]));
   const lines = [
     "%% Generated from docs/architecture/module-catalog.json; do not edit by hand.",
     "flowchart LR",
   ];
 
   for (const module of [...modules].sort((a, b) => a.id.localeCompare(b.id))) {
-    lines.push(`  ${graphNodeId(module.id)}[\"${graphLabel(module)}\"]`);
+    lines.push(`  ${graphNodeId(module)}[\"${graphLabel(module)}\"]`);
   }
 
   for (const module of [...modules].sort((a, b) => a.id.localeCompare(b.id))) {
     const dependencies = module.dependencies ?? {};
     for (const dependency of [...(dependencies.hard ?? [])].sort()) {
-      lines.push(`  ${graphNodeId(module.id)} -->|hard| ${graphNodeId(dependency)}`);
+      lines.push(`  ${graphNodeId(module)} -->|hard| ${graphNodeId(modulesById.get(dependency) ?? { id: dependency })}`);
     }
     for (const dependency of [...(dependencies.optional ?? [])].sort()) {
-      lines.push(`  ${graphNodeId(module.id)} -. optional .-> ${graphNodeId(dependency)}`);
+      lines.push(`  ${graphNodeId(module)} -. optional .-> ${graphNodeId(modulesById.get(dependency) ?? { id: dependency })}`);
     }
   }
 

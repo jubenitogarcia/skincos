@@ -4,176 +4,47 @@ title: Observabilidade e SLOs
 
 # Observabilidade e SLOs
 
-## Estado verificado em 2026-07-31
-
-Este runbook descreve o contrato desejado; a reconstrucao atual nao confirma
-operacao continua. A instalacao privada registrada em
-`C:\CodexRuntime\operator\admin\skincos\observability\installation.json`
-esta em `operator-run-key`, mas nao ha Scheduled Task nem processo ativo
-`SkincosObservability*`. O ultimo `monitor-health.json` valido e de
-`2026-07-30T18:30:37Z`, com alerta/recuperacao historicos preservados. Antes de
-tratar qualquer modulo como monitorado continuamente, restabeleca o supervisor
-fora do GitHub, execute um alerta controlado e registre nova evidencia sanitizada.
-
-Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacional para CRM, Website, Workers e o coordination plane global.
+O monitor primário é o `SkincosObservabilityProbe`, executado fora do GitHub e
+do Cloudflare. Ele grava estado, histórico e métricas sanitizadas em
+`C:\CodexRuntime\operator\admin\skincos\observability`. O catálogo vigente
+está em `ops/observability/catalog.json`.
 
 ## Princípios
 
 - Monitor sintético não substitui telemetria de aplicação.
-- Todo alerta precisa de owner e runbook.
-- Toda resposta operacional precisa de um identificador de correlação por request ou incidente.
+- Todo alerta possui owner, rota e runbook.
+- Logs nunca contêm body integral, token, segredo, cookie, digest de request ou
+  PII.
+- Módulo não implantado permanece `disabled`; não é convertido em falso verde.
 
-## Monitor primário fora de GitHub e Cloudflare
+## Superfícies monitoradas
 
-O primário é o `SkincosObservabilityProbe`, uma tarefa agendada no Windows do operador. Ela executa probes públicos a cada minuto, grava estado, histórico, métricas Prometheus e um dashboard HTML em `C:\\CodexRuntime\\operator\\admin\\skincos\\observability`. Não depende de GitHub Actions nem de Workers para detectar uma indisponibilidade.
+- Website: `/api/booking/status`.
+- API/gateway: `/health` e rotas públicas de integração.
+- Ponto: health/readiness dos Workers e Pages dedicados.
+- Escala: `/api/escala/health`.
+- Integrações de Atendimento: catálogo comercial read-only, quando habilitado.
+- CRM externo: monitorado no próprio projeto; o monorepo somente verifica a
+  disponibilidade do contrato de gateway.
+- Plano de coordenação: `/v1/readyz` em staging e produção.
 
-- Catálogo autoritativo: `ops/observability/catalog.json`.
-- Dashboard local: `dashboard.html`; dashboard Grafana importável: `ops/observability/dashboards/skincos-operations.json`.
-- Métricas: `metrics.prom`; o coletor/servidor Grafana/Prometheus é opcional e não muda o monitor primário.
-- O pipeline canônico de Core Workers injeta o SHA promovido em `APP_VERSION`; a resposta não usa um nome de branch como versão.
-- Alerta local obrigatório: Windows Application Event Log, source `SkincosObservability` (1001 alerta, 1002 recuperação). O desktop recebe somente alertas confirmados, nunca a recuperação; o webhook HTTPS é secundário e só pode ser configurado com credencial segregada fora do repositório.
-- Probes de módulos ainda não implantados ficam `disabled` com motivo explícito; não geram falso verde.
+SLO de referência: disponibilidade mensal de 99,9%, p95 de 800 ms para APIs
+de produto e alerta de 5xx igual ou superior a 1% em cinco minutos. O plano de
+coordenação usa 99,95% e p95 de 500 ms.
 
-Instalação/reversão no host do operador:
+## Operação
+
+O catálogo exige duas leituras consecutivas fora do saudável para confirmar
+um alerta e duas saudáveis para confirmar recuperação. O workflow
+`.github/workflows/uptime-slo.yml` é complementar e não substitui o monitor
+local. Alertas externos e credenciais de webhook são configurados fora do Git.
+
+Para instalar o monitor local:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ops\observability\scripts\Install-SkincosObservability.ps1
-# rollback: Unregister-ScheduledTask -TaskName SkincosObservabilityProbe -Confirm:$false
 ```
 
-O catálogo exige duas leituras consecutivas fora do saudável antes de confirmar um alerta e duas leituras saudáveis antes de confirmá-lo como resolvido. Por ambiente e unidade, a mensagem de desktop tem cooldown de 15 minutos e expira em 30 segundos. Oscilações de uma única sonda continuam no histórico/métricas, mas não interrompem o operador. Uma resposta Finance lenta porém HTTP válida é classificada por latência; somente a resposta upstream efetivamente 5xx permanece uma indisponibilidade.
-
-O watchdog usa o mesmo limiar de duas observações stale, mantém estado próprio e serializa o monitor com mutex local. Assim, ele reinicia o dashboard quando necessário sem abrir mensagens repetidas nem perder uma transição confirmável durante invocações simultâneas. O instalador encerra somente processos do runtime-alvo e nunca seu próprio PID, preservando uma única dupla supervisor/dashboard durante reinstalações.
-
-Uma jornada sintética autenticada exige ator exclusivo de staging, segredo fora do Git e passos sem escrita. Enquanto Identity/Finance não estiverem implantados em staging, o catálogo a mantém desabilitada em vez de reutilizar uma sessão humana.
-
-## SLOs propostos
-
-- **Disponibilidade (mensal)**: 99,9%
-- **Latência (p95)**:
-  - Website `/api/booking/status`: ≤ 800ms
-  - CRM Pages `/api/health`: ≤ 800ms
-  - Worker API `/health` e `/insumos/health`: ≤ 800ms
-- **Erros**:
-  - 5xx ≥ 1% em 5m → alerta
-  - Rate limit ≥ 5% em 5m → alerta
-  - D1/R2 error rate ≥ 1% em 5m → alerta
-
-### Coordination plane
-
-O catálogo também monitora `/v1/readyz` do Durable Object global em staging e
-produção. O objetivo operacional é disponibilidade mensal de 99,95% e p95 de
-até 500ms. Um timeout, resposta 5xx, contrato divergente, `protocol` ausente
-ou `authorityEpoch` inválido é indisponibilidade: não se transforma em
-“saudável” por retry local. Workflows e o mini-PC devem aguardar ou falhar
-fechados enquanto o endpoint estiver indisponível ou ambíguo.
-
-O Worker emite eventos JSON sanitizados para a telemetria do runtime. Os campos
-permitidos são `event`, `route`, `action`, `status`, `result`, `reason`,
-`coordinationPlane`, `authorityEpoch`, `keyId`, `resourceClass` e `durationMs`,
-além dos metadados do contrato. Não são registrados body, digest de request,
-recovery ID, token, segredo, autorização, cookie ou PII. O `keyId` é somente o
-identificador público de versão da chave, nunca a chave.
-
-O contrato de eventos e campos é compartilhado pelo Worker em
-`ops/cloudflare/global-coordinator/observability-contract.mjs` e pelo catálogo
-`ops/observability/catalog.json`. `scripts/observability/validate-catalog.mjs`
-compara os dois contratos; uma divergência falha a validação de arquitetura em
-vez de depender de documentação manual.
-
-Eventos mínimos do coordinator: `coordination.readiness`,
-`coordination.request_processed`, `coordination.request_rejected` e
-`coordination.request_failed`. Para diagnóstico, correlacione janela temporal,
-`action`, recurso lógico, epoch e resultado; nunca copie o envelope assinado
-para logs ou tickets.
-
-## Owners de alerta
-
-- Website / booking: owner `website/`
-- CRM / Escala / Ponto: owner `frontend/`
-- CRM API: owner `backend/apps/crm-api/`
-- Infra Cloudflare / segredos: owner `.github/` + backend de domínio afetado
-
-Até existirem times GitHub por domínio, o owner humano único deve manter a matriz acima atualizada em `docs/service-catalog.md`.
-
-## Alertas automáticos (GitHub Actions)
-
-Workflow: `.github/workflows/uptime-slo.yml`
-
-Variáveis (repo → Settings → Variables → Actions):
-- `OBS_HEALTHCHECK_URLS` (CSV)  
-  Ex.: `https://crm.skincos.com.br/api/health,https://crm.skincos.com.br/api/escala/_proxy-status,https://api.skincos.com.br/health,https://api.skincos.com.br/insumos/health,https://escala-api.skincos.com.br/api/escala/health,https://orb.skincos.com.br/healthz`
-- `OBS_LATENCY_MS` (default: `800`)
-- `OBS_TIMEOUT_SEC` (default: `10`)
-
-Secrets (repo → Settings → Secrets and variables → Actions):
-- `OBS_ALERT_WEBHOOK_URL` (opcional) para receber alerta push quando o workflow falhar.
-
-O workflow falha quando qualquer endpoint retornar status não-2xx ou ultrapassar o `OBS_LATENCY_MS`.
-
-## Telemetria de aplicação mínima
-
-- Booking e APIs sensíveis devem logar `request_id`, rota, status e tempo total.
-- Eventos de erro devem incluir domínio funcional (`booking`, `escala`, `crm-auth`, `insumos`).
-- Logs sem PII sensível: tokens, segredos e payloads integrais ficam proibidos.
-- O identificador do incidente deve aparecer no postmortem e no alerta.
-
-## Alertas no Cloudflare (produção)
-
-Ativar alertas no **Cloudflare Dashboard** para:
-- **5xx rate** (Workers + Pages)
-- **Request latency p95/p99**
-- **D1 errors** (timeout, transaction failures)
-- **R2 errors** (4xx/5xx)
-- **Rate limiting** (429)
-
-Recomendação: configurar alertas com janelas de 5–10 minutos e rotas específicas:
-- `api.skincos.com.br/*`
-- `crm.skincos.com.br/api/*`
-
-### Automação de alertas via API (baseline)
-
-Workflow: `.github/workflows/cloudflare-alerting-apply.yml`
-
-Este workflow cria/atualiza (idempotente) um baseline de políticas via **Cloudflare Alerting API v3**:
-- Incidents (Cloudflare Status)
-- Maintenance (Cloudflare Status)
-- Pages events (deploy/erros)
-- Passive Origin Monitoring (origin unreachable)
-- HTTP DDoS (L7)
-- Universal SSL events
-
-Configuração (repo → Settings):
-- **Secrets → Actions**
-  - `CLOUDFLARE_ACCOUNT_ID`
-  - `CLOUDFLARE_ALERTS_API_TOKEN`
-  - (opcional) `CLOUDFLARE_ALERT_WEBHOOK_URL`
-- **Variables → Actions**
-  - `ENABLE_CLOUDFLARE_ALERTING_APPLY` = `true` para permitir a execução agendada
-  - `CLOUDFLARE_ALERT_ENABLE_EMAILS` = `true` para permitir destinos por e-mail
-  - `CLOUDFLARE_ALERT_EMAILS` (CSV, usado apenas quando `CLOUDFLARE_ALERT_ENABLE_EMAILS=true`)
-  - (opcional) `CLOUDFLARE_PAGES_PROJECT_IDS` (CSV)
-  - (opcional) `CLOUDFLARE_PAGES_ENVIRONMENTS` (CSV, default sugerido: `production,preview`)
-  - (opcional) `CLOUDFLARE_PAGES_EVENTS` (CSV)
-
-Observação: os alertas de **5xx/latência/D1/R2/429** podem depender de produtos/telemetria adicionais (ex.: Workers Observability) e podem não estar disponíveis diretamente via Alerting API v3; mantenha também o `uptime-slo.yml` como monitor sintético.
-Observação 2: por segurança, o agendamento semanal e os destinos de e-mail são opt-in explícitos.
-
-### Checklist rápido (Cloudflare)
-
-1. **Workers / Pages → Analytics → Alerts**:
-   - 5xx rate ≥ 1% (5m)
-   - p95 latency ≥ 800ms (5m)
-   - 429 rate ≥ 5% (5m)
-2. **D1 → Analytics**:
-   - D1 errors ≥ 1% (5m)
-3. **R2 → Analytics**:
-   - R2 4xx/5xx ≥ 1% (5m)
-
-## Runbook mínimo
-
-1. Validar status com os endpoints de health e confirmar qual domínio está em degradação.
-2. Verificar logs de Worker/Pages e CRM API usando `request_id` ou janela temporal do alerta.
-3. Confirmar D1/R2 status no painel Cloudflare.
-4. Mitigar com rollback, fix ou isolamento de rota.
-5. Registrar incidente com causa, impacto, owner e follow-up de prevenção.
+Cada evento deve conter apenas rota, status, resultado, duração, ambiente,
+recurso lógico e identificador público da chave. A resposta do CRM externo,
+quando sondada, não é armazenada neste repositório.

@@ -2,19 +2,19 @@
 
 ## Phase 1 invariant
 
-This repository change creates no Pages project and changes no DNS, custom
-domain, Cloudflare route, API target, secret, cookie, database, workflow secret,
-or user-facing URL. The legacy `skincos` Pages project continues to serve Ponto.
-The new package has no deploy command and its dedicated workflow rejects any
+This repository creates no Pages project and changes no DNS, custom domain,
+Cloudflare route, API target, secret, cookie, database or workflow secret. The
+CRM host is owned by `jubenitogarcia/crm`; this package is source-only and has
+no active Ponto publisher or URL claim. Its dedicated workflow rejects any
 manual publish intent.
 
 | Existing contract | Phase 1 state | Future dedicated-project handling |
 | --- | --- | --- |
-| `https://crm.skincos.com.br/?module=ponto` | Unchanged and still canonical | Serve the Ponto client from a separate host only after an approved client handoff or a narrowly scoped compatibility redirect. |
-| `/ponto-terminal.html` | Unchanged and still canonical | Publish the same path on the dedicated host; guide administrators through device re-pairing. |
-| `/api/ponto/*` | Unchanged on the legacy origin | Keep the existing secure Pages gateway contract. Do not replace it with a browser-to-API call or a generic worker proxy. |
-| `/api/auth/*` | Unchanged on the legacy origin | Validate the shared `.skincos.com.br` cookie contract in isolated staging before allowing a sibling host. |
-| `/api/insumos/health` | Unchanged on the legacy origin | The dedicated package only reads this narrow health endpoint for unit labels. |
+| `https://crm.skincos.com.br/?module=ponto` | Historical CRM-hosted entrypoint; not owned by this package | Choose and validate a dedicated Ponto host before publishing a redirect or new URL. |
+| `/ponto-terminal.html` | Historical path only | Publish the same path on the dedicated host and guide administrators through device re-pairing. |
+| `/api/ponto/*` | No active route in this package | Provision a dedicated secure gateway before enabling browser calls. |
+| `/api/auth/*` | No active route in this package | Validate the cookie/Identity contract in isolated staging before allowing a sibling host. |
+| `/api/insumos/health` | Source compatibility function only | Keep it narrow and owner-scoped when a dedicated host is provisioned. |
 
 The pure `src/legacyHandoff.ts` helper records the candidate mapping and is not
 wired to browser navigation, a Function, or a Worker. It exists so that a later
@@ -31,8 +31,8 @@ URL.
    HMAC contracts; no binding value belongs in Git.
 3. Run synthetic staging smoke for login/session/CSRF, Ponto read/write paths,
    terminal device pairing and the same-artifact rollback.
-4. Choose and validate a dedicated host without changing the legacy URL. A
-   sibling host needs cookie, origin and CSRF validation before any redirect.
+4. Choose and validate a dedicated host. A sibling host needs cookie, origin
+   and CSRF validation before any redirect or public release.
 5. Announce and execute terminal re-pairing. The device token is stored under
    the browser origin, so it must not be copied or assumed to survive a host
    change.
@@ -42,8 +42,7 @@ URL.
 
 ## Rollback principle
 
-Before the future URL switch, rollback is simply no deployment: the legacy
-Ponto surface remains active. After a governed switch, rollback must restore the
-previous verified Pages deployment or remove the new URL mapping; it must not
-restore old writers, bypass CSRF, or forward device credentials through a new
-unreviewed proxy.
+Before the future URL switch, rollback is simply no deployment. After a
+governed switch, rollback must restore the previous verified Pages deployment
+or remove the new URL mapping; it must not restore old writers, bypass CSRF, or
+forward device credentials through a new unreviewed proxy.

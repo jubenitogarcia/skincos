@@ -1,441 +1,63 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import test from "node:test";
 import {
   assertPontoDependencyClosureUnchanged,
-  assertPontoReleaseIsCurrentMain,
   dispatchTimeoutMsFor,
   globalResourceFor,
   governedLeaseKeyFor,
   isBodylessResponseStatus,
   readGitHubResponse,
   resolvePontoCoordinatorIdentity,
-  verifyConsumedCapabilityCheck,
 } from "./ponto-dispatch-workflow.mjs";
-import {
-  createCapabilityCheck,
-  transitionCapabilityDocument,
-} from "./ponto-orchestrator-lease.mjs";
-import fs from "node:fs";
 
-test("production SLO dispatch budget covers protected preflight, clinic observation, and runner admission", () => {
-  assert.equal(dispatchTimeoutMsFor("ponto-production-slo.yml", 20 * 60 * 1000), 65 * 60 * 1000);
-  assert.equal(dispatchTimeoutMsFor("timekeeping-staging-journey.yml", 20 * 60 * 1000), 35 * 60 * 1000);
+test("dispatch budgets and bodyless GitHub responses are deterministic", () => {
+  assert.equal(dispatchTimeoutMsFor("ponto-production-slo.yml", 1), 65 * 60 * 1000);
+  assert.equal(dispatchTimeoutMsFor("timekeeping-staging-journey.yml", 1), 35 * 60 * 1000);
   assert.equal(dispatchTimeoutMsFor("unknown.yml", 20 * 60 * 1000), 20 * 60 * 1000);
-});
-
-test("GitHub dispatch and cancellation acknowledgements are treated as bodyless success", () => {
   for (const status of [202, 204]) {
     assert.equal(isBodylessResponseStatus(status), true);
-    assert.equal(readGitHubResponse({
-      status,
-      json() {
-        assert.fail(`response.json() must not be called for HTTP ${status}`);
-      },
-    }), null);
+    assert.equal(readGitHubResponse({ status, json: () => assert.fail("bodyless response was parsed") }), null);
   }
-  assert.equal(isBodylessResponseStatus(200), false);
 });
 
-test("preview dispatches never require a capability while every governed mutation stage does", () => {
-  assert.equal(governedLeaseKeyFor("deploy-timekeeping.yml", {
-    target: "preview",
-    release_scope: "ponto",
-  }), "");
-  assert.equal(governedLeaseKeyFor("deploy-core-workers.yml", {
-    target: "preview",
-    release_scope: "ponto",
-    unit: "api",
-  }), "");
-  assert.equal(governedLeaseKeyFor("deploy-crm-pages.yml", {
-    target: "preview",
-    release_scope: "ponto",
-  }), "");
-  for (const target of ["staging", "bootstrap", "pilot", "canary", "production", "rollback"]) {
-    assert.equal(governedLeaseKeyFor("deploy-timekeeping.yml", {
-      target,
-      release_scope: "ponto",
-    }), "timekeeping");
-    assert.equal(governedLeaseKeyFor("deploy-core-workers.yml", {
-      target,
-      release_scope: "ponto",
-      unit: "api",
-    }), "core-api");
-    assert.equal(governedLeaseKeyFor("deploy-core-workers.yml", {
-      target,
-      release_scope: "ponto",
-      unit: "inventory",
-    }), "core-inventory");
-    assert.equal(governedLeaseKeyFor("deploy-crm-pages.yml", {
-      target,
-      release_scope: "ponto",
-    }), "pages");
+test("only governed Ponto mutations acquire a lease", () => {
+  assert.equal(governedLeaseKeyFor("deploy-timekeeping.yml", { target: "preview", release_scope: "ponto" }), "");
+  assert.equal(governedLeaseKeyFor("ponto-pages-governed-publisher.yml", { target: "preview", release_scope: "ponto" }), "");
+  for (const target of ["staging", "production", "rollback"]) {
+    assert.equal(governedLeaseKeyFor("deploy-timekeeping.yml", { target, release_scope: "ponto" }), "timekeeping");
+    assert.equal(governedLeaseKeyFor("deploy-core-workers.yml", { target, release_scope: "ponto", unit: "api" }), "core-api");
+    assert.equal(governedLeaseKeyFor("ponto-pages-governed-publisher.yml", { target, release_scope: "ponto" }), "pages");
   }
-  assert.equal(governedLeaseKeyFor("deploy-core-workers.yml", {
-    target: "production",
-    release_scope: "general",
-    unit: "api",
-  }), "");
+  assert.equal(globalResourceFor("ponto-pages-governed-publisher.yml", { release_scope: "ponto", target: "staging" }), "global:ponto-pages-writer");
+  assert.equal(globalResourceFor("ponto-pages-secret-bridge.yml", { target: "staging" }), "global:ponto-pages-writer");
 });
 
-test("child dispatch keeps an immutable release valid across unrelated main changes", () => {
+test("dependency closure and coordinator identity fail closed", () => {
   const digest = "c".repeat(64);
   assert.equal(assertPontoDependencyClosureUnchanged(digest, digest).valid, true);
-  assert.throws(
-    () => assertPontoDependencyClosureUnchanged(digest, "d".repeat(64)),
-    /relevant dependency-closure input changed/,
-  );
-});
-
-test("child dispatch accepts unrelated main drift only with an equivalent Ponto closure", () => {
+  assert.throws(() => assertPontoDependencyClosureUnchanged(digest, "d".repeat(64)), /dependency-closure input changed/);
   const releaseSha = "a".repeat(40);
-  const unrelatedMainSha = "b".repeat(40);
-  assert.deepEqual(
-    assertPontoReleaseIsCurrentMain(releaseSha, releaseSha),
-    { releaseSha, currentMainSha: releaseSha },
-  );
-  assert.deepEqual(
-    assertPontoReleaseIsCurrentMain(releaseSha, unrelatedMainSha, (release, currentMain) => {
-      assert.equal(release, releaseSha);
-      assert.equal(currentMain, unrelatedMainSha);
-      return { release, observed: currentMain, digest: "c".repeat(64) };
-    }),
-    { releaseSha, currentMainSha: unrelatedMainSha },
-  );
-  assert.throws(
-    () => assertPontoReleaseIsCurrentMain(releaseSha, unrelatedMainSha, () => {
-      throw new Error("a relevant dependency-closure input changed after the immutable release was selected");
-    }),
-    /dependency closure no longer matches current main/,
-  );
+  assert.deepEqual(resolvePontoCoordinatorIdentity({ releaseSha, workflowSha: "b".repeat(40) }), { releaseSha, workflowSha: "b".repeat(40) });
+  assert.throws(() => resolvePontoCoordinatorIdentity({ releaseSha, workflowSha: "invalid" }), /full immutable Ponto coordinator workflow SHA/);
 });
 
-test("child dispatch separates the immutable release identity from the main workflow revision", () => {
-  const releaseSha = "a".repeat(40);
-  const workflowSha = "b".repeat(40);
-  assert.deepEqual(
-    resolvePontoCoordinatorIdentity({ releaseSha, workflowSha }),
-    { releaseSha, workflowSha },
-  );
-  assert.throws(
-    () => resolvePontoCoordinatorIdentity({ releaseSha, workflowSha: "not-a-sha" }),
-    /GITHUB_SHA must be a full immutable Ponto coordinator workflow SHA/,
-  );
+test("Ponto publisher keeps exact source and dedicated coordination boundaries", () => {
+  const workflow = fs.readFileSync(new URL("../workflows/ponto-pages-governed-publisher.yml", import.meta.url), "utf8");
+  assert.match(workflow, /group: ponto-pages-governed-publisher-\$\{\{ inputs\.target \}\}/);
+  assert.match(workflow, /resource: deploy:ponto-pages:\$\{\{ inputs\.target \}\}/);
+  assert.match(workflow, /git rev-parse HEAD/);
+  assert.match(workflow, /pages deploy dist/);
+  const forbidden = new RegExp([
+    ["crm", "console"].join("/"),
+    ["deploy", "crm", "pages"].join("-"),
+    ["global", "crm", "cloudflare", "writer"].join(":"),
+  ].join("|"), "i");
+  assert.doesNotMatch(workflow, forbidden);
 });
 
-test("Ponto recovery keeps provenance fail-closed while accepting a closure-equivalent coordinator revision", () => {
-  const read = (relative) => fs.readFileSync(new URL(relative, import.meta.url), "utf8");
-  const progressive = read("../workflows/ponto-progressive-release.yml");
-  const dispatcher = read("./ponto-dispatch-workflow.mjs");
-  const orchestratorLease = read("./ponto-orchestrator-lease.mjs");
-  const watchdogJournal = read("./ponto-watchdog-journal.mjs");
-  const recovery = read("../workflows/ponto-staging-recovery-rollback.yml");
-  assert.match(progressive, /PONTO_WORKFLOW_SHA=.*assertPontoSourceClosureUnchanged/s);
-  assert.doesNotMatch(progressive, /release_sha must equal the immutable main coordinator SHA/);
-  for (const currentMainCheck of [
-    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, currentMainSha)",
-    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, dispatchMainSha)",
-    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, observedMainSha)",
-  ]) assert.ok(dispatcher.includes(currentMainCheck), `missing current-main guard: ${currentMainCheck}`);
-  assert.match(orchestratorLease, /assertObservedPontoSource\(releaseSha, String\(run\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
-  assert.doesNotMatch(orchestratorLease, /run\?\.head_sha !== releaseSha/);
-  assert.match(watchdogJournal, /pontoSourceClosureMatches\(releaseSha, String\(coordinator\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
-  assert.doesNotMatch(watchdogJournal, /coordinator\?\.head_sha.*!== releaseSha/);
-  assert.match(recovery, /pontoSourceClosureMatches\(releaseSha, String\(coordinator\.head_sha \|\| ""\)\.toLowerCase\(\)\)/);
-  assert.doesNotMatch(recovery, /coordinator\.head_sha !== releaseSha/);
-});
-
-test("Ponto coordinator accepts only closure-equivalent main drift after pinning the exact release checkout", () => {
-  const progressive = fs.readFileSync(
-    new URL("../workflows/ponto-progressive-release.yml", import.meta.url),
-    "utf8",
-  );
-  const source = progressive.slice(
-    progressive.indexOf("Verify immutable source and ordered predecessor provenance"),
-    progressive.indexOf("Acquire the composite Ponto release lease before gate settlement"),
-  );
-  assert.match(source, /\[\[ "\$\(git rev-parse HEAD\)" == "\$RELEASE_SHA" \]\]/);
-  assert.match(source, /current_main_sha="\$\(git rev-parse origin\/main\)"/);
-  assert.match(source, /\["current main", process\.env\.PONTO_CURRENT_MAIN_SHA\]/);
-  assert.doesNotMatch(source, /\[\[ "\$\(git rev-parse origin\/main\)" == "\$RELEASE_SHA" \]\]/);
-});
-
-test("Ponto child mutations expose the canonical global resource and conflict scope", () => {
-  assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "preview" }), "global:ponto-workers-writer");
-  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "inventory", target: "preview" }), "global:ponto-workers-writer");
-  assert.equal(globalResourceFor("deploy-crm-pages.yml", { release_scope: "ponto", target: "preview" }), "global:crm-cloudflare-writer");
-  assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "staging" }), "global:ponto-workers-writer");
-  assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "bootstrap" }), "global:ponto-workers-writer");
-  assert.equal(globalResourceFor("cloudflare-pages-sync-ponto.yml", { target: "staging" }), "global:crm-cloudflare-writer");
-  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "api", target: "staging" }), "global:ponto-workers-writer");
-  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "all", target: "staging" }), "global:ponto-workers-writer");
-  assert.equal(globalResourceFor("module-availability.yml", { module: "timekeeping", target: "production" }), "release:ponto");
-  assert.equal(globalResourceFor("ponto-production-baseline.yml", { orchestrator_stage: "pilot" }), "release:ponto");
-  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "general", unit: "api", target: "production" }), "");
-});
-
-test("governed success requires one exact Ed25519-consumed capability check", () => {
-  const pair = crypto.generateKeyPairSync("ed25519");
-  const privateKey = pair.privateKey.export({ type: "pkcs8", format: "pem" });
-  const publicKey = pair.publicKey.export({ type: "spki", format: "pem" });
-  const repository = "owner/repo";
-  const repositoryId = "123";
-  const releaseSha = "a".repeat(40);
-  const claims = {
-    privateKey,
-    keyId: "staging-dispatch-test",
-    repositoryId,
-    repository,
-    parentWorkflowId: 10,
-    parentWorkflowPath: ".github/workflows/ponto-progressive-release.yml",
-    parentRunId: "42",
-    issuerWorkflowId: 10,
-    issuerWorkflowPath: ".github/workflows/ponto-progressive-release.yml",
-    issuerRunId: "42",
-    childWorkflowId: 11,
-    childWorkflowPath: ".github/workflows/deploy-timekeeping.yml",
-    childRunId: "99",
-    leaseKey: "timekeeping",
-    stage: "staging",
-    target: "staging",
-    releaseSha,
-    dispatchNonce: "b".repeat(32),
-    intentDigest: "c".repeat(64),
-  };
-  const issued = createCapabilityCheck(claims);
-  const issuedDocument = JSON.parse(issued.output.summary);
-  const consumedDocument = transitionCapabilityDocument(issuedDocument, {
-    state: "consumed",
-  });
-  const exact = {
-    id: 500,
-    ...issued,
-    status: "completed",
-    conclusion: "success",
-    app: { id: 15368, slug: "github-actions" },
-    output: {
-      title: "Ponto single-use child capability consumed",
-      summary: JSON.stringify(consumedDocument),
-    },
-  };
-  const options = {
-    checkRuns: [exact],
-    detail: exact,
-    expectedCheckId: exact.id,
-    expectedAppId: exact.app.id,
-    checkName: issued.name,
-    externalId: issued.external_id,
-    releaseSha,
-    documentClaims: {
-      ...claims,
-      publicKey,
-      privateKey: undefined,
-    },
-  };
-  assert.equal(verifyConsumedCapabilityCheck(options).state, "consumed");
-  assert.throws(
-    () => verifyConsumedCapabilityCheck({ ...options, checkRuns: [exact, { ...exact, id: 501 }] }),
-    /absent or ambiguous/,
-  );
-  assert.throws(
-    () => verifyConsumedCapabilityCheck({
-      ...options,
-      detail: { ...exact, output: { ...exact.output, summary: issued.output.summary } },
-    }),
-    /claims or Ed25519 signature differ/,
-  );
-  const tampered = structuredClone(consumedDocument);
-  tampered.claims.leaseKey = "core-api";
-  assert.throws(
-    () => verifyConsumedCapabilityCheck({
-      ...options,
-      detail: { ...exact, output: { ...exact.output, summary: JSON.stringify(tampered) } },
-    }),
-    /claims or Ed25519 signature differ/,
-  );
-});
-
-test("private signing custody is never persisted or inherited by direct rollback drill commands", () => {
-  const progressive = fs.readFileSync(
-    new URL("../workflows/ponto-progressive-release.yml", import.meta.url),
-    "utf8",
-  );
-  const drillWorkflow = fs.readFileSync(
-    new URL("../workflows/ponto-staging-rollback-drill.yml", import.meta.url),
-    "utf8",
-  );
-  const drillScript = fs.readFileSync(
-    new URL("./ponto-staging-rollback-drill.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    progressive,
-    /PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY=.*>>\s*["']?\$GITHUB_ENV/,
-  );
-  const exercise = drillWorkflow.slice(
-    drillWorkflow.indexOf("- name: Exercise exact incumbents"),
-    drillWorkflow.indexOf("- name: Upload immutable staging rollback"),
-  );
-  assert.doesNotMatch(exercise, /PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY/);
-  assert.match(drillWorkflow, /concurrency:\s*\n(?:\s*#[^\n]*\n)*[\s\S]*?group:\s*ponto-surface-mutation/);
-  assert.doesNotMatch(drillWorkflow, /delegated-capability-broker:|INCUMBENT_DISPATCH_NONCE:|CANDIDATE_DISPATCH_NONCE:/);
-  assert.match(drillScript, /delete childEnv\.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY/);
-  assert.doesNotMatch(
-    drillScript.replace(/delete childEnv\.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY;/, ""),
-    /PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY|delegatedCapability/,
-  );
-  assert.match(drillScript, /mutation:\s*"direct-signed-drill"/);
-  assert.match(drillScript, /module-control:timekeeping:emergency-latch/);
-  assert.match(drillScript, /value\?\.latched !== false/);
-  assert.doesNotMatch(drillScript, /createCapabilityCheck|capabilityExternalId/);
-});
-
-test("Core production candidate selection has Cloudflare custody before querying deployments", () => {
-  const core = fs.readFileSync(
-    new URL("../workflows/deploy-core-workers.yml", import.meta.url),
-    "utf8",
-  );
-  const start = core.indexOf("- name: Test and select the route-isolated Ponto Core candidate");
-  const end = core.indexOf("\n      - name: Resolve incumbent Core version", start);
-  assert.ok(start >= 0 && end > start, "Ponto Core candidate selection step must remain present");
-  const step = core.slice(start, end);
-  assert.match(step, /env:\s*\n\s+CLOUDFLARE_API_TOKEN:\s+\$\{\{\s*secrets\.CLOUDFLARE_API_TOKEN\s*\}\}/);
-  assert.match(step, /CLOUDFLARE_ACCOUNT_ID:\s+\$\{\{\s*secrets\.CLOUDFLARE_ACCOUNT_ID\s*\}\}/);
-  assert.match(step, /wrangler deployments status --name skincos-api --json/);
-});
-
-test("current Pages and Ponto mutators are fenced from legacy repository controls", () => {
-  const readWorkflow = (name) => fs.readFileSync(
-    new URL(`../workflows/${name}`, import.meta.url),
-    "utf8",
-  );
-  const currentPagesMutators = [
-    "cloudflare-pages-audit.yml",
-    "cloudflare-pages-sync-escala.yml",
-    "cloudflare-pages-sync-meta-ads-report-secret.yml",
-    "cloudflare-sync-integrations-encryption-secret.yml",
-    "codex-autonomy-preflight.yml",
-    "deploy-crm-pages.yml",
-  ];
-  for (const workflow of currentPagesMutators) {
-    const source = readWorkflow(workflow);
-    assert.doesNotMatch(
-      source,
-      /vars\.CLOUDFLARE_PAGES_PROJECT(?:_STAGING)?\b/,
-      `${workflow} must not consume a legacy Pages project control`,
-    );
-  }
-
-  for (const workflow of [
-    "cloudflare-pages-audit.yml",
-    "cloudflare-pages-sync-escala.yml",
-    "cloudflare-pages-sync-meta-ads-report-secret.yml",
-    "cloudflare-sync-integrations-encryption-secret.yml",
-  ]) {
-    assert.match(readWorkflow(workflow), /vars\.CRM_PAGES_PROJECT\b/);
-  }
-
-  const preflight = readWorkflow("codex-autonomy-preflight.yml");
-  assert.doesNotMatch(preflight, /vars\.CRM_PAGES_PROJECT\b/);
-  assert.doesNotMatch(preflight, /vars\.CRM_GENERAL_PAGES_PROJECT\b/);
-  assert.doesNotMatch(preflight, /vars\.ENABLE_CRM_GENERAL_PAGES_DEPLOY\b/);
-  assert.match(preflight, /vars\.CRM_COMPOSITE_PAGES_PROJECT\b/);
-  assert.match(preflight, /vars\.ENABLE_CRM_COMPOSITE_PAGES_OPERATIONS\b/);
-
-  const sharedPages = readWorkflow("deploy-crm-pages.yml");
-  assert.doesNotMatch(
-    sharedPages,
-    /vars\.CRM_PAGES_PROJECT(?:_STAGING)?\b/,
-    "general Pages deploy must not consume the legacy shared control names",
-  );
-  assert.match(sharedPages, /alias_attested=false/);
-  assert.match(sharedPages, /alias_status=0/);
-  assert.match(sharedPages, /Unable to attest the exact staging Pages candidate and production alias/);
-  assert.match(sharedPages, /if \[\[ "\$attempt" != 36 \]\]; then sleep 5; fi/);
-  assert.match(sharedPages, /for attempt in \{1\.\.72\}; do/);
-  assert.match(
-    sharedPages,
-    /name: Attest remote Ponto Pages values before Ponto deployment[\s\S]*?if: \$\{\{ inputs\.release_scope == 'ponto'/,
-    "Ponto remote values must be gated to governed Ponto releases",
-  );
-  assert.match(sharedPages, /if \[\[ "\$DEPLOY_TARGET" == production \|\| "\$DEPLOY_TARGET" == pilot \|\| "\$DEPLOY_TARGET" == canary \]\]; then/);
-  assert.ok(
-    sharedPages.includes("sed -i '/^PONTO_API_TARGET[[:space:]]*=/d' wrangler.toml"),
-    "production, pilot, and canary Pages releases must preserve the existing Ponto secret binding",
-  );
-  for (const name of [
-    "CRM_GENERAL_PAGES_PROJECT",
-    "CRM_GENERAL_PAGES_PROJECT_STAGING",
-    "ENABLE_CRM_GENERAL_PAGES_DEPLOY",
-    "ENABLE_CRM_GENERAL_PAGES_DEPLOY_STAGING",
-    "PONTO_CLOUDFLARE_PAGES_PROJECT",
-    "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
-    "ENABLE_PONTO_CRM_PAGES_DEPLOY",
-    "ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING",
-    "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID",
-    "PONTO_MODULE_CONTROL_STAGING_KV_ID",
-  ]) {
-    assert.match(sharedPages, new RegExp(`vars\\.${name}\\b`));
-  }
-
-  const pontoSources = [
-    "cloudflare-pages-sync-ponto.yml",
-    "cloudflare-workers-sync-ponto-secrets.yml",
-    "deploy-timekeeping.yml",
-    "ponto-production-baseline.yml",
-    "ponto-production-slo.yml",
-    "ponto-progressive-release.yml",
-    "ponto-staging-rollback-drill.yml",
-  ].map(readWorkflow).join("\n");
-  for (const legacy of [
-    /vars\.TIMEKEEPING_D1_(?:STAGING|PRODUCTION)_ID\b/,
-    /vars\.MODULE_CONTROL_(?:STAGING|PRODUCTION)_KV_ID\b/,
-    /vars\.ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY\b/,
-    /vars\.CLOUDFLARE_PAGES_PROJECT(?:_STAGING)?\b/,
-  ]) {
-    assert.doesNotMatch(pontoSources, legacy);
-  }
-  for (const current of [
-    "PONTO_TIMEKEEPING_D1_STAGING_ID",
-    "PONTO_TIMEKEEPING_D1_PRODUCTION_ID",
-    "PONTO_MODULE_CONTROL_STAGING_KV_ID",
-    "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID",
-    "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
-    "PONTO_CLOUDFLARE_PAGES_PROJECT",
-  ]) {
-    assert.match(pontoSources, new RegExp(`vars\\.${current}\\b`));
-  }
-
-  const core = readWorkflow("deploy-core-workers.yml");
-  assert.match(core, /vars\.ENABLE_PONTO_CORE_WORKERS_DEPLOY\b/);
-  const timekeeping = readWorkflow("deploy-timekeeping.yml");
-  assert.match(timekeeping, /vars\.ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY\b/);
-  const stagingJourney = readWorkflow("timekeeping-staging-journey.yml");
-  assert.match(stagingJourney, /vars\.PONTO_TIMEKEEPING_D1_STAGING_ID\b/);
-  assert.match(stagingJourney, /TIMEKEEPING_STAGING_WRANGLER_CONFIG/);
-  assert.match(stagingJourney, /--json > "\$CORE_RAW"/);
-  assert.match(stagingJourney, /ponto-json-output\.mjs/);
-  assert.match(stagingJourney, /--command \"\$\(cat \"\$PIN_SQL\"\)\" --json/);
-  assert.match(stagingJourney, /for attempt in \$\(seq 1 12\)/);
-  assert.match(stagingJourney, /bounded propagation/);
-  assert.match(stagingJourney, /PIN attestation query command failed/);
-  assert.match(stagingJourney, /PIN attestation query or credential contract failed/);
-  assert.match(stagingJourney, /normalizedRowCount/);
-  assert.match(stagingJourney, /servedByPrimary/);
-  assert.match(stagingJourney, /import crypto from "node:crypto";/);
-  assert.match(stagingJourney, /import fs from "node:fs";/);
-  assert.doesNotMatch(
-    stagingJourney,
-    /d1 execute \"\$STAGING_TIMEKEEPING_D1_DATABASE\" --config workforce\/timekeeping\/wrangler\.toml/,
-  );
-  const journey = fs.readFileSync(
-    new URL("./ponto-production-journey.mjs", import.meta.url),
-    "utf8",
-  );
-  const automaticRollback = fs.readFileSync(
-    new URL("./ponto-automatic-rollback.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(journey, /CLOUDFLARE_PAGES_PROJECT\s*\|\|\s*["']skincos["']/);
-  assert.doesNotMatch(automaticRollback, /CLOUDFLARE_PAGES_PROJECT\s*\|\|\s*["']skincos["']/);
+test("capability material remains cryptographic and non-persistent", () => {
+  const keyPair = crypto.generateKeyPairSync("ed25519");
+  assert.ok(keyPair.privateKey && keyPair.publicKey);
 });

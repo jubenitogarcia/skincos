@@ -20,7 +20,7 @@ const finish = async (ok, cause) => {
 try {
   if (process.env.FINANCE_STAGING_CANARY_ACK !== '1') throw new Error('FINANCE_STAGING_CANARY_ACK=1 is required');
   const baseUrl = required('FINANCE_CANARY_BASE_URL').replace(/\/$/, '');
-  if (baseUrl !== 'https://skincos-staging.pages.dev') throw new Error('canary base URL must be the staging CRM shell');
+if (baseUrl !== 'https://skincos-staging.pages.dev') throw new Error('canary base URL must be the staging web application');
   const username = required('FINANCE_CANARY_USERNAME');
   if (username !== 'finance-staging-smoke') throw new Error('only dedicated synthetic smoke actor may run canary');
   const password = requiredSecret('FINANCE_CANARY_PASSWORD');
@@ -47,7 +47,7 @@ try {
   // Authenticate through the same Pages proxy used by the browser shell. The
   // session cookie is host-scoped to the staging shell and is not portable to
   // a direct api-staging request.
-  // The CRM authentication contract calls the credential identifier `email`
+  // The Identity authentication contract calls the credential identifier `email`
   // even when the synthetic actor signs in with its canonical username.
   const loginResponse = await request('login', '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl }, body: JSON.stringify({ email: username, password }) });
   const login = await loginResponse.json().catch(() => null);

@@ -21,8 +21,8 @@ const child = {
   head_branch: "skincos/release/ponto/" + "a".repeat(40),
   head_sha: "a".repeat(40),
   repository: { full_name: context.repository },
-  display_title: "CRM Pages staging " + "a".repeat(40) + " orchestrator=12345",
-  path: ".github/workflows/deploy-crm-pages.yml",
+  display_title: "Ponto Pages staging " + "a".repeat(40) + " orchestrator=12345",
+  path: ".github/workflows/ponto-pages-governed-publisher.yml",
   status: "in_progress",
 };
 
@@ -56,19 +56,19 @@ test("GitHub cancellation acknowledgements are treated as bodyless success", () 
 
 test("a pending dispatch only resolves to the same workflow at or after its request", () => {
   const pending = {
-    workflow: "deploy-crm-pages.yml",
+    workflow: "ponto-pages-governed-publisher.yml",
     orchestratorRunId: "12345",
     dispatchNonce: "1".repeat(32),
     dispatchRequestedAt: "2026-07-29T12:00:10.000Z",
   };
   assert.equal(matchesPendingDispatch({
-    path: ".github/workflows/deploy-crm-pages.yml@refs/heads/main",
-    display_title: `CRM Pages staging ${"a".repeat(40)} orchestrator=12345 nonce=${"1".repeat(32)}`,
+    path: ".github/workflows/ponto-pages-governed-publisher.yml@refs/heads/main",
+    display_title: `Ponto Pages staging ${"a".repeat(40)} orchestrator=12345 nonce=${"1".repeat(32)}`,
     created_at: "2026-07-29T12:00:11.000Z",
   }, pending), true);
   assert.equal(matchesPendingDispatch({
-    path: ".github/workflows/deploy-crm-pages.yml@refs/heads/main",
-    display_title: `CRM Pages staging ${"a".repeat(40)} orchestrator=12345 nonce=${"1".repeat(32)}`,
+    path: ".github/workflows/ponto-pages-governed-publisher.yml@refs/heads/main",
+    display_title: `Ponto Pages staging ${"a".repeat(40)} orchestrator=12345 nonce=${"1".repeat(32)}`,
     created_at: "2026-07-29T11:59:00.000Z",
   }, pending), false);
   assert.equal(matchesPendingDispatch({

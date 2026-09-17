@@ -52,7 +52,7 @@ app.post('/api/message', (req, res) => {
         } else if (lowerMessage.includes('test') || lowerMessage.includes('teste')) {
             response = '✅ **Teste do Agent Zero**\n\nSistema funcionando perfeitamente!\n\n📊 Status: Operacional\n🔗 Proxy: Ativo\n⚡ API: Respondendo\n\nTodos os módulos estão integrados e funcionais.';
         } else {
-            response = `🤖 **Agent Zero IA**\n\nOlá! Recebi sua mensagem: "${message}"\n\n🎯 **Posso ajudá-lo com:**\n• Automação WhatsApp\n• Marketing Instagram  \n• Gestão CRM\n• Análises de dados\n\nDigite "whatsapp", "instagram" ou "teste" para começar!`;
+            response = `🤖 **Agent Zero IA**\n\nOlá! Recebi sua mensagem: "${message}"\n\n🎯 **Posso ajudá-lo com:**\n• Automação WhatsApp\n• Marketing Instagram\n• Análises de dados\n\nDigite "whatsapp", "instagram" ou "teste" para começar!`;
         }
         
         // Store conversation
@@ -111,7 +111,7 @@ app.get('/api/config', (req, res) => {
         config: {
             name: 'SKINCOS AI Agent',
             version: '1.0.0',
-            features: ['WhatsApp', 'Instagram', 'CRM'],
+            features: ['WhatsApp', 'Instagram'],
             status: 'active'
         }
     });

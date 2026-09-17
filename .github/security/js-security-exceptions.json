@@ -1,10 +1,6 @@
 {
   "patterns": {
     "dangerouslySetInnerHTML": {
-      "crm/console/chart.tsx": {
-        "count": 1,
-        "reason": "Static SVG/markup injection generated locally for chart export."
-      },
       "website/src/app/[unit]/page.tsx": {
         "count": 1,
         "reason": "Static LocalBusiness JSON-LD serialization."

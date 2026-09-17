@@ -33,7 +33,7 @@ Não use `workflow_dispatch` nesta mudança. Esta PR altera apenas o mecanismo.
 
 ## Cobertura e bloqueios explícitos
 
-- Core Workers (inclui Inventory e Financeiro), CRM Pages (inclui Financeiro),
+- Core Workers (inclui Inventory e Financeiro), Ponto Pages,
   Escala, Ponto e Meta Ads Report têm staging configurado e podem cumprir a
   cadeia quando seus secrets e aprovações estiverem presentes.
 - Social Publisher, Website e runtime nativo foram convertidos para o mesmo

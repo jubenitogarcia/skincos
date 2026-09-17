@@ -34,22 +34,6 @@ ReadWritePaths=/var/lib/skincos-runtime/global-coordination
 # ledger/receipt state. Keep both explicit under ProtectSystem=strict.
 ReadWritePaths=/etc/skincos/ponto-legacy-absence-attestation
 ReadWritePaths=/var/lib/skincos/ponto-legacy-absence-attestation
-# A fixed, root-owned helper inherits this mount namespace through sudo. These
-# are the only additional destinations it needs for the dedicated CRM
-# transaction: immutable releases/pointers, its private custody journal and
-# the explicit crm.service unit. The runner account itself still has no write
-# permission to them and no general sudo command.
-ReadWritePaths=/opt/skincos/releases
-ReadWritePaths=/opt/skincos/current
-# The schema-only Atendimento identity executor writes its own root-private
-# receipt and uses the existing fixed staging database checkpoint helper. The
-# runner account remains denied by POSIX ownership; these paths exist solely
-# because sudo inherits ProtectSystem=strict's mount namespace.
-ReadWritePaths=/var/lib/skincos-runtime/crm-core-identity-schema-custody
-ReadWritePaths=/var/backups/skincos/clientes/staging
-ReadWritePaths=/etc/skincos/crm-native-publisher
-ReadWritePaths=/var/lib/skincos-runtime/crm-native-publisher
-ReadWritePaths=/etc/systemd/system
 UMask=0077
 
 [Install]

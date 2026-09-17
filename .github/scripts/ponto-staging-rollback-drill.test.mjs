@@ -29,7 +29,7 @@ const ids = {
     candidate: "51111111-1111-4111-8111-111111111111",
     incumbent: "61111111-1111-4111-8111-111111111111",
   },
-  crmPages: {
+  pontoPages: {
     candidate: "71111111-1111-4111-8111-111111111111",
     incumbent: "81111111-1111-4111-8111-111111111111",
   },
@@ -69,9 +69,9 @@ const incumbentEvidence = {
     versionId: ids.coreApi.incumbent,
     sourceSha: "c".repeat(40),
   },
-  crmPages: {
+  pontoPages: {
     passed: true,
-    deploymentId: ids.crmPages.incumbent,
+    deploymentId: ids.pontoPages.incumbent,
     sourceSha: null,
   },
 };
@@ -96,9 +96,9 @@ const coherentIncumbentEvidence = {
     versionId: ids.coreApi.incumbent,
     sourceSha: "b".repeat(40),
   },
-  crmPages: {
+  pontoPages: {
     passed: true,
-    deploymentId: ids.crmPages.incumbent,
+    deploymentId: ids.pontoPages.incumbent,
     sourceSha: "b".repeat(40),
   },
 };
@@ -127,8 +127,8 @@ test("configuration derives the transient release-probe key without delegated ch
     IDENTITY_INCUMBENT_VERSION_ID: ids.identityWorkforce.incumbent,
     CORE_CANDIDATE_VERSION_ID: ids.coreApi.candidate,
     CORE_INCUMBENT_VERSION_ID: ids.coreApi.incumbent,
-    PAGES_CANDIDATE_DEPLOYMENT_ID: ids.crmPages.candidate,
-    PAGES_INCUMBENT_DEPLOYMENT_ID: ids.crmPages.incumbent,
+    PAGES_CANDIDATE_DEPLOYMENT_ID: ids.pontoPages.candidate,
+    PAGES_INCUMBENT_DEPLOYMENT_ID: ids.pontoPages.incumbent,
   };
   const loaded = loadConfig(env, ["/tmp/report.json"]);
   const expected = createHmac("sha256", idempotencyKey)
@@ -148,7 +148,7 @@ test("incumbent provenance accepts heterogeneous and absent source SHAs with exa
   assert.equal(evidence.timekeeping.sourceSha, "b".repeat(40));
   assert.equal(evidence.identityWorkforce.sourceSha, null);
   assert.equal(evidence.coreApi.sourceSha, "c".repeat(40));
-  assert.equal(evidence.crmPages.sourceSha, null);
+  assert.equal(evidence.pontoPages.sourceSha, null);
   assert.throws(
     () => validateIncumbentProvenance(ids, {
       ...incumbentEvidence,
@@ -461,7 +461,7 @@ test("drill exercises two fresh fixtures and restores every exact candidate", as
   assert.equal(report.teardown.candidate.passed, true);
   assert.equal(report.recovery.disposition, "candidate-restored-under-maintenance");
   assert.match(report.restoration.surfaces.timekeeping.deploymentId, /^[0-9a-f-]{36}$/);
-  assert.match(report.restoration.surfaces.crmPages.activeDeploymentId, /^[0-9a-f-]{36}$/);
+  assert.match(report.restoration.surfaces.pontoPages.activeDeploymentId, /^[0-9a-f-]{36}$/);
   assert.equal(report.credentialsIncluded, false);
   assert.equal(report.piiIncluded, false);
   const serialized = JSON.stringify(report);
@@ -614,8 +614,8 @@ test("failure after every candidate restoration compensates every surface to inc
     assert.match(report.failureCompensation.surfaces[surface].deploymentId, /^[0-9a-f-]{36}$/);
   }
   assert.equal(
-    report.failureCompensation.surfaces.crmPages.sourceDeploymentId,
-    ids.crmPages.incumbent,
+    report.failureCompensation.surfaces.pontoPages.sourceDeploymentId,
+    ids.pontoPages.incumbent,
   );
   assert.equal(runtime.calls.at(-1), "module:post-compensation-maintenance:maintenance");
 });

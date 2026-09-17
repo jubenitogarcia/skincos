@@ -20,23 +20,6 @@
       }
     },
     {
-      "id": "identity-crm-delivery-staging",
-      "workflow": ".github/workflows/identity-crm-delivery.yml",
-      "concurrencyPrefix": "identity-crm-delivery-",
-      "publishes": ["Worker:skincos-identity-crm-delivery-staging"],
-      "resources": ["Identity CRM delivery staging signer", "restricted CRM session caller configuration on the staging API Worker", "synthetic Identity session smoke fixture"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY", "CRM_IDENTITY_ISSUER_CALLER_HMAC", "IDENTITY_CRM_DELIVERY_CALLER_HMAC"],
-      "migrationPaths": [],
-      "environments": ["staging"],
-      "promotion": {
-        "stagingSupported": true,
-        "publisherType": "restricted-staging-identity-delivery",
-        "stagingOnly": true,
-        "featureFlagDefault": "disabled",
-        "rollback": "Disable the API caller and Identity issuer caller while retaining the internally generated HMAC only for controlled recovery."
-      }
-    },
-    {
       "id": "ponto-core-baseline",
       "workflow": ".github/workflows/ponto-core-baseline-publisher.yml",
       "concurrencyPrefix": "ponto-surface-mutation",
@@ -130,17 +113,6 @@
       }
     },
     {
-      "id": "finance-ui",
-      "workflow": ".github/workflows/deploy-finance-ui.yml",
-      "concurrencyPrefix": "deploy-finance-ui-",
-      "publishes": ["Pages:skincos-finance-ui", "Pages:skincos-finance-ui-staging"],
-      "resources": ["Finance Pages bundle", "skincos-finance-ui Pages project", "skincos-finance-ui-staging Pages project"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
-      "migrationPaths": [],
-      "environments": ["preview", "staging", "production"],
-      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled"}
-    },
-    {
       "id": "ponto-pages",
       "workflow": ".github/workflows/ponto-pages-governed-publisher.yml",
       "concurrencyPrefix": "ponto-pages-governed-publisher-",
@@ -150,26 +122,7 @@
       "secrets": ["PONTO_PAGES_CLOUDFLARE_API_TOKEN", "PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID", "PONTO_API_TARGET", "AUTH_API_TARGET", "INSUMOS_API_TARGET", "PONTO_ACTOR_HMAC_KEY", "PONTO_NETWORK_CONTEXT_KEY", "PONTO_RELEASE_PROBE_HMAC_KEY", "SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET"],
       "migrationPaths": [],
       "environments": ["staging", "production"],
-      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "candidatePreflight": ".github/workflows/ponto-pages-candidate-preflight.yml", "rollback": "Production requires a later dedicated staging same-deployment-source rollback receipt; this publisher never changes a custom domain, DNS record or legacy CRM Pages project."}
-    },
-    {
-      "id": "crm-pages",
-      "workflow": ".github/workflows/deploy-crm-pages.yml",
-      "concurrencyPrefix": "ponto-surface-mutation",
-      "publishes": ["Pages:skincos", "Pages:skincos-staging"],
-      "resources": ["Cloudflare Pages skincos", "Cloudflare Pages skincos-staging", "crm console"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
-      "migrationPaths": [],
-      "environments": ["preview", "staging", "production"],
-      "promotion": {
-        "stagingSupported": true,
-        "financeIncluded": true,
-        "pontoProgressiveCoordinator": ".github/workflows/ponto-progressive-release.yml",
-        "pontoAffinityVariable": "PONTO_CORE_VERSION_ID",
-        "pontoAffinityStages": ["pilot", "canary"],
-        "pontoRolloutVariable": "PONTO_ROLLOUT_STAGE",
-        "pontoPrivateServiceBinding": "PONTO_CORE"
-      }
+      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled", "candidatePreflight": ".github/workflows/ponto-pages-candidate-preflight.yml", "rollback": "Production requires a later dedicated staging same-deployment-source rollback receipt; this publisher never changes a custom domain or DNS record."}
     },
     {
       "id": "escala-api",
@@ -289,10 +242,10 @@
       "id": "native-runtime",
       "workflow": null,
       "canonicalRunbook": "docs/runbooks/lifecycle-runtime-cutover.md",
-      "publishes": ["Native:messaging-whatsapp", "Native:crm", "Native:booking", "Native:cloudflare-runtime"],
-      "resources": ["messaging-whatsapp", "crm", "booking", "cloudflare-runtime"],
+      "publishes": ["Native:messaging-whatsapp", "Native:booking", "Native:atendimento-commercial-catalog", "Native:cloudflare-runtime"],
+      "resources": ["messaging-whatsapp", "booking", "atendimento-commercial-catalog", "cloudflare-runtime"],
       "secrets": ["/etc/skincos"],
-      "migrationPaths": ["crm/api/server/atendimento/migrations", "booking/migrations"],
+      "migrationPaths": ["booking/migrations"],
       "environments": ["preview", "staging", "production"],
       "promotion": {"stagingSupported": false, "blocker": "Native runtime has immutable releases but no isolated native staging host; production remains operator-gated."}
     }
@@ -300,7 +253,7 @@
   "nonPublishingSurfaces": [
     {
       "id": "cloudflare-configuration-synchronizers",
-      "workflows": ["cloudflare-pages-sync-escala.yml", "cloudflare-pages-sync-meta-ads-report-secret.yml", "cloudflare-pages-sync-ponto.yml", "cloudflare-sync-integrations-encryption-secret.yml", "cloudflare-workers-sync-ponto-secrets.yml", "sync-website-cloudflare-security.yml", "website-instagram-sync.yml"],
+      "workflows": ["cloudflare-pages-sync-escala.yml", "cloudflare-sync-integrations-encryption-secret.yml", "cloudflare-workers-sync-ponto-secrets.yml", "sync-website-cloudflare-security.yml", "website-instagram-sync.yml"],
       "scope": "Secrets, bindings or configuration only; a source deploy command is prohibited by CI topology validation."
     },
     {
@@ -311,27 +264,14 @@
       "scope": "No GitHub publisher exists; this Worker remains held outside the release catalog until its promotion runbook is made explicit."
     }
   ],
-  "externalPublisherControls": [
-    {
-      "id": "cloudflare-pages-skincos-git-source",
-      "provider": "Cloudflare Pages",
-      "project": "skincos",
-      "sourceRepository": "jubenitogarcia/skincos",
-      "productionDeploymentsEnabled": false,
-      "previewDeploymentSetting": "none",
-      "verification": "Read the Pages project source config before every release-governance change; the Git source remains connected only for repository metadata, never for publication."
-    }
-  ],
+  "externalPublisherControls": [],
   "retiredWorkflowPaths": [
     ".github/workflows/deploy-core-workers-reconcile.yml",
     ".github/workflows/deploy-insumos-worker.yml",
     ".github/workflows/deploy-workers-reconcile.yml",
     ".github/workflows/deploy-workers-after-automerge.yml",
     ".github/workflows/dispatch-after-automerge-fallback.yml",
-    ".github/workflows/deploy-crm-pages-after-automerge.yml",
-    ".github/workflows/deploy-crm-pages-reconcile.yml",
     ".github/workflows/deploy-escala-api-reconcile.yml",
-    ".github/workflows/deploy-social-publisher-worker-reconcile.yml",
-    ".github/workflows/deploy-crm-api.yml"
+    ".github/workflows/deploy-social-publisher-worker-reconcile.yml"
   ]
 }

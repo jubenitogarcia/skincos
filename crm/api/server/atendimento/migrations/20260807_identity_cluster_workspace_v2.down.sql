@@ -1,2 +1,0 @@
--- Non-destructive rollback. Do not delete append-only operations or reveal
--- evidence; the guarded migration runner only marks this workspace unavailable.

@@ -67,14 +67,14 @@ export function validateIncumbentProvenance(ids, evidence) {
       sourceSha: validateSourceEvidence(proof.sourceSha),
     };
   }
-  const pages = evidence.crmPages;
+  const pages = evidence.pontoPages;
   if (
     pages?.passed !== true
-    || String(pages.deploymentId || "").toLowerCase() !== ids.crmPages.incumbent.toLowerCase()
+    || String(pages.deploymentId || "").toLowerCase() !== ids.pontoPages.incumbent.toLowerCase()
   ) throw new DrillFailure("INCUMBENT_CONTROL_PLANE_INVALID");
-  validated.crmPages = {
+  validated.pontoPages = {
     passed: true,
-    deploymentId: ids.crmPages.incumbent,
+    deploymentId: ids.pontoPages.incumbent,
     sourceSha: validateSourceEvidence(pages.sourceSha),
   };
   return validated;
@@ -83,7 +83,7 @@ export function validateIncumbentProvenance(ids, evidence) {
 export function classifyIncumbentBundle(evidence) {
   const sourceShas = [
     ...WORKER_SURFACES.map((surface) => evidence?.[surface]?.sourceSha),
-    evidence?.crmPages?.sourceSha,
+    evidence?.pontoPages?.sourceSha,
   ]
     .map((value) => String(value || "").trim().toLowerCase())
     .filter(Boolean);
@@ -262,23 +262,23 @@ async function mutateEverySurface({
   }
 
   try {
-    target.surfaces.crmPages = await runtime.deployPages(
-      config.ids.crmPages[side],
+    target.surfaces.pontoPages = await runtime.deployPages(
+      config.ids.pontoPages[side],
       phase,
       expectedSha,
     );
   } catch (error) {
-    target.surfaces.crmPages = {
+    target.surfaces.pontoPages = {
       passed: false,
-      sourceDeploymentId: config.ids.crmPages[side],
+      sourceDeploymentId: config.ids.pontoPages[side],
       reason: `${phase}-failed`,
     };
-    recordFailure(report, `${phase}.crmPages`, error);
+    recordFailure(report, `${phase}.pontoPages`, error);
   }
 
   target.passed = Object.keys(target.surfaces).length === 4
     && Object.values(target.surfaces).every((surface) => surface?.passed === true);
-  return target.surfaces.crmPages;
+  return target.surfaces.pontoPages;
 }
 
 async function validateFixture({
@@ -447,7 +447,7 @@ export async function runStagingRollbackDrill(config, runtime) {
 
   if (report.preflight.passed) {
     incumbentCompatibilityExpected = {
-      pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
+      pagesSourceSha: incumbentProvenance.pontoPages.sourceSha,
       identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
       coreSourceSha: incumbentProvenance.coreApi.sourceSha,
       timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
@@ -506,7 +506,7 @@ export async function runStagingRollbackDrill(config, runtime) {
             timekeepingVersionId: config.ids.timekeeping.incumbent,
             identityVersionId: config.ids.identityWorkforce.incumbent,
             coreVersionId: config.ids.coreApi.incumbent,
-            pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
+            pagesSourceSha: incumbentProvenance.pontoPages.sourceSha,
             identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
             coreSourceSha: incumbentProvenance.coreApi.sourceSha,
             timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
@@ -721,7 +721,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
       candidate: requireValue(env, "CORE_CANDIDATE_VERSION_ID"),
       incumbent: requireValue(env, "CORE_INCUMBENT_VERSION_ID"),
     },
-    crmPages: {
+    pontoPages: {
       candidate: requireValue(env, "PAGES_CANDIDATE_DEPLOYMENT_ID"),
       incumbent: requireValue(env, "PAGES_INCUMBENT_DEPLOYMENT_ID"),
     },
@@ -1485,17 +1485,17 @@ function createRealRuntime(config, env = process.env) {
       || origin.search
       || origin.hash
     ) throw new DrillFailure("JOURNEY_ORIGIN_INVALID");
-    const journeyArgs = ["crm/console/scripts/ponto-staging-journey.cjs"];
+    const journeyArgs = ["workforce/ponto-pages/scripts/ponto-staging-journey.cjs"];
     const journeyOptions = {
       code: "AUTHENTICATED_JOURNEY_FAILED",
       captureFailureDetail: true,
       env: {
-        PONTO_STAGING_CRM_URL: origin.href,
+        PONTO_STAGING_URL: origin.href,
         PONTO_STAGING_EXPECTED_RELEASE_SHA: expected.releaseSha,
         PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: expected.timekeepingVersionId,
         PONTO_STAGING_FIXTURES_FILE: handle.fixturePath,
         PONTO_STAGING_REPORT_FILE: handle.journeyReportPath,
-        NODE_PATH: path.resolve("crm/console/node_modules"),
+        NODE_PATH: path.resolve("workforce/ponto-pages/node_modules"),
       },
     };
     let journeyAttempts = 0;
@@ -1750,9 +1750,9 @@ function createRealRuntime(config, env = process.env) {
         };
         incumbents[surface] = workerVersionDetails(surface, config.ids[surface].incumbent);
       }
-      surfaces.crmPages = await assertPagesActive(config.ids.crmPages.candidate, config.releaseSha);
-      const incumbentPages = await pagesDeploymentDetails(config.ids.crmPages.incumbent);
-      incumbents.crmPages = {
+      surfaces.pontoPages = await assertPagesActive(config.ids.pontoPages.candidate, config.releaseSha);
+      const incumbentPages = await pagesDeploymentDetails(config.ids.pontoPages.incumbent);
+      incumbents.pontoPages = {
         passed: true,
         deploymentId: incumbentPages.id,
         sourceSha: incumbentPages.commitHash,

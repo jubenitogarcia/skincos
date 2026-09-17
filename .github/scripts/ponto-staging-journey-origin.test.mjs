@@ -5,19 +5,19 @@ import path from "node:path";
 import test from "node:test";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const journeyScript = path.join(repositoryRoot, "crm", "console", "scripts", "ponto-staging-journey.cjs");
+const journeyScript = path.join(repositoryRoot, "workforce", "ponto-pages", "scripts", "ponto-staging-journey.cjs");
 
 function validateOrigin({ origin, pagesSurface } = {}) {
   const env = { ...process.env };
   for (const key of [
-    "PONTO_STAGING_CRM_URL",
+    "PONTO_STAGING_URL",
     "PONTO_STAGING_PAGES_SURFACE",
     "PONTO_STAGING_EXPECTED_RELEASE_SHA",
     "PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID",
     "PONTO_STAGING_FIXTURES_FILE",
     "PONTO_STAGING_REPORT_FILE",
   ]) delete env[key];
-  env.PONTO_STAGING_CRM_URL = origin;
+  env.PONTO_STAGING_URL = origin;
   if (pagesSurface !== undefined) env.PONTO_STAGING_PAGES_SURFACE = pagesSurface;
   return spawnSync(process.execPath, [journeyScript], {
     cwd: repositoryRoot,
@@ -47,7 +47,7 @@ test("legacy immutable Pages candidates remain accepted by default", () => {
 test("the dedicated Ponto Pages origin requires its explicit surface selector", () => {
   assertOriginRejected(
     validateOrigin({ origin: "https://skincos-ponto-staging.pages.dev/" }),
-    /PONTO_STAGING_CRM_URL must be an immutable skincos-staging\.pages\.dev HTTPS origin/,
+    /PONTO_STAGING_URL must be an immutable skincos-staging\.pages\.dev HTTPS origin/,
   );
   assertOriginAccepted(validateOrigin({
     origin: "https://skincos-ponto-staging.pages.dev/",
@@ -64,7 +64,7 @@ test("the dedicated selector rejects other or malformed origins", () => {
   ]) {
     assertOriginRejected(
       validateOrigin({ origin, pagesSurface: "dedicated-ponto-pages" }),
-      /PONTO_STAGING_CRM_URL must be (the exact dedicated Ponto Pages staging origin|an immutable skincos-staging\.pages\.dev HTTPS origin)/,
+      /PONTO_STAGING_URL must be (the exact dedicated Ponto Pages staging origin|an immutable skincos-staging\.pages\.dev HTTPS origin)/,
     );
   }
   assertOriginRejected(

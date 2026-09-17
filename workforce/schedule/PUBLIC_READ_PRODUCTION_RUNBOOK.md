@@ -73,7 +73,7 @@ staging keys. Values reach new Worker versions only via `--secrets-file
 
 Every production mutation requires a fresh checked/fenced lease. Adapter and
 probe share `deploy:schedule-public-read-adapter:production`; core retains
-`global:crm-cloudflare-writer` on the production authority. A failed lease stops
+`global:escala-writer` on the production authority. A failed lease stops
 the next mutation, including rollback or cleanup. Reruns after a possibly
 mutating attempt are refused; create a new dispatch with explicit evidence.
 The manifest is also revalidated in each mutating Wrangler step, before the

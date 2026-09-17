@@ -32,30 +32,30 @@ const validate = (baseline) => {
     assert(surface.percentage === 100, `${unit} baseline must be exactly 100 percent`);
     assert(typeof surface.tag === "string" && typeof surface.message === "string", `${unit} baseline metadata is missing`);
   }
-  assert(UUID.test(baseline.surfaces?.crmPages?.deploymentId), "Pages baseline deployment is invalid");
-  assert(SHA.test(baseline.surfaces?.crmPages?.commitHash), "Pages baseline commit hash is invalid");
+  assert(UUID.test(baseline.surfaces?.pontoPages?.deploymentId), "Pages baseline deployment is invalid");
+  assert(SHA.test(baseline.surfaces?.pontoPages?.commitHash), "Pages baseline commit hash is invalid");
   assert(
-    baseline.surfaces?.crmPages?.commitHash.toLowerCase() !== baseline.releaseSha.toLowerCase(),
+    baseline.surfaces?.pontoPages?.commitHash.toLowerCase() !== baseline.releaseSha.toLowerCase(),
     "Pages baseline incumbent cannot already be the release candidate",
   );
   assert(
-    baseline.surfaces?.crmPages?.status === "success"
-      && baseline.surfaces?.crmPages?.latestStage?.name === "deploy"
-      && Number.isFinite(Date.parse(String(baseline.surfaces?.crmPages?.latestStage?.endedOn || "")))
-      && baseline.surfaces?.crmPages?.isSkipped === false,
+    baseline.surfaces?.pontoPages?.status === "success"
+      && baseline.surfaces?.pontoPages?.latestStage?.name === "deploy"
+      && Number.isFinite(Date.parse(String(baseline.surfaces?.pontoPages?.latestStage?.endedOn || "")))
+      && baseline.surfaces?.pontoPages?.isSkipped === false,
     "Pages baseline must be an unskipped completed deploy success",
   );
-  assert(baseline.surfaces?.crmPages?.project === "skincos", "Pages baseline project is not canonical production");
-  assert(baseline.surfaces?.crmPages?.environment === "production", "Pages baseline environment is not production");
-  assert(baseline.surfaces?.crmPages?.canonical === true, "Pages baseline deployment is not canonical");
+  assert(baseline.surfaces?.pontoPages?.project === "skincos", "Pages baseline project is not canonical production");
+  assert(baseline.surfaces?.pontoPages?.environment === "production", "Pages baseline environment is not production");
+  assert(baseline.surfaces?.pontoPages?.canonical === true, "Pages baseline deployment is not canonical");
   assert(
-    baseline.surfaces?.crmPages?.alias === "https://crm.skincos.com.br",
+    baseline.surfaces?.pontoPages?.alias === "https://crm.skincos.com.br",
     "Pages baseline canonical alias is invalid",
   );
   assert(
-    baseline.surfaces?.crmPages?.sourceControl?.deploymentsEnabled === false
-      && baseline.surfaces?.crmPages?.sourceControl?.productionDeploymentsEnabled === false
-      && baseline.surfaces?.crmPages?.sourceControl?.previewDeploymentSetting === "none",
+    baseline.surfaces?.pontoPages?.sourceControl?.deploymentsEnabled === false
+      && baseline.surfaces?.pontoPages?.sourceControl?.productionDeploymentsEnabled === false
+      && baseline.surfaces?.pontoPages?.sourceControl?.previewDeploymentSetting === "none",
     "Pages source auto-deploy controls are not fully disabled",
   );
   assert(/^[0-9]+$/.test(String(baseline.bootstrapCore?.workflowRunId || "")), "Core bootstrap workflow run is invalid");
@@ -216,7 +216,7 @@ if (mode === "capture") {
       timekeeping,
       coreApi,
       identityWorkforce,
-      crmPages: {
+      pontoPages: {
         deploymentId: pages.id,
         commitHash,
         createdOn: String(pages.created_on || ""),
@@ -273,7 +273,7 @@ if (mode === "capture") {
       `baseline_core_deployment_id=${baseline.surfaces.coreApi.deploymentId}`,
       `baseline_identity_version_id=${baseline.surfaces.identityWorkforce.versionId}`,
       `baseline_identity_deployment_id=${baseline.surfaces.identityWorkforce.deploymentId}`,
-      `baseline_pages_deployment_id=${baseline.surfaces.crmPages.deploymentId}`,
+      `baseline_pages_deployment_id=${baseline.surfaces.pontoPages.deploymentId}`,
       `baseline_core_bootstrap_workflow_run_id=${baseline.bootstrapCore.workflowRunId}`,
       `baseline_core_bootstrap_artifact_id=${baseline.bootstrapCore.artifactId}`,
       `baseline_core_bootstrap_artifact_digest=${baseline.bootstrapCore.artifactDigest}`,

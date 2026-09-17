@@ -23,7 +23,7 @@ test("a localized website correction does not require unrelated domain tests", (
 });
 
 test("ordinary auth and migration paths are elevated, not exceptional by default", () => {
-  const report = classifyFiles(policy, ["crm/api/auth/session.ts", "workforce/timekeeping/migrations/0009_add_column.sql"]);
+  const report = classifyFiles(policy, ["shared/identity-auth/worker.js", "workforce/timekeeping/migrations/0009_add_column.sql"]);
   assert.equal(report.risk, "high");
   assert.ok(report.requiredChecks.includes("rollback-plan"));
   assert.ok(report.skippedChecks.includes("staging-smoke"));

@@ -1,5 +1,5 @@
 import { createGatewayHandler } from './router.js';
-import { csrfErrorFor, resolveCrmActor } from '../../shared/crm-auth/worker.js';
+import { csrfErrorFor, resolveCrmActor } from '../../shared/identity-auth/worker.js';
 import { fetchBoundService } from '../../shared/service-adapters/cloudflare-service-binding.js';
 import { createSignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 import {

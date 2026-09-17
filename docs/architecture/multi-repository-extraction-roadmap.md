@@ -1,6 +1,6 @@
 # Roteiro para a extração multi-repositório
 
-**Estado:** decisão de arquitetura em execução
+**Estado:** referência histórica atualizada após a extração do CRM
 **Data:** 2026-08-28
 **Escopo:** após a extração de Orb e BioEvo, ordenar os próximos produtos que
 podem deixar o monorepo SKINCOS sem copiar código, runtime ou responsabilidade
@@ -26,7 +26,7 @@ corte, concluir estas bases:
 
 1. Publicar contratos neutros como pacotes privados versionados, com exports
     explícitos e SemVer. Os primeiros candidatos são identidade, finance,
-    disponibilidade de módulo, observabilidade e adapters de borda. `crm-auth`
+    disponibilidade de módulo, observabilidade e adapters de borda. `identity-auth`
     e `identity-runtime` ficam locais até que deixem de reexportar
     implementação. O bootstrap local `skincos-contracts` não deve virar um
     release plane permanente para donos de cadências diferentes: antes da
@@ -50,17 +50,17 @@ corte, concluir estas bases:
 | Onda | Produto privado proposto | Decisão | Motivo e condição de entrada |
 | --- | --- | --- | --- |
 | P1 | `skincos-meta-ads-reporting` | **Preparar, não cortar ainda** | Há duas implementações divergentes entre `ads/meta/apps/report-ingest-worker` e Orb apontando para o mesmo Worker/D1/R2. Primeiro reconciliar owner, fluxo Orb, contrato HTTP/evento e staging; o novo repositório deve herdar os recursos existentes, não recriá-los. |
-| P1 | `skincos-finance` | **Preparar, não cortar ainda** | Worker, D1/KV, migrations e gateway já são próximos de independentes; a UI ainda é compilada pelo CRM e testes ainda tomam runtime/configuração do CRM. Separar UI, testes e pipeline, e registrar um disable/maintenance explícito antes do primeiro rollout. |
-| P1 | `skincos-clientes-readonly` | **Preparar, não cortar ainda** | A operação read-only é isolável, mas o entrypoint importa CRM completo e o perfil `full` expõe mais que Clientes. Definir allowlist de leitura e entrypoint próprio, sem rotas comerciais, antes do corte. |
+| P1 | `skincos-finance` | **Preparar, não cortar ainda** | Worker, D1/KV, migrations e gateway já são próximos de independentes; a UI e os testes ainda têm dependências de compatibilidade. Separar UI, testes e pipeline, e registrar um disable/maintenance explícito antes do primeiro rollout. |
+| P1 | `skincos-clientes-readonly` | **Preparar, não cortar ainda** | A operação read-only é isolável, mas o entrypoint ainda expõe mais que Clientes. Definir allowlist de leitura e entrypoint próprio, sem rotas comerciais, antes do corte. |
 | P2 | `skincos-workforce-schedule` | **Depois da Wave 0** | A API de escala já tem Worker/D1/migrations, porém Website lê o D1 de escala diretamente e Ponto depende do contrato HMAC. Publicar API de leitura de agenda e contrato de ator antes de trocar os consumidores. |
 | P2 | `skincos-public-website-booking` | **Depois de Schedule** | `booking/` é só um esqueleto; o booking real (dados pessoais, pedidos, comunicação e tracking) está em `website/`. Extrair Website junto do booking real inicialmente, substituindo a leitura direta da escala por API. |
-| P2 | `skincos-whatsapp-adapter` | **Depois da Wave 0; pré-corte protegido** | O release nativo já usa candidato imutável, mas o candidato ainda contém o fork/upstream Evolution. O adapter HTTP do CRM, a custódia e o rollback possuem uma fronteira executável; antes do repositório, substituir a fonte embutida por artefato upstream fixado e manter um único serviço, publicador e rollback. |
+| P2 | `skincos-whatsapp-adapter` | **Depois da Wave 0; pré-corte protegido** | O release nativo já usa candidato imutável, mas o candidato ainda contém o fork/upstream Evolution. O adapter HTTP, a custódia e o rollback possuem uma fronteira executável; antes do repositório, substituir a fonte embutida por artefato upstream fixado e manter um único serviço, publicador e rollback. |
 
 ## Domínios deliberadamente adiados
 
 `api`, `inventory` e `identity` continuam juntos até haver um plano stateful
 para Durable Objects, sessão e dados compartilhados. Também ficam no monorepo
-por enquanto: CRM completo, Ponto/timekeeping, EF inteiro, social, backend,
+por enquanto: Ponto/timekeeping, EF inteiro, social, backend,
 platform, ops, Token Vault e coordenador global. Esses domínios têm contratos,
 dados ou release ownership ainda cruzados e seriam falsos positivos de
 independência.
@@ -83,7 +83,7 @@ Cada PR/repositório de extração deve demonstrar:
 
 Concluir a Wave 0 em PRs pequenos e independentes. Em seguida, iniciar Meta
 Ads Reporting pela reconciliação de ownership (não pela criação do repositório)
-e Finance pela remoção da dependência de UI/testes do CRM. O primeiro corte só
+e Finance pela remoção das dependências de UI/testes de compatibilidade. O primeiro corte só
 começa quando um deles satisfizer todos os critérios acima.
 
 ## Evidência de código

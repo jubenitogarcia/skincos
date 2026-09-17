@@ -72,4 +72,8 @@ Semana e mês usam ícones distinguíveis. O indicador ao lado do ícone ativo e
 - Gráficos priorizam elementos SVG focáveis quando interativos, alternativa textual e não dependem de hover para entendimento mínimo.
 - O viewport de referência inclui `390 × 844`; ranking, resumo, formulário e rolagem de tabela precisam manter operação funcional nesse tamanho.
 
-As fórmulas, semântica de níveis e comportamentos de borda estão em [atendimento-core-rules.md](atendimento-core-rules.md). O fluxo de execução e validação local está em [atendimento-local-validation.md](../runbooks/atendimento-local-validation.md).
+As regras de domínio e o contrato de leitura ficam no serviço proprietário em
+[`integration/atendimento/commercial-catalog`](../../integration/atendimento/commercial-catalog/README.md).
+O fluxo geral de execução e validação local está no
+[catálogo de serviços](../service-catalog.md); este documento não depende mais
+do shell CRM removido.

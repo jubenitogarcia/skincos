@@ -94,7 +94,7 @@ backup_escaped="$(sed_escape "$BACKUP_ROOT")"
 
 units=(
   messaging-whatsapp.service
-  crm.service
+  atendimento-commercial-catalog.service
   booking.service
   cloudflare-runtime.service
 )

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unified restart script for Agent Zero monorepo
-# Replaces: restart_full.sh, restart_crm.sh, restart_agent_zero_embedded.sh
+# Unified restart entrypoint for Agent Zero and its WebUI.
 
 set -euo pipefail
 
@@ -38,10 +38,7 @@ fi
 LOG_DIR="${LOG_DIR:-${VAR_DIR:-$SKINCOS_ROOT/backend/var}/agent-zero/logs}"
 CLEAN_PROFILE=1
 START_GATEWAY=1
-START_CRM=1
 START_WEBUI=1
-CRM_PORT=${CRM_PORT:-5173}
-CRM_API_PORT=${CRM_API_PORT:-3100}
 AGENT_ZERO_PORT=${WEB_UI_PORT:-50001}
 
 # Default services to start
@@ -55,13 +52,10 @@ Unified restart script for Agent Zero monorepo services.
 
 OPTIONS:
     --help                  Show this help message
-    --service SERVICE       Specify which service to restart (agent-zero|webui|crm|gateway|all)
+    --service SERVICE       Specify which service to restart (agent-zero|webui|gateway|all)
     --no-clean             Skip cleaning profile/cache
     --no-gateway           Don't start WhatsApp gateway
-    --no-crm               Don't start CRM
     --no-webui             Don't start WebUI
-    --crm-port PORT        CRM frontend port (default: 5173)
-    --crm-api-port PORT    CRM API port (default: 3100)
     --agent-port PORT      Agent Zero port (default: 50001)
     --kill-only            Only kill existing processes and exit
     --tail                 Tail logs after starting
@@ -72,7 +66,7 @@ EXAMPLES:
     $0 --service agent-zero     # Start only Agent Zero core
     $0 --service all            # Start all services
     $0 --kill-only              # Kill all processes
-    $0 --no-gateway --no-crm    # Start only core services
+    $0 --no-gateway            # Start only core services
 
 EOF
 }
@@ -93,17 +87,12 @@ parse_args() {
                     webui)
                         SERVICES=("webui")
                         ;;
-                    crm)
-                        SERVICES=("crm")
-                        START_CRM=1
-                        ;;
                     gateway)
                         SERVICES=("gateway")
                         START_GATEWAY=1
                         ;;
                     all)
-                        SERVICES=("agent-zero" "webui" "crm" "gateway")
-                        START_CRM=1
+                        SERVICES=("agent-zero" "webui" "gateway")
                         START_GATEWAY=1
                         ;;
                 esac
@@ -117,21 +106,9 @@ parse_args() {
                 START_GATEWAY=0
                 shift
                 ;;
-            --no-crm)
-                START_CRM=0
-                shift
-                ;;
             --no-webui)
                 START_WEBUI=0
                 shift
-                ;;
-            --crm-port)
-                CRM_PORT="$2"
-                shift 2
-                ;;
-            --crm-api-port)
-                CRM_API_PORT="$2"
-                shift 2
                 ;;
             --agent-port)
                 AGENT_ZERO_PORT="$2"
@@ -189,10 +166,6 @@ kill_processes() {
     pkill -f "run_ui.py" 2>/dev/null || true
     pkill -f "az_daemon.py" 2>/dev/null || true
 
-    # Kill CRM processes
-    pkill -f "crm/api/server.js" 2>/dev/null || true
-    pkill -f "vite --port $CRM_PORT" 2>/dev/null || true
-
     # Kill WhatsApp gateway processes (best-effort)
 
     sleep 2
@@ -216,20 +189,6 @@ start_agent_zero() {
 
 start_webui() {
     echo "[restart] WebUI is integrated with Agent Zero core"
-}
-
-start_crm() {
-    if [[ $START_CRM -eq 1 ]]; then
-        echo "[restart] Starting CRM (port $CRM_PORT, API port $CRM_API_PORT)..."
-        local CRM_DIR="$SKINCOS_ROOT/crm/console"
-        local CRM_SCRIPT="$CRM_DIR/restart_crm.sh"
-        if [[ -x "$CRM_SCRIPT" ]]; then
-            "$CRM_SCRIPT" --crm-port "$CRM_PORT" --crm-api-port "$CRM_API_PORT" --tail || true
-            echo "[restart] CRM services started"
-        else
-            echo "[restart] WARN: CRM script not found at $CRM_SCRIPT"
-        fi
-    fi
 }
 
 start_gateway() {
@@ -259,9 +218,6 @@ main() {
                 ;;
             webui)
                 start_webui
-                ;;
-            crm)
-                start_crm
                 ;;
             gateway)
                 start_gateway

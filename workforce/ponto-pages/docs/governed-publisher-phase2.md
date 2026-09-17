@@ -13,9 +13,9 @@ Cloudflare, deploy an artifact, move a domain, or change a browser URL.
 
 | Legacy source | Inventory finding | Phase 2 treatment |
 | --- | --- | --- |
-| crm/console/wrangler.toml | Ponto Core, Ponto Identity and module control coexist with unrelated CRM integrations and shared storage. | Retain only Ponto roles. The dedicated contract pins the Ponto service identities but copies no unrelated CRM storage, integration or value. |
-| .github/workflows/deploy-crm-pages.yml | The composite CRM publisher owns legacy skincos and skincos-staging deployment paths. | Explicitly excluded. It must never be pointed at the dedicated Ponto projects. |
-| .github/workflows/cloudflare-pages-sync-ponto.yml | Existing Ponto secret custody is coupled to the legacy composite Pages projects. | Not reused. The successor uses separate protected environments. |
+| workforce/ponto-pages/wrangler.toml | Ponto Core, Ponto Identity and module control coexist with unrelated CRM integrations and shared storage. | Retain only Ponto roles. The dedicated contract pins the Ponto service identities but copies no unrelated CRM storage, integration or value. |
+| `.github/workflows/ponto-pages-governed-publisher.yml` | Historical composite CRM publisher for the old `skincos` and `skincos-staging` Pages projects. | Retired and explicitly excluded; it must never be pointed at the dedicated Ponto projects. |
+| .github/workflows/ponto-pages-secret-bridge.yml | Existing Ponto secret custody is coupled to the legacy composite Pages projects. | Not reused. The successor uses separate protected environments. |
 | .github/workflows/ponto-progressive-release.yml | Existing Ponto rollout and rollback governance is domain-wide. | It remains the evidence source for later release decisions; Phase 2 does not replace it. |
 
 The template excludes the unrelated share bucket, Atendimento, Escala, Meta

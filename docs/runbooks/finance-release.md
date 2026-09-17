@@ -34,7 +34,7 @@ treinamento e criterios de abort aprovados.
 ## Kill switch e manutenção
 
 - `maintenance`: responde 503 somente para Financeiro, com `x-skincos-module-state=maintenance`.
-- `disabled`: responde 423 somente para Financeiro; CRM, Inventory, Ponto e navegação continuam disponíveis.
+- `disabled`: responde 423 somente para Financeiro; os demais domínios e a navegação continuam disponíveis.
 - `canary`: exige simultaneamente allowlist, unidade, bucket percentual determinístico e SHA promovido; qualquer campo ausente falha fechado com 403/503. A política atual permite somente `finance-staging-smoke` em `novo-hamburgo` no staging; a identidade `viewer` do monitor não participa da jornada.
 
 ## Canary sintético e limites automáticos
@@ -57,7 +57,7 @@ usuários reais ou a coorte de produção.
 ## Rollback e restore
 
 1. Colocar Financeiro em `maintenance`.
-2. Executar `deploy-finance.yml` com `operation=rollback` e o SHA anterior que possua evidência de staging. O pipeline seleciona a versão Worker já enviada para esse SHA; não recompila nem republica gateway, Inventory ou CRM Pages.
+2. Executar `deploy-finance.yml` com `operation=rollback` e o SHA anterior que possua evidência de staging. O pipeline seleciona a versão Worker já enviada para esse SHA; não recompila nem republica gateway, Inventory ou Ponto Pages.
 3. Executar `deploy-finance-ui.yml` com o mesmo SHA anterior se o bundle também precisar retornar; ele publica somente o projeto Pages Financeiro.
 4. Se a correção exigir dados, baixar o checkpoint cifrado do workflow, restaurar primeiro em D1 isolado e comparar contagem/checksum lógico de `finance_audit_events`, `finance_movements`, `finance_journal_lines` e `finance_import_batches` por escopo.
 5. Migrations são somente aditivas. Nunca apagar ledger, auditoria ou idempotência para “voltar”.

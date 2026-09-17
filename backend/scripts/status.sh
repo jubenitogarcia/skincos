@@ -24,9 +24,6 @@ check_http() {
 }
 
 echo "[status] Ports"
-check_port "${CRM_PORT:-5173}"
-check_port "${CRM_API_PORT:-8099}"
-
 INSTANCES_CSV="${INSTANCES:-1}"
 IFS=',' read -r -a WA_INSTANCES <<<"$INSTANCES_CSV"
 for inst in "${WA_INSTANCES[@]}"; do
@@ -42,8 +39,6 @@ check_port "${META_ADS_API_PORT:-4000}"
 
 echo ""
 echo "[status] Health (best-effort)"
-check_http "http://localhost:${CRM_API_PORT:-8099}/api/health" "CRM-API"
-check_http "http://localhost:${CRM_PORT:-5173}" "CRM-FE"
 for inst in "${WA_INSTANCES[@]}"; do
   if [[ -n "${inst:-}" ]] && [[ "$inst" =~ ^[0-9]+$ ]]; then
     check_http "http://localhost:$((3000 + inst))/health" "WA[$inst]"

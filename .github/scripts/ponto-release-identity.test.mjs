@@ -58,7 +58,7 @@ test("final artifact identity binds exact surface IDs and its immutable source i
       incumbentVersionId: "22222222-2222-4222-8222-222222222222",
       deploymentId: "33333333-3333-4333-8333-333333333333",
     },
-    crmPages: {
+    pontoPages: {
       runId: "101",
       deploymentId: "44444444-4444-4444-8444-444444444444",
       rollbackDeploymentId: "55555555-5555-4555-8555-555555555555",
@@ -82,8 +82,8 @@ test("final artifact identity binds exact surface IDs and its immutable source i
   });
   assert.equal(final.sourceIdentityDigest, source.releaseIdentityDigest);
   assert.ok(final.artifactBindings.some((binding) => binding.versionId === surfaces.timekeeping.candidateVersionId));
-  assert.ok(final.artifactBindings.some((binding) => binding.pagesDeploymentId === surfaces.crmPages.deploymentId));
-  assert.ok(final.rollbackIncumbents.includes(surfaces.crmPages.rollbackDeploymentId));
+  assert.ok(final.artifactBindings.some((binding) => binding.pagesDeploymentId === surfaces.pontoPages.deploymentId));
+  assert.ok(final.rollbackIncumbents.includes(surfaces.pontoPages.rollbackDeploymentId));
   assert.equal(verifyReleaseIdentity(final).releaseIdentityDigest, final.releaseIdentityDigest);
 });
 

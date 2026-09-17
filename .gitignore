@@ -177,7 +177,6 @@ backend/apps/automations/sprinta/**/checkout_urls.csv
 backend/apps/actual-server/node_modules/
 
 # pnpm-only backend apps (avoid reintroducing npm lockfiles)
-backend/apps/crm-api/package-lock.json
 backend/apps/whatsapp/official-module/package-lock.json
 backend/apps/whatsapp/official/package-lock.json
 backend/apps/actual-server/logs/

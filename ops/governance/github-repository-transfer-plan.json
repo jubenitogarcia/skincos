@@ -18,7 +18,6 @@
   },
   "teamBlueprint": [
     {"slug": "skincos-platform", "purpose": "GitHub, CI, deployment definitions, runbooks and shared operational controls", "permission": "maintain"},
-    {"slug": "skincos-crm", "purpose": "CRM shell, gateway, Identity compatibility and Atendimento", "permission": "push"},
     {"slug": "skincos-finance", "purpose": "Finance domain, immutable releases and recovery evidence", "permission": "push"},
     {"slug": "skincos-workforce", "purpose": "Ponto and Escala", "permission": "push"},
     {"slug": "skincos-inventory", "purpose": "Inventory domain, stock recovery and data reconciliation", "permission": "push"},
@@ -27,7 +26,7 @@
   ],
   "codeownersBlueprint": [
     {"paths": ["/.github/", "/.githooks/", "/ops/", "/scripts/", "/docs/", "/db/", "/skills/", "/packages/"], "team": "skincos-platform"},
-    {"paths": ["/crm/", "/api/", "/backend/", "/frontend/", "/identity/", "/service/", "/booking/", "/integration/", "/messaging/", "/clientes-readonly/"], "team": "skincos-crm"},
+    {"paths": ["/api/", "/backend/", "/identity/", "/service/", "/booking/", "/integration/", "/messaging/", "/clientes-readonly/"], "team": "skincos-platform"},
     {"paths": ["/finance/"], "team": "skincos-finance"},
     {"paths": ["/workforce/"], "team": "skincos-workforce"},
     {"paths": ["/inventory/"], "team": "skincos-inventory"},

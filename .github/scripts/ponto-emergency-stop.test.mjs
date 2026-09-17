@@ -104,10 +104,10 @@ test("canonical high-risk allowlist covers every Ponto workflow that can hydrate
     [
       ".github/workflows/deploy-timekeeping.yml",
       ".github/workflows/deploy-core-workers.yml",
-      ".github/workflows/deploy-crm-pages.yml",
+      ".github/workflows/ponto-pages-governed-publisher.yml",
       ".github/workflows/module-availability.yml",
       ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
-      ".github/workflows/cloudflare-pages-sync-ponto.yml",
+      ".github/workflows/ponto-pages-secret-bridge.yml",
       ".github/workflows/ponto-core-baseline-publisher.yml",
       ".github/workflows/timekeeping-staging-journey.yml",
       ".github/workflows/ponto-staging-rollback-drill.yml",

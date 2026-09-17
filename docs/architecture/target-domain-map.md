@@ -11,7 +11,7 @@ the former source path and public route must be removed rather than aliased.
 | `ads` | Meta Ads campaigns, reporting and delivery | generic social publishing |
 | `api` | the only HTTP boundary at `api.skincos.com.br` | domain business rules or data ownership |
 | `booking` | availability, request lifecycle and reservation contracts | Selenium/browser execution |
-| `crm` | console shell, customers, leads and permissions | extracted product internals |
+| `crm` | `jubenitogarcia/crm` (Worker, Pages, D1 and release; external boundary) | qualquer implementação, datastore ou publisher dentro deste monorepo |
 | `finance` | cash, billing and financial imports | browser collection mechanics |
 | `identity` | users, sessions, invitations, roles and permissions | inventory implementation or inventory data ownership |
 | `integration` | external connectors, browser sessions and technical jobs | business data ownership |
@@ -35,13 +35,13 @@ accepted by the semantic owner:
 - patient availability and reservations: `booking`;
 - cash and payments: `finance`;
 - procedures: `service`;
-- clients: `crm`.
+- clients: Atendimento's versioned read-only catalog; CRM consumes only the gateway contract.
 
 ## Public and internal boundaries
 
 - All programmatic public routes use `https://api.skincos.com.br/<domain>`.
-- Website and CRM keep their UI deployments, but no longer expose separate
-  programmatic API surfaces after their cutovers.
+- Website and the independent CRM keep their own UI deployments. The monorepo
+  exposes only the API gateway and never publishes a CRM UI or API runtime.
 - `api/internal/*` has two callers: a CRM-authenticated human action or a
   private service identity used by Workers, the external automation contract
   and integration executors.
@@ -51,16 +51,10 @@ accepted by the semantic owner:
 
 ## Clinical approval boundary
 
-Clinical cadence approval is an independent bounded context even while the
-clinical service remains experimental. Its implementation is isolated under
-`crm/api/server/clinical`, its additive schema is `clinical_approval`, and its
-authenticated contract is `/api/clinical`. `GESTOR` may create and submit a
-draft; only `CLINICAL_APPROVER` may approve or reject it, with unit scope,
-optimistic revision and an append-only event ledger. The Clientes commercial
-router can only maintain drafts and reads approved rows from this domain; it
-cannot approve, prescribe, or send a message. The context is disabled for
-online launch until the schema, role, independent reviewer and staging
-evidence gates are all present.
+Clinical cadence approval remains an experimental bounded context. Its owner
+must provide a service under `service/` before an online route is enabled; no
+Clinical approval remains a contract owned by its clinical domain; no
+implementation is retained under a CRM tree in this repository.
 
 ## Migration rules
 

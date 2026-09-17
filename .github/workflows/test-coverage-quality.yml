@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "crm/console/**"
+      - "workforce/ponto-pages/**"
       - "website/**"
       - "booking/**"
       - "backend/**"
@@ -14,7 +14,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "crm/console/**"
+      - "workforce/ponto-pages/**"
       - "website/**"
       - "booking/**"
       - "backend/**"
@@ -56,7 +56,7 @@ jobs:
           changed() {
             if git diff --quiet "$base...$head" -- "$@"; then printf false; else printf true; fi
           }
-          echo "frontend=$(changed crm/console website booking package.json package-lock.json)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$(changed workforce/ponto-pages website booking package.json package-lock.json)" >> "$GITHUB_OUTPUT"
           echo "python=$(changed backend)" >> "$GITHUB_OUTPUT"
           echo "workflow=$(changed .github/workflows/test-coverage-quality.yml)" >> "$GITHUB_OUTPUT"
 
@@ -74,21 +74,21 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            crm/console/package-lock.json
+            workforce/ponto-pages/package-lock.json
             website/package-lock.json
 
       - name: Frontend install
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ hashFiles('workforce/ponto-pages/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd crm/console
+          cd workforce/ponto-pages
           npm ci
 
       - name: Frontend coverage
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ hashFiles('workforce/ponto-pages/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd crm/console
+          cd workforce/ponto-pages
           npm run test:coverage
 
       - name: Website install

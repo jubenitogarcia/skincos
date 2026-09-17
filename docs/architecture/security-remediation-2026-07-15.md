@@ -1,4 +1,8 @@
-# Security remediation evidence — 2026-07-15
+# Security remediation evidence (historical legacy runtime) — 2026-07-15
+
+This is an archival record from before the CRM extraction. The CRM API and
+Console rows below refer to source that has since been removed from this
+monorepo; they are not current runtime surfaces or release gates.
 
 This record maps the reachable critical/high CodeQL findings addressed during the
 native-runtime cutover. Alert numbers refer to the GitHub repository alerts as
@@ -6,9 +10,9 @@ observed on `main` before this change.
 
 | Surface | Alerts | Classification and reachability | Remediation | Regression evidence |
 | --- | --- | --- | --- | --- |
-| CRM API URL construction | 4286 | Real SSRF/URL-injection path in active CRM fallback | Local origins, ports and route suffixes are selected from constants; the active provider defaults to the native WhatsApp engine and receives a private runtime overlay | CRM API suite (78 tests); invalid port/path cases |
-| CRM API parsing and logs | 4217–4220, 4283, 4316, 4320–4325 | Reachable ReDoS, timer and log-format findings | Bounded linear parsing, finite timeout buckets, capped input and structured logging | CRM API suite (78 tests) |
-| CRM Console rich content | 4226, 4232 | Reachable unsafe HTML rendering in authenticated UI | Rich content is converted to text/React nodes; obsolete `dangerouslySetInnerHTML` exceptions were removed | Console suite (96 tests), typecheck and production build |
+| Retired CRM API URL construction | 4286 | Historical SSRF/URL-injection path in the removed CRM fallback | The legacy runtime was removed; the current gateway accepts only the external, version-pinned CRM contract | Architecture and gateway contract tests |
+| Retired CRM API parsing and logs | 4217–4220, 4283, 4316, 4320–4325 | Historical ReDoS, timer and log-format findings in removed source | The legacy runtime and its launch paths were removed; no equivalent source is reachable here | Architecture and dependency-closure tests |
+| Retired CRM Console rich content | 4226, 4232 | Historical unsafe HTML rendering in the removed authenticated UI | The legacy Console was removed from this repository; current HTML exceptions are limited to Website files listed in the active allowlist | JavaScript exception and Website tests |
 | WhatsApp engine webhook | 4236 | Reachable reflected content in public Meta verification route | Constant-time token comparison, bounded inert challenge and explicit `text/plain` response | Engine security regression tests, lint and build |
 | WhatsApp engine identifiers | 4299–4300 | Reachable predictable identifiers | Cryptographic UUID generation | Engine security regression tests and build |
 | WhatsApp engine HTTP views | 4276–4277 | Reachable unauthenticated resource exhaustion | Per-route rate limiting for manager/static views | Engine security regression tests, lint and build |
@@ -18,10 +22,10 @@ observed on `main` before this change.
 | One-off credential patch | 4317–4319 | Obsolete operational script, no consumer in runtime or repository | Removed instead of suppressing findings | Architecture and security-contract validation |
 
 The remaining critical/high findings observed before this change were confined
-to retired, unconsumed WhatsApp variants. After the hardened native engine and
-CRM overlay passed production smokes, those source trees and their launch paths
-were removed. The only supported implementation is now
-`messaging/channels/whatsapp/engine`.
+to retired, unconsumed WhatsApp variants. Those source trees and their launch
+paths were removed. The only supported implementation is now
+`messaging/channels/whatsapp/engine`; the CRM is an external product and has no
+implementation in this repository.
 
 No scanner suppression, path exclusion, global ignore or alert dismissal is part
 of this remediation.

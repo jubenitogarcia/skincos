@@ -231,7 +231,7 @@ export function artifactBindingsFromSurfaces({
       digest: surfaceDigest,
       ...(surface.candidateVersionId ? { versionId: surface.candidateVersionId } : {}),
       ...(surface.deploymentId ? { deploymentId: surface.deploymentId } : {}),
-      ...(unit === "crmPages" && surface.deploymentId ? { pagesDeploymentId: surface.deploymentId } : {}),
+      ...(unit === "pontoPages" && surface.deploymentId ? { pagesDeploymentId: surface.deploymentId } : {}),
     };
     bindings.push({ name: `surface/${unit}/candidate`, ...candidateFields });
 

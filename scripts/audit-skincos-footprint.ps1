@@ -549,7 +549,7 @@ function Get-WorktreeAudit {
                 $classification = "review_clean_diverged"
             }
         }
-        elseif (Test-PathWithinRoot -Path $path -Root (Join-Path $OperatorPath "source\crm-local\immutable")) {
+        elseif (Test-PathWithinRoot -Path $path -Root (Join-Path $OperatorPath "source")) {
             if ($manifestReferenceCount -gt 0) {
                 $classification = "preserve_runtime_manifest_reference"
             }
@@ -609,7 +609,7 @@ function Get-TopologyDocument {
     if ([int]$document.schemaVersion -ne 1 -or [string]$document.topologyId -ne "skincos-canonical-worktrees") {
         return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = "unsupported_schema" }
     }
-    $surfaceIds = @($document.crm.surfaces | ForEach-Object { [string]$_.id })
+    $surfaceIds = @($document.surfaces | ForEach-Object { [string]$_.id })
     if (@($surfaceIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9-]*$' }).Count -gt 0) {
         return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = "invalid_surface_id" }
     }
@@ -630,15 +630,18 @@ function Get-TopologySurfaceDefinitions {
     }
 
     $definitions = @()
-    foreach ($surface in @($Topology.crm.surfaces)) {
+    foreach ($surface in @($Topology.surfaces)) {
         $id = [string]$surface.id
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        $type = if ([string]::IsNullOrWhiteSpace([string]$surface.type)) { "module" } else { [string]$surface.type }
+        $relativePath = if ([string]::IsNullOrWhiteSpace([string]$surface.relativePath)) { "$type\$id" } else { [string]$surface.relativePath }
         $definitions += [pscustomobject]@{
-            surfaceType = "crm-module"
+            surfaceType = $type
             surfaceId = $id
             label = [string]$surface.label
-            pilot = @($Topology.crm.pilot) -contains $id
-            expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) ("crm\$id"))
-            workflowIds = @()
+            pilot = [bool]$surface.pilot
+            expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) $relativePath)
+            workflowIds = @($surface.workflowIds)
         }
     }
     return @($definitions)
@@ -857,7 +860,7 @@ $effectiveProtectedPaths += $ProjectRoot
 
 $originMain = ((Get-GitOutput -RepoPath $ProjectRoot -Arguments @("rev-parse", "origin/main")) | Select-Object -First 1)
 $pullRequestIndex = Get-PullRequestIndex -RepositoryName $Repository -Skip:$SkipGitHub
-$manifestIndex = Get-RuntimeManifestIndex -RuntimePath (Join-Path $OperatorRuntimeRoot "runtime\crm-local")
+$manifestIndex = Get-RuntimeManifestIndex -RuntimePath (Join-Path $OperatorRuntimeRoot "runtime")
 $worktrees = @(Get-WorktreeAudit -RepoPath $ProjectRoot -SharedWorktreePath $WorktreeRoot -RuntimePath $RuntimeRoot -OperatorPath $OperatorRuntimeRoot -OriginMain $originMain -PullRequestIndex $pullRequestIndex -ManifestIndex $manifestIndex -ProtectedPaths $effectiveProtectedPaths)
 $topologyState = Get-TopologyDocument -Path $effectiveTopologyPath
 $canonicalTopology = Get-CanonicalTopologyAudit -TopologyState $topologyState -WorktreeRoot $WorktreeRoot -OperatorRuntimeRoot $OperatorRuntimeRoot -Worktrees $worktrees
@@ -867,18 +870,17 @@ $retiredPaths = @(
     "C:\ProgramData\CodexProfileRename",
     "C:\ProgramData\SkincosMiniPc",
     "C:\CodexShared\Backups",
-    "C:\CodexShared\Projetos\_bootstrap\n8n-top-level-legacy-20260703T181656",
-    "C:\CodexRuntime\recovery\atendimento-legacy"
+    "C:\CodexShared\Projetos\_bootstrap\n8n-top-level-legacy-20260703T181656"
 )
 $orphanTask = Get-ScheduledTask -TaskName "Orb Stack WSL Supervisor" -ErrorAction SilentlyContinue
 $drive = Get-PSDrive -Name C
 $manualWorktrees = @($worktrees | Where-Object { $_.category -eq "manual-shared" })
-$privateSourceWorktrees = @($worktrees | Where-Object { $_.classification -like "*runtime_source*" -or (Test-PathWithinRoot -Path $_.path -Root (Join-Path $OperatorRuntimeRoot "source\crm-local\immutable")) })
+$privateSourceWorktrees = @($worktrees | Where-Object { $_.classification -like "*runtime_source*" -or (Test-PathWithinRoot -Path $_.path -Root (Join-Path $OperatorRuntimeRoot "source")) })
 $classificationCounts = @{}
 foreach ($group in @($worktrees | Group-Object classification)) {
     $classificationCounts[$group.Name] = $group.Count
 }
-$sourceMetadataRoot = Join-Path $OperatorRuntimeRoot "source\crm-local\metadata"
+$sourceMetadataRoot = Join-Path $OperatorRuntimeRoot "source\metadata"
 $sourceMetadataCount = @(Get-ChildItem -LiteralPath $sourceMetadataRoot -File -Force -ErrorAction SilentlyContinue).Count
 $runtimeManifests = @($manifestIndex.manifests)
 $runtimeStateCounts = @{}
@@ -942,7 +944,6 @@ $result = [pscustomobject]@{
         @(
             Get-Health -Url "http://127.0.0.1:5678/healthz"
             Get-Health -Url "https://orb.skincos.com.br/healthz"
-            Get-Health -Url "https://crm.skincos.com.br"
         )
     }
     protectedPaths = @($effectiveProtectedPaths | Select-Object -Unique)

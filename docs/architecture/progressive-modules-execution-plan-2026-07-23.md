@@ -2,7 +2,9 @@
 
 **Versão:** 1.0 — 2026-07-23
 **Baseline:** `origin/main` em `2151a49d267f39e2ba5c81b4ba741a469d059722`
-**Estado:** plano de execução; não autoriza deploy, ativação de módulo ou corte de dados.
+**Estado:** referência histórica; a extração do CRM foi concluída depois desta
+baseline. Este documento não autoriza deploy, ativação de módulo ou corte de
+dados.
 
 ## Objetivo
 
@@ -17,7 +19,7 @@ Evoluir o SKINCOS para que módulos sejam usados e promovidos progressivamente, 
 | 3 | P0 | Identity como domínio | contrato de ator/escopos | sessão compatível, sem dependência de Inventory e rollback validado |
 | 4 | P1 | Separação de bancos e migrations | backup e contrato de domínio | D1/PostgreSQL por domínio crítico, migrations aditivas e recovery independente |
 | 5 | P1 | Isolamento de processos e eventos | health, outbox e contratos | workers pesados separados; falha do consumidor não bloqueia origem |
-| 6 | P1 | Shell CRM e módulos lógicos | registry, flags e error boundaries | Financeiro como padrão; depois Ponto e Atendimento |
+| 6 | P1 | Shells e módulos lógicos por domínio | registry, flags e error boundaries | Financeiro como padrão; depois Ponto e Atendimento |
 | 7 | P2 | Promoção e operação progressiva | artefatos imutáveis, observabilidade e piloto | preview → staging → smoke → canary → produção, com kill switch |
 | 8 | P2 | Caos controlado e auditoria final | passos 1–7 com evidência | degradação, rollback e restore comprovados nos fluxos críticos |
 

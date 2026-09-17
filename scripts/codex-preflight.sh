@@ -90,8 +90,6 @@ check_github() {
   )
   local required_vars=(
     CLOUDFLARE_PAGES_PROJECT
-    ENABLE_CRM_PAGES_DEPLOY
-    ENABLE_CRM_API_DEPLOY
     META_ADS_REPORT_WORKER_BASE_URL
   )
 
@@ -221,7 +219,6 @@ check_workflows() {
     .github/workflows/cloudflare-audit.yml
     .github/workflows/security-secrets-audit.yml
     .github/workflows/deploy-core-workers.yml
-    .github/workflows/deploy-crm-pages.yml
     .github/workflows/prepare-release-candidate.yml
     .github/workflows/promotion-gate.yml
   )
@@ -239,9 +236,7 @@ check_http() {
   $SKIP_HTTP && { warn "HTTP health checks skipped"; return; }
 
   local checks=(
-    "https://crm.skincos.com.br/?module=meta-ads|200|CRM Pages shell"
-    "https://crm.skincos.com.br/api/health|200|CRM Pages health"
-    "https://crm.skincos.com.br/api/insumos/health|200|Insumos proxy health"
+    "https://crm.skincos.com.br/|200|CRM independent Pages"
     "https://api.skincos.com.br/health|200|Core worker health"
     "https://skincos-meta-ads-performance-report.skincos.workers.dev/health|200|Meta Ads report worker health"
     "https://crm.skincos.com.br/api/meta-ads/status|200,401|Meta Ads status endpoint"

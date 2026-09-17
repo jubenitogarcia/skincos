@@ -301,7 +301,7 @@ test("consume-check waits only for a queued child to become the active capabilit
 
 test("Ponto workflow REST provenance gates accept canonical parent or immutable release path forms", () => {
   const workflowNames = [
-    "cloudflare-pages-sync-ponto.yml",
+    "ponto-pages-secret-bridge.yml",
     "cloudflare-workers-sync-ponto-secrets.yml",
     "deploy-timekeeping.yml",
     "ponto-production-baseline.yml",
@@ -329,7 +329,7 @@ test("Ponto workflow REST provenance gates accept canonical parent or immutable 
 
 test("Pages custody journals no mutation before any precondition can fail", () => {
   const source = fs.readFileSync(
-    path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
+    path.join(repositoryRoot, ".github", "workflows", "ponto-pages-secret-bridge.yml"),
     "utf8",
   );
   const journalIndex = source.indexOf("- name: Initialize Pages mutation journal before checkout, setup, and preconditions");
@@ -350,7 +350,7 @@ test("Pages custody journals no mutation before any precondition can fail", () =
 
 test("Ponto root custody provenance uses workflow metadata for the static workflow name", () => {
   for (const workflowName of [
-    "cloudflare-pages-sync-ponto.yml",
+    "ponto-pages-secret-bridge.yml",
     "deploy-timekeeping.yml",
   ]) {
     const source = fs.readFileSync(
@@ -364,7 +364,7 @@ test("Ponto root custody provenance uses workflow metadata for the static workfl
 
 test("Pages custody uses structured Cloudflare project env_vars for inventory checks", () => {
   const source = fs.readFileSync(
-    path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
+    path.join(repositoryRoot, ".github", "workflows", "ponto-pages-secret-bridge.yml"),
     "utf8",
   );
   assert.match(source, /pages\/projects\/\$PROJECT/);
@@ -384,7 +384,7 @@ test("Pages custody uses structured Cloudflare project env_vars for inventory ch
 
 test("Pages deploy gates use trusted inline API attestation instead of promoted checkout scripts", () => {
   const source = fs.readFileSync(
-    path.join(repositoryRoot, ".github", "workflows", "deploy-crm-pages.yml"),
+    path.join(repositoryRoot, ".github", "workflows", "ponto-pages-governed-publisher.yml"),
     "utf8",
   );
   assert.match(source, /pages\/projects\/\$PAGES_PROJECT/);
@@ -620,10 +620,10 @@ test("every orchestrated secret or mutation job revalidates the coordinator afte
     ["deploy-core-workers.yml", "deploy"],
     ["deploy-core-workers.yml", "ponto-progressive-release"],
     ["deploy-core-workers.yml", "ponto-identity-progressive-release"],
-    ["deploy-crm-pages.yml", "deploy"],
-    ["deploy-crm-pages.yml", "ponto-progressive-release"],
+    ["ponto-pages-governed-publisher.yml", "deploy"],
+    ["ponto-pages-governed-publisher.yml", "ponto-progressive-release"],
     ["cloudflare-workers-sync-ponto-secrets.yml", "provision"],
-    ["cloudflare-pages-sync-ponto.yml", "provision"],
+    ["ponto-pages-secret-bridge.yml", "provision"],
     ["module-availability.yml", "set-state"],
     ["ponto-production-baseline.yml", "capture"],
     ["ponto-production-slo.yml", "prepare-clinic-credentials"],
@@ -651,10 +651,10 @@ test("every privileged Ponto mutation job refuses workflow reruns without blocki
     ["deploy-core-workers.yml", "deploy"],
     ["deploy-core-workers.yml", "ponto-progressive-release"],
     ["deploy-core-workers.yml", "ponto-identity-progressive-release"],
-    ["deploy-crm-pages.yml", "deploy"],
-    ["deploy-crm-pages.yml", "ponto-progressive-release"],
+    ["ponto-pages-governed-publisher.yml", "deploy"],
+    ["ponto-pages-governed-publisher.yml", "ponto-progressive-release"],
     ["cloudflare-workers-sync-ponto-secrets.yml", "provision"],
-    ["cloudflare-pages-sync-ponto.yml", "provision"],
+    ["ponto-pages-secret-bridge.yml", "provision"],
     ["module-availability.yml", "set-state"],
     ["module-availability.yml", "emergency-reconciliation"],
     ["ponto-emergency-latch-reset.yml", "reset-mutate"],
@@ -679,7 +679,7 @@ test("every privileged Ponto mutation job refuses workflow reruns without blocki
     /inputs\.release_scope != 'ponto' \|\| github\.run_attempt == 1/,
   );
   assert.match(
-    job(workflow("deploy-crm-pages.yml"), "deploy"),
+    job(workflow("ponto-pages-governed-publisher.yml"), "deploy"),
     /inputs\.release_scope != 'ponto' \|\| github\.run_attempt == 1/,
   );
   assert.match(workflow("ponto-orchestrator-gate.yml"), /Governed Ponto capabilities cannot be consumed from a workflow rerun/);
@@ -731,7 +731,7 @@ test("recovery rollback classification receives the attested artifact root in it
 });
 
 test("staging Pages incumbent capture retries and requires exact terminal provenance", () => {
-  const source = workflow("deploy-crm-pages.yml");
+  const source = workflow("ponto-pages-governed-publisher.yml");
   const start = source.indexOf("- name: Capture Ponto staging Pages rollback deployment");
   const end = source.indexOf("- name: Deploy to Cloudflare Pages (wrangler)", start);
   assert.ok(start >= 0 && end > start, "staging Pages incumbent capture block is absent");
@@ -757,7 +757,7 @@ test("staging Pages incumbent capture retries and requires exact terminal proven
 });
 
 test("Pages configs keep remote secrets out of Wrangler Pages configuration", () => {
-  for (const relativePath of ["crm/console/wrangler.toml", "crm/console/.wrangler-staging/wrangler.toml"]) {
+  for (const relativePath of ["workforce/ponto-pages/wrangler.toml", "workforce/ponto-pages/.wrangler-staging/wrangler.toml"]) {
     const source = fs.readFileSync(path.join(repositoryRoot, relativePath), "utf8");
     assert.doesNotMatch(source, /^\[secrets\]/m, `${relativePath} must not declare unsupported Pages secrets`);
     assert.doesNotMatch(source, /^\[env\.(?:production|preview)\.secrets\]/m, `${relativePath} must not declare unsupported environment secrets`);
@@ -765,7 +765,7 @@ test("Pages configs keep remote secrets out of Wrangler Pages configuration", ()
 });
 
 test("staging Pages compensation fails closed when an owned candidate cannot be attested", () => {
-  const source = workflow("deploy-crm-pages.yml");
+  const source = workflow("ponto-pages-governed-publisher.yml");
   const start = source.indexOf("- name: Restore Ponto staging Pages incumbent after failure or cancellation");
   const end = source.indexOf("- name: Write Ponto staging Pages mutation journal", start);
   assert.ok(start >= 0 && end > start, "staging Pages compensation block is absent");
@@ -784,7 +784,7 @@ test("staging Pages compensation fails closed when an owned candidate cannot be 
 });
 
 test("Ponto staging Pages resolves and compensates candidates from the API inventory", () => {
-  const source = workflow("deploy-crm-pages.yml");
+  const source = workflow("ponto-pages-governed-publisher.yml");
   const deployStart = source.indexOf("- name: Deploy to Cloudflare Pages (wrangler)");
   const restoreEnd = source.indexOf("- name: Write Ponto staging Pages mutation journal", deployStart);
   assert.ok(deployStart >= 0 && restoreEnd > deployStart, "Ponto Pages deployment block is absent");

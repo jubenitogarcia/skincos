@@ -1030,7 +1030,7 @@ jobs:
             root_custody_run_id: process.env.PONTO_ROOT_CUSTODY_RUN_ID,
           }));
           NODE
-          node .github/scripts/ponto-dispatch-workflow.mjs cloudflare-pages-sync-ponto.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/provision-pages.json" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json"
+          node .github/scripts/ponto-dispatch-workflow.mjs ponto-pages-secret-bridge.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/provision-pages.json" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json"
           pages_provision_run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json")"
           mkdir -p "$PONTO_ARTIFACT_DIR/provisioning/pages"
           gh run download "$pages_provision_run_id" --repo "$GITHUB_REPOSITORY" \
@@ -1184,7 +1184,7 @@ jobs:
           if [[ "$STAGE" == preview ]]; then
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-api --dir "$PONTO_ARTIFACT_DIR/promotion/core"
           fi
-      - name: Publish and attest canonical CRM Pages surface
+      - name: Publish and attest canonical Ponto Pages surface
         id: pages
         if: ${{ inputs.stage != 'bootstrap' }}
         env:
@@ -1214,13 +1214,13 @@ jobs:
           }
           fs.writeFileSync(process.argv[2], JSON.stringify(inputs));
           NODE
-          node .github/scripts/ponto-dispatch-workflow.mjs deploy-crm-pages.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/pages-inputs.json" "$PONTO_ARTIFACT_DIR/runs/pages.json"
+          node .github/scripts/ponto-dispatch-workflow.mjs ponto-pages-governed-publisher.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/pages-inputs.json" "$PONTO_ARTIFACT_DIR/runs/pages.json"
           run_id="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1])).runId)" "$PONTO_ARTIFACT_DIR/runs/pages.json")"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "ponto-surface-crm-pages-${STAGE}-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/surfaces/pages"
-          node -e "const s=require(process.argv[1]);if(s.surface!=='crmPages'||s.stage!==process.env.STAGE||s.sourceSha!==process.env.RELEASE_SHA)process.exit(1)" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "ponto-surface-ponto-pages-${STAGE}-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/surfaces/pages"
+          node -e "const s=require(process.argv[1]);if(s.surface!=='pontoPages'||s.stage!==process.env.STAGE||s.sourceSha!==process.env.RELEASE_SHA)process.exit(1)" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json"
           if [[ "$STAGE" == preview ]]; then
-            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-crm-pages --dir "$PONTO_ARTIFACT_DIR/promotion/pages"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-ponto-pages --dir "$PONTO_ARTIFACT_DIR/promotion/pages"
           fi
       - name: Activate exact staging release for the synthetic journey
         if: inputs.stage == 'staging'
@@ -1406,7 +1406,7 @@ jobs:
             timekeeping_staging_run_id: process.env.TIMEKEEPING_RUN,
             core_api_staging_run_id: process.env.CORE_RUN,
             identity_staging_run_id: process.env.IDENTITY_RUN,
-            crm_pages_staging_run_id: process.env.PAGES_RUN,
+            ponto_pages_staging_run_id: process.env.PAGES_RUN,
             pages_url: process.argv[3],
             timekeeping_version_id: process.argv[4],
             identity_version_id: process.argv[5],
@@ -1526,14 +1526,14 @@ jobs:
           }
           const pagesFile = process.argv[6];
           const pages = JSON.parse(fs.readFileSync(pagesFile, "utf8"));
-          const pagesProof = value.restoration?.surfaces?.crmPages;
+          const pagesProof = value.restoration?.surfaces?.pontoPages;
           if (
-            pages.surface !== "crmPages"
+            pages.surface !== "pontoPages"
             || pagesProof?.passed !== true
             || !uuid.test(pagesProof.activeDeploymentId)
             || pagesProof.sourceDeploymentId !== pages.deploymentId
             || String(pagesProof.commitHash || "").toLowerCase() !== process.env.RELEASE_SHA
-          ) throw new Error("CRM Pages rollback-drill restoration identity is invalid");
+          ) throw new Error("Ponto Pages rollback-drill restoration identity is invalid");
           fs.writeFileSync(pagesFile, `${JSON.stringify({
             ...pages,
             preRollbackDrillDeploymentId: pages.deploymentId,
@@ -1638,7 +1638,7 @@ jobs:
                 timekeeping: read(path.join(root, "surfaces/timekeeping/surface.json")),
                 coreApi: read(path.join(root, "surfaces/core/surface.json")),
                 identityWorkforce: read(path.join(root, "surfaces/identity/surface.json")),
-                crmPages: read(path.join(root, "surfaces/pages/surface.json")),
+                pontoPages: read(path.join(root, "surfaces/pages/surface.json")),
               };
           if (["staging", "bootstrap", "pilot"].includes(process.env.STAGE)) {
             const preflightFile = path.join(root, "provisioning/workers/root-custody.json");
@@ -1706,7 +1706,7 @@ jobs:
                   timekeepingVersionId: surfaces.timekeeping.incumbentVersionId,
                   coreVersionId: surfaces.coreApi.incumbentVersionId,
                   identityVersionId: surfaces.identityWorkforce.incumbentVersionId,
-                  pagesDeploymentId: surfaces.crmPages.rollbackDeploymentId,
+                  pagesDeploymentId: surfaces.pontoPages.rollbackDeploymentId,
                 },
           ));
           if (bootstrap) {
@@ -1903,7 +1903,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ success() && inputs.stage == 'preview' }}
         with:
-          name: promotion-evidence-crm-pages
+          name: promotion-evidence-ponto-pages
           path: ${{ runner.temp }}/ponto-release/promotion/pages/promotion-evidence.json
           retention-days: 90
           if-no-files-found: error

@@ -1,0 +1,5 @@
+{
+  "name": "@skincos/identity-auth-adapter",
+  "private": true,
+  "type": "module"
+}

@@ -1,9 +1,9 @@
 const GATED_CHILD_WORKFLOWS = new Set([
   ".github/workflows/deploy-timekeeping.yml",
   ".github/workflows/deploy-core-workers.yml",
-  ".github/workflows/deploy-crm-pages.yml",
+  ".github/workflows/ponto-pages-governed-publisher.yml",
   ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
-  ".github/workflows/cloudflare-pages-sync-ponto.yml",
+  ".github/workflows/ponto-pages-secret-bridge.yml",
 ]);
 
 const TERMINAL_FAILURES = new Set(["failure", "startup_failure"]);

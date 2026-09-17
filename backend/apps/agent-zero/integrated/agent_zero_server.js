@@ -90,20 +90,16 @@ class SimpleAgentZero {
             return '📸 **Instagram Integration Ativa**\n\nRecursos disponíveis:\n• Análise OSINT de perfis\n• Automação de interações\n• Download de conteúdo\n• Monitoramento de hashtags\n\nComo posso ajudar?';
         }
         
-        if (lowerMessage.includes('crm') || context.source === 'crm') {
-            return '📊 **CRM Integration Ativa**\n\nFuncionalidades:\n• Gestão de clientes\n• Controle de vendas\n• Relatórios detalhados\n• Automações de follow-up\n\nQual operação você deseja realizar?';
-        }
-        
         if (lowerMessage.includes('sistema') || lowerMessage.includes('status') || lowerMessage.includes('ajuda')) {
-            return '🎯 **SKINCOS AI Central**\n\nSistema operacional! Módulos ativos:\n\n📱 **WhatsApp**: Mensagens e automações\n📸 **Instagram**: Análise e automação\n📊 **CRM**: Gestão de clientes\n🔧 **Sistema**: Monitoramento\n\nDigite o que você precisa ou escolha um módulo!';
+            return '🎯 **SKINCOS AI Central**\n\nSistema operacional! Módulos ativos:\n\n📱 **WhatsApp**: Mensagens e automações\n📸 **Instagram**: Análise e automação\n🔧 **Sistema**: Monitoramento\n\nDigite o que você precisa ou escolha um módulo!';
         }
         
         if (lowerMessage.includes('oi') || lowerMessage.includes('olá') || lowerMessage.includes('hello')) {
-            return '👋 **Olá! Bem-vindo ao SKINCOS AI**\n\nSou sua IA central para automação e gestão de:\n• WhatsApp Business\n• Instagram Marketing\n• Sistema CRM\n\n🚀 **Como posso ajudá-lo hoje?**\n\nDigite "ajuda" para ver todas as funcionalidades ou mencione o módulo que precisa (WhatsApp, Instagram, CRM).';
+            return '👋 **Olá! Bem-vindo ao SKINCOS AI**\n\nSou sua IA central para automação e gestão de:\n• WhatsApp Business\n• Instagram Marketing\n\n🚀 **Como posso ajudá-lo hoje?**\n\nDigite "ajuda" para ver todas as funcionalidades ou mencione o módulo que precisa (WhatsApp ou Instagram).';
         }
         
         // Default intelligent response
-        return `🤖 **SKINCOS AI Agent**\n\nEntendi sua mensagem: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"\n\n💡 **Posso ajudá-lo com:**\n• Automação WhatsApp\n• Marketing Instagram\n• Gestão CRM\n• Análises e relatórios\n\nPara melhor atendê-lo, mencione qual módulo você quer usar ou digite "ajuda" para ver todas as opções!`;
+        return `🤖 **SKINCOS AI Agent**\n\nEntendi sua mensagem: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"\n\n💡 **Posso ajudá-lo com:**\n• Automação WhatsApp\n• Marketing Instagram\n• Análises e relatórios\n\nPara melhor atendê-lo, mencione qual módulo você quer usar ou digite "ajuda" para ver todas as opções!`;
     }
 }
 

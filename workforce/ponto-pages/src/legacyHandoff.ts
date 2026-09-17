@@ -16,8 +16,9 @@ function validDedicatedOrigin(value: string): URL | null {
 }
 
 /**
- * A pure Phase 1 compatibility map. It is deliberately not installed as a
- * redirect: old URLs continue to be served by the existing Pages project.
+ * A pure compatibility map for planning/tests only. It is deliberately not
+ * installed as a redirect: the old CRM origin is owned by the independent CRM
+ * repository and this source-only package has no active Ponto publisher.
  */
 export function resolvePontoLegacyHandoff(location: PontoLegacyLocation, dedicatedOrigin: string): string | null {
   if (String(location.origin || '').replace(/\/$/, '') !== 'https://crm.skincos.com.br') return null

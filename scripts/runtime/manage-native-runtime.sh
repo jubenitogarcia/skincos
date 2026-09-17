@@ -6,9 +6,7 @@ source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
 
 units=(
   messaging-whatsapp.service
-  crm.service
-  crm-atendimento-staging.service
-  crm-atendimento-production.service
+  atendimento-commercial-catalog.service
   booking.service
   cloudflare-runtime.service
 )

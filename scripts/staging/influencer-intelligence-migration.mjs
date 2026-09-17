@@ -13,22 +13,49 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import pg from 'pg'
 
 const ROOT = path.resolve(import.meta.dirname, '../..')
 const MIGRATIONS_ROOT = path.join(ROOT, 'social/influencer-intelligence/migrations')
-// Reuse the canonical staging database migrator custody already provisioned
-// for the CRM. Do not duplicate the password into an analytics-specific file;
-// the destination and role assertions below still bind this operation to the
-// exact staging database contract.
-const FIXED_ENV_FILE = '/etc/skincos/crm-atendimento-staging-migrator.env'
+// The migration has its own staging custody file and database roles. Values
+// are read literally; no shell expansion or cross-domain secret reuse occurs.
+const FIXED_ENV_FILE = '/etc/skincos/influencer-intelligence-staging-migrator.env'
+
+const ENVIRONMENT_KEY = /^[A-Z][A-Z0-9_]{0,127}$/
+
+async function readLiteralEnvironment(filePath, { allowedKeys = null } = {}) {
+    const requested = String(filePath || '').trim()
+    if (!requested.startsWith('/etc/skincos/') || requested.includes('..')) throw migrationError('II_MIGRATION_ENV_PATH_INVALID')
+    let text
+    try { text = await fs.readFile(requested, 'utf8') } catch { throw migrationError('II_MIGRATION_ENV_UNREADABLE') }
+    const allowed = allowedKeys ? new Set(allowedKeys.map(String)) : null
+    const values = {}
+    for (const [index, sourceLine] of String(text).split(/\r?\n/).entries()) {
+        const line = sourceLine.trim()
+        if (!line || line.startsWith('#')) continue
+        const separator = line.indexOf('=')
+        if (separator <= 0) throw migrationError(`II_MIGRATION_ENV_LINE_${index + 1}_INVALID`)
+        const key = line.slice(0, separator).trim()
+        if (!ENVIRONMENT_KEY.test(key) || (allowed && !allowed.has(key))) throw migrationError(`II_MIGRATION_ENV_LINE_${index + 1}_INVALID`)
+        let value = line.slice(separator + 1).trim()
+        if (value.startsWith('"') || value.startsWith("'")) {
+            const quote = value[0]
+            if (value.length < 2 || !value.endsWith(quote)) throw migrationError(`II_MIGRATION_ENV_LINE_${index + 1}_INVALID`)
+            value = value.slice(1, -1)
+        }
+        if (value.includes('\u0000') || value.includes('\n') || value.includes('\r')) throw migrationError(`II_MIGRATION_ENV_LINE_${index + 1}_INVALID`)
+        values[key] = value
+    }
+    return values
+}
 
 export const INFLUENCER_INTELLIGENCE_MIGRATION_RUNNER_VERSION = 'influencer-intelligence/staging-migrations/v1'
 export const INFLUENCER_INTELLIGENCE_STAGING_TARGET = Object.freeze({
     environment: 'staging',
     database: 'skincos_staging',
     sessionUser: 'skincos_staging_migrator_login',
-    ownerRole: 'skincos_staging_crm_owner',
-    runtimeRoles: Object.freeze(['skincos_staging_crm_app', 'skincos_staging_crm_runtime']),
+    ownerRole: 'skincos_staging_social_owner',
+    runtimeRoles: Object.freeze(['skincos_staging_social_app', 'skincos_staging_social_runtime']),
     schema: 'influencer_intelligence',
 })
 export const INFLUENCER_INTELLIGENCE_MIGRATION_LOCK_KEY = 'skincos:influencer-intelligence:staging-migrations/v1'
@@ -208,10 +235,16 @@ export function assertInfluencerIntelligenceStagingDestination(rawUrl, target = 
 }
 
 async function defaultCreatePool(databaseUrl, options) {
-    // Keep pg in the existing CRM/API dependency boundary; tests inject a
-    // fake pool and therefore do not load a second database dependency.
-    const { createPgPool } = await import('../../crm/api/server/harmonia/store/pg.js')
-    return createPgPool(databaseUrl, options)
+    const url = String(databaseUrl || '').trim()
+    if (!url) return null
+    const max = Number(options?.max ?? 10)
+    if (!Number.isSafeInteger(max) || max < 1) throw migrationError('II_MIGRATION_POOL_MAX_INVALID')
+    const { Pool } = pg
+    return new Pool({
+        connectionString: url,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+        max,
+    })
 }
 
 async function queryValue(client, sql, values = []) {
@@ -640,7 +673,6 @@ export async function runInfluencerIntelligenceMigration({
 }
 
 async function readStagingDatabaseUrl() {
-    const { readLiteralEnvironment } = await import('../../crm/api/server/atendimento/runtimeEnv.js')
     const values = await readLiteralEnvironment(FIXED_ENV_FILE, { allowedKeys: ['DATABASE_URL'] })
     if (!values.DATABASE_URL) throw migrationError('II_MIGRATION_STAGING_SECRET_MISSING')
     return values.DATABASE_URL

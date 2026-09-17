@@ -215,7 +215,7 @@ globalThis.fetch = async (input, init = {}) => {
       PONTO_RELEASE_SHA: sha,
       PONTO_RELEASE_STAGE: stage,
       PONTO_RELEASE_SLO_REPORT: report,
-      PONTO_RELEASE_CRM_URL: "https://crm.test",
+      PONTO_RELEASE_PONTO_URL: "https://crm.test",
       PONTO_RELEASE_IDENTITY_URL: "https://identity.test",
       PONTO_EXPECTED_CORE_VERSION_ID: uuid,
       PONTO_EXPECTED_TIMEKEEPING_VERSION_ID: uuid,

@@ -147,7 +147,7 @@ $workingDirectoryInvocation = New-SkincosWslInvocation `
     -Mode Executable `
     -Target "node" `
     -ProjectRoot "C:\CodexShared\Projetos\skincos" `
-    -WorkingDirectory "crm/console" `
+    -WorkingDirectory "workforce/ponto-pages" `
     -Argument @("--version") `
     -SkipBootstrapCheck `
     -SkipNodeCheck `
@@ -155,7 +155,7 @@ $workingDirectoryInvocation = New-SkincosWslInvocation `
     -SkipGitCheck
 Assert-Contains `
     -Value $workingDirectoryInvocation.BashCommand `
-    -Expected "cd -- 'crm/console'" `
+    -Expected "cd -- 'workforce/ponto-pages'" `
     -Message "WorkingDirectory must remain repository-relative and be applied before the typed command"
 
 $python = New-SkincosWslInvocation `

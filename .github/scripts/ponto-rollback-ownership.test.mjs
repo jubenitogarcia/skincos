@@ -260,7 +260,7 @@ test("automatic rollback refuses every mutation until custody reconciliation and
   );
   assert.match(
     source,
-    /if \(plan\.crmPages\) \{[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
+    /if \(plan\.pontoPages\) \{[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
   );
 });
 

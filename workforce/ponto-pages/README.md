@@ -72,14 +72,13 @@ production URL. Local auth is limited to an explicit loopback-only bypass.
 
 ## Compatibility
 
-No existing URL has changed. The active legacy URLs remain:
-
-- `https://crm.skincos.com.br/?module=ponto`
-- `https://crm.skincos.com.br/ponto-terminal.html`
-- `/api/ponto/*` and `/api/auth/*` on that legacy Pages origin
+This package does not own or publish `crm.skincos.com.br`; that host belongs to
+the independent CRM repository. The former Ponto URLs on that origin are
+historical compatibility references, not an active Ponto publisher. No Ponto
+domain, redirect, API route or cookie is created by this source-only package.
 
 See [docs/compatibility-handoff.md](docs/compatibility-handoff.md) for the
-future migration and rollback requirements. In particular, terminal device
+requirements for a future dedicated host. In particular, terminal device
 tokens are origin-local and must be deliberately re-paired after a new host is
 live.
 

@@ -1,7 +1,9 @@
-# Deploy after automerge (note)
+# Deploy após automerge
 
-This repository deploys CRM Pages and CRM API via GitHub Actions.
+Este repositório usa workflows canônicos por domínio. Um PR integrado em
+`main` deve ser validado pelo pipeline correspondente à superfície alterada;
+não existe um publisher composto para produtos externos.
 
-If a PR is merged via automerge, dedicated "after automerge" workflows run on the PR close event and can re-trigger deploys based on which paths changed.
-
-Smoke check: this file exists to validate that the "after automerge" workflows can be triggered via a merged PR.
+Se um deploy for necessário após automerge, selecione explicitamente o
+workflow do domínio e o SHA exato de `main`. O workflow deve repetir preflight,
+custódia, smoke, readback e rollback do mesmo artefato.

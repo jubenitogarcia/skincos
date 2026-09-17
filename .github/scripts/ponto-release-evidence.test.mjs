@@ -19,7 +19,7 @@ const previewSurfaces = {
   timekeeping: { sourceSha: sha, stage: "preview", runId: "100", validation: "test-and-dry-run" },
   coreApi: { sourceSha: sha, stage: "preview", runId: "100", validation: "test-and-dry-run" },
   identityWorkforce: { sourceSha: sha, stage: "preview", runId: "100", validation: "test-and-dry-run" },
-  crmPages: { sourceSha: sha, stage: "preview", runId: "100", validation: "test-and-build" },
+  pontoPages: { sourceSha: sha, stage: "preview", runId: "100", validation: "test-and-build" },
 };
 const stageWeights = {
   staging: { timekeeping: 100, coreApi: 100, identityWorkforce: 100 },
@@ -76,14 +76,14 @@ const liveSurfaces = (stage) => {
   },
   coreApi: { ...workerSurface("coreApi", stage, "https://api.skincos.com.br/health"), ...(stage === "pilot" ? { baselineRunId: "250" } : {}) },
   identityWorkforce: { ...workerSurface("identityWorkforce", stage, "https://api.skincos.com.br/insumos/health"), ...(stage === "pilot" ? { baselineRunId: "250" } : {}) },
-  crmPages: {
+  pontoPages: {
     sourceSha: sha,
     stage,
     runId: "200",
     ...(stage === "pilot" ? { baselineRunId: "250" } : {}),
     deploymentId: uuid,
     rollbackDeploymentId: uuid2,
-    candidateTag: `ponto:crmPages:${sha}`,
+    candidateTag: `ponto:pontoPages:${sha}`,
     url: "https://crm.skincos.com.br",
   },
   });

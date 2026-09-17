@@ -40,7 +40,7 @@ const financeAudit = (actionName, before, after) => `INSERT INTO finance_audit_e
 
 let coreSql;
 let financeSql;
-// CONSULTOR is intentionally constrained by the CRM shell to Atendimento,
+// CONSULTOR is intentionally constrained by the web application to Atendimento,
 // regardless of its configured modules. INJETOR is the least-privileged role
 // that preserves the explicit, single-module Finance grant below.
 const baseline = { username, environment: 'staging', role: 'INJETOR', allowedUnits: ['novo-hamburgo'], allowedModules: ['finance'] };

@@ -1,3 +1,0 @@
--- Non-destructive rollback: do not delete source-link or run evidence.
--- The guarded migration runner marks this workflow extension unavailable in
--- crm_atendimento.schema_migrations, which keeps review writes fail-closed.

@@ -68,7 +68,7 @@ const GOVERNED_INTENT_SCHEMAS = {
     timekeeping_version_id: stringField(),
     ...chainFields,
   },
-  ".github/workflows/deploy-crm-pages.yml": {
+  ".github/workflows/ponto-pages-governed-publisher.yml": {
     target: stringField("staging"),
     release_sha: stringField(),
     preview_run_id: stringField(),
@@ -87,7 +87,7 @@ const GOVERNED_INTENT_SCHEMAS = {
     staging_run_id: stringField(),
     ...chainFields,
   },
-  ".github/workflows/cloudflare-pages-sync-ponto.yml": {
+  ".github/workflows/ponto-pages-secret-bridge.yml": {
     target: stringField("staging"),
     release_sha: stringField(),
     staging_run_id: stringField(),
@@ -134,7 +134,7 @@ const GOVERNED_INTENT_SCHEMAS = {
     timekeeping_staging_run_id: stringField(),
     core_api_staging_run_id: stringField(),
     identity_staging_run_id: stringField(),
-    crm_pages_staging_run_id: stringField(),
+    ponto_pages_staging_run_id: stringField(),
     pages_url: stringField(),
     timekeeping_version_id: stringField(),
     identity_version_id: stringField(),
@@ -252,12 +252,12 @@ export function expectedGovernedRunName(workflowPath, inputs) {
       `Timekeeping ${value("target")} ${value("release_sha")} ${suffix}`,
     ".github/workflows/deploy-core-workers.yml":
       `Core ${value("unit")} ${value("target")} team=${value("unified_team_enabled")} ${value("release_sha")} ${suffix}`,
-    ".github/workflows/deploy-crm-pages.yml":
-      `CRM Pages ${value("target")} ${value("release_sha")} ${suffix}`,
+    ".github/workflows/ponto-pages-governed-publisher.yml":
+      `Ponto Pages ${value("target")} ${value("release_sha")} ${suffix}`,
     ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml":
       `Attest Ponto Workers ${value("target")} ${value("release_sha")} ${suffix}`,
-    ".github/workflows/cloudflare-pages-sync-ponto.yml":
-      `Attest CRM Pages ${value("target")} ${value("release_sha")} ${suffix}`,
+    ".github/workflows/ponto-pages-secret-bridge.yml":
+      `Attest Ponto Pages ${value("target")} ${value("release_sha")} ${suffix}`,
     ".github/workflows/module-availability.yml":
       `Module ${value("module")} ${value("target")} ${value("state")} ${suffix}`,
     ".github/workflows/ponto-production-baseline.yml":
