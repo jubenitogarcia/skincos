@@ -15,3 +15,8 @@ Install dependencies with `npm ci` in this directory. Run `npm test` before
 installing the accompanying systemd unit. Production credentials are supplied
 only by the private runtime environment; no secret, customer row or token is
 stored in Git.
+
+The current owner database is the local PostgreSQL instance, so its unit sets
+`ATENDIMENTO_COMMERCIAL_CATALOG_DATABASE_SSL=disable`. Set that variable to
+`require` (and provide a CA when required by the database) when the owner moves
+the contract to a TLS-enabled database.

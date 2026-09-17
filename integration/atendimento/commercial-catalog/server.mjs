@@ -25,6 +25,19 @@ function errorResponse(res, error) {
   })
 }
 
+export function resolveDatabaseSsl(environment = {}, databaseUrl = '') {
+  const configured = String(environment.ATENDIMENTO_COMMERCIAL_CATALOG_DATABASE_SSL || environment.PGSSLMODE || '').trim().toLowerCase()
+  let mode = configured
+  if (!mode) {
+    try { mode = new URL(String(databaseUrl)).searchParams.get('sslmode')?.toLowerCase() || '' } catch { /* fall through to NODE_ENV */ }
+  }
+  if (['disable', 'off', 'false', '0', 'no'].includes(mode)) return undefined
+  if (['require', 'on', 'true', '1', 'yes'].includes(mode)) return { rejectUnauthorized: false }
+  return String(environment.NODE_ENV || '').toLowerCase() === 'production'
+    ? { rejectUnauthorized: false }
+    : undefined
+}
+
 export function createCommercialCatalogApp({ store, token = '', logger = console } = {}) {
   if (!store || typeof store.commercialCatalog !== 'function') throw new TypeError('CATALOG_STORE_REQUIRED')
   const app = express()
@@ -68,7 +81,7 @@ export function startCommercialCatalogServer({ environment = process.env } = {})
   const token = String(environment.ATENDIMENTO_COMMERCIAL_CATALOG_TOKEN || environment.CRM_COMMERCIAL_CATALOG_TOKEN || '').trim()
   const pool = databaseUrl ? new pg.Pool({
     connectionString: databaseUrl,
-    ssl: String(environment.NODE_ENV || '').toLowerCase() === 'production' ? { rejectUnauthorized: false } : undefined,
+    ssl: resolveDatabaseSsl(environment, databaseUrl),
     max: 4,
   }) : null
   const store = pool ? createCatalogStore({ pool }) : null
