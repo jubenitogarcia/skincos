@@ -13,7 +13,7 @@
 - Removidos atalhos, exemplos de ambiente, documentação e fixtures que
   apontavam para o CRM local ou para publishers antigos.
 
-## Verificações antes do merge
+## Verificações executadas neste corte
 
 - `npm run architecture:validate`
 - `npm run module-catalog:validate`
@@ -22,8 +22,11 @@
 - testes focalizados de API, Website, Ponto e catálogo de Atendimento
 - `git diff --check` e busca por caminhos removidos
 
-## Operação externa
+## Operação externa confirmada
 
-O runtime de produção e consumidores fora deste repositório devem ser
-confirmados no ambiente próprio antes de aposentar qualquer serviço. Nenhuma
-credencial, dado real ou recibo externo deve ser colocado no Git.
+O runtime legado foi confirmado parado e sem consumidores ativos. As units
+`crm.service`, `crm-jobs.service`, `crm-atendimento-*` e
+`crm-clientes-source-refresh.*` foram retiradas do systemd e preservadas no
+arquivo privado de runtime; o catálogo proprietário de Atendimento continua
+ativo em modo read-only. Nenhuma credencial, dado real ou recibo externo deve
+ser colocado no Git.
