@@ -42,6 +42,7 @@
     "ponto": {
       "patterns": [
         "workforce/timekeeping/**",
+        "workforce/ponto-pages/**",
         "workforce/ponto-pages/scripts/ponto-*.cjs",
         "workforce/ponto-pages/scripts/verify-ponto-core-staging-candidate.mjs",
         "workforce/ponto-pages/scripts/verify-ponto-pages-staging-smoke.mjs",
