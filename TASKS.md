@@ -26,7 +26,8 @@
 
 O runtime legado foi confirmado parado e sem consumidores ativos. As units
 `crm.service`, `crm-jobs.service`, `crm-atendimento-*` e
-`crm-clientes-source-refresh.*` foram retiradas do systemd e preservadas no
-arquivo privado de runtime; o catálogo proprietário de Atendimento continua
-ativo em modo read-only. Nenhuma credencial, dado real ou recibo externo deve
-ser colocado no Git.
+`crm-clientes-source-refresh.*`, os helpers de custódia CRM e as regras
+sudoers correspondentes foram retirados das superfícies operacionais e
+preservados no arquivo privado de runtime; o catálogo proprietário de
+Atendimento continua ativo em modo read-only. Nenhuma credencial, dado real ou
+recibo externo deve ser colocado no Git.
