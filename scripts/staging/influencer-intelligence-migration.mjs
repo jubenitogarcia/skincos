@@ -242,7 +242,7 @@ async function defaultCreatePool(databaseUrl, options) {
     const { Pool } = pg
     return new Pool({
         connectionString: url,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
         max,
     })
 }

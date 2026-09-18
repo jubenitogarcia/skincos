@@ -32,9 +32,9 @@ export function resolveDatabaseSsl(environment = {}, databaseUrl = '') {
     try { mode = new URL(String(databaseUrl)).searchParams.get('sslmode')?.toLowerCase() || '' } catch { /* fall through to NODE_ENV */ }
   }
   if (['disable', 'off', 'false', '0', 'no'].includes(mode)) return undefined
-  if (['require', 'on', 'true', '1', 'yes'].includes(mode)) return { rejectUnauthorized: false }
+  if (['require', 'on', 'true', '1', 'yes'].includes(mode)) return { rejectUnauthorized: true }
   return String(environment.NODE_ENV || '').toLowerCase() === 'production'
-    ? { rejectUnauthorized: false }
+    ? { rejectUnauthorized: true }
     : undefined
 }
 

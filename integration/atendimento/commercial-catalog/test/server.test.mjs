@@ -4,7 +4,7 @@ import { createCommercialCatalogApp, resolveDatabaseSsl } from '../server.mjs'
 
 test('uses explicit database SSL mode instead of forcing TLS on the local owner database', () => {
   assert.equal(resolveDatabaseSsl({ NODE_ENV: 'production', ATENDIMENTO_COMMERCIAL_CATALOG_DATABASE_SSL: 'disable' }, 'postgresql://localhost/db'), undefined)
-  assert.deepEqual(resolveDatabaseSsl({ NODE_ENV: 'production', ATENDIMENTO_COMMERCIAL_CATALOG_DATABASE_SSL: 'require' }, 'postgresql://localhost/db'), { rejectUnauthorized: false })
+  assert.deepEqual(resolveDatabaseSsl({ NODE_ENV: 'production', ATENDIMENTO_COMMERCIAL_CATALOG_DATABASE_SSL: 'require' }, 'postgresql://localhost/db'), { rejectUnauthorized: true })
   assert.equal(resolveDatabaseSsl({ NODE_ENV: 'production' }, 'postgresql://localhost/db?sslmode=disable'), undefined)
 })
 
