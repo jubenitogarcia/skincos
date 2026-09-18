@@ -54,7 +54,7 @@ jobs:
     environment: ponto-emergency-staging
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -80,7 +80,7 @@ jobs:
     environment: ponto-emergency-production
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -127,7 +127,7 @@ jobs:
       SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
       SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
@@ -1969,7 +1969,7 @@ jobs:
       contents: read
     environment: ${{ inputs.stage == 'staging' && 'ponto-emergency-staging' || 'ponto-emergency-production' }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -2076,7 +2076,7 @@ jobs:
       checks: write
       contents: read
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -2217,7 +2217,7 @@ jobs:
       group: ponto-surface-mutation
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -2345,7 +2345,7 @@ jobs:
       group: ponto-surface-mutation
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
