@@ -8,22 +8,10 @@
       "exclude": []
     }
   },
-  "bypass_actors": [
-    {
-      "actor_id": 15368,
-      "actor_type": "Integration",
-      "bypass_mode": "always"
-    }
-  ],
+  "bypass_actors": [],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
-    {
-      "type": "update",
-      "parameters": {
-        "update_allows_fetch_and_merge": false
-      }
-    },
     {
       "type": "pull_request",
       "parameters": {

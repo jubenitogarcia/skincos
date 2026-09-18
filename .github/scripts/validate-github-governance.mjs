@@ -9,8 +9,9 @@ const readJson = (relativePath) => JSON.parse(read(relativePath));
 
 const codeowners = read(".github/CODEOWNERS");
 const owner = "@jubenitogarcia";
+const ignoredRootDirectories = new Set([".git", "node_modules", ".playwright-mcp", ".wrangler"]);
 const requiredOwnerPaths = fs.readdirSync(root, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name !== ".git")
+  .filter((entry) => entry.isDirectory() && !ignoredRootDirectories.has(entry.name))
   .map((entry) => `/${entry.name}/`)
   .sort();
 
@@ -60,14 +61,12 @@ if (ruleset.name !== "main-enterprise-baseline" || ruleset.target !== "branch") 
 if (ruleset.enforcement !== "active" || !ruleset.conditions?.ref_name?.include?.includes("~DEFAULT_BRANCH")) {
   fail("main ruleset must actively target the default branch");
 }
-for (const requiredRule of ["deletion", "non_fast_forward", "update", "pull_request", "required_status_checks"]) {
+for (const requiredRule of ["deletion", "non_fast_forward", "pull_request", "required_status_checks"]) {
   if (!ruleset.rules?.some((rule) => rule.type === requiredRule)) fail(`main ruleset is missing ${requiredRule}`);
 }
 const updateRule = ruleset.rules?.find((rule) => rule.type === "update");
-if (updateRule?.parameters?.update_allows_fetch_and_merge !== false) fail("main update rule must deny uncoordinated ref updates");
-if (JSON.stringify(ruleset.bypass_actors || []) !== JSON.stringify([{ actor_id: 15368, actor_type: "Integration", bypass_mode: "always" }])) {
-  fail("main update rule must be bypassed only by the GitHub Actions integration");
-}
+if (updateRule) fail("main ruleset must not declare an unavailable repository update bypass");
+if (Array.isArray(ruleset.bypass_actors) && ruleset.bypass_actors.length > 0) fail("main ruleset must not declare unavailable bypass actors");
 const pullRequestRule = ruleset.rules?.find((rule) => rule.type === "pull_request");
 if (JSON.stringify(pullRequestRule?.parameters?.allowed_merge_methods || []) !== JSON.stringify(["squash"])) {
   fail("main pull request rule must allow only squash merges");
