@@ -215,7 +215,7 @@ jobs:
 
       - name: Persist Beauty Movement production incumbent checkpoint
         if: ${{ steps.beautyMovementRollbackCheckpoint.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: website-production-incumbent-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/website-deploy-checkpoints/incumbent.json
@@ -247,7 +247,7 @@ jobs:
 
       - name: Persist Beauty Movement production candidate checkpoint
         if: ${{ always() && inputs.target == 'production' && steps.beautyMovementRollbackCheckpoint.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: website-production-candidate-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/website-deploy-checkpoints/candidate.json
@@ -317,7 +317,7 @@ jobs:
       - name: Upload Beauty Movement production release evidence
         id: beautyMovementReleaseEvidence
         if: ${{ always() && inputs.target == 'production' && steps.beautyMovementRelease.outputs.active == 'true' && steps.beautyMovementReleaseSmoke.outcome != 'skipped' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: beauty-movement-production-release-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/beauty-movement-production-release-smoke/evidence.json
@@ -346,7 +346,7 @@ jobs:
 
       - name: Upload Beauty Movement production reconciliation evidence
         if: ${{ always() && inputs.target == 'production' && steps.beautyMovementRollbackCheckpoint.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: beauty-movement-production-reconcile-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/beauty-movement-production-reconcile/evidence.json
@@ -489,7 +489,7 @@ jobs:
 
       - name: Upload staging promotion evidence
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: promotion-evidence-public-website-release
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
