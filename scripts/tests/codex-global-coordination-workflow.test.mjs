@@ -89,7 +89,7 @@ test("merge admission carries only changed paths, not the full repository closur
 
 test("merge admission rejects a changed-file payload before remote coordination", () => {
   assert.throws(() => assertCoordinationPayloadSize({
-    inputs: { changedPaths: Array.from({ length: 2_000 }, (_, index) => `website/${"x".repeat(48)}/${index}.tsx`) },
+    inputs: { changedPaths: Array.from({ length: 2_000 }, (_, index) => `website/${"x".repeat(120)}/${index}.tsx`) },
   }), /payload budget/);
 });
 

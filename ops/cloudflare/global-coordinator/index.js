@@ -22,7 +22,9 @@ import { COORDINATION_OBSERVABILITY_FIELDS } from "./observability-contract.mjs"
 const CONTRACT_ID = "skincos/global-coordination/v1";
 const MAX_SKEW_MS = 30_000;
 const NONCE_TTL_MS = 15 * 60_000;
-const MAX_BODY_BYTES = 64 * 1024;
+// The body remains bounded, while allowing large but finite changed-file
+// attestations. The repository adapter uses the same 256 KiB ceiling.
+const MAX_BODY_BYTES = 256 * 1024;
 const COORDINATION_MODES = new Set(["legacy-drain", "global"]);
 const RECOVERY_PROTOCOL = "epoch-fence-v1";
 
