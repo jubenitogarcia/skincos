@@ -21,7 +21,6 @@
         "response",
         "whatsapp_integration",
         "instagram_integration",
-        "crm_integration",
         "search_engine",
         "code_execution",
         "memory_save",
@@ -36,10 +35,6 @@
       "instagram": {
         "endpoint": "http://localhost:3003",
         "enabled": true
-      },
-      "crm": {
-        "endpoint": "http://localhost:3100",
-        "enabled": false
       },
       "main_system": {
         "endpoint": "http://localhost:5000",

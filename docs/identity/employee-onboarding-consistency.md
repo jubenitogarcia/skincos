@@ -28,5 +28,4 @@ O consumo do convite cria o usuário Identity inativo, ativa o Workforce por cha
 
 ## Escopo de staging
 
-O Pages `skincos-staging` recebeu o alias `crm-staging.skincos.com.br` com CNAME DNS-only para `skincos-staging.pages.dev`. A validação de certificado permanece dependente do estado do Pages; nenhuma rota produtiva foi modificada.
-
+O fluxo de staging do Ponto usa o projeto Pages dedicado `skincos-ponto-staging` e sua origem imutável `skincos-ponto-staging.pages.dev`. Nenhuma rota do CRM independente ou do monorepo é usada como compatibilidade.

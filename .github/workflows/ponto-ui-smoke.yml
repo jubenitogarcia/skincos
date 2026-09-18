@@ -34,11 +34,11 @@ jobs:
         with:
           node-version: "22.12.0"
           cache: "npm"
-          cache-dependency-path: crm/console/package-lock.json
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
 
       - name: Install frontend deps
         run: npm ci
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
 
       - name: Cache Playwright browsers
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -48,7 +48,7 @@ jobs:
 
       - name: Install Playwright Chromium (with deps)
         run: npx --yes playwright install --with-deps chromium
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
 
       - name: Resolve expected SHA
         id: sha
@@ -84,7 +84,7 @@ jobs:
         id: smoke
         continue-on-error: true
         env:
-          CRM_URL: https://crm.skincos.com.br
+          PONTO_URL: https://skincos-ponto.pages.dev
           EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
           AUTO_LOGIN: "1"
           SMOKE_EMAIL: ${{ secrets.PONTO_PILOT_LOGIN }}
@@ -94,15 +94,15 @@ jobs:
           MUTATE_ADMIN: "0"
           MUTATE_EMPLOYEE: "0"
           MUTATE_PUNCH: "0"
-          NODE_PATH: crm/console/node_modules
+          NODE_PATH: workforce/ponto-pages/node_modules
         run: |
           set -euo pipefail
-          node crm/console/scripts/ponto-ui-smoke.cjs
+          node workforce/ponto-pages/scripts/ponto-ui-smoke.cjs
 
       - name: Re-run UI smoke with trace (on failure)
         if: ${{ steps.smoke.outcome != 'success' }}
         env:
-          CRM_URL: https://crm.skincos.com.br
+          PONTO_URL: https://skincos-ponto.pages.dev
           EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
           AUTO_LOGIN: "1"
           SMOKE_EMAIL: ${{ secrets.PONTO_PILOT_LOGIN }}
@@ -113,10 +113,10 @@ jobs:
           MUTATE_ADMIN: "0"
           MUTATE_EMPLOYEE: "0"
           MUTATE_PUNCH: "0"
-          NODE_PATH: crm/console/node_modules
+          NODE_PATH: workforce/ponto-pages/node_modules
         run: |
           set -euo pipefail
-          node crm/console/scripts/ponto-ui-smoke.cjs
+          node workforce/ponto-pages/scripts/ponto-ui-smoke.cjs
 
       - name: Fail if fast smoke failed
         if: ${{ steps.smoke.outcome != 'success' }}

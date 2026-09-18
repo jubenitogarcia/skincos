@@ -49,11 +49,7 @@ try {
         schemaVersion = 1
         topologyId = 'skincos-canonical-worktrees'
         worktree = [ordered]@{ canonicalRelativeRoot = 'admin\canonical'; pathTemplate = 'admin\canonical\{surfaceType}\{surfaceId}' }
-        crm = [ordered]@{
-            pilot = @('users')
-            surfaces = @([ordered]@{ id = 'users'; label = 'Usuários'; route = '/?module=users'; source = 'fixture' })
-        }
-        orb = [ordered]@{ pilot = @(); families = @() }
+        surfaces = @([ordered]@{ id = 'users'; type = 'module'; label = 'Usuários'; relativePath = 'module\users'; source = 'fixture'; pilot = $true })
     }
     $topology | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $fixtureTopology -Encoding utf8
 
@@ -64,7 +60,7 @@ try {
     $plan = Invoke-Coordinator @{ Action = 'plan' }
     if ($plan.actions[0].action -ne 'ensure-canonical' -or $plan.actions[0].mutation -notmatch 'Apply') { throw 'Read-only plan did not require explicit ensure apply.' }
 
-    $created = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'crm-module'; SurfaceId = 'users'; TargetCommit = $target; Apply = $true }
+    $created = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'module'; SurfaceId = 'users'; TargetCommit = $target; Apply = $true }
     if ($created.action -ne 'created' -or $created.targetCommit -ne $target) { throw 'Canonical slot was not created at the explicit target SHA.' }
 
     $ready = Invoke-Coordinator @{ Action = 'inventory' }
@@ -76,15 +72,15 @@ try {
     $registry | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $registryPath -Encoding utf8
     $mismatch = Invoke-Coordinator @{ Action = 'inventory' }
     if ($mismatch.surfaces[0].status -ne 'registry_mismatch' -or -not $mismatch.surfaces[0].registryMismatch) { throw 'Registry/SHA mismatch was not reported.' }
-    $repaired = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'crm-module'; SurfaceId = 'users'; TargetCommit = $target; Apply = $true }
+    $repaired = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'module'; SurfaceId = 'users'; TargetCommit = $target; Apply = $true }
     if ($repaired.action -ne 'reused') { throw 'Existing canonical slot was not safely reused after registry repair.' }
 
-    $claimed = Invoke-Coordinator @{ Action = 'claim'; SurfaceType = 'crm-module'; SurfaceId = 'users'; Owner = 'fixture-owner'; Apply = $true }
+    $claimed = Invoke-Coordinator @{ Action = 'claim'; SurfaceType = 'module'; SurfaceId = 'users'; Owner = 'fixture-owner'; Apply = $true }
     if ($claimed.action -ne 'claimed' -or [string]::IsNullOrWhiteSpace($claimed.token)) { throw 'Canonical claim did not create a lease token.' }
 
     $secondClaimParameters = @{
         Action = 'claim'
-        SurfaceType = 'crm-module'
+        SurfaceType = 'module'
         SurfaceId = 'users'
         Owner = 'other-owner'
         Apply = $true
@@ -109,10 +105,10 @@ try {
     $ErrorActionPreference = $oldPreference
     if ($secondClaimExitCode -eq 0 -or (($secondClaim -join ' ') -notmatch 'já possui lease|lease')) { throw 'Duplicate canonical claim was not rejected.' }
 
-    $released = Invoke-Coordinator @{ Action = 'release'; SurfaceType = 'crm-module'; SurfaceId = 'users'; Owner = 'fixture-owner'; LeaseToken = $claimed.token; Apply = $true }
+    $released = Invoke-Coordinator @{ Action = 'release'; SurfaceType = 'module'; SurfaceId = 'users'; Owner = 'fixture-owner'; LeaseToken = $claimed.token; Apply = $true }
     if ($released.action -ne 'released') { throw 'Canonical release did not remove the lease.' }
 
-    $canonicalPath = Join-Path $fixtureWorktrees 'admin\canonical\crm\users'
+    $canonicalPath = Join-Path $fixtureWorktrees 'admin\canonical\module\users'
     Add-Content -LiteralPath (Join-Path $canonicalPath 'README.md') -Value "dirty`n"
     $dirty = Invoke-Coordinator @{ Action = 'inventory' }
     if ($dirty.surfaces[0].status -ne 'blocked_dirty') { throw 'Dirty canonical slot was not preserved as blocked.' }

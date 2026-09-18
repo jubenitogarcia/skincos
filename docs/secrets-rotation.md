@@ -1,109 +1,37 @@
-# Secrets & Rotation Playbook
+# Secrets e rotação
 
-## Objetivo
-Garantir que segredos de GitHub, Cloudflare e backend tenham **escopo mínimo**, **rotação periódica** e **procedimento de emergência** documentado; o risco decorre do efeito e da reversibilidade, não do nome do secret.
+Segredos de GitHub, Cloudflare e integrações devem ter escopo mínimo, rotação
+periódica e valores sempre fora do Git. O CRM externo mantém a própria
+custódia; este repositório não armazena suas credenciais.
 
-## Inventário mínimo (por área)
+## Inventário deste repositório
 
-### GitHub Actions (secrets)
-- `GH_TOKEN` (CI submodules)
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ALERTS_API_TOKEN` (alerting/notifications — escopo mínimo, sem permissões de deploy)
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_ALERT_WEBHOOK_URL` (opcional)
-- `GITLEAKS_LICENSE` (opcional)
-- `SEMGREP_APP_TOKEN` (opcional)
+- `CLOUDFLARE_API_TOKEN` e `CLOUDFLARE_ACCOUNT_ID` com permissões apenas para a
+  superfície que o workflow publica.
+- `SESSION_SECRET`, `MIGRATION_TOKEN` e `INTEGRATIONS_ENCRYPTION_SECRET` nos
+  Workers que realmente os consomem.
+- `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY`, seu `KEY_ID` e, durante uma janela
+  limitada, a chave anterior/recovery separada.
+- Segredos próprios de Website, Ponto, Escala, Financeiro, Social, EF App e
+  Token Vault, conforme os respectivos workflows.
 
-### Cloudflare (Workers/Pages env/secret)
-- `SESSION_SECRET`
-- `MIGRATION_TOKEN`
-- `INTEGRATIONS_ENCRYPTION_SECRET`
-- `SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` — legacy/current normal coordination custody and, when no explicit active key exists, the active key.
-- `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY` — optional explicit active normal coordination custody during a key transition; it takes precedence over the shared secret only when paired with a non-legacy active key ID.
-- `SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY` — time-bounded overlap key during rotation.
-- `SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET` — separate break-glass custody; never reuse the normal key.
-NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
+## Procedimento
 
-### CRM API / Infra
-- Credenciais do lifecycle nativo, mantidas fora do GitHub e documentadas em `docs/runbooks/lifecycle-runtime-cutover.md`
-- Tokens internos de módulos (ex.: `CRM_UNIT_MONITOR_PROXY_TOKEN`, `WEBHOOK_SECRET`)
+1. Gerar o novo valor em cofre externo, sem registrá-lo em arquivos ou argv.
+2. Atualizar o GitHub Environment/Cloudflare Worker correto.
+3. Revogar o valor anterior somente após o readback do nome e do health check.
+4. Executar o teste focal e guardar recibo sanitizado fora do Git.
 
-## Política de rotação
+Tokens de deploy devem ser revisados pelo menos a cada 90 dias; segredos de
+sessão/criptografia, a cada 180 dias ou imediatamente após incidente.
 
-### Frequência recomendada
-- **Tokens de deploy (Cloudflare/GH/SSH)**: a cada 90 dias.
-- **Segredos de sessão/criptografia** (`SESSION_SECRET`, `INTEGRATIONS_ENCRYPTION_SECRET`): a cada 180 dias.
-- **Chaves de integração externa** (Google Service Account, webhooks): a cada 180 dias ou após incidente.
+## Coordenação global
 
-### Evento de rotação imediata
-- Vazamento de credencial, acesso indevido, ou alerta confirmado de secret scanning.
+A rotação altera primeiro a custódia externa, depois o Worker de coordenação,
+clientes e workflows. Cada lease carrega `keyId` e `authorityEpoch`; ausência,
+expiração ou divergência falha fechada. Após o TTL máximo, remover a chave
+anterior e repetir `/v1/readyz` e o readback assinado.
 
-## Procedimento (checklist)
-
-### GitHub Actions
-1. Gerar novo token com **escopo mínimo** (ex.: `repo` apenas se necessário).
-2. Atualizar `Settings → Secrets and variables → Actions`.
-3. Invalidar token antigo.
-4. Rodar workflow de deploy/CI para validar.
-
-### Cloudflare
-1. Gerar novo `CLOUDFLARE_API_TOKEN` com escopos mínimos.
-2. Atualizar em `GitHub Actions secrets`.
-3. Atualizar secrets/vars no Cloudflare (Workers/Pages).
-4. Fazer deploy de teste e validar `/health`.
-
-### Coordenação global: rotação de chave e fencing
-
-O contrato normal usa `SKINCOS_GLOBAL_COORDINATION_KEY_ID` como identificador
-ativo e `authorityEpoch` como fencing. Sem `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY`,
-`SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` continua sendo a custódia ativa.
-Durante a primeira rotação, a nova custódia explícita pode ser publicada no
-Worker como `COORDINATION_ACTIVE_KEY`, enquanto o shared secret antigo fica
-temporariamente como chave anterior por herança controlada. A rotação é uma
-operação coordenada, não uma troca unilateral no Worker:
-
-1. Criar a nova chave fora do repositório e configurar
-   `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY`; definir um novo
-   `SKINCOS_GLOBAL_COORDINATION_KEY_ID` e uma variável anterior com ID e
-   expiração curta. O workflow recusa uma chave explícita sem esse overlap.
-2. Manter `SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` disponível somente para
-   a herança da chave anterior durante a primeira transição, ou configurar
-   explicitamente `SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY` em rotações
-   posteriores.
-3. Fazer deploy do coordination plane, validar `/v1/readyz`, e confirmar que o
-   readback assinado contém `protocol=epoch-fence-v1`, `keyId` e um
-   `authorityEpoch` inteiro.
-4. Atualizar clientes/actions para enviar a nova custódia e o novo key ID e
-   fazer um novo deploy. Durante a primeira janela, chamadas sem key ID só
-   podem drenar se a chave anterior for explicitamente `legacy-v1` e ainda
-   estiver dentro da expiração. Os leases emitidos carregam `authorityKeyId` e
-   `authorityEpoch`; provas sem ambos são rejeitadas depois da transição.
-5. Após o TTL máximo dos leases e a janela de overlap, remover a chave anterior,
-   apagar sua variável de expiração e repetir a readiness/readback. Se houver
-   dúvida sobre a autoridade, interromper mutações e usar somente o workflow
-   `recover-global-coordinator.yml` com versão incumbent registrada e
-   confirmação exata; o workflow aplica fencing de epoch antes de qualquer
-   nova aquisição.
-
-O recovery secret precisa ser provisionado separadamente em cada environment e
-não é aceito pelo endpoint normal. A operação de recovery é limitada a uma
-versão conhecida, uma tentativa e um `recovery_id` idempotente; estado saudável,
-versão desconhecida, epoch divergente ou probe ambíguo falham fechados.
-
-### Backend / CRM API (SSH)
-1. Gerar nova chave SSH.
-2. Atualizar `authorized_keys` no servidor.
-3. Atualizar `CRM_API_SSH_KEY` (GitHub).
-4. Executar o procedimento de promoção nativa; não criar uma via SSH pelo GitHub Actions.
-
-## Medidas de segurança recomendadas
-- Escopo mínimo em tokens (Cloudflare/GitHub).
-- Evitar segredos em `.env` versionados.
-- Rotação documentada em changelog interno.
-- Validar sessão/login após mudança de `SESSION_SECRET`.
-
-## Notas
-- Para exceções conhecidas, veja `docs/security-exceptions.md`.
-- Variables relacionadas a alerting devem permanecer em modo opt-in:
-  - `ENABLE_CLOUDFLARE_ALERTING_APPLY=true` somente se quiser execução agendada.
-  - `CLOUDFLARE_ALERT_ENABLE_EMAILS=true` somente se quiser destinos por e-mail.
+Nenhum workflow deste repositório deve criar uma via SSH para runtime de outro
+produto. O projeto CRM possui seu próprio procedimento de rotação em
+`C:\CodexShared\Projetos\crm`.

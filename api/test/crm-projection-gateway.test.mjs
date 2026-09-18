@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createApiGateway } from '../src/gateway.js';
 import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
 
-const origins = ['https://crm-core-staging.skincos.com.br', 'https://crm-staging.skincos.com.br'];
+const origins = ['https://staging-core.invalid', 'https://staging-console.invalid'];
 const paths = ['/crm/session', '/crm/projections?units=novo-hamburgo'];
 const actor = { identitySubject: 'idn:synthetic_gateway_actor_0001', role: 'CONSULTOR',
     scopes: { units: ['novo-hamburgo'], modules: ['clients'], permissions: [] } };
@@ -79,9 +79,9 @@ test('both exact staging origins have bounded preflight without identity or Core
 
 test('Pages previews, production, wildcard, null and lookalike origins fail before identity', async () => {
     for (const origin of [
-        'https://skincos-crm-core-staging.pages.dev', 'https://7ffda591.skincos-crm-core-staging.pages.dev',
-        'https://crm.skincos.com.br', 'https://crm-core-staging.skincos.com.br.evil.test',
-        'https://crm-core-staging.skincos.com.br:444', 'http://crm-core-staging.skincos.com.br', '*', 'null',
+        'https://staging-core.pages.dev', 'https://7ffda591.staging-core.pages.dev',
+        'https://crm.skincos.com.br', 'https://staging-core.invalid.evil.test',
+        'https://staging-core.invalid:444', 'http://staging-core.invalid', '*', 'null',
     ]) for (const path of paths) for (const method of ['GET', 'OPTIONS']) {
         const fixture = setup();
         const denied = await fixture.call(path, { method, headers: { origin, 'access-control-request-method': 'GET' } });

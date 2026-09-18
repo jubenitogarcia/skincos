@@ -51,7 +51,7 @@
     },
     {
       "id": "timekeeping",
-      "patterns": ["workforce/timekeeping/**", "crm/console/**", "crm/api/**", "api/**"],
+      "patterns": ["workforce/timekeeping/**", "workforce/ponto-pages/**", "api/**"],
       "releaseInput": true
     },
     {
@@ -140,7 +140,6 @@
     ".github/workflows/**",
     ".github/actions/**",
     "api/**",
-    "crm/api/**",
     "inventory/src/routes/**",
     "workforce/**",
     "website/**",
@@ -194,7 +193,7 @@
     {
       "risk": "high",
       "reason": "Authentication, sessions, permissions, secrets, migrations, payment, deployment, workflow, Worker, database, tracking, externally integrated, or Inventory route surface changed and needs a focal check plus rollback.",
-      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*token*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "inventory/src/routes/**", "platform/**", "ops/runtime/**", "website/**/api/**", "ops/cloudflare/**", "ops/governance/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**", "**/*tracking*", "**/*integration*", "**/*webhook*"]
+      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*token*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "inventory/src/routes/**", "platform/**", "ops/runtime/**", "website/**/api/**", "ops/cloudflare/**", "ops/governance/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**", "**/*tracking*", "**/*integration*", "**/*webhook*"]
     },
     {
       "risk": "medium",
@@ -204,7 +203,7 @@
     {
       "risk": "low",
       "reason": "A presentation-only asset or explicitly local UI component path changed without an elevated security, dependency, contract, or production marker.",
-      "patterns": ["**/*.css", "**/*.scss", "**/*.html", "crm/console/**/*.component.ts", "crm/console/**/*.component.tsx", "crm/console/**/*.component.jsx", "crm/console/**/*.story.tsx", "crm/console/**/*.stories.tsx", "crm/console/**/*.story.jsx", "crm/console/**/*.stories.jsx", "crm/console/**/components/**/*.tsx", "crm/console/**/components/**/*.jsx", "crm/console/**/ui/**/*.tsx", "crm/console/**/ui/**/*.jsx", "crm/console/**/layout/**/*.tsx", "crm/console/**/layout/**/*.jsx"]
+      "patterns": ["**/*.css", "**/*.scss", "**/*.html"]
     },
     {
       "risk": "low",

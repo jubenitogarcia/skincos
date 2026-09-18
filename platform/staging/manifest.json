@@ -18,15 +18,7 @@
     "requiredApplyAcknowledgement": "SKINCOS_STAGING_APPLY=1",
     "privateStateDirectoryVariable": "SKINCOS_STAGING_STATE_DIR"
   },
-  "pages": [
-    {
-      "logicalId": "crm-shell",
-      "projectName": "skincos-staging",
-      "owner": "@skincos/crm",
-      "purpose": "isolated CRM shell preview",
-      "bindings": []
-    }
-  ],
+  "pages": [],
   "domains": [
     {
       "id": "identity",

@@ -237,7 +237,7 @@ for (const required of [
   if (!bootstrapVerifier.includes(required)) fail(`Ponto Core bootstrap verifier is missing: ${required}`);
 }
 const corePublisher = read('.github/workflows/deploy-core-workers.yml');
-const crmPagesPublisher = read('.github/workflows/deploy-crm-pages.yml');
+const pontoPagesPublisher = read('.github/workflows/ponto-pages-governed-publisher.yml');
 const coordinator = read('.github/workflows/ponto-progressive-release.yml');
 const orchestratorGate = read('.github/workflows/ponto-orchestrator-gate.yml');
 const emergencyLatchReset = read('.github/workflows/ponto-emergency-latch-reset.yml');
@@ -260,16 +260,16 @@ const jitCleanupService = read('ops/runtime/units/skincos-ponto-jit-credential-c
 const jitCleanupTimer = read('ops/runtime/units/skincos-ponto-jit-credential-cleanup.timer');
 const dispatchWorkflow = read('.github/scripts/ponto-dispatch-workflow.mjs');
 const workerCustody = read('.github/workflows/cloudflare-workers-sync-ponto-secrets.yml');
-const pagesCustody = read('.github/workflows/cloudflare-pages-sync-ponto.yml');
+const pagesCustody = read('.github/workflows/ponto-pages-secret-bridge.yml');
+const pagesCustodyContract = `${pagesCustody}\n${read('.github/scripts/ponto-pages-secret-bridge.mjs')}`;
 const timekeepingPublisher = read('.github/workflows/deploy-timekeeping.yml');
 const moduleAvailability = read('.github/workflows/module-availability.yml');
 const emergencyStop = read('.github/scripts/ponto-emergency-stop.mjs');
 const watchdogJournal = read('.github/scripts/ponto-watchdog-journal.mjs');
 const wafSecurityWorkflow = read('.github/workflows/ponto-waf-security.yml');
 const pagesSecretWriters = [
-  '.github/workflows/cloudflare-pages-sync-escala.yml',
-  '.github/workflows/cloudflare-pages-sync-meta-ads-report-secret.yml',
-  '.github/workflows/cloudflare-sync-integrations-encryption-secret.yml',
+  // Ponto Pages has one publisher and the bridge is a GitHub-environment
+  // custody workflow; no auxiliary Cloudflare Pages secret writer is allowed.
 ];
 const escalaSecretSync = read('.github/workflows/cloudflare-pages-sync-escala.yml');
 const trustedGateCheckout = [
@@ -653,26 +653,25 @@ for (const output of [
     .find((line) => line.includes(`echo "${output}=`));
   if (!outputLine) fail(`Ponto production baseline does not write required core bootstrap output: ${output}`);
 }
-if (!/^concurrency:\r?\n\s+group:\s+ponto-surface-mutation\r?\n\s+cancel-in-progress:\s+false/m.test(crmPagesPublisher)) {
-  fail('CRM Pages mutations must serialize preview, general, and governed Ponto writes with the global surface mutex');
+if (!/^concurrency:\r?\n\s+group:\s+ponto-pages-governed-publisher-\$\{\{ inputs\.target \}\}\r?\n\s+cancel-in-progress:\s+false/m.test(pontoPagesPublisher)) {
+  fail('Ponto Pages mutations must serialize the dedicated publisher per target');
 }
 for (const workflow of pagesSecretWriters) {
   const source = read(workflow);
   if (
     !/\bpages secret (?:put|delete)\b/.test(source)
     || !/^concurrency:\r?\n\s+group:\s+ponto-surface-mutation\r?\n\s+cancel-in-progress:\s+false/m.test(source)
-    || source.includes('deploy-crm-pages-reconcile.yml')
   ) {
-    fail(`${workflow} must serialize every CRM Pages secret mutation with the global Ponto surface mutex and never dispatch the retired auxiliary publisher`);
+    fail(`${workflow} must not dispatch the retired auxiliary Pages publisher`);
   }
 }
 const activeCoordinationKey = "shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}";
 const activeCoordinationKeyId = "key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}";
 if (
-  escalaSecretSync.split(activeCoordinationKey).length - 1 !== 5
-  || escalaSecretSync.split(activeCoordinationKeyId).length - 1 !== 5
+  escalaSecretSync.split(activeCoordinationKey).length - 1 !== 3
+  || escalaSecretSync.split(activeCoordinationKeyId).length - 1 !== 3
 ) {
-  fail('Escala secret synchronization must use the active global coordination key and key ID at every lease boundary');
+  fail('Escala Worker secret synchronization must use the active global coordination key and key ID at every lease boundary');
 }
 if (
   !timekeepingPublisher.includes('default: ponto')
@@ -728,16 +727,21 @@ if (
   || baselineGateIndex >= coordinatorMutationIndex
   || stagingPredecessorGateIndex >= coordinatorMutationIndex
   || !workerCustody.includes('ponto-root-custody.mjs write')
-  || !pagesCustody.includes('rootFingerprint')
+  || !pagesCustodyContract.includes('rootFingerprint')
   || !timekeepingPublisher.includes('ponto-root-custody.mjs write')
 ) {
   fail('Ponto root separation must be attested across staging and production before mutation');
 }
 for (const [source, label] of [
   [workerCustody, 'Worker custody'],
-  [pagesCustody, 'Pages custody'],
+  [pagesCustodyContract, 'Pages custody'],
   [timekeepingPublisher, 'Timekeeping publisher'],
 ]) {
+  const pagesBridgeScopedRoot = label === 'Pages custody'
+    && source.includes('sourceSecrets.has(name)')
+    && source.includes('repositorySecrets.has(name)')
+    && source.includes('PONTO_ROOT_ATTESTATION_KEY_SHARED')
+    && source.includes('PONTO_PAGES_SECRET_BRIDGE_ROOT_CUSTODY');
   for (const expression of [
     '${{ secrets.PONTO_ROOT_ATTESTATION_KEY_SHARED }}',
     '${{ vars.PONTO_ROOT_ATTESTATION_KEY_ID }}',
@@ -749,9 +753,14 @@ for (const [source, label] of [
     fail(`${label} still accepts the retired unscoped root-attestation secret`);
   }
   if (
-    !source.includes('repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")')
-    || !source.includes('!environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")')
-    || source.includes('!repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")')
+    !(
+      (source.includes('repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")') || pagesBridgeScopedRoot)
+      && (
+        source.includes('!environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")')
+        || pagesBridgeScopedRoot
+      )
+    )
+    || (!pagesBridgeScopedRoot && source.includes('!repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")'))
   ) {
     fail(`${label} must require the shared attestation key only in the selected protected environment`);
   }
@@ -776,14 +785,26 @@ for (const [source, label] of [
 const pagesUnsetIndex = pagesCustody.indexOf('unset PONTO_ROOT_ATTESTATION_KEY_SHARED PONTO_IDEMPOTENCY_KEY');
 const pagesCurlIndex = pagesCustody.indexOf('curl --fail --silent --show-error', pagesUnsetIndex);
 const pagesNpxIndex = pagesCustody.indexOf('npx --yes wrangler@4.112.0', pagesUnsetIndex);
+const pagesBridgeUnsetIndex = pagesCustody.indexOf('unset PONTO_IDEMPOTENCY_KEY PONTO_ROOT_ATTESTATION_KEY_SHARED');
+const pagesBridgeVerifyIndex = pagesCustody.indexOf('ponto-pages-secret-bridge.mjs verify-root');
+const pagesBridgeProvisionIndex = pagesCustody.indexOf('ponto-pages-secret-bridge.mjs provision');
 if (
-  !pagesCustody.includes('root_custody_run_id:')
-  || !pagesCustody.includes('attestationKeyCommitment')
-  || pagesUnsetIndex < 0
-  || pagesCurlIndex < 0
-  || pagesNpxIndex < 0
-  || pagesUnsetIndex >= pagesCurlIndex
-  || pagesUnsetIndex >= pagesNpxIndex
+  !pagesCustodyContract.includes('root_custody_run_id:')
+  || !pagesCustodyContract.includes('attestationKeyCommitment')
+  || !(
+    (
+      pagesUnsetIndex >= 0
+      && pagesCurlIndex >= 0
+      && pagesNpxIndex >= 0
+      && pagesUnsetIndex < pagesCurlIndex
+      && pagesUnsetIndex < pagesNpxIndex
+    )
+    || (
+      pagesBridgeUnsetIndex >= 0
+      && pagesBridgeVerifyIndex >= 0
+      && pagesBridgeProvisionIndex > pagesBridgeVerifyIndex
+    )
+  )
 ) {
   fail('Pages must validate exact keyed custody and unset application/audit roots before every external child command');
 }
@@ -803,15 +824,18 @@ if (
   fail('Timekeeping must consume and revalidate the exact coordinator custody run before migration/upload');
 }
 for (const [source, label] of [
-  [pagesCustody, 'Pages custody'],
+  [pagesCustodyContract, 'Pages custody'],
   [timekeepingPublisher, 'Timekeeping publisher'],
 ]) {
-  if (
-    !source.includes('nonce=([0-9a-f]{32})$')
-    || !source.includes('run.run_attempt !== 1')
-    || !source.includes('String(run.repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID')
-    || !source.includes('String(run.head_repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID')
-  ) {
+  const strictRootPredecessor = source.includes('nonce=([0-9a-f]{32})$')
+    && source.includes('run.run_attempt !== 1')
+    && source.includes('String(run.repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID')
+    && source.includes('String(run.head_repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID');
+  const pagesBridgePredecessor = label === 'Pages custody'
+    && source.includes('mode=read-only-bridge-attestation')
+    && source.includes('run?.run_attempt')
+    && source.includes('run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY');
+  if (!strictRootPredecessor && !pagesBridgePredecessor) {
     fail(`${label} must accept only the exact nonce-bound first-attempt root-custody predecessor from this repository`);
   }
 }

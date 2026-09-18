@@ -2,8 +2,8 @@
 
 This runbook covers only the additive PostgreSQL artifacts under
 `social/influencer-intelligence/migrations/`. It does not register the module,
-enable `INFLUENCER_INTELLIGENCE_ENABLED`, start external automation collection, call Meta,
-grant CRM access, or touch production.
+enable `INFLUENCER_INTELLIGENCE_ENABLED`, start external automation collection,
+call Meta, grant access to another product, or touch production.
 
 ## Admission contract
 
@@ -17,19 +17,18 @@ checkpoint only below
 `/var/backups/skincos/influencer-intelligence/staging/`; callers cannot choose
 the destination. The underlying fixed runner is
 `scripts/staging/influencer-intelligence-migration.mjs`. It reads the database URL only from the native private file
-`/etc/skincos/crm-atendimento-staging-migrator.env`, the canonical staging
-database migrator custody already used by the CRM; no analytics-specific copy
-of the password is created. The file is not in Git and its value is never
+`/etc/skincos/influencer-intelligence-staging-migrator.env`, its dedicated
+staging database migrator custody. The file is not in Git and its value is never
 printed. The URL must point to loopback TLS,
 `skincos_staging`, and `skincos_staging_migrator_login`. The runner overrides
 the connection application name to `influencer-intelligence-migration` and
 proves it from PostgreSQL.
 
 The effective DDL role is the existing staging owner role
-`skincos_staging_crm_owner`, reached only through the dedicated migrator
+`skincos_staging_social_owner`, reached only through the dedicated migrator
 membership. The preflight proves database identity, session/effective role,
 `CONNECT`/`CREATE` privileges and role shape. The module runtime roles
-(`skincos_staging_crm_app` and `skincos_staging_crm_runtime`) must have no
+(`skincos_staging_social_app` and `skincos_staging_social_runtime`) must have no
 usage/create/DML privilege on the new schema. No runtime grant is created by
 this operation.
 

@@ -1,16 +1,6 @@
 {
   "version": 1,
-  "core": {
-    "crm": {
-      "id": "crm",
-      "path": "crm/console",
-      "kind": "core",
-      "ports": {
-        "frontend": 5173,
-        "api": 8099
-      }
-    }
-  },
+  "core": {},
   "capabilities": [
     {
       "id": "insumos",
@@ -20,7 +10,7 @@
       "health": {
         "path": "/health"
       },
-      "notes": "API Cloudflare em https://api.skincos.com.br/insumos (proxy same-origin: /api/insumos/* via CRM API)."
+      "notes": "API Cloudflare em https://api.skincos.com.br/insumos; o gateway aplica o contrato same-origin /api/insumos/*."
     },
     {
       "id": "messaging-whatsapp",
@@ -34,17 +24,7 @@
       "health": {
         "path": "/health"
       },
-      "notes": "Runtime nativo único em /opt/skincos; API local na porta 8080 e compatibilidade multi-canal no CRM."
-    },
-    {
-      "id": "harmonia",
-      "label": "Harmonia (WhatsApp Leads)",
-      "path": "crm/api",
-      "kind": "service",
-      "health": {
-        "path": "/api/harmonia/health"
-      },
-      "notes": "Decision + executor interno. Webhooks: POST /api/harmonia/webhook/official e /webhook/evolution. Endpoint principal: POST /api/harmonia/ingest"
+      "notes": "Runtime nativo único em /opt/skincos; API local na porta 8080 e compatibilidade multi-canal por contrato."
     },
     {
       "id": "scraper",

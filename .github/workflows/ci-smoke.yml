@@ -38,7 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       website: ${{ steps.scope.outputs.website }}
-      crm_api: ${{ steps.scope.outputs.crm_api }}
       whatsapp: ${{ steps.scope.outputs.whatsapp }}
       codex: ${{ steps.scope.outputs.codex }}
       observability: ${{ steps.scope.outputs.observability }}
@@ -73,18 +72,16 @@ jobs:
             if git diff --quiet "$base...$head" -- "$@"; then printf false; else printf true; fi
           }
           website="$(changed website booking package.json package-lock.json)"
-          crm_api="$(changed crm/api)"
           whatsapp="$(changed messaging/channels/whatsapp/engine)"
           codex="$(changed .codex skills ops/codex scripts/codex-*.mjs scripts/codex-*.sh scripts/*codex*.ps1)"
           observability="$(changed scripts/observability)"
-          clientes_runtime_contract="$(changed scripts crm/api ops/runtime/units)"
+          clientes_runtime_contract="$(changed scripts ops/runtime/units integration/atendimento)"
           clientes_readonly_boundary="$(changed clientes-readonly ops/governance/global-concurrency-policy.json)"
           storage_governance="$(changed ops/codex/storage-retention-policy.json scripts/skincos-storage-governance.ps1 scripts/dedupe-source-tars.ps1 scripts/tests/test-skincos-storage-governance.ps1)"
           all="$(changed .github/workflows/ci-smoke.yml)"
           node=false
-          if [[ "$website" == true || "$crm_api" == true || "$whatsapp" == true || "$observability" == true || "$clientes_runtime_contract" == true || "$clientes_readonly_boundary" == true || "$all" == true ]]; then node=true; fi
+          if [[ "$website" == true || "$whatsapp" == true || "$observability" == true || "$clientes_runtime_contract" == true || "$clientes_readonly_boundary" == true || "$all" == true ]]; then node=true; fi
           echo "website=$website" >> "$GITHUB_OUTPUT"
-          echo "crm_api=$crm_api" >> "$GITHUB_OUTPUT"
           echo "whatsapp=$whatsapp" >> "$GITHUB_OUTPUT"
           echo "codex=$codex" >> "$GITHUB_OUTPUT"
           echo "observability=$observability" >> "$GITHUB_OUTPUT"
@@ -155,10 +152,6 @@ jobs:
         if: ${{ needs.changes.outputs.observability == 'true' || needs.changes.outputs.all == 'true' }}
         run: node scripts/observability/validate-catalog.mjs
 
-      - name: Verify Clientes staging runtime contract
-        if: ${{ needs.changes.outputs.clientes_runtime_contract == 'true' || needs.changes.outputs.all == 'true' }}
-        run: node --test scripts/tests/clientes-production-readonly-runtime.test.mjs
-
       - name: Verify Clientes readonly extraction boundary
         if: ${{ needs.changes.outputs.clientes_readonly_boundary == 'true' || needs.changes.outputs.all == 'true' }}
         run: npm --prefix clientes-readonly run check && npm --prefix clientes-readonly run test && node .github/scripts/validate-dependency-closures.mjs
@@ -183,21 +176,10 @@ jobs:
         working-directory: website
         run: npm run build
 
-      - name: Install CRM API dependencies
-        if: ${{ needs.changes.outputs.crm_api == 'true' || needs.changes.outputs.all == 'true' }}
-        working-directory: crm/api
-        run: npm ci
-
       - name: Install WhatsApp engine dependencies
         if: ${{ needs.changes.outputs.whatsapp == 'true' || needs.changes.outputs.all == 'true' }}
         working-directory: messaging/channels/whatsapp/engine
         run: npm ci --ignore-scripts
-
-      - name: Run CRM API regression smoke
-        if: ${{ needs.changes.outputs.crm_api == 'true' || needs.changes.outputs.all == 'true' }}
-        run: |
-          set -euo pipefail
-          npm --prefix crm/api test
 
       - name: Run WhatsApp engine regression smoke
         if: ${{ needs.changes.outputs.whatsapp == 'true' || needs.changes.outputs.all == 'true' }}

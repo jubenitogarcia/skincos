@@ -180,21 +180,22 @@
 - Autonomy/deploy preflight: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:preflight`
 - Site fast check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:site:check`
 - Site release check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:site:release-check`
-- Site EF CRM smoke: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:crm:site-smoke`
-- Meta Ads CRM smoke: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:crm:meta-ads-smoke`
+- CRM smoke/build: run the independent repository's own scripts from
+  `C:\\CodexShared\\Projetos\\crm`; this monorepo validates only the gateway
+  contract with `npm run api:test`.
 
 ## Interpretation Defaults
 
 - "site" usually means `website/` and production
   `https://espacofacial.com`.
-- "CRM" usually means `crm/console/` plus `crm/api/` and
-  `https://crm.skincos.com.br`.
+- "CRM" means the independent project `jubenitogarcia/crm` at
+  `C:\\CodexShared\\Projetos\\crm` and `https://crm.skincos.com.br`; this
+  monorepo contains only the allowlisted gateway mount.
 - "n8n" usually means the independent Orb repository
   `https://github.com/jubenitogarcia/orb` and production
   `https://orb.skincos.com.br`.
-- "Site EF" means the CRM module `?module=site-tracking`.
-- "Meta Ads" means the CRM module plus related `ads/meta/`
-  services.
+- "Site EF" means the public Website/marketing domain, not a CRM module.
+- "Meta Ads" means the independent `ads/meta/` services and their contracts.
 - "publicar", "deploy", "commit/push/pr/merge" means use branch `codex/*`,
   PR, GitHub checks, automerge/merge, deploy workflows, and live smoke evidence.
 - "verifique se está funcionando" means inspect both local/source-of-truth and

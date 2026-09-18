@@ -100,9 +100,9 @@ test("workflow, tracking, and dependency changes expose conservative indicators"
 
 test("dependency, shared-contract, and security signals cannot remain medium", () => {
   for (const files of [
-    ["crm/console/package.json"],
+    ["workforce/ponto-pages/package.json"],
     ["shared/identity-runtime/index.ts"],
-    ["crm/console/securityPolicy.ts"],
+    ["workforce/ponto-pages/securityPolicy.ts"],
   ]) {
     const report = classifyFiles(policy, files);
     assert.equal(report.risk, "high", files.join(","));

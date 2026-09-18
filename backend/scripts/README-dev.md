@@ -1,7 +1,7 @@
 # Backend command catalog
 
 - `backend/scripts/dev.sh status|start|stop|restart`: delegates lifecycle to the supported native `systemd` units.
-- `backend/scripts/dev.sh crm [args...]`: starts the CRM API only for an explicit development session.
+- Product runtimes are started from their owning directory; this compatibility area does not provide a launcher for an external product.
 - `backend/scripts/e2e.sh health`: checks native unit health.
 - `backend/scripts/e2e.sh smoke`: checks local and public runtime endpoints.
 - `backend/scripts/e2e.sh ci-smoke`: checks the repository architecture contract without starting production services.

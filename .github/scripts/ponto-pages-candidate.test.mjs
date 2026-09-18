@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { selectPagesCandidate, selectPagesPendingCandidate } from "./ponto-pages-candidate.mjs";
 
-const project = "skincos-staging";
+const project = "skincos-ponto-staging";
 const branch = "staging";
 const releaseSha = "a".repeat(40);
-const alias = "crm-staging.skincos.com.br";
+const alias = "skincos-ponto-staging.pages.dev";
 const startedAt = "2026-08-03T00:00:00.000Z";
 
 const deployment = ({
@@ -16,7 +16,7 @@ const deployment = ({
   deploymentBranch = branch,
   status = "success",
   aliases = [`https://${alias}`],
-  url = `https://${id.slice(0, 8)}.skincos-staging.pages.dev`,
+  url = `https://${id.slice(0, 8)}.skincos-ponto-staging.pages.dev`,
   skipped = false,
 } = {}) => ({
   id,

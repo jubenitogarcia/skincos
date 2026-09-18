@@ -131,7 +131,7 @@ test("rollback observation has the Actions read permission required by the activ
 });
 
 test("Pages derivation and Timekeeping upload independently attest environment custody", () => {
-  const pages = workflow("cloudflare-pages-sync-ponto.yml");
+  const pages = workflow("ponto-pages-secret-bridge.yml");
   const workers = workflow("cloudflare-workers-sync-ponto-secrets.yml");
   const timekeeping = workflow("deploy-timekeeping.yml");
   assert.match(
@@ -171,7 +171,7 @@ test("Pages derivation and Timekeeping upload independently attest environment c
 });
 
 test("Pages root derivation passes private paths through explicit environment variables", () => {
-  const source = workflow("cloudflare-pages-sync-ponto.yml");
+  const source = workflow("ponto-pages-secret-bridge.yml");
   const start = source.indexOf("- name: Derive and provision environment-scoped Ponto Pages keys");
   const end = source.indexOf("- name: Upload sanitised Pages secret attestation", start);
   const step = source.slice(start, end);
@@ -192,7 +192,7 @@ test("Pages root derivation passes private paths through explicit environment va
 });
 
 test("Pages production repair converts drifted Ponto target metadata to a secret binding", () => {
-  const source = workflow("cloudflare-pages-sync-ponto.yml");
+  const source = workflow("ponto-pages-secret-bridge.yml");
   const repairStart = source.indexOf("- name: Repair production Ponto target binding when metadata drifted");
   const deriveStart = source.indexOf("- name: Derive and provision environment-scoped Ponto Pages keys");
   const repair = source.slice(repairStart, deriveStart);
@@ -210,7 +210,7 @@ test("Pages production repair converts drifted Ponto target metadata to a secret
 
 test("Ponto REST run provenance accepts canonical parent or immutable release path representations", () => {
   for (const name of [
-    "cloudflare-pages-sync-ponto.yml",
+    "ponto-pages-secret-bridge.yml",
     "deploy-timekeeping.yml",
     "ponto-production-baseline.yml",
   ]) {

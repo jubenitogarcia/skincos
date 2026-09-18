@@ -5,7 +5,7 @@
 - Code: `C:\CodexShared\Projetos\skincos` on `main`; edit-bearing work uses `C:\CodexShared\Worktrees\skincos\admin\<task>`.
 - Durable operator evidence: `C:\CodexRuntime\operator\admin\skincos`; secrets and mutable runtime state never belong in Git or `C:\CodexShared`.
 - Human operator: Windows/WSL `admin`. Linux `skincos` is non-interactive and owns system services.
-- Product roots are `ads`, `api`, `booking`, `crm`, `finance`, `integration`, `inventory`, `messaging`, `service`, `social`, `website` and `workforce`; Orb/n8n is maintained in the independent repository `https://github.com/jubenitogarcia/orb`. Neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.
+- Product roots are `ads`, `api`, `booking`, `finance`, `integration`, `inventory`, `messaging`, `service`, `social`, `website` and `workforce`. CRM is maintained only in the independent repository `https://github.com/jubenitogarcia/crm` at `C:\CodexShared\Projetos\crm`; Orb/n8n is maintained in `https://github.com/jubenitogarcia/orb`. Neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.
 - Codex runs natively on Windows with PowerShell as its integrated terminal.
   Windows Node/Python support general agent tools; SKINCOS dependencies,
   builds, tests, Playwright, Wrangler and runtime operations remain in
@@ -18,7 +18,7 @@
 - Source release: `/opt/skincos/current/source`, an atomic link to the reviewed `main` SHA. It is populated from a Windows-created, checksum-verified archive transferred through `\\wsl$`; services never execute from DrvFS or a worktree.
 - WhatsApp release: `/opt/skincos/current/messaging-whatsapp`; the only supported implementation is `messaging/channels/whatsapp/engine`.
 - Mutable state: `/var/lib/skincos-runtime`; private config/secrets: `/etc/skincos`; logs: `/var/log/skincos`; temporary runtime: `/var/tmp/skincos`.
-- SKINCOS-owned active units: `messaging-whatsapp`, `crm`, `booking` and `cloudflare-runtime`. Orb units and its database are owned by the independent repository.
+- SKINCOS-owned active units: `messaging-whatsapp`, `booking` and `cloudflare-runtime`. CRM and Orb units/databases are owned by their independent repositories.
 - Windows keepalive: scheduled task `SkincosWslRuntimeKeepalive`; its single
   anchor uses native cwd `/`, while Linux service supervision remains under
   `systemd`.
@@ -28,8 +28,8 @@
 
 - Restore-verified lifecycle backup:
   `C:\CodexRuntime\backups\runtime\20260715T231622Z`; it contains private
-  config, native Booking/CRM/WhatsApp state and PostgreSQL dumps. Restore tests
-  recreated 37 WhatsApp tables and 17 CRM tables in temporary databases, and
+  config, native Booking/WhatsApp state and PostgreSQL dumps. Restore tests
+  recreated 37 WhatsApp tables in temporary databases, and
   every Windows-published artifact matched its native SHA-256.
 - Orb backup owner, PostgreSQL restore and n8n encryption-key custody belong to
   the independent Orb repository and its private runtime. SKINCOS does not
@@ -67,12 +67,11 @@
 - The detached worktree under `%USERPROFILE%\.codex\worktrees` is Codex
   App-managed state and is not a project cleanup target while the App owns it.
 
-## Messaging and CRM contract
+## Messaging and external CRM contract
 
 - Public/user-facing naming is `messaging-whatsapp`; supplier terminology is confined to internal configuration/adapters where required by the protocol.
-- CRM delegates all WhatsApp operations to the native engine. It does not spawn alternate engines, load sessions from the repository, expose a host-restart endpoint, or mutate Git.
-- The former HTTP CRM deploy/restart path is retired. `ENABLE_CRM_API_DEPLOY=false` is intentional on this host; native source promotion is the deployment source of truth. The optional GitHub CRM API workflow supports SSH only.
-- CRM Pages deployment uses bounded Ponto smoke retries to allow Cloudflare propagation without masking persistent failures.
+- The monorepo has no CRM runtime, Pages bundle, local launcher or CRM writer. CRM delegates WhatsApp and domain data through versioned gateway contracts owned by `jubenitogarcia/crm`.
+- Production CRM deployment, D1, Identity, rollback and publisher are external to this repository. Do not add CRM credentials, customer data or fallback implementations here.
 
 ## Validation commands
 

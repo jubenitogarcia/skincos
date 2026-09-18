@@ -174,7 +174,7 @@ test("Pages ownership follows the public alias after Cloudflare restores an olde
   const currentIncumbent = {
     ...pages(incumbent).result[0],
     created_on: "2026-07-30T00:00:00Z",
-    aliases: ["https://crm-staging.skincos.com.br"],
+    aliases: ["https://skincos-ponto-staging.pages.dev"],
   };
   assert.equal(
     classifyPagesRollbackOwnership(
@@ -182,7 +182,7 @@ test("Pages ownership follows the public alias after Cloudflare restores an olde
       {
         candidateDeploymentId: candidate,
         incumbentDeploymentId: incumbent,
-        alias: "crm-staging.skincos.com.br",
+        alias: "skincos-ponto-staging.pages.dev",
       },
     ),
     "already-incumbent",
@@ -213,7 +213,7 @@ test("Pages already-restored clone must attest the exact incumbent commit and pu
   const commit = "a".repeat(40);
   const deployment = (id, commitHash) => ({
     id,
-    project_name: "skincos-staging",
+    project_name: "skincos-ponto-staging",
     environment: "production",
     deployment_trigger: { metadata: { branch: "staging", commit_hash: commitHash } },
     latest_stage: {
@@ -222,14 +222,14 @@ test("Pages already-restored clone must attest the exact incumbent commit and pu
       ended_on: "2026-07-30T00:01:00Z",
     },
     is_skipped: false,
-    aliases: ["https://crm-staging.skincos.com.br"],
+    aliases: ["https://skincos-ponto-staging.pages.dev"],
   });
   const args = {
     incumbentDeploymentId: incumbent,
     activeDeploymentId: restored,
-    project: "skincos-staging",
+    project: "skincos-ponto-staging",
     branch: "staging",
-    alias: "crm-staging.skincos.com.br",
+    alias: "skincos-ponto-staging.pages.dev",
   };
   assert.deepEqual(
     attestPagesIncumbentState(deployment(incumbent, commit), deployment(restored, commit), args),
@@ -260,7 +260,7 @@ test("automatic rollback refuses every mutation until custody reconciliation and
   );
   assert.match(
     source,
-    /if \(plan\.crmPages\) \{[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
+    /if \(plan\.pontoPages\) \{[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
   );
 });
 

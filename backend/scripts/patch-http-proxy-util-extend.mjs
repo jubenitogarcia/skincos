@@ -4,7 +4,7 @@ import path from 'node:path'
 const repoRoot = path.resolve(import.meta.dirname, '..')
 const searchRoots = [
   path.join(repoRoot, 'node_modules'),
-  path.join(repoRoot, 'apps', 'crm-api', 'node_modules')
+  path.join(repoRoot, 'apps', 'api', 'node_modules')
 ]
 const targetSuffix = path.join('http-proxy', 'lib', 'http-proxy', 'index.js')
 const beforeNeedle = "extend    = require('util')._extend,"

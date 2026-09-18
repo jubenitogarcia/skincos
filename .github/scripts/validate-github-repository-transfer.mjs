@@ -20,7 +20,7 @@ if (!Array.isArray(plan.target?.selectionRequired) || !plan.target.selectionRequ
   fail("transfer plan must require two distinct GitHub owner accounts");
 }
 
-const expectedTeams = new Set(["skincos-platform", "skincos-crm", "skincos-finance", "skincos-workforce", "skincos-inventory", "skincos-web", "skincos-security"]);
+const expectedTeams = new Set(["skincos-platform", "skincos-finance", "skincos-workforce", "skincos-inventory", "skincos-web", "skincos-security"]);
 const declaredTeams = new Set((plan.teamBlueprint || []).map((team) => team.slug));
 for (const team of expectedTeams) if (!declaredTeams.has(team)) fail(`transfer plan is missing team ${team}`);
 if (declaredTeams.size !== (plan.teamBlueprint || []).length) fail("transfer plan team slugs must be unique");

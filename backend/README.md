@@ -1,6 +1,6 @@
 # SKINCOS backend compatibility area
 
-`backend/` retains shared utilities and applications that have not yet moved to a root domain. New product code belongs to the owning root domain (`api`, `booking`, `crm`, `integration`, `messaging`, and others).
+`backend/` retains shared utilities and applications that have not yet moved to a root domain. New product code belongs to its owning root domain (`api`, `booking`, `integration`, `messaging`, `social`, `workforce`, and others). Independent products are consumed through versioned contracts rather than copied into this repository.
 
 Stable operator commands:
 

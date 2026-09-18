@@ -1,2 +1,0 @@
--- Rollback is intentionally non-destructive. The controlled runner marks the
--- migration rolled_back_at while retaining the schema and append-only evidence.

@@ -32,9 +32,7 @@ Last review: 2026-04-14
   - `website/src/components/MarketingPixels.tsx`
   - `website/src/app/layout.tsx`
   - `website/src/app/[unit]/page.tsx`
-  - `frontend/EmailTemplatesManager.tsx`
-  - `frontend/RichTaskManager.tsx`
-  - `frontend/chart.tsx`
+  - No extracted CRM or legacy `frontend/` paths remain in this repository.
 - **Reason**:
   - JSON-LD serialization and third-party snippets still require controlled HTML/script injection.
   - Admin HTML previews and markdown rendering remain legacy hotspots pending sanitization hardening.

@@ -176,43 +176,42 @@ function buildVerificationPlan({ changes, diffSpecs, report, full = false }) {
     return { files, plan, lane: full ? "full" : report.risk, forcedFull };
   }
 
-  const crmConsoleCode = files.filter((file) =>
-    file.startsWith("crm/console/") && [".js", ".jsx", ".ts", ".tsx"].includes(fileExtension(file))
+  const pontoPagesCode = files.filter((file) =>
+    file.startsWith("workforce/ponto-pages/") && [".js", ".jsx", ".ts", ".tsx"].includes(fileExtension(file))
   );
   const websiteCode = files.filter((file) =>
     file.startsWith("website/") && [".js", ".jsx", ".ts", ".tsx"].includes(fileExtension(file))
   );
-  const crmApiChanged = files.some((file) => file.startsWith("crm/api/") || file.startsWith("api/"));
+  const apiChanged = files.some((file) => file.startsWith("api/"));
+  const catalogChanged = files.some((file) => file.startsWith("integration/atendimento/commercial-catalog/"));
   const pythonChanged = files.some((file) => fileExtension(file) === ".py");
 
   if (report.risk === "medium") {
-    if (crmConsoleCode.length) {
-      plan.push(command("CRM console lint", "npm", ["--prefix", "crm/console", "run", "lint"]));
-      plan.push(command("CRM console typecheck", "npm", ["--prefix", "crm/console", "run", "typecheck"]));
-      plan.push(command("CRM console affected tests", "npm", ["--prefix", "crm/console", "run", "test"]));
+    if (pontoPagesCode.length) {
+      plan.push(command("Ponto Pages typecheck", "npm", ["--prefix", "workforce/ponto-pages", "run", "typecheck"]));
+      plan.push(command("Ponto Pages tests", "npm", ["--prefix", "workforce/ponto-pages", "run", "test"]));
     }
     if (websiteCode.length) {
       plan.push(command("website lint", "npm", ["--prefix", "website", "run", "lint"]));
       plan.push(command("website affected tests", "npm", ["--prefix", "website", "run", "test"]));
       plan.push(command("website typecheck", "npm", ["--prefix", "website", "run", "typecheck"]));
     }
-    if (crmApiChanged) plan.push(command("CRM API tests", "npm", ["--prefix", "crm/api", "test"]));
+    if (apiChanged) plan.push(command("API tests", "npm", ["--prefix", "api", "test"]));
+    if (catalogChanged) plan.push(command("Atendimento catalog tests", "npm", ["--prefix", "integration/atendimento/commercial-catalog", "test"]));
     if (pythonChanged) plan.push(command("Python unit tests", "python3", ["-m", "pytest", "backend/tests/unit"]));
     const changedTests = presentFiles.filter(isTestFile);
-    if (changedTests.length && !crmConsoleCode.length && !websiteCode.length) {
+    if (changedTests.length && !pontoPagesCode.length && !websiteCode.length && !apiChanged && !catalogChanged) {
       plan.push(command("changed Node tests", process.execPath, ["--test", ...changedTests]));
     }
-    if (!crmConsoleCode.length && !websiteCode.length && !crmApiChanged && !pythonChanged && !changedTests.length) {
+    if (!pontoPagesCode.length && !websiteCode.length && !apiChanged && !catalogChanged && !pythonChanged && !changedTests.length) {
       plan.push(command("policy/classifier contract", "npm", ["run", "codex:autonomy:test"]));
     }
   } else if (report.risk === "low") {
-    if (crmConsoleCode.length) {
-      const paths = crmConsoleCode.map((file) => file.slice("crm/console/".length));
-      plan.push(command("CRM console focal lint", "npm", ["--prefix", "crm/console", "exec", "--", "eslint", ...paths]));
-      plan.push(command("CRM console focal typecheck", "npm", ["--prefix", "crm/console", "run", "typecheck"]));
-      const tests = [...new Set(crmConsoleCode.flatMap(relatedTests))];
+    if (pontoPagesCode.length) {
+      plan.push(command("Ponto Pages typecheck", "npm", ["--prefix", "workforce/ponto-pages", "run", "typecheck"]));
+      const tests = [...new Set(pontoPagesCode.flatMap(relatedTests))];
       if (tests.length) {
-        plan.push(command("CRM console affected tests", "npm", ["--prefix", "crm/console", "exec", "--", "vitest", "run", ...tests.map((file) => file.slice("crm/console/".length))]));
+        plan.push(command("Ponto Pages affected tests", "npm", ["--prefix", "workforce/ponto-pages", "exec", "--", "vitest", "run", ...tests.map((file) => file.slice("workforce/ponto-pages/".length))]));
       }
     }
     if (websiteCode.length) {

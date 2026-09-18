@@ -2,28 +2,21 @@
 
 ## Phase 1 invariant
 
-This repository change creates no Pages project and changes no DNS, custom
-domain, Cloudflare route, API target, secret, cookie, database, workflow secret,
-or user-facing URL. The legacy `skincos` Pages project continues to serve Ponto.
-The new package has no deploy command and its dedicated workflow rejects any
-manual publish intent.
+This package no longer claims or serves any CRM origin. Ponto publication is
+isolated to the dedicated Pages projects `skincos-ponto-staging` and
+`skincos-ponto`; this source-only checkout does not change DNS, routes, API
+targets, secrets, cookies or databases by itself.
 
-| Existing contract | Phase 1 state | Future dedicated-project handling |
+| Surface | Current state | Owner |
 | --- | --- | --- |
-| `https://crm.skincos.com.br/?module=ponto` | Unchanged and still canonical | Serve the Ponto client from a separate host only after an approved client handoff or a narrowly scoped compatibility redirect. |
-| `/ponto-terminal.html` | Unchanged and still canonical | Publish the same path on the dedicated host; guide administrators through device re-pairing. |
-| `/api/ponto/*` | Unchanged on the legacy origin | Keep the existing secure Pages gateway contract. Do not replace it with a browser-to-API call or a generic worker proxy. |
-| `/api/auth/*` | Unchanged on the legacy origin | Validate the shared `.skincos.com.br` cookie contract in isolated staging before allowing a sibling host. |
-| `/api/insumos/health` | Unchanged on the legacy origin | The dedicated package only reads this narrow health endpoint for unit labels. |
-
-The pure `src/legacyHandoff.ts` helper records the candidate mapping and is not
-wired to browser navigation, a Function, or a Worker. It exists so that a later
-change can test exactly what would change instead of silently taking over a
-URL.
+| `https://skincos-ponto-staging.pages.dev` | Dedicated staging origin used by the governed synthetic journey | `skincos-ponto-staging` Pages project |
+| `https://skincos-ponto.pages.dev` | Dedicated production origin used by release probes and smoke tooling | `skincos-ponto` Pages project |
+| `/api/ponto/*` | Dedicated Ponto Pages Function surface only | `workforce/ponto-pages` plus `skincos-ponto-core` |
+| `/api/auth/*`, `/api/insumos/health` | Owner-scoped bindings of the dedicated Ponto surface | Identity/Inventory owners |
 
 ## Required future sequence
 
-1. Create distinct staging and production Pages projects, neither named
+1. Keep the distinct staging and production Pages projects, neither named
    `skincos` nor `skincos-staging`, and prove their ownership and rollback
    deployment history.
 2. Provision only the approved runtime bindings through external custody.
@@ -31,19 +24,18 @@ URL.
    HMAC contracts; no binding value belongs in Git.
 3. Run synthetic staging smoke for login/session/CSRF, Ponto read/write paths,
    terminal device pairing and the same-artifact rollback.
-4. Choose and validate a dedicated host without changing the legacy URL. A
-   sibling host needs cookie, origin and CSRF validation before any redirect.
-5. Announce and execute terminal re-pairing. The device token is stored under
+4. Use only the exact dedicated Pages origin selected by the governed release.
+   A custom sibling host requires its own cookie, origin and CSRF validation
+   before it can be introduced.
+5. Announce and execute terminal pairing on the dedicated origin. The device token is stored under
    the browser origin, so it must not be copied or assumed to survive a host
    change.
-6. Only after independent readback, make a single controlled URL/publisher
-   switch. Keep the legacy deployment available as a rollback artifact until
-   the prescribed observation window closes.
+6. Only after independent readback, make a single controlled publisher switch.
+   The former CRM-hosted Ponto surface is not a rollback target.
 
 ## Rollback principle
 
-Before the future URL switch, rollback is simply no deployment: the legacy
-Ponto surface remains active. After a governed switch, rollback must restore the
-previous verified Pages deployment or remove the new URL mapping; it must not
-restore old writers, bypass CSRF, or forward device credentials through a new
-unreviewed proxy.
+Before the future URL switch, rollback is simply no deployment. After a
+governed switch, rollback must restore the previous verified Pages deployment
+or remove the new URL mapping; it must not restore old writers, bypass CSRF, or
+forward device credentials through a new unreviewed proxy.

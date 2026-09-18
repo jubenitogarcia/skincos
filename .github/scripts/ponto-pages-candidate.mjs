@@ -28,7 +28,7 @@ const candidateUrl = (value) => {
   try {
     const url = new URL(String(value));
     return url.protocol === "https:"
-      && /^[a-z0-9-]+\.skincos-staging\.pages\.dev$/.test(url.hostname)
+      && /^(?:[a-z0-9-]+\.)?skincos-ponto-staging\.pages\.dev$/.test(url.hostname)
       && (url.pathname === "/" || url.pathname === "");
   } catch {
     return false;
@@ -40,7 +40,7 @@ const normalizeExpectations = ({
   branch = "staging",
   releaseSha,
   startedAt,
-  alias = "crm-staging.skincos.com.br",
+  alias = "skincos-ponto-staging.pages.dev",
   candidateId = "",
 }) => {
   const expectedProject = String(project || "");
@@ -126,7 +126,7 @@ const cliExpectations = () => ({
   branch: process.env.BRANCH || "staging",
   releaseSha: process.env.RELEASE_SHA,
   startedAt: process.env.PAGES_STAGING_DEPLOYMENT_STARTED_AT,
-  alias: process.env.PAGES_STAGING_ALIAS || "crm-staging.skincos.com.br",
+  alias: process.env.PAGES_STAGING_ALIAS || "skincos-ponto-staging.pages.dev",
   candidateId: process.env.CANDIDATE_ID || "",
 });
 

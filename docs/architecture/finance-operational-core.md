@@ -4,8 +4,8 @@
 
 `finance/` é o único dono de schema D1, regras de lançamento, razão, importação,
 auditoria e conciliação. O gateway apenas monta `/finance/*` e fornece a sessão
-CRM já autenticada. `crm/console` transmite intenções tipadas para a API: não
-calcula saldo, não equilibra partidas e não decide acesso.
+Uma sessão já autenticada é transmitida pelo gateway. Nenhuma interface
+externa calcula saldo, não equilibra partidas e não decide acesso.
 
 Cada leitura e mutação exige um `scopeId` concedido em `finance_access_grants`.
 Os escopos de unidade são independentes; o escopo pessoal existe no schema,

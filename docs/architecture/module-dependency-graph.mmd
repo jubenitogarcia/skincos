@@ -3,7 +3,7 @@ flowchart LR
   module_ads["ads\nexperimental"]
   module_api["api\nexperimental"]
   module_booking["booking\nexperimental"]
-  module_crm["crm\nexperimental"]
+  module_external_crm["crm\nexternal"]
   module_finance["finance\nexperimental"]
   module_identity["identity\nexperimental"]
   module_integration["integration\nexperimental"]
@@ -25,16 +25,6 @@ flowchart LR
   module_booking -->|hard| module_shared
   module_booking -. optional .-> module_integration
   module_booking -. optional .-> module_workforce
-  module_crm -->|hard| module_shared
-  module_crm -. optional .-> module_ads
-  module_crm -. optional .-> module_api
-  module_crm -. optional .-> module_booking
-  module_crm -. optional .-> module_finance
-  module_crm -. optional .-> module_inventory
-  module_crm -. optional .-> module_messaging
-  module_crm -. optional .-> module_service
-  module_crm -. optional .-> module_social
-  module_crm -. optional .-> module_workforce
   module_finance -->|hard| module_shared
   module_finance -. optional .-> module_integration
   module_identity -->|hard| module_shared
@@ -43,7 +33,6 @@ flowchart LR
   module_messaging -->|hard| module_shared
   module_ops -->|hard| module_shared
   module_ops -. optional .-> module_booking
-  module_ops -. optional .-> module_crm
   module_ops -. optional .-> module_messaging
   module_ops -. optional .-> module_platform
   module_platform -->|hard| module_shared

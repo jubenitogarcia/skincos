@@ -89,10 +89,10 @@ test("coordinator initializes runner-only custody paths inside a step", () => {
 
 test("every governed caller grants read-only deployment metadata to the gate", () => {
   const callers = [
-    "cloudflare-pages-sync-ponto.yml",
+    "ponto-pages-secret-bridge.yml",
     "cloudflare-workers-sync-ponto-secrets.yml",
     "deploy-core-workers.yml",
-    "deploy-crm-pages.yml",
+    "ponto-pages-governed-publisher.yml",
     "deploy-timekeeping.yml",
     "module-availability.yml",
     "ponto-production-baseline.yml",
@@ -117,7 +117,7 @@ test("every governed caller grants read-only deployment metadata to the gate", (
 
 test("custody metadata consumers read every GitHub API page", () => {
   for (const name of [
-    "cloudflare-pages-sync-ponto.yml",
+    "ponto-pages-secret-bridge.yml",
     "cloudflare-workers-sync-ponto-secrets.yml",
     "deploy-timekeeping.yml",
   ]) {

@@ -127,8 +127,6 @@ packages/*/coverage/
 # Agent Zero specific runtime files
 daemon.out
 daemon.pid
-crm_*.out
-crm_*.pid
 gw*.out
 gw*.pid
 ui_test.pid

@@ -18,7 +18,7 @@ if (
   || governance?.administratorBypassAllowed !== false
   || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(String(governance?.operatorLogin || ""))
 ) fail("policy must declare the single-operator Codex governance contract");
-const expectedChecks = ["CI Smoke (Assert)", "Central E2E Smoke", "JS/TS Checks (workspace)", "Dependency Audit (JS/TS)", "Scan for secrets (Gitleaks)"];
+const expectedChecks = ["CI Smoke (Assert)", "JS/TS Checks (workspace)", "Dependency Audit (JS/TS)", "Scan for secrets (Gitleaks)"];
 if (JSON.stringify(governance?.requiredChecks) !== JSON.stringify(expectedChecks)) fail("single-operator governance required checks drifted from branch protection");
 for (const target of ["staging", "production"]) {
   const protection = governance?.environmentProtection?.[target];

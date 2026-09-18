@@ -10,17 +10,17 @@
       "owner": "finance"
     },
     {
-      "id": "crm-auth-adapter-v1",
+      "id": "identity-auth-adapter-v1",
       "kind": "adapter",
-      "paths": ["shared/crm-auth/**"],
-      "consumers": ["api", "crm", "integration"],
-      "owner": "crm"
+      "paths": ["shared/identity-auth/**"],
+      "consumers": ["api", "identity"],
+      "owner": "identity"
     },
     {
       "id": "identity-actor-contract-v1",
       "kind": "contract",
       "paths": ["shared/identity-contract/**"],
-      "consumers": ["api", "crm", "finance", "identity", "inventory", "workforce"],
+      "consumers": ["api", "finance", "identity", "inventory", "workforce", "crm-independent"],
       "owner": "identity"
     },
     {
@@ -69,13 +69,6 @@
   ],
   "recommendedContracts": [
     {
-      "from": "crm",
-      "to": "inventory",
-      "contractId": "module-sdk-v1",
-      "path": "shared/module-sdk/README.md",
-      "usage": "publish an Inventory HTTP contract or SDK before consuming Inventory from CRM"
-    },
-    {
       "from": "api",
       "to": "inventory",
       "contractId": "service-binding-adapter-v1",
@@ -88,13 +81,6 @@
       "contractId": "service-binding-adapter-v1",
       "path": "shared/service-adapters/cloudflare-service-binding.js",
       "usage": "use the service-binding adapter instead of importing Finance implementation"
-    },
-    {
-      "from": "finance",
-      "to": "crm",
-      "contractId": "module-sdk-v1",
-      "path": "shared/module-sdk/README.md",
-      "usage": "provide a Finance-owned test-runtime adapter instead of borrowing CRM dependencies"
     },
     {
       "from": "inventory",

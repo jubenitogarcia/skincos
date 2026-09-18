@@ -14,7 +14,7 @@ modifica pesos e não consegue iniciar, recuperar ou repetir um rollback.
 > Estado atual: este é um recibo complementar e limitado, não o sucessor do
 > drill composto legado. O coordenador `ponto-progressive-release.yml` continua
 > chamando `ponto-staging-rollback-drill.yml` para a prova integrada de
-> Timekeeping e CRM Pages. Não substitua essa chamada, nem avance um release,
+> Timekeeping e Ponto Pages. Não substitua essa chamada, nem avance um release,
 > apenas com este recibo de Core/Identity.
 
 ## Evidência canônica limitada
@@ -91,7 +91,7 @@ A publicação normal anterior continua sujeita às proteções e recibos própr
 do publisher canônico.
 
 O recibo prova somente as transições same-artifact de **Core e Identity**.
-Ele não prova rollback/restauração de Timekeeping ou CRM Pages, e não permite
+Ele não prova rollback/restauração de Timekeeping ou Ponto Pages, e não permite
 inferir essas duas superfícies a partir da afinidade lida nos snapshots. Essas
 provas continuam pendentes no caminho canônico; até haver paridade por
 publisher, a evidência integrada do drill legado e seu uso atual pelo

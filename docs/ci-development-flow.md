@@ -44,7 +44,7 @@ Não são reconstruídos nem executados por justificativa genérica:
 
 - histórico completo do Git em checkout de rotina;
 - auditoria de dependências, Python SAST/CodeQL ou Semgrep de superfícies sem relação;
-- build/instalação do Website quando apenas CRM mudou;
+- build/instalação do Website quando apenas o repositório CRM independente mudou;
 - E2E de Escala, Ponto, Finance, Influencer Intelligence ou outros domínios sem closure afetada;
 - full Gitleaks histórico; o delta continua sendo escaneado;
 - preflight de produção, staging/live evidence, lease ou custody antes de uma fase que não toca esses recursos;

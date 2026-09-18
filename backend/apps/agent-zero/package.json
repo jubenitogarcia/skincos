@@ -23,7 +23,6 @@
     "dev": "nx run-many --target=dev --all --parallel",
     "dev:agent-zero": "nx run agent-zero-core:dev",
     "dev:webui": "nx run webui:dev",
-    "dev:crm": "nx run crm:dev",
     "start": "nx run agent-zero-core:start",
     "prepare": "husky install || true",
     "pre-commit": "lint-staged"

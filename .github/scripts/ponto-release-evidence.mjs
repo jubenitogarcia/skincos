@@ -44,7 +44,7 @@ const assertSha256 = (value, name) => assert(SHA256.test(String(value || "")), `
 function validateSurfaces(surfaces, stage, sourceSha, repository) {
   assert(surfaces && typeof surfaces === "object" && !Array.isArray(surfaces), "surfaces must be an object");
   const bootstrap = stage === "bootstrap";
-  const units = bootstrap ? ["timekeeping"] : ["timekeeping", "coreApi", "identityWorkforce", "crmPages"];
+  const units = bootstrap ? ["timekeeping"] : ["timekeeping", "coreApi", "identityWorkforce", "pontoPages"];
   if (bootstrap) {
     assert(JSON.stringify(Object.keys(surfaces).sort()) === JSON.stringify(["timekeeping"]), "bootstrap may publish only the Timekeeping surface");
   }
@@ -94,12 +94,12 @@ function validateSurfaces(surfaces, stage, sourceSha, repository) {
     assertSha256(maintenance.healthSha256, "bootstrap maintenance healthSha256");
     return;
   }
-  assertUuid(surfaces.crmPages.deploymentId, "crmPages.deploymentId");
-  assertUuid(surfaces.crmPages.rollbackDeploymentId, "crmPages.rollbackDeploymentId");
-  assert(surfaces.crmPages.candidateTag === `ponto:crmPages:${sourceSha}`, "crmPages.candidateTag does not identify source SHA");
-  assert(HTTPS.test(String(surfaces.crmPages.url || "")), "crmPages.url must be HTTPS");
+  assertUuid(surfaces.pontoPages.deploymentId, "pontoPages.deploymentId");
+  assertUuid(surfaces.pontoPages.rollbackDeploymentId, "pontoPages.rollbackDeploymentId");
+  assert(surfaces.pontoPages.candidateTag === `ponto:pontoPages:${sourceSha}`, "pontoPages.candidateTag does not identify source SHA");
+  assert(HTTPS.test(String(surfaces.pontoPages.url || "")), "pontoPages.url must be HTTPS");
   if (stage === "pilot") {
-    const baselineRunIds = ["timekeeping", "coreApi", "identityWorkforce", "crmPages"]
+    const baselineRunIds = ["timekeeping", "coreApi", "identityWorkforce", "pontoPages"]
       .map(unit => String(surfaces[unit].baselineRunId || ""));
     assert(baselineRunIds.every(value => /^[0-9]+$/.test(value)), "pilot surfaces require numeric baselineRunId");
     assert(new Set(baselineRunIds).size === 1, "pilot surfaces must reference one immutable baseline run");
@@ -439,8 +439,8 @@ if (mode === "write") {
       `identity_incumbent_version_id=${evidence.surfaces.identityWorkforce?.incumbentVersionId || ""}`,
       `identity_checkpoint_artifact=${evidence.checkpoint?.identityWorkforce?.artifactName || ""}`,
       `identity_checkpoint_sha256=${evidence.checkpoint?.identityWorkforce?.sha256 || ""}`,
-      `pages_deployment_id=${evidence.surfaces.crmPages?.deploymentId || ""}`,
-      `pages_rollback_deployment_id=${evidence.surfaces.crmPages?.rollbackDeploymentId || ""}`,
+      `pages_deployment_id=${evidence.surfaces.pontoPages?.deploymentId || ""}`,
+      `pages_rollback_deployment_id=${evidence.surfaces.pontoPages?.rollbackDeploymentId || ""}`,
       "",
     ].join("\n"));
   }

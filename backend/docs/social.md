@@ -1,10 +1,11 @@
 # Redes Sociais (Social Publisher)
 
-Este documento cobre o módulo “Redes Sociais” (Instagram/Facebook/Threads) do CRM.
+Este documento cobre o módulo “Redes Sociais” (Instagram/Facebook/Threads) e o
+contrato que a aplicação consumidora utiliza.
 
 ## Arquitetura (visão rápida)
-- **UI (CRM)**: `frontend/SocialNetworksStudio.tsx`
-- **API (Pages Functions)**: `frontend/functions/api/social/*`
+- **UI consumidora**: produto externo que chama o gateway versionado
+- **API**: gateway `/api/social/*` e o Worker publisher
 - **Storage**: R2 (`SHARE_BUCKET`) com fila, assets, resultados e auditoria
 - **Worker cron**: `social/publisher` (publica via Meta Graph e grava resultados)
 
@@ -20,9 +21,9 @@ Este documento cobre o módulo “Redes Sociais” (Instagram/Facebook/Threads) 
 4) **Resultados**
    - `GET /api/social/results?dateKey=...&groupKey=...` → resultado por unidade/plataforma.
 
-## Setup guiado (CRM)
+## Setup guiado (aplicação consumidora)
 O Planner do módulo “Redes Sociais” possui um checklist de primeiro acesso que valida:
-- login (sessão/cookies do CRM),
+- login (sessão Identity entregue pelo gateway),
 - permissão de admin (role global `ADMIN`),
 - contas configuradas por unidade/plataforma,
 - (opcional) métricas do Worker.
@@ -35,7 +36,7 @@ Endpoints usados pelo checklist:
 Por padrão, as abas **Instagram/Facebook/Threads** ficam **visíveis porém bloqueadas** até o usuário finalizar o Planner.
 
 Critério de liberação (para o escopo selecionado no Planner):
-- Login no CRM OK (`/api/social/setup/status` não pode retornar 401)
+- Login OK (`/api/social/setup/status` não pode retornar 401)
 - R2 configurado (`setup.r2.bucketConfigured === true`)
 - Se criptografia for obrigatória, secret configurado (`setup.encryption.required === true` ⇒ `setup.encryption.configured === true`)
 - Permissão de Admin OK (`setup.admin.isAdmin === true`)
@@ -51,7 +52,7 @@ Reset (re-onboarding):
 - Limpar os itens acima do `localStorage` (ou “Limpar dados do site” no browser).
 
 ## Unidades (personalização)
-O módulo Social usa chaves curtas de unidade (hoje: `BSS` e `NH`). Para personalização, a UI tenta mapear unidades vindas da sessão do CRM:
+O módulo Social usa chaves curtas de unidade (hoje: `BSS` e `NH`). Para personalização, a UI tenta mapear unidades vindas da sessão Identity:
 - `barra-shopping-sul` → `BSS`
 - `novo-hamburgo` → `NH`
 
@@ -77,9 +78,9 @@ Preferências locais no browser:
 - `internal/share/index/{yyyy-mm-dd}/*` (base para cleanup de shares)
 
 ## Admin (global)
-As rotas de admin do módulo Social (`/api/social/admin/*` e `/api/social/publish`) exigem usuário autenticado no CRM com role global `ADMIN`, `GESTOR` ou `GERENTE`.
+As rotas de admin do módulo Social (`/api/social/admin/*` e `/api/social/publish`) exigem usuário autenticado pelo contrato Identity com role global `ADMIN`, `GESTOR` ou `GERENTE`.
 
-## Variáveis de ambiente (CRM/Pages)
+## Variáveis de ambiente (gateway/web)
 - `INTEGRATIONS_ENCRYPTION_SECRET` (recomendado)
 - `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true` (falha fechado se secret ausente)
 - `R2_KEY_PREFIX` (recomendado para separar preview/prod)
@@ -105,7 +106,7 @@ As rotas de admin do módulo Social (`/api/social/admin/*` e `/api/social/publis
 - `R2_KEY_PREFIX` definido para preview (ou `R2_PRODUCTION_BRANCH` correto) — preview não pode escrever em prod.
 - `SOCIAL_PUBLISHER_ENABLED=true` e cron ativo no Worker.
 - `SOCIAL_JOBS_ENABLED=true` (publish assíncrono).
-- Usuários `ADMIN` do CRM conseguem configurar contas e publicar.
+- Usuários `ADMIN` conseguem configurar contas e publicar.
 - URLs públicas (`/social-media/*`, `/share/*`) acessíveis no domínio correto.
 
 ## Matriz de ambientes (mínimo recomendado)
@@ -114,11 +115,11 @@ As rotas de admin do módulo Social (`/api/social/admin/*` e `/api/social/publis
 
 ## Runbook (diagnóstico rápido)
 - **“ADMIN_REQUIRED”** em rotas admin:
-  - Confirme que o usuário logado no CRM tem role global `ADMIN`, `GESTOR` ou `GERENTE`.
+  - Confirme que o usuário logado possui role global `ADMIN`, `GESTOR` ou `GERENTE`.
 - **Job pendente sem resultado**:
   - Confirme `SOCIAL_PUBLISHER_ENABLED=true` e cron ativo no Worker.
   - Consulte logs do Worker (wrangler tail / Cloudflare logs).
 - **Mídia 404**:
   - Verifique `R2_KEY_PREFIX` e `SOCIAL_MEDIA_MAX_AGE_DAYS`.
 - **UNAUTHORIZED**:
-  - Sessão do CRM expirada ou ausente (login necessário).
+  - Sessão Identity expirada ou ausente (login necessário).

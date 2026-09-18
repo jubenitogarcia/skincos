@@ -78,7 +78,7 @@ export function loadConfiguration(env = process.env, policyOverride = null) {
     || !POSITIVE_ID.test(coordinatorRunId)
     || !POSITIVE_ID.test(workflowRunId)
     || !/^[0-9a-f]{32}$/.test(accountId)
-    || pagesProject !== "skincos"
+    || pagesProject !== "skincos-ponto"
     || !Object.values(ids).every((value) => UUID.test(value))
   ) throw new Error("Ponto production SLO preflight identity is invalid");
 
@@ -183,8 +183,8 @@ export async function execute({
     || metadata.branch !== "main"
     || commitSha !== configuration.releaseSha
     || !isTerminalPagesDeployment(deployment)
-    || !aliases.has("crm.skincos.com.br")
-  ) throw new Error("public CRM domain is not linked to the exact terminal Pages candidate");
+    || !aliases.has("skincos-ponto.pages.dev")
+  ) throw new Error("dedicated Ponto Pages origin is not linked to the exact terminal Pages candidate");
 
   const observedAt = now.toISOString();
   const controlPlaneSummary = {
@@ -205,7 +205,7 @@ export async function execute({
     pagesBranch: "main",
     pagesCommitSha: commitSha,
     pagesTerminal: true,
-    crmAliasMatched: true,
+    pontoAliasMatched: true,
     ...(configuration.runnerPolicy ? {
       pilotRunnerId: String(configuration.runnerPolicy.runnerId),
       pilotRunnerName: configuration.runnerPolicy.runnerName,

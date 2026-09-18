@@ -1,7 +1,10 @@
 import { buildWorkflowLeaseRequest } from "./codex-global-coordination-workflow.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
-const MAX_COORDINATION_REQUEST_BYTES = 48 * 1024;
+// Keep the attestation bounded, but do not make a valid changed-file set fail
+// merely because a historical 48 KiB envelope was too small. The coordinator
+// Worker enforces the same 256 KiB ceiling for the signed request body.
+const MAX_COORDINATION_REQUEST_BYTES = 256 * 1024;
 
 function requiredToken(token = process.env.GH_TOKEN) {
   const value = String(token || "").trim();

@@ -82,7 +82,9 @@ binding = "WORKFORCE"
 service = "skincos-timekeeping-staging"
 
 [env.staging.vars]
-APP_ORIGIN = "https://crm-staging.skincos.com.br"
+# No independent CRM staging console exists. Keep staging browser CORS
+# fail-closed until an owner provisions a dedicated Inventory surface.
+APP_ORIGIN = "https://no-staging-console.invalid"
 APP_VERSION = "unreleased"
 ENVIRONMENT = "staging"
 

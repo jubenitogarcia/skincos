@@ -23,10 +23,10 @@ const ALLOWED_HIGH_RISK_EVENTS = new Set(["workflow_dispatch", "schedule"]);
 export const HIGH_RISK_WORKFLOWS = Object.freeze([
   { path: ".github/workflows/deploy-timekeeping.yml", title: /^Timekeeping (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
   { path: ".github/workflows/deploy-core-workers.yml", title: /^Core (?:api|inventory|all) (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
-  { path: ".github/workflows/deploy-crm-pages.yml", title: /^CRM Pages (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
+  { path: ".github/workflows/ponto-pages-governed-publisher.yml", title: /^Ponto Pages (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
   { path: ".github/workflows/module-availability.yml", title: /^Module (?:finance|timekeeping) (staging|production)(?:\s|$)/ },
   { path: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml", title: /^Attest Ponto Workers (staging|production)(?:\s|$)/ },
-  { path: ".github/workflows/cloudflare-pages-sync-ponto.yml", title: /^Attest CRM Pages (staging|production)(?:\s|$)/ },
+  { path: ".github/workflows/ponto-pages-secret-bridge.yml", title: /^Attest Ponto Pages (staging|production)(?:\s|$)/ },
   { path: ".github/workflows/ponto-core-baseline-publisher.yml", targets: ["staging", "production"] },
   { path: ".github/workflows/timekeeping-staging-journey.yml", targets: ["staging"] },
   { path: ".github/workflows/ponto-staging-rollback-drill.yml", targets: ["staging"] },

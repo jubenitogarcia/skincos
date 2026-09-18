@@ -35,7 +35,7 @@
         {
           "status": "R100",
           "oldPath": "docs/legacy-session.md",
-          "newPath": "crm/api/auth/session.ts"
+          "newPath": "shared/identity-auth/worker.js"
         }
       ],
       "expect": {
@@ -47,7 +47,7 @@
         "production_sensitive": true,
         "security_sensitive": true,
         "status": "classified",
-        "classified_files": ["crm/api/auth/session.ts", "docs/legacy-session.md"]
+        "classified_files": ["shared/identity-auth/worker.js", "docs/legacy-session.md"]
       }
     },
     {

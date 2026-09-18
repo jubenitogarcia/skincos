@@ -55,9 +55,6 @@ dev-agent: ## Start only Agent Zero core in development mode
 dev-webui: ## Start only WebUI in development mode
 	$(NX) run webui:dev
 
-dev-crm: ## Start only CRM in development mode
-	./tools/scripts/restart.sh --service crm --watch
-
 dev-gateway: ## Start only WhatsApp Gateway in development mode
 	./tools/scripts/restart.sh --service gateway --watch
 
@@ -203,9 +200,6 @@ logs: ## Show logs from all services
 
 logs-agent: ## Show Agent Zero logs
 	tail -f logs/agent_zero.out
-
-logs-crm: ## Show CRM logs
-	tail -f logs/crm_*.out
 
 # Security
 security-check: ## Run security checks

@@ -78,7 +78,7 @@ test("external composite recovery readback waits for bounded edge propagation be
 test("Pages recovery skips rollback intent custody when no owned candidate exists", () => {
   assert.match(
     source,
-    /const pagesIntentInput = plan\.crmPages && UUID\.test\(plan\.crmPages\.candidateDeploymentId \|\| ""\) \?/,
+    /const pagesIntentInput = plan\.pontoPages && UUID\.test\(plan\.pontoPages\.candidateDeploymentId \|\| ""\) \?/,
   );
 });
 

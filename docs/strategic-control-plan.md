@@ -8,17 +8,17 @@ Este documento transforma a auditoria estratégica em trabalho executável dentr
    Critério de aceite: `/api/booking/status` aceita token apenas por header dedicado ou `Authorization`; URLs com `token=` são rejeitadas.
    Status: concluído.
 2. Endurecer guardrails de bypass local.
-   Critério de aceite: CI falha se `LOCAL_AUTH_BYPASS=true`, `VITE_LOCAL_AUTH_BYPASS=true` ou `VITE_NO_AUTH` estiverem hardcoded no frontend.
-   Status: concluído para frontend; expansão para outros domínios continua nas fases seguintes.
-3. Tornar qualidade do frontend uma obrigação, não uma sugestão.
-   Critério de aceite: `frontend` executa teste unitário na CI e publica cobertura.
+   Critério de aceite: CI falha se `LOCAL_AUTH_BYPASS=true`, `VITE_LOCAL_AUTH_BYPASS=true` ou `VITE_NO_AUTH` estiverem hardcoded em uma superfície web.
+   Status: concluído para o Website; expansão para outros domínios continua nas fases seguintes.
+3. Tornar qualidade das superfícies web uma obrigação, não uma sugestão.
+   Critério de aceite: o Website executa teste unitário na CI e publica cobertura.
    Status: concluído.
 
 ## Fase 1
 
-1. Expandir testes unitários/integration do `frontend` para `Escala`, auth helpers e clients críticos.
+1. Expandir testes unitários/integration do `website` para `Escala`, auth helpers e clients críticos.
 2. Remover `best-effort`, `--if-present` e thresholds simbólicos dos caminhos que sustentam produção.
-3. Formalizar baseline de cobertura por superfície: `website`, `frontend`, `backend`.
+3. Formalizar baseline de cobertura por superfície: `website`, `api` e `backend`.
 
 ## Fase 2
 
@@ -35,11 +35,11 @@ Este documento transforma a auditoria estratégica em trabalho executável dentr
 ## Entregas aplicadas nesta rodada
 
 - Guardrail do booking por header dedicado e rejeição de `token` em query string.
-- Teste unitário/coverage no `frontend` com Vitest.
+- Teste unitário/coverage no `website` com Vitest.
 - Coverage do Python movida de 5% global para baseline real em `backend/config`.
 - Testes unitários adicionais para `backend/config/constants.py` e `backend/config/environment.py`.
 - Policy check para `dangerouslySetInnerHTML` e `new Function`.
-- `pre-commit`/`pre-push` com checks de TS/React, Website, CRM API e Python.
+- `pre-commit`/`pre-push` com checks de TS/React, Website, API e Python.
 - Catálogo de serviços, modelo de ownership e documentação reforçada de staging/observabilidade.
 
 ## Fase 4

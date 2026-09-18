@@ -11,7 +11,7 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/i;
 const WORKER_SURFACES = ["timekeeping", "identityWorkforce", "coreApi"];
-const STAGING_PAGES_ALIAS = "crm-staging.skincos.com.br";
+const STAGING_PAGES_ALIAS = "skincos-ponto-staging.pages.dev";
 const SURFACE_SOURCE_PATTERNS = {
   timekeeping: /ponto:timekeeping:([0-9a-f]{40})/i,
   identityWorkforce: /ponto:identityWorkforce:([0-9a-f]{40})/i,
@@ -67,14 +67,14 @@ export function validateIncumbentProvenance(ids, evidence) {
       sourceSha: validateSourceEvidence(proof.sourceSha),
     };
   }
-  const pages = evidence.crmPages;
+  const pages = evidence.pontoPages;
   if (
     pages?.passed !== true
-    || String(pages.deploymentId || "").toLowerCase() !== ids.crmPages.incumbent.toLowerCase()
+    || String(pages.deploymentId || "").toLowerCase() !== ids.pontoPages.incumbent.toLowerCase()
   ) throw new DrillFailure("INCUMBENT_CONTROL_PLANE_INVALID");
-  validated.crmPages = {
+  validated.pontoPages = {
     passed: true,
-    deploymentId: ids.crmPages.incumbent,
+    deploymentId: ids.pontoPages.incumbent,
     sourceSha: validateSourceEvidence(pages.sourceSha),
   };
   return validated;
@@ -83,7 +83,7 @@ export function validateIncumbentProvenance(ids, evidence) {
 export function classifyIncumbentBundle(evidence) {
   const sourceShas = [
     ...WORKER_SURFACES.map((surface) => evidence?.[surface]?.sourceSha),
-    evidence?.crmPages?.sourceSha,
+    evidence?.pontoPages?.sourceSha,
   ]
     .map((value) => String(value || "").trim().toLowerCase())
     .filter(Boolean);
@@ -262,23 +262,23 @@ async function mutateEverySurface({
   }
 
   try {
-    target.surfaces.crmPages = await runtime.deployPages(
-      config.ids.crmPages[side],
+    target.surfaces.pontoPages = await runtime.deployPages(
+      config.ids.pontoPages[side],
       phase,
       expectedSha,
     );
   } catch (error) {
-    target.surfaces.crmPages = {
+    target.surfaces.pontoPages = {
       passed: false,
-      sourceDeploymentId: config.ids.crmPages[side],
+      sourceDeploymentId: config.ids.pontoPages[side],
       reason: `${phase}-failed`,
     };
-    recordFailure(report, `${phase}.crmPages`, error);
+    recordFailure(report, `${phase}.pontoPages`, error);
   }
 
   target.passed = Object.keys(target.surfaces).length === 4
     && Object.values(target.surfaces).every((surface) => surface?.passed === true);
-  return target.surfaces.crmPages;
+  return target.surfaces.pontoPages;
 }
 
 async function validateFixture({
@@ -447,7 +447,7 @@ export async function runStagingRollbackDrill(config, runtime) {
 
   if (report.preflight.passed) {
     incumbentCompatibilityExpected = {
-      pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
+      pagesSourceSha: incumbentProvenance.pontoPages.sourceSha,
       identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
       coreSourceSha: incumbentProvenance.coreApi.sourceSha,
       timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
@@ -506,7 +506,7 @@ export async function runStagingRollbackDrill(config, runtime) {
             timekeepingVersionId: config.ids.timekeeping.incumbent,
             identityVersionId: config.ids.identityWorkforce.incumbent,
             coreVersionId: config.ids.coreApi.incumbent,
-            pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
+            pagesSourceSha: incumbentProvenance.pontoPages.sourceSha,
             identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
             coreSourceSha: incumbentProvenance.coreApi.sourceSha,
             timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
@@ -721,7 +721,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
       candidate: requireValue(env, "CORE_CANDIDATE_VERSION_ID"),
       incumbent: requireValue(env, "CORE_INCUMBENT_VERSION_ID"),
     },
-    crmPages: {
+    pontoPages: {
       candidate: requireValue(env, "PAGES_CANDIDATE_DEPLOYMENT_ID"),
       incumbent: requireValue(env, "PAGES_INCUMBENT_DEPLOYMENT_ID"),
     },
@@ -737,7 +737,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
     throw new DrillFailure("STAGING_CUSTODY_INVALID");
   }
   if (Buffer.byteLength(idempotencyKey, "utf8") < 32) throw new DrillFailure("IDEMPOTENCY_KEY_INVALID");
-  if (pagesProject !== "skincos-staging") throw new DrillFailure("PAGES_PROJECT_INVALID");
+  if (pagesProject !== "skincos-ponto-staging") throw new DrillFailure("PAGES_PROJECT_INVALID");
   for (const [surface, identity] of Object.entries(ids)) {
     if (
       !UUID.test(identity.candidate)
@@ -927,7 +927,7 @@ function createRealRuntime(config, env = process.env) {
       || deployment?.environment !== "production"
       || (!terminal && !(allowPending && pending))
       || origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash
@@ -1241,7 +1241,7 @@ function createRealRuntime(config, env = process.env) {
     const origin = new URL(pages?.url || "");
     if (
       origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash
@@ -1317,7 +1317,7 @@ function createRealRuntime(config, env = process.env) {
     const origin = new URL(pages?.url || "");
     if (
       origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash
@@ -1480,22 +1480,22 @@ function createRealRuntime(config, env = process.env) {
     const origin = new URL(url);
     if (
       origin.protocol !== "https:"
-      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || !origin.hostname.endsWith(".skincos-ponto-staging.pages.dev")
       || origin.pathname !== "/"
       || origin.search
       || origin.hash
     ) throw new DrillFailure("JOURNEY_ORIGIN_INVALID");
-    const journeyArgs = ["crm/console/scripts/ponto-staging-journey.cjs"];
+    const journeyArgs = ["workforce/ponto-pages/scripts/ponto-staging-journey.cjs"];
     const journeyOptions = {
       code: "AUTHENTICATED_JOURNEY_FAILED",
       captureFailureDetail: true,
       env: {
-        PONTO_STAGING_CRM_URL: origin.href,
+        PONTO_STAGING_URL: origin.href,
         PONTO_STAGING_EXPECTED_RELEASE_SHA: expected.releaseSha,
         PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: expected.timekeepingVersionId,
         PONTO_STAGING_FIXTURES_FILE: handle.fixturePath,
         PONTO_STAGING_REPORT_FILE: handle.journeyReportPath,
-        NODE_PATH: path.resolve("crm/console/node_modules"),
+        NODE_PATH: path.resolve("workforce/ponto-pages/node_modules"),
       },
     };
     let journeyAttempts = 0;
@@ -1750,9 +1750,9 @@ function createRealRuntime(config, env = process.env) {
         };
         incumbents[surface] = workerVersionDetails(surface, config.ids[surface].incumbent);
       }
-      surfaces.crmPages = await assertPagesActive(config.ids.crmPages.candidate, config.releaseSha);
-      const incumbentPages = await pagesDeploymentDetails(config.ids.crmPages.incumbent);
-      incumbents.crmPages = {
+      surfaces.pontoPages = await assertPagesActive(config.ids.pontoPages.candidate, config.releaseSha);
+      const incumbentPages = await pagesDeploymentDetails(config.ids.pontoPages.incumbent);
+      incumbents.pontoPages = {
         passed: true,
         deploymentId: incumbentPages.id,
         sourceSha: incumbentPages.commitHash,

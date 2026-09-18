@@ -7,10 +7,10 @@ mechanism.
 
 | Package area | Origin at the extraction base | Treatment |
 | --- | --- | --- |
-| `src/PontoModule.tsx`, Ponto API/types/presentation, UI primitives | `crm/console/**` | Copied, converted to local relative imports, with minimal local type annotations for standalone checking. |
-| `public/ponto-terminal.html`, brand asset | `crm/console/public/**` | Copied without changing the terminal's relative `/api/ponto/device/*` contract. |
-| `functions/api/ponto/[[path]].ts` | `crm/console/functions/api/ponto/[[path]].ts` | Copied as the existing strict gateway; its runtime bindings remain absent in Phase 1. |
-| CSRF and proxy helpers | `crm/console/functions/_lib/**` | Small local copies needed by the Ponto-only Functions. |
+| `src/PontoModule.tsx`, Ponto API/types/presentation, UI primitives | `workforce/ponto-pages/**` | Copied, converted to local relative imports, with minimal local type annotations for standalone checking. |
+| `public/ponto-terminal.html`, brand asset | `workforce/ponto-pages/public/**` | Copied without changing the terminal's relative `/api/ponto/device/*` contract. |
+| `functions/api/ponto/[[path]].ts` | `workforce/ponto-pages/functions/api/ponto/[[path]].ts` | Copied as the existing strict gateway; its runtime bindings remain absent in Phase 1. |
+| CSRF and proxy helpers | `workforce/ponto-pages/functions/_lib/**` | Small local copies needed by the Ponto-only Functions. |
 | Auth provider and auth Function | CRM auth contract | Minimal local boundary preserving the existing `/api/auth/*` session path and shared-domain cookie behavior. |
 
 The auth helper intentionally preserves `ADMIN`; Ponto reserves canonical

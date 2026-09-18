@@ -110,7 +110,7 @@ test("high and critical classifications remain full and blocking-capable", () =>
 test("auth, secrets, tracking, workflow, and migration paths force broad security coverage", () => {
   for (const { file, securitySensitive } of [
     { file: "website/src/lib/tracking.ts", securitySensitive: false },
-    { file: "crm/api/auth/session.ts", securitySensitive: true },
+    { file: "shared/identity-auth/worker.js", securitySensitive: true },
     { file: "platform/security/token-vault/secret-contract.md", securitySensitive: true },
     { file: ".github/workflows/example.yml", securitySensitive: true },
     { file: "backend/migrations/0001_init.sql", securitySensitive: true },

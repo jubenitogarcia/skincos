@@ -12,7 +12,6 @@
     "administratorBypassAllowed": false,
     "requiredChecks": [
       "CI Smoke (Assert)",
-      "Central E2E Smoke",
       "JS/TS Checks (workspace)",
       "Dependency Audit (JS/TS)",
       "Scan for secrets (Gitleaks)"
@@ -115,7 +114,6 @@
   },
   "criticalUnits": {
     "core-workers": {"featureFlag": "deployment gate ENABLE_CORE_WORKERS_DEPLOY plus module-control:timekeeping", "killSwitch": "module-control:timekeeping=maintenance or disabled for Ponto traffic", "rollback": "pre-pilot attested route-isolated Ponto Core and Identity/Inventory versions through deploy-core-workers.yml", "pilotCanary": "Ponto never split-deploys the shared skincos-api Worker. The private no-route skincos-ponto-core candidate is pinned to exact Timekeeping and remains at 0 percent default traffic for pilot and canary; Pages selects it only through an internal service binding for the conjunctively authorized cohort. Shared Core versions plus Finance and Inventory probes must remain unchanged. Identity/Inventory stays at 0 percent default traffic and its candidate contract is probed only through a protected internal binding."},
-    "crm-pages": {"featureFlag": "PONTO_ROLLOUT_STAGE plus module-control:timekeeping", "killSwitch": "module-control:timekeeping=maintenance or disabled", "rollback": "pre-pilot attested Pages deployment through deploy-crm-pages.yml", "pilotCanary": "Ponto coordinator deploys the same SHA and Pages uses the PONTO_CORE private service binding. Candidate selection is conjunctive on opaque employee, Identity, Identity-login, unit and network grants before canary bucketing; public URL fetch and public version-override selection are forbidden."},
     "escala-api": {"featureFlag": "deployment gate ENABLE_ESCALA_API_DEPLOY", "killSwitch": "RELEASE_KILL_SWITCH_ESCALA_API", "rollback": "previous staging-attested SHA", "pilotCanary": "blocked: Worker gradual routing and external SLO evidence are not configured"},
     "timekeeping": {"featureFlag": "ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY and module-control:timekeeping", "killSwitch": "module-control:timekeeping=maintenance or disabled", "rollback": "pre-pilot attested Timekeeping version through deploy-timekeeping.yml with additive-migration compatibility", "pilotCanary": "Ponto coordinator keeps the Timekeeping candidate at 0 percent default traffic for pilot and canary, authorizes only the conjunctive opaque employee, Identity, Identity-login, unit and network cohort, and requires the external authenticated CONSULTOR SLO workflow before advancement"},
     "meta-ads-report": {"featureFlag": "META_ADS_REPORT_MODE", "killSwitch": "RELEASE_KILL_SWITCH_META_ADS_REPORT", "rollback": "previous staging-attested SHA", "pilotCanary": "blocked: job-level canary and external ingestion journey evidence are not configured"}

@@ -804,7 +804,7 @@ test('CRM Core keeps its public staging mount with a narrow request-header allow
       'content-type': 'application/json',
       'cf-connecting-ip': '203.0.113.20',
       forwarded: 'for=203.0.113.10;proto=https',
-      origin: 'https://crm-staging.skincos.com.br',
+      origin: 'https://staging-console.invalid',
       'proxy-authorization': 'Basic synthetic-proxy-credential',
       'x-csrf-token': 'legacy-csrf',
       'x-identity-delivery': 'identity-crm-delivery/v1.synthetic-envelope',
@@ -844,7 +844,7 @@ test('CRM Core keeps its public staging mount with a narrow request-header allow
   assert.equal(new URL(received.url).search, '?smoke=1');
   assert.equal(received.headers.get('accept'), 'application/json');
   assert.equal(received.headers.get('content-type'), 'application/json');
-  assert.equal(received.headers.get('origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(received.headers.get('origin'), 'https://staging-console.invalid');
   assert.equal(received.headers.get('x-request-id'), 'crm-core-gateway-1');
   assert.equal(received.headers.get('x-identity-delivery'), null);
   for (const name of [
@@ -906,7 +906,7 @@ test('CRM session resolves Identity only at the staging gateway and forwards its
       accept: 'application/json',
       authorization: 'Bearer browser-credential',
       cookie: 'session=browser-only',
-      origin: 'https://crm-staging.skincos.com.br',
+      origin: 'https://staging-console.invalid',
       'x-csrf-token': 'browser-csrf-not-forwarded',
       'x-identity-delivery': 'forged.browser.envelope',
       'x-request-id': 'crm-session-gateway-1',
@@ -1007,7 +1007,7 @@ test('CRM projections signs only an explicit canonical unit query before reachin
       accept: 'application/json',
       authorization: 'Bearer browser-credential',
       cookie: 'session=browser-only',
-      origin: 'https://crm-staging.skincos.com.br',
+      origin: 'https://staging-console.invalid',
       'x-csrf-token': 'browser-csrf-not-forwarded',
       'x-identity-delivery': 'forged.browser.envelope',
       'x-request-id': 'crm-projection-gateway-1',
@@ -1045,7 +1045,7 @@ test('CRM projections signs only an explicit canonical unit query before reachin
   }, {});
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://staging-console.invalid');
   assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
   assert.equal(resolverCalls, 1);
   assert.ok(issuerRequest);
@@ -1099,7 +1099,7 @@ test('CRM projections rejects noncanonical unit queries and non-GET requests bef
     'https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul,novo-hamburgo&unexpected=true',
     'https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul%2Cnovo-hamburgo',
   ]) {
-    const response = await projectionGateway(new Request(url, { headers: { origin: 'https://crm-staging.skincos.com.br' } }), env, {});
+    const response = await projectionGateway(new Request(url, { headers: { origin: 'https://staging-console.invalid' } }), env, {});
     assert.equal(response.status, 400, url);
     assert.equal((await response.json()).error, 'CRM_PROJECTION_QUERY_INVALID', url);
   }
@@ -1174,13 +1174,13 @@ test('CRM session has an exact staging CORS preflight and never resolves Identit
   const preflight = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
     method: 'OPTIONS',
     headers: {
-      origin: 'https://crm-staging.skincos.com.br',
+      origin: 'https://staging-console.invalid',
       'access-control-request-method': 'GET',
       'access-control-request-headers': 'cache-control',
     },
   }), { ENVIRONMENT: 'staging' }, {});
   assert.equal(preflight.status, 204);
-  assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://staging-console.invalid');
   assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
   assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET');
   assert.equal(preflight.headers.get('access-control-allow-headers'), 'accept, cache-control');
@@ -1190,13 +1190,13 @@ test('CRM session has an exact staging CORS preflight and never resolves Identit
   const projectionPreflight = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/projections?units=barra-shopping-sul,novo-hamburgo', {
     method: 'OPTIONS',
     headers: {
-      origin: 'https://crm-staging.skincos.com.br',
+      origin: 'https://staging-console.invalid',
       'access-control-request-method': 'GET',
       'access-control-request-headers': 'accept',
     },
   }), { ENVIRONMENT: 'staging' }, {});
   assert.equal(projectionPreflight.status, 204);
-  assert.equal(projectionPreflight.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(projectionPreflight.headers.get('access-control-allow-origin'), 'https://staging-console.invalid');
   assert.equal(projectionPreflight.headers.get('access-control-allow-credentials'), 'true');
   assert.equal(resolverCalls, 0);
   assert.equal(coreCalls, 0);
@@ -1204,14 +1204,14 @@ test('CRM session has an exact staging CORS preflight and never resolves Identit
   const deniedHeader = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
     method: 'OPTIONS',
     headers: {
-      origin: 'https://crm-staging.skincos.com.br',
+      origin: 'https://staging-console.invalid',
       'access-control-request-method': 'GET',
       'access-control-request-headers': 'authorization',
     },
   }), { ENVIRONMENT: 'staging' }, {});
   assert.equal(deniedHeader.status, 400);
   assert.equal((await deniedHeader.json()).error, 'CRM_SESSION_CORS_PREFLIGHT_INVALID');
-  assert.equal(deniedHeader.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(deniedHeader.headers.get('access-control-allow-origin'), 'https://staging-console.invalid');
   assert.equal(resolverCalls, 0);
   assert.equal(coreCalls, 0);
 });
@@ -1223,10 +1223,10 @@ test('CRM session supplies credentialed CORS only to its exact staging origin', 
     resolveActor: async () => { resolverCalls += 1; return { actor: null, csrf: null }; },
   });
   const allowed = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
-    headers: { origin: 'https://crm-staging.skincos.com.br' },
+    headers: { origin: 'https://staging-console.invalid' },
   }), { ENVIRONMENT: 'staging' }, {});
   assert.equal(allowed.status, 401);
-  assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://staging-console.invalid');
   assert.equal(allowed.headers.get('access-control-allow-credentials'), 'true');
 
   const denied = await sessionGateway(new Request('https://api-staging.skincos.com.br/crm/session', {
@@ -1432,7 +1432,7 @@ test('CRM projections reach receipt-authorized production Core with the exact pr
   assert.equal(coreRequest.headers.get('cookie'), null);
 
   const denied = await productionGateway(new Request('https://api.skincos.com.br/crm/projections?units=novo-hamburgo', {
-    headers: { origin: 'https://crm-staging.skincos.com.br' },
+    headers: { origin: 'https://staging-console.invalid' },
   }), env, {});
   assert.equal(denied.status, 403);
   assert.equal((await denied.json()).error, 'CRM_SESSION_CORS_ORIGIN_NOT_ALLOWED');
@@ -1490,7 +1490,7 @@ test('CRM Core keeps its Core-owned CORS origin while omitting unneeded prefligh
   const response = await handleGatewayRequest(new Request('https://api-staging.skincos.com.br/crm', {
     method: 'OPTIONS',
     headers: {
-      origin: 'https://crm-staging.skincos.com.br',
+      origin: 'https://staging-console.invalid',
       'access-control-request-headers': 'content-type,x-identity-delivery',
       'access-control-request-method': 'POST',
       'x-skincos-service-token': 'synthetic-service-token',
@@ -1511,7 +1511,7 @@ test('CRM Core keeps its Core-owned CORS origin while omitting unneeded prefligh
   // Core's preflight contract derives its static method/header response from
   // Origin alone; these browser negotiation headers are not part of its
   // service-binding contract and must not broaden the forwarding boundary.
-  assert.equal(received.headers.get('origin'), 'https://crm-staging.skincos.com.br');
+  assert.equal(received.headers.get('origin'), 'https://staging-console.invalid');
   assert.equal(received.headers.get('access-control-request-headers'), null);
   assert.equal(received.headers.get('access-control-request-method'), null);
   assert.equal(received.headers.get('x-skincos-service-token'), null);

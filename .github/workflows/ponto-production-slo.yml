@@ -34,7 +34,7 @@ on:
         required: true
         type: string
       pages_deployment_id:
-        description: Exact CRM Pages deployment attested by the publisher
+        description: Exact Ponto Pages deployment attested by the publisher
         required: true
         type: string
       orchestrator_issuer_run_id:
@@ -545,7 +545,7 @@ jobs:
           merge-multiple: true
       - name: Run external read-only CONSULTOR journey
         env:
-          PONTO_RELEASE_CRM_URL: https://crm.skincos.com.br
+          PONTO_RELEASE_PONTO_URL: https://skincos-ponto.pages.dev
           PONTO_RELEASE_SLO_REPORT: ${{ runner.temp }}/ponto-production-slo.json
           CLOUDFLARE_PAGES_PROJECT: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
           PONTO_SLO_CONTROL_PLANE_ATTESTATION: ${{ runner.temp }}/ponto-slo-preflight/control-plane-attestation.json
@@ -687,7 +687,7 @@ jobs:
         env:
           PONTO_RELEASE_SHA: ${{ inputs.release_sha }}
           PONTO_RELEASE_STAGE: rollback
-          PONTO_RELEASE_CRM_URL: https://crm.skincos.com.br
+          PONTO_RELEASE_PONTO_URL: https://skincos-ponto.pages.dev
           PONTO_RELEASE_SLO_REPORT: ${{ runner.temp }}/ponto-production-slo.json
           PONTO_EXPECTED_CORE_VERSION_ID: ${{ inputs.core_version_id }}
           PONTO_EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
