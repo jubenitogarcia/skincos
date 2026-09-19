@@ -96,7 +96,7 @@
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",
-    "@modelcontextprotocol/inspector": "^1.0.0",
+    "@modelcontextprotocol/inspector": "^2.6.0",
     "pg": "^8.16.3",
     "semver": "^7.7.3"
   }
