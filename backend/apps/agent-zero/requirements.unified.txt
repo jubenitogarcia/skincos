@@ -65,7 +65,7 @@ google-auth-httplib2>=0.2.0
 requests>=2.32.4
 urllib3>=1.26.0
 # Imaging / OCR
-Pillow>=9.0.0
+Pillow>=12.3.0
 # pytesseract already listed with pinned version above (keep higher specificity 0.3.13)
 # Data formatting
 python-dateutil>=2.8.0
