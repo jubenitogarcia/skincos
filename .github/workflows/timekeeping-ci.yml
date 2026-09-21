@@ -174,7 +174,7 @@ jobs:
           set -euo pipefail
           npm --prefix workforce/ponto-pages ci
           npm --prefix workforce/ponto-pages run typecheck
-          npm --prefix workforce/ponto-pages run lint
+          npm --prefix workforce/ponto-pages run verify:surface
           npm --prefix workforce/ponto-pages test
           npm --prefix workforce/ponto-pages run build
           node workforce/ponto-pages/scripts/verify-surface.mjs

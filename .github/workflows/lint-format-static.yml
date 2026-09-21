@@ -117,12 +117,12 @@ jobs:
           cd workforce/ponto-pages
           npm ci
 
-      - name: Frontend lint
+      - name: Frontend surface checks
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd workforce/ponto-pages
-          npm run lint
+          npm run verify:surface
 
       - name: Frontend typecheck
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
