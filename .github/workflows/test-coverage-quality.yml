@@ -84,12 +84,12 @@ jobs:
           cd workforce/ponto-pages
           npm ci
 
-      - name: Frontend coverage
+      - name: Frontend tests
         if: ${{ hashFiles('workforce/ponto-pages/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd workforce/ponto-pages
-          npm run test:coverage
+          npm run test
 
       - name: Website install
         if: ${{ hashFiles('website/package-lock.json') != '' }}

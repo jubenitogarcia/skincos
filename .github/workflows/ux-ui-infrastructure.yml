@@ -35,7 +35,7 @@ jobs:
           npm ci
           npm --prefix workforce/ponto-pages ci
           npm --prefix website ci
-          npm --prefix workforce/ponto-pages exec -- playwright install --with-deps chromium
+          npm --prefix website exec -- playwright install --with-deps chromium
       - name: Run component, journey, accessibility and visual baselines
         env:
           PLAYWRIGHT_KEEP_ARTIFACTS: '1'

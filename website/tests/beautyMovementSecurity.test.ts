@@ -46,8 +46,9 @@ test("beauty movement encrypts personal data and rejects tampering", async () =>
         email: "ana@example.com",
     });
 
+    const tamperedCiphertext = `${encrypted.ciphertext.startsWith("A") ? "B" : "A"}${encrypted.ciphertext.slice(1)}`;
     await assert.rejects(
-        decryptBeautyMovementPersonalData({ ...encrypted, ciphertext: `${encrypted.ciphertext.slice(0, -1)}A` }, PII_KEY),
+        decryptBeautyMovementPersonalData({ ...encrypted, ciphertext: tamperedCiphertext }, PII_KEY),
         /beauty_movement_invalid_encrypted_personal_data/,
     );
 });

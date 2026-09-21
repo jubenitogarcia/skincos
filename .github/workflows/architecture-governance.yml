@@ -133,6 +133,8 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
+      - name: Install workspace dependencies
+        run: npm ci --ignore-scripts
       - name: Test Influencer Intelligence contracts, providers and snapshots
         run: node --test social/influencer-intelligence/tests/*.test.mjs
 

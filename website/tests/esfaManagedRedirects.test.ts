@@ -83,6 +83,30 @@ test("Instagram live WhatsApp aliases preserve the unit-specific prefilled messa
     }
 });
 
+test("Patricia Leaoferras alias opens the BarraShoppingSul prefilled WhatsApp message", () => {
+    const destinationUrl = ESFA_REDIRECTS["/patricialeaoferras"];
+    assert.ok(destinationUrl);
+
+    const destination = new URL(destinationUrl);
+    const message = "Ganhei um *desconto exclusivo* da @patricialeaoferras para o meu momento de *auto-cuidado e bem-estar* na Espaço Facial. Quero saber mais! 💥";
+
+    assert.equal(destination.hostname, "api.whatsapp.com");
+    assert.equal(destination.pathname, "/send");
+    assert.equal(destination.searchParams.get("phone"), "5551980882293");
+    assert.equal(destination.searchParams.get("text"), message);
+    assert.equal(normalizeEsfaRedirectPath("/PatriciaLeaoferras/"), "/patricialeaoferras");
+
+    const seed = buildEsfaManagedRedirectSeed({
+        slugPath: "/PatriciaLeaoferras/",
+        destinationUrl,
+        now: 789,
+    });
+    assert.equal(seed.slugPath, "/patricialeaoferras");
+    assert.equal(seed.placement, "whatsapp");
+    assert.equal(seed.unitSlug, null);
+    assert.equal(seed.source, ESFA_MIGRATED_SOURCE);
+});
+
 test("listEsfaManagedRedirectSeeds covers the active and retired catalog", () => {
     const seeds = listEsfaManagedRedirectSeeds(456);
 
