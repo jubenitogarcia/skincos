@@ -181,9 +181,9 @@ async function receiptFromEnvironment(env) {
     return { receipt, publicKeys };
 }
 
-function probeRequest(request, receipt) {
+function probeRequest(request, receipt, pathname = '/readiness') {
     const url = new URL(request.url);
-    url.pathname = '/ready';
+    url.pathname = pathname;
     url.search = '';
     const suppliedRequestId = normalizedText(request.headers.get('x-request-id'));
     const requestId = /^[A-Za-z0-9._:-]{1,96}$/.test(suppliedRequestId)
@@ -214,25 +214,38 @@ async function fetchProbe(binding, request) {
 async function provesReceiptTarget(request, env, receipt) {
     const binding = env?.CRM_CORE;
     if (!binding || typeof binding.fetch !== 'function') return false;
-    const response = await fetchProbe(binding, probeRequest(request, receipt));
-    if (!response || !response.ok) {
-        if (response?.body) await response.body.cancel().catch(() => {});
-        return false;
+    // CRM Core exposes both /ready and /readiness. Probe /ready first to keep
+    // compatibility with older independently deployed artifacts, then use
+    // /readiness when the legacy response omits the explicit `ready` field
+    // required by this custody probe.
+    for (const pathname of ['/ready', '/readiness']) {
+        const response = await fetchProbe(binding, probeRequest(request, receipt, pathname));
+        if (!response || !response.ok) {
+            if (response?.body) await response.body.cancel().catch(() => {});
+            continue;
+        }
+        let body;
+        try {
+            body = await response.json();
+        } catch {
+            continue;
+        }
+        const coreIdentity = body?.ok === true
+            && body?.unit === 'crm-core'
+            && body?.environment === 'production';
+        if (!coreIdentity) continue;
+        // Current Core readiness carries `ok: true` plus the stable reason
+        // instead of a duplicate `ready` boolean; older fixtures include the
+        // boolean. Once a recognizable readiness payload is received, do not
+        // probe a second path when its release or digest disagrees.
+        const ready = body?.ready === true || body?.reason === 'CRM_PRODUCTION_READY';
+        return ready
+            && String(body?.release || '').trim().toLowerCase() === receipt.release
+            && String(body?.version || '').trim().toLowerCase() === receipt.release
+            && String(body?.artifact_digest || '').trim().toLowerCase() === receipt.artifactDigest
+            && String(body?.artifactDigest || '').trim().toLowerCase() === receipt.artifactDigest;
     }
-    let body;
-    try {
-        body = await response.json();
-    } catch {
-        return false;
-    }
-    return body?.ok === true
-        && body?.ready === true
-        && body?.unit === 'crm-core'
-        && body?.environment === 'production'
-        && String(body?.release || '').trim().toLowerCase() === receipt.release
-        && String(body?.version || '').trim().toLowerCase() === receipt.release
-        && String(body?.artifact_digest || '').trim().toLowerCase() === receipt.artifactDigest
-        && String(body?.artifactDigest || '').trim().toLowerCase() === receipt.artifactDigest;
+    return false;
 }
 
 /**
