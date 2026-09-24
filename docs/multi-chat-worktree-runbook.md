@@ -19,19 +19,18 @@ Permitir trabalho paralelo em varios chats/agents sem perder alteracoes e sem co
 6. Validar deploy/smoke apos merge.
 
 ## Comandos padrao
-```bash
+```powershell
 # 1) Base atualizada
-git -C C:/CodexShared/Projetos/skincos fetch origin
+git -C C:\CodexShared\Projetos\skincos fetch origin
 
 # 2) Novo worktree para um chat
-powershell -ExecutionPolicy Bypass -File \
-  C:/CodexShared/Projetos/skincos/scripts/new-shared-worktree.ps1 \
-  -Actor <actor> \
-  -TaskSlug <modulo>-<chat> \
+& C:\CodexShared\Projetos\skincos\scripts\new-shared-worktree.ps1 `
+  -Actor <actor> `
+  -TaskSlug <modulo>-<chat> `
   -Fetch
 
 # 3) Publicar checkpoint
-cd C:/CodexShared/Worktrees/skincos/<actor>/<modulo>-<chat>
+Set-Location "$env:USERPROFILE\.codex\worktrees\<actor>--<modulo>-<chat>"
 git add -A
 git commit -m "wip(<modulo>): checkpoint"
 git push -u origin codex/<actor>/<modulo>-<chat>
@@ -55,10 +54,14 @@ superfícies deste repositório. Produtos independentes e workflows externos nã
 recebem slots aqui. O slot canônico é destinado a preview, qualificação e
 leitura estável; alterações continuam em worktrees temporários por tarefa/PR.
 
-Os slots ficam em:
+Os slots canônicos ficam como filhos diretos de `%USERPROFILE%\.codex\worktrees`.
+Superfícies que apontam para o mesmo commit usam o mesmo checkout estável; o
+gerenciador bloqueia `claim` nesses caminhos compartilhados para impedir leases
+independentes sobre um diretório só. Os nomes incluem o grupo e os oito
+caracteres iniciais do commit:
 
 ```text
-C:\CodexShared\Worktrees\skincos\admin\canonical\<surfaceType>\<surfaceId>
+%USERPROFILE%\.codex\worktrees\skincos-canonical-<grupo>-<commit8>
 ```
 
 Inventário e plano não alteram Git:
@@ -68,20 +71,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 -Action plan
 ```
 
-Criar ou reivindicar um slot exige SHA explícito e `-Apply`; não existe
-fallback automático para outro worktree:
+Criar um slot exige o SHA completo registrado na topologia (ou um
+`-TargetCommit` explícito) e `-Apply`; não existe fallback automático para
+outro worktree. `claim` também exige `-Apply` e é recusado quando várias
+superfícies compartilham o mesmo checkout:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
-  -Action ensure-canonical -SurfaceType module -SurfaceId <surface-id> `
+  -Action ensure-canonical -SurfaceType crm-module -SurfaceId <surface-id> `
   -TargetCommit <sha> -Apply
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
-  -Action claim -SurfaceType module -SurfaceId <surface-id> -Apply
+  -Action claim -SurfaceType crm-module -SurfaceId <surface-id> -Apply
 ```
 
-O estado de owners e leases fica no runtime privado em
-`C:\CodexRuntime\operator\admin\skincos\worktree-registry`, nunca no clone
-compartilhado. `claim` não substitui branch/PR de uma tarefa.
+O registro de rotas e leases locais fica em
+`%USERPROFILE%\.codex\worktrees\worktree-registry`, fora dos checkouts e nunca
+no clone compartilhado. `claim` não substitui branch/PR de uma tarefa.
 
 “Mesclar worktrees” significa integrar commits por PR, merge ou cherry-pick
 explícito. Diretórios não são combinados. Worktrees sujos, detached, com PR,

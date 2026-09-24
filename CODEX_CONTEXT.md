@@ -2,7 +2,7 @@
 
 ## Canonical workspace
 
-- Code: `C:\CodexShared\Projetos\skincos` on `main`; edit-bearing work uses `C:\CodexShared\Worktrees\skincos\admin\<task>`.
+- Code: `C:\CodexShared\Projetos\skincos` on `main`; edit-bearing work uses `%USERPROFILE%\.codex\worktrees\<actor>--<task>` as a direct child.
 - Durable operator evidence: `C:\CodexRuntime\operator\admin\skincos`; secrets and mutable runtime state never belong in Git or `C:\CodexShared`.
 - Human operator: Windows/WSL `admin`. Linux `skincos` is non-interactive and owns system services.
 - Product roots are `ads`, `api`, `booking`, `finance`, `integration`, `inventory`, `messaging`, `service`, `social`, `website` and `workforce`. CRM is maintained only in the independent repository `https://github.com/jubenitogarcia/crm` at `C:\CodexShared\Projetos\crm`; Orb/n8n is maintained in `https://github.com/jubenitogarcia/orb`. Neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.

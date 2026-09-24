@@ -18,8 +18,9 @@
   helpers canônicos apontados nele em vez de criar pontes manuais por tarefa.
 - Use branches in the format `codex/admin/<task-slug>`.
 - For every non-trivial or potentially concurrent mission, a dedicated
-  worktree under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>` is
-  mandatory. The shared checkout is a read-only context/source-of-truth
+  worktree directly under `%USERPROFILE%\.codex\worktrees` is mandatory. Name
+  task worktrees `<operator>--<task-slug>`; do not use nested actor, project, or
+  category folders. The shared checkout is a read-only context/source-of-truth
   surface for agents, not a normal editing surface. The task identity is the
   tuple `mission_id`, `task_slug`, `codex/admin/<task-slug>` branch and the
   dedicated worktree path; persist that tuple in the supervisor snapshot.

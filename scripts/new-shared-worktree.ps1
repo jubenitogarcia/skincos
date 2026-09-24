@@ -2,7 +2,7 @@ param(
     [string]$TaskSlug,
     [string]$Actor = $env:USERNAME,
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
-    [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$BaseRef = "origin/main",
     [string]$BranchName,
     [switch]$Fetch
@@ -99,10 +99,10 @@ if ($BranchName -ne $expectedBranchName) {
     throw "BranchName must preserve the task identity and equal '$expectedBranchName'."
 }
 
-$actorRoot = Join-Path $WorktreeRoot $normalizedActor
-$worktreePath = Join-Path $actorRoot $normalizedTask
+$worktreeName = "$normalizedActor--$normalizedTask"
+$worktreePath = Join-Path $WorktreeRoot $worktreeName
 
-Ensure-Directory -Path $actorRoot
+Ensure-Directory -Path $WorktreeRoot
 Ensure-SafeDirectory -RepoPath $ProjectRoot
 
 if ($Fetch) {
@@ -125,6 +125,7 @@ $lifecycleRecord = Write-WorktreeLifecycleRecord -RepoPath $worktreePath -TaskSl
 $result = [pscustomobject]@{
     actor = $normalizedActor
     taskSlug = $normalizedTask
+    worktreeName = $worktreeName
     branchName = $BranchName
     baseRef = $BaseRef
     projectRoot = $ProjectRoot

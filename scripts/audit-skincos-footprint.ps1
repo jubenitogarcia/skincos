@@ -1,6 +1,6 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
-    [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$RuntimeRoot = "C:\CodexRuntime",
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos",
     [string]$Repository = "jubenitogarcia/skincos",
@@ -695,6 +695,7 @@ function Get-CanonicalTopologyAudit {
         [object[]]$Worktrees
     )
 
+    $defaultRegistryRoot = Join-Path $WorktreeRoot 'worktree-registry'
     if ($TopologyState.status -ne "ok") {
         return [pscustomobject]@{
             status = $TopologyState.status
@@ -706,18 +707,20 @@ function Get-CanonicalTopologyAudit {
             claimedCount = 0
             surfaces = @()
             unmappedCanonicalWorktrees = @()
-            registry = Get-CanonicalRegistrySnapshot -RegistryRoot (Join-Path $OperatorRuntimeRoot "worktree-registry")
+            registry = Get-CanonicalRegistrySnapshot -RegistryRoot $defaultRegistryRoot
         }
     }
 
-    $registry = Get-CanonicalRegistrySnapshot -RegistryRoot (Join-Path $OperatorRuntimeRoot "worktree-registry")
+    $registryRelativeRoot = [string]$TopologyState.document.worktree.registryRelativeRoot
+    $registryRoot = if ([string]::IsNullOrWhiteSpace($registryRelativeRoot)) { $defaultRegistryRoot } else { Join-Path $WorktreeRoot $registryRelativeRoot }
+    $registry = Get-CanonicalRegistrySnapshot -RegistryRoot $registryRoot
     $definitions = @(Get-TopologySurfaceDefinitions -Topology $TopologyState.document -WorktreeRoot $WorktreeRoot)
     $canonicalRows = @()
     foreach ($definition in $definitions) {
         $expected = Normalize-PathString -Path $definition.expectedPath
         $matches = @($Worktrees | Where-Object { (Normalize-PathString -Path $_.path) -eq $expected })
         $registryRows = @($registry.surfaces | Where-Object { $_.surfaceType -eq $definition.surfaceType -and $_.surfaceId -eq $definition.surfaceId })
-        $lease = Get-CanonicalLeaseSnapshot -RegistryRoot (Join-Path $OperatorRuntimeRoot "worktree-registry") -SurfaceType $definition.surfaceType -SurfaceId $definition.surfaceId
+        $lease = Get-CanonicalLeaseSnapshot -RegistryRoot $registryRoot -SurfaceType $definition.surfaceType -SurfaceId $definition.surfaceId
         $registryMismatch = $false
         if ($matches.Count -eq 1 -and $registryRows.Count -eq 1) {
             $registryMismatch = (Normalize-PathString -Path ([string]$registryRows[0].path)) -ne $expected -or
@@ -779,11 +782,14 @@ function Get-CanonicalTopologyAudit {
         }
     }
 
-    $canonicalRoot = Join-Path $WorktreeRoot ([string]$TopologyState.document.worktree.canonicalRelativeRoot)
+    $canonicalRoot = [System.IO.Path]::GetFullPath((Join-Path $WorktreeRoot ([string]$TopologyState.document.worktree.canonicalRelativeRoot)))
+    $managedPrefix = [string]$TopologyState.document.worktree.managedNamePrefix
     $expectedPaths = @($canonicalRows | ForEach-Object { Normalize-PathString -Path $_.expectedPath })
     $unmapped = @($Worktrees | Where-Object {
         $path = Normalize-PathString -Path $_.path
-        (Test-PathWithinRoot -Path $_.path -Root $canonicalRoot) -and ($expectedPaths -notcontains $path)
+        (Normalize-PathString -Path (Split-Path -Parent $_.path)) -eq (Normalize-PathString -Path $WorktreeRoot) -and
+            (Split-Path -Leaf $_.path).StartsWith($managedPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+            ($expectedPaths -notcontains $path)
     } | ForEach-Object {
         [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; dirtyCount = $_.dirtyCount }
     })

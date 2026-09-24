@@ -5,7 +5,7 @@ param(
     [string]$Branch,
     [ValidateSet("edit", "read-only")]
     [string]$Mode = "edit",
-    [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$CanonicalRoot = "C:\CodexShared\Projetos\skincos"
 )
 
@@ -58,6 +58,11 @@ if ($Mode -eq "read-only") {
         -not (Test-PathWithin -Path $gitTop -Root $resolvedWorktreeRoot)) {
         throw "Read-only context must be the canonical checkout or an approved SKINCOS worktree."
     }
+    if (Test-PathWithin -Path $gitTop -Root $resolvedWorktreeRoot) {
+        $relative = $gitTop.Substring($resolvedWorktreeRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar)
+        $segments = @($relative.Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries))
+        if ($segments.Count -ne 1) { throw "Every worktree must be a direct child of $resolvedWorktreeRoot." }
+    }
 }
 else {
     if ($gitTop.Equals($resolvedCanonicalRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -72,15 +77,15 @@ else {
     $normalizedTask = Normalize-Slug -Value $TaskSlug
     $relative = $gitTop.Substring($resolvedWorktreeRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar)
     $segments = @($relative.Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries))
-    if ($segments.Count -ne 2) {
-        throw "Worktree must be exactly <actor>\<task-slug> below $resolvedWorktreeRoot."
+    if ($segments.Count -ne 1) { throw "Worktree must be a direct child of $resolvedWorktreeRoot." }
+    $branchIdentity = [regex]::Match($actualBranch, '^codex/(?<actor>[a-z0-9][a-z0-9._-]*)/(?<task>[a-z0-9][a-z0-9._-]*)$')
+    if (-not $branchIdentity.Success) { throw "Branch '$actualBranch' does not match codex/<actor>/<task-slug>." }
+    if ($branchIdentity.Groups['task'].Value -ne $normalizedTask) {
+        throw "TaskSlug '$normalizedTask' does not match branch task '$($branchIdentity.Groups['task'].Value)'."
     }
-    if ($segments[1].ToLowerInvariant() -ne $normalizedTask) {
-        throw "TaskSlug '$normalizedTask' does not match worktree directory '$($segments[1])'."
-    }
-    $expectedBranch = "codex/$($segments[0].ToLowerInvariant())/$normalizedTask"
-    if ($actualBranch -ne $expectedBranch) {
-        throw "Branch '$actualBranch' does not match the dedicated worktree identity '$expectedBranch'."
+    $expectedDirectory = "$($branchIdentity.Groups['actor'].Value)--$normalizedTask"
+    if ($segments[0].ToLowerInvariant() -ne $expectedDirectory.ToLowerInvariant()) {
+        throw "Worktree directory '$($segments[0])' does not match the dedicated identity '$expectedDirectory'."
     }
     if (-not [string]::IsNullOrWhiteSpace($Branch) -and $Branch -ne $actualBranch) {
         throw "Requested branch '$Branch' does not match the current branch '$actualBranch'."

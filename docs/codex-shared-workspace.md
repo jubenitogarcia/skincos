@@ -5,8 +5,9 @@ O clone compartilhado do monorepo fica em:
 `C:\CodexShared\Projetos\skincos`
 
 Ele serve para contexto, revisão e bootstrap. Tarefas não triviais usam
-worktrees em `C:\CodexShared\Worktrees\skincos\<ator>\<tarefa>`; o clone
-compartilhado não é superfície normal de edição.
+worktrees diretamente em `%USERPROFILE%\.codex\worktrees\<ator>--<tarefa>`;
+não crie subpastas por ator, projeto ou categoria. O clone compartilhado não é
+superfície normal de edição.
 
 ## Regras
 

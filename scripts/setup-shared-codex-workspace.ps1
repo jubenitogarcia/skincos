@@ -1,6 +1,6 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
-    [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$RuntimeRoot = "C:\CodexRuntime",
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos",
     [switch]$SkipAclRefresh,
@@ -89,7 +89,6 @@ function Grant-PrivateOperatorAcl {
 
 Ensure-Directory -Path $ProjectRoot
 Ensure-Directory -Path $WorktreeRoot
-Ensure-Directory -Path (Join-Path $WorktreeRoot $env:USERNAME)
 Ensure-Directory -Path $RuntimeRoot
 Ensure-Directory -Path $OperatorRuntimeRoot
 
@@ -138,7 +137,6 @@ $codexEnvironment = Get-CodexEnvironmentStatus -RepoPath $ProjectRoot
 
 if (-not $SkipAclRefresh) {
     Grant-SharedAcl -TargetPath $ProjectRoot -Recursive:$DeepAclRefresh
-    Grant-SharedAcl -TargetPath $WorktreeRoot -Recursive:$DeepAclRefresh
 }
 
 Ensure-SafeDirectory -RepoPath $ProjectRoot
@@ -146,7 +144,7 @@ Ensure-SafeDirectory -RepoPath $ProjectRoot
 $result = [pscustomobject]@{
     projectRoot = $ProjectRoot
     worktreeRoot = $WorktreeRoot
-    actorWorktreeRoot = (Join-Path $WorktreeRoot $env:USERNAME)
+    worktreeLayout = '<actor>--<task-slug> as a direct child; no nested folders'
     runtimeRoot = $RuntimeRoot
     runtimeDirs = $runtimeDirs
     operatorRuntimeRoot = $OperatorRuntimeRoot

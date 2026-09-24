@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$WorktreePath,
     [string]$ProjectRoot = 'C:\CodexShared\Projetos\skincos',
-    [string]$WorktreeRoot = 'C:\CodexShared\Worktrees\skincos\admin',
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$LifecycleRoot = 'C:\CodexRuntime\operator\admin\skincos\storage-governance\worktrees',
     [string]$CodexHome = '%USERPROFILE%\.codex',
     [switch]$RemoveRegenerable,
@@ -23,6 +23,7 @@ function Test-Within([string]$Path, [string]$Root) {
     return $p.StartsWith($r + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
 }
 if (-not (Test-Within $WorktreePath $WorktreeRoot)) { throw "Refusing a path outside the approved worktree root: $WorktreePath" }
+if (-not ([IO.Path]::GetFullPath((Split-Path -Parent $WorktreePath)).TrimEnd('\').Equals($WorktreeRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase))) { throw "Worktree must be a direct child of the approved root: $WorktreeRoot" }
 if ($WorktreePath.Equals($ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'The canonical checkout cannot be closed by this command.' }
 
 $status = @(& git -C $WorktreePath status --porcelain 2>$null)

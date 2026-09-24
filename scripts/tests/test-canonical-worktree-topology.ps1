@@ -48,23 +48,56 @@ try {
     $topology = [ordered]@{
         schemaVersion = 1
         topologyId = 'skincos-canonical-worktrees'
-        worktree = [ordered]@{ canonicalRelativeRoot = 'admin\canonical'; pathTemplate = 'admin\canonical\{surfaceType}\{surfaceId}' }
-        surfaces = @([ordered]@{ id = 'users'; type = 'module'; label = 'Usuários'; relativePath = 'module\users'; source = 'fixture'; pilot = $true })
+        worktree = [ordered]@{ canonicalRelativeRoot = '.'; pathTemplate = 'skincos-canonical-{group}-{commitShort}'; managedNamePrefix = 'skincos-canonical-' }
+        surfaces = @(
+            [ordered]@{ id = 'users'; type = 'module'; label = 'Usuários'; relativePath = 'skincos-canonical-users'; source = 'fixture'; pilot = $true },
+            [ordered]@{ id = 'alias-a'; type = 'module'; label = 'Alias A'; relativePath = 'skincos-canonical-shared'; source = 'fixture'; pilot = $false },
+            [ordered]@{ id = 'alias-b'; type = 'module'; label = 'Alias B'; relativePath = 'skincos-canonical-shared'; source = 'fixture'; pilot = $false }
+        )
     }
     $topology | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $fixtureTopology -Encoding utf8
 
     $common = @('-ProjectRoot', $fixtureRepo, '-WorktreeRoot', $fixtureWorktrees, '-TopologyPath', $fixtureTopology, '-RuntimeRegistryRoot', $fixtureRegistry, '-SkipGitHub')
     $initial = Invoke-Coordinator @{ Action = 'inventory' }
-    if ($initial.missingCount -ne 1 -or $initial.presentCount -ne 0) { throw 'Initial inventory did not report one missing canonical slot.' }
+    if ($initial.missingCount -ne 3 -or $initial.presentCount -ne 0) { throw 'Initial inventory did not report three missing surfaces.' }
 
     $plan = Invoke-Coordinator @{ Action = 'plan' }
     if ($plan.actions[0].action -ne 'ensure-canonical' -or $plan.actions[0].mutation -notmatch 'Apply') { throw 'Read-only plan did not require explicit ensure apply.' }
 
     $created = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'module'; SurfaceId = 'users'; TargetCommit = $target; Apply = $true }
     if ($created.action -ne 'created' -or $created.targetCommit -ne $target) { throw 'Canonical slot was not created at the explicit target SHA.' }
+    $null = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'module'; SurfaceId = 'alias-a'; TargetCommit = $target; Apply = $true }
+    $null = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'module'; SurfaceId = 'alias-b'; TargetCommit = $target; Apply = $true }
 
     $ready = Invoke-Coordinator @{ Action = 'inventory' }
-    if ($ready.surfaces[0].status -ne 'ready' -or $ready.presentCount -ne 1 -or -not $ready.surfaces[0].worktrees[0].detached) { throw 'Created canonical slot was not reported ready and detached.' }
+    if ($ready.surfaces[0].status -ne 'ready' -or $ready.presentCount -ne 3 -or -not $ready.surfaces[0].worktrees[0].detached) { throw 'Created flat canonical slots were not reported ready and detached.' }
+
+    $aliasClaimParameters = @{
+        Action = 'claim'
+        SurfaceType = 'module'
+        SurfaceId = 'alias-a'
+        Owner = 'fixture-owner'
+        Apply = $true
+        ProjectRoot = $fixtureRepo
+        WorktreeRoot = $fixtureWorktrees
+        TopologyPath = $fixtureTopology
+        RuntimeRegistryRoot = $fixtureRegistry
+        SkipGitHub = $true
+    }
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $aliasClaimExitCode = 0
+    $aliasClaim = @()
+    try {
+        $aliasClaim = @(& $coordinator @aliasClaimParameters 2>&1)
+        $aliasClaimExitCode = $LASTEXITCODE
+    }
+    catch {
+        $aliasClaimExitCode = 1
+        $aliasClaim += [string]$_.Exception.Message
+    }
+    $ErrorActionPreference = $oldPreference
+    if ($aliasClaimExitCode -eq 0 -or (($aliasClaim -join ' ') -notmatch 'caminho é compartilhado')) { throw 'Claim on a shared flat worktree path was not rejected.' }
 
     $registryPath = Join-Path $fixtureRegistry 'canonical-registry.json'
     $registry = Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json
@@ -108,7 +141,7 @@ try {
     $released = Invoke-Coordinator @{ Action = 'release'; SurfaceType = 'module'; SurfaceId = 'users'; Owner = 'fixture-owner'; LeaseToken = $claimed.token; Apply = $true }
     if ($released.action -ne 'released') { throw 'Canonical release did not remove the lease.' }
 
-    $canonicalPath = Join-Path $fixtureWorktrees 'admin\canonical\module\users'
+    $canonicalPath = Join-Path $fixtureWorktrees 'skincos-canonical-users'
     Add-Content -LiteralPath (Join-Path $canonicalPath 'README.md') -Value "dirty`n"
     $dirty = Invoke-Coordinator @{ Action = 'inventory' }
     if ($dirty.surfaces[0].status -ne 'blocked_dirty') { throw 'Dirty canonical slot was not preserved as blocked.' }

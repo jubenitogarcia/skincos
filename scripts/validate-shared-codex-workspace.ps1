@@ -1,6 +1,6 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
-    [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$RuntimeRoot = "C:\CodexRuntime",
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 )
@@ -50,6 +50,23 @@ function Test-ModifyAccess {
         hasUsersModify = $hasModify
         owner = $acl.Owner
     }
+}
+
+function Test-CurrentUserModifyAccess {
+    param([string]$TargetPath)
+
+    $acl = Get-Acl -LiteralPath $TargetPath
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $tokenSids = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if ($identity.User) { [void]$tokenSids.Add($identity.User.Value) }
+    foreach ($group in $identity.Groups) { [void]$tokenSids.Add($group.Value) }
+    $hasModify = $false
+    foreach ($rule in $acl.Access) {
+        if ($rule.AccessControlType -ne 'Allow') { continue }
+        try { $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+        if ($tokenSids.Contains($sid) -and ($rule.FileSystemRights.ToString().Contains('Modify') -or $rule.FileSystemRights.ToString().Contains('FullControl'))) { $hasModify = $true; break }
+    }
+    [pscustomobject]@{ path = $TargetPath; exists = (Test-Path -LiteralPath $TargetPath); hasCurrentUserModify = $hasModify; owner = $acl.Owner }
 }
 
 function Test-PrivateOperatorRuntime {
@@ -116,7 +133,7 @@ function Get-CodexEnvironmentStatus {
 }
 
 $projectCheck = Test-ModifyAccess -TargetPath $ProjectRoot
-$worktreeCheck = Test-ModifyAccess -TargetPath $WorktreeRoot
+$worktreeCheck = Test-CurrentUserModifyAccess -TargetPath $WorktreeRoot
 $runtimeCheck = Test-PrivateOperatorRuntime -TargetPath $RuntimeRoot
 $operatorRuntimeCheck = Test-PrivateOperatorRuntime -TargetPath $OperatorRuntimeRoot
 $childChecks = @()

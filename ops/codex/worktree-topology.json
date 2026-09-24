@@ -3,8 +3,9 @@
   "topologyId": "skincos-canonical-worktrees",
   "operator": "admin",
   "worktree": {
-    "canonicalRelativeRoot": "admin\\canonical",
-    "pathTemplate": "admin\\canonical\\{surfaceType}\\{surfaceId}",
+    "canonicalRelativeRoot": ".",
+    "pathTemplate": "skincos-canonical-{group}-{commitShort}",
+    "managedNamePrefix": "skincos-canonical-",
     "registryRelativeRoot": "worktree-registry",
     "canonicalRole": "stable-preview-or-qualification",
     "ephemeralRole": "task-or-pr"
@@ -13,5 +14,27 @@
     "manualWorktreeRemoval": "git-worktree-remove-only",
     "runtimeSourceRemoval": "source-in-use-lease-manifest-quarantine",
     "protectedStates": ["dirty", "detached", "open-pr", "manifest-reference", "active-process", "active-lease", "unproven"]
-  }
+  },
+  "surfaces": [
+    { "id": "insumos", "type": "crm-module", "label": "Insumos", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "conversa", "type": "crm-module", "label": "Conversa", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "ponto", "type": "crm-module", "label": "Ponto", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "caixa", "type": "crm-module", "label": "Caixa", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "faturamento", "type": "crm-module", "label": "Faturamento", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "procedimentos", "type": "crm-module", "label": "Procedimentos", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "unit-monitor", "type": "crm-module", "label": "Unit Monitor", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "instagram-studio", "type": "crm-module", "label": "Redes Sociais", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "meta-pages-review", "type": "crm-module", "label": "Meta Review", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "meta-ads", "type": "crm-module", "label": "Meta Ads", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "site-tracking", "type": "crm-module", "label": "Site EF", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "escala-profissionais", "type": "crm-module", "label": "Escala", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "clinical-approvals", "type": "crm-module", "label": "Aprovações clínicas", "source": "local-launch-catalog", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "clinic-scheduling", "type": "orb-workflow-family", "label": "Clinic Scheduling", "source": "workflow-family", "relativePath": "skincos-canonical-base-73e8b30a", "targetCommit": "73e8b30a3b76c7e9711a6563fa2e06894bdd91cf", "pilot": false, "workflowIds": [] },
+    { "id": "influencer-intelligence", "type": "crm-module", "label": "Influencer Intelligence", "source": "local-launch-catalog", "relativePath": "skincos-canonical-influencer-intelligence-e5fab792", "targetCommit": "e5fab7927bf5a44f34d551d587f8b0f9cd7b54a0", "pilot": false, "workflowIds": [] },
+    { "id": "users", "type": "crm-module", "label": "Usuários", "source": "registry-exception", "relativePath": "skincos-canonical-users-9662f897", "targetCommit": "9662f8971dd2d4fd87f1f07db2c15b03d49ce364", "pilot": false, "workflowIds": [] },
+    { "id": "atendimento", "type": "crm-module", "label": "Atendimento", "source": "local-launch-catalog", "relativePath": "skincos-canonical-atendimento-31a2929e", "targetCommit": "31a2929e179b328951350b16a63d79d1dcd644f5", "pilot": false, "workflowIds": [] },
+    { "id": "clientes", "type": "crm-module", "label": "Clientes", "source": "local-launch-catalog", "relativePath": "skincos-canonical-clientes-70804d1a", "targetCommit": "70804d1aa551dc8b416bab5038f20509aebe2e16", "pilot": false, "workflowIds": [] },
+    { "id": "livia", "type": "orb-workflow-family", "label": "Livia", "source": "workflow-family", "relativePath": "skincos-canonical-livia-106f934a", "targetCommit": "106f934aad010e54a338bcc4b180ea822e515930", "pilot": false, "workflowIds": [] },
+    { "id": "meta-ads-publish", "type": "orb-workflow-family", "label": "Meta Ads Publish", "source": "workflow-family", "relativePath": "skincos-canonical-meta-ads-publish-e8ab474d", "targetCommit": "e8ab474d7995c228c210e8e6ab7f1792fc56bab2", "pilot": false, "workflowIds": [] }
+  ]
 }

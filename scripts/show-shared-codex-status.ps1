@@ -1,6 +1,6 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
-    [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$RuntimeRoot = "C:\CodexRuntime",
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 )
@@ -76,43 +76,51 @@ function Get-GitStatusSummary {
 }
 
 function Get-WorktreeSummary {
-    param([string]$Root)
+    param([string]$Root, [string]$RepoPath)
 
     if (-not (Test-Path -LiteralPath $Root)) {
         return @()
     }
 
-    $items = @()
-    foreach ($actorDir in Get-ChildItem -LiteralPath $Root -Directory -Force | Sort-Object Name) {
-        foreach ($taskDir in Get-ChildItem -LiteralPath $actorDir.FullName -Directory -Force | Sort-Object Name) {
-            $branch = $null
-            $gitTrusted = $false
-            if (Test-Path -LiteralPath (Join-Path $taskDir.FullName '.git')) {
-                $branchLines = @(Invoke-GitSafe -RepoPath $taskDir.FullName -Arguments @("rev-parse", "--abbrev-ref", "HEAD") | Where-Object {
-                    -not [string]::IsNullOrWhiteSpace($_)
-                })
-                if ($branchLines.Count -gt 0) {
-                    $branch = ([string]$branchLines[0]).Trim()
-                    $gitTrusted = $true
-                } else {
-                    $branch = "untrusted-or-unavailable"
-                }
-            }
+    $lines = @(Invoke-GitSafe -RepoPath $RepoPath -Arguments @('worktree', 'list', '--porcelain'))
+    $records = @(); $current = $null
+    foreach ($line in @($lines + '')) {
+        if ($line -like 'worktree *') {
+            if ($null -ne $current) { $records += [pscustomobject]$current }
+            $current = [ordered]@{ path = $line.Substring(9); head = $null; branch = $null; detached = $false }
+        }
+        elseif ($null -ne $current -and $line -like 'HEAD *') { $current.head = $line.Substring(5) }
+        elseif ($null -ne $current -and $line -match '^branch refs/heads/(.*)$') { $current.branch = $Matches[1] }
+        elseif ($null -ne $current -and $line -eq 'detached') { $current.detached = $true }
+    }
+    if ($null -ne $current) { $records += [pscustomobject]$current }
 
-            $items += [pscustomobject]@{
-                actor = $actorDir.Name
-                task = $taskDir.Name
-                path = $taskDir.FullName
-                branch = $branch
-                gitTrusted = $gitTrusted
-            }
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $items = @()
+    foreach ($record in $records) {
+        $path = [IO.Path]::GetFullPath([string]$record.path).TrimEnd('\', '/')
+        $parent = [IO.Path]::GetDirectoryName($path).TrimEnd('\', '/')
+        if (-not $parent.Equals($rootPath, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $leaf = [IO.Path]::GetFileName($path)
+        $identity = if ($leaf -match '^(?<actor>.+)--(?<task>.+)$') { @{ actor = $Matches.actor; task = $Matches.task } } else { @{ actor = 'canonical-or-managed'; task = $leaf } }
+        $statusLines = @(Invoke-GitSafe -RepoPath $path -Arguments @('status', '--short') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $items += [pscustomobject]@{
+            actor = $identity.actor
+            task = $identity.task
+            path = $path
+            branch = if ($record.branch) { [string]$record.branch } else { 'detached' }
+            head = [string]$record.head
+            dirtyCount = $statusLines.Count
+            isDirty = $statusLines.Count -gt 0
+            sample = @($statusLines | Select-Object -First 10)
+            gitTrusted = $true
         }
     }
 
-    return $items
+    return @($items | Sort-Object path)
 }
 
-$safeDirectories = @(git config --global --get-all safe.directory 2>$null)
+$safeDirectories = @(Invoke-GitSafe -RepoPath $ProjectRoot -Arguments @('config', '--global', '--get-all', 'safe.directory') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 $normalizedProjectRoot = Normalize-PathString -Path $ProjectRoot
 $normalizedSafeDirectories = @($safeDirectories | ForEach-Object { Normalize-PathString -Path $_ })
 
@@ -125,7 +133,7 @@ $status = [pscustomobject]@{
     projectRoot = $ProjectRoot
     projectStatus = Get-GitStatusSummary -RepoPath $ProjectRoot
     worktreeRoot = $WorktreeRoot
-    worktrees = @(Get-WorktreeSummary -Root $WorktreeRoot)
+    worktrees = @(Get-WorktreeSummary -Root $WorktreeRoot -RepoPath $ProjectRoot)
     safeDirectoryRegistered = $normalizedSafeDirectories -contains $normalizedProjectRoot
     safeDirectories = $safeDirectories
     localStateRoot = $localStateRoot
