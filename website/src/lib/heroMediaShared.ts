@@ -19,9 +19,15 @@ export type HeroMediaItem = {
     enabled?: boolean;
     order?: number;
     bookingHotspot?: HeroMediaBookingHotspot;
+    campaignWindow?: HeroMediaCampaignWindow;
 };
 
 export type HeroMediaVariant = "desktop" | "mobile";
+
+export type HeroMediaCampaignWindow = {
+    startsOn: string;
+    endsOn: string;
+};
 
 export type HeroMediaUnitCampaign = {
     desktop: HeroMediaItem[];
@@ -33,6 +39,14 @@ export type HeroMediaScopeBuckets = {
     globalItems: HeroMediaItem[];
 };
 
+const HERO_CAMPAIGN_TIME_ZONE = "America/Sao_Paulo";
+const HERO_CAMPAIGN_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+    timeZone: HERO_CAMPAIGN_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+});
+
 const HERO_AGOSTO_2026_CAMPAIGN_ITEMS = [
     { id: "banner-01", desktopWidth: 1733, desktopHeight: 907, alt: "Preenchimento facial de 1 ml a partir de R$ 599 durante a Vitrine de 10 a 31 de agosto" },
     { id: "banner-02", desktopWidth: 1733, desktopHeight: 907, alt: "Botox 3 regiões 40U por R$ 599 durante a Vitrine de 10 a 31 de agosto" },
@@ -43,6 +57,52 @@ const HERO_AGOSTO_2026_CAMPAIGN_ITEMS = [
     { id: "banner-07", desktopWidth: 1733, desktopHeight: 907, alt: "Bioestimulador de colágeno Nutriex por R$ 899 e Diamond Intense por R$ 1.299" },
     { id: "banner-08", desktopWidth: 1733, desktopHeight: 907, alt: "Peeling de uma sessão por R$ 149 durante a Vitrine de 10 a 31 de agosto" },
 ] as const;
+
+const HERO_AGOSTO_2026_WINDOW: HeroMediaCampaignWindow = {
+    startsOn: "2026-08-10",
+    endsOn: "2026-08-31",
+};
+
+function isValidCampaignDate(value: unknown): value is string {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split("-").map(Number);
+    if (!year || month < 1 || month > 12 || day < 1 || day > 31) return false;
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+
+export function normalizeHeroMediaCampaignWindow(value: unknown): HeroMediaCampaignWindow | null {
+    if (!value || typeof value !== "object") return null;
+    const window = value as Record<string, unknown>;
+    const startsOn = window.startsOn;
+    const endsOn = window.endsOn;
+    if (!isValidCampaignDate(startsOn) || !isValidCampaignDate(endsOn) || startsOn > endsOn) return null;
+    return { startsOn, endsOn };
+}
+
+function currentHeroCampaignDate(now: Date): string | null {
+    if (!Number.isFinite(now.getTime())) return null;
+    const parts = HERO_CAMPAIGN_DATE_FORMATTER.formatToParts(now);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    return year && month && day ? year + "-" + month + "-" + day : null;
+}
+
+export function isHeroMediaCampaignWindowCurrent(item: HeroMediaItem, now: Date = new Date()): boolean {
+    const campaignWindow = normalizeHeroMediaCampaignWindow(item.campaignWindow);
+    const currentDate = currentHeroCampaignDate(now);
+    return Boolean(
+        campaignWindow &&
+        currentDate &&
+        campaignWindow.startsOn <= currentDate &&
+        currentDate <= campaignWindow.endsOn,
+    );
+}
+
+export function filterHeroMediaItemsByCampaignWindow(items: HeroMediaItem[], now: Date = new Date()): HeroMediaItem[] {
+    return items.filter((item) => isHeroMediaCampaignWindowCurrent(item, now));
+}
 
 function formatHeroAspectRatio(width: number | undefined, height: number | undefined): string | undefined {
     if (!Number.isFinite(width) || !Number.isFinite(height)) return undefined;
@@ -69,6 +129,7 @@ function heroAgosto2026DesktopItem(
         width: item.desktopWidth,
         height: item.desktopHeight,
         aspectRatio: formatHeroAspectRatio(item.desktopWidth, item.desktopHeight),
+        campaignWindow: HERO_AGOSTO_2026_WINDOW,
         order: index + 1,
     };
 }
@@ -87,6 +148,7 @@ function heroAgosto2026MobileItem(
         width,
         height,
         aspectRatio: formatHeroAspectRatio(width, height),
+        campaignWindow: HERO_AGOSTO_2026_WINDOW,
         order: index + 1,
     };
 }
@@ -193,13 +255,19 @@ export function dedupeHeroMediaItems(items: HeroMediaItem[]): HeroMediaItem[] {
     return [...unique.values()];
 }
 
-function resolveItemsWithFallbackScope(items: HeroMediaItem[], fallbackScope: HeroMediaScope, unitScope: HeroMediaScope | null): HeroMediaScopeBuckets {
+function resolveItemsWithFallbackScope(
+    items: HeroMediaItem[],
+    fallbackScope: HeroMediaScope,
+    unitScope: HeroMediaScope | null,
+    now: Date = new Date(),
+): HeroMediaScopeBuckets {
     const unitItems: HeroMediaItem[] = [];
     const globalItems: HeroMediaItem[] = [];
 
     for (const rawItem of items) {
         if (!rawItem || typeof rawItem.src !== "string" || !rawItem.src.trim()) continue;
         if (rawItem.enabled === false) continue;
+        if (!isHeroMediaCampaignWindowCurrent(rawItem, now)) continue;
 
         const scope = normalizeHeroMediaScope(rawItem.scope ?? null) ?? fallbackScope;
         if (scope !== "global" && (!unitScope || scope !== unitScope)) continue;
@@ -228,22 +296,24 @@ export function resolveScopedHeroMediaItems(options: {
     items: HeroMediaItem[];
     unitSlug?: string | null;
     fallbackScope?: HeroMediaScope;
+    now?: Date;
 }): HeroMediaScopeBuckets {
     const unitScope = toUnitScope(options.unitSlug);
     const fallbackScope = options.fallbackScope ?? "global";
-    return resolveItemsWithFallbackScope(options.items, fallbackScope, unitScope);
+    return resolveItemsWithFallbackScope(options.items, fallbackScope, unitScope, options.now);
 }
 
 export function composeHeroMediaItems(options: {
     unitSlug?: string | null;
     unitItems?: HeroMediaItem[];
     globalItems?: HeroMediaItem[];
+    now?: Date;
 }): HeroMediaItem[] {
     const unitScope = toUnitScope(options.unitSlug);
     const resolvedUnit = unitScope
-        ? resolveItemsWithFallbackScope(options.unitItems ?? [], unitScope, unitScope)
+        ? resolveItemsWithFallbackScope(options.unitItems ?? [], unitScope, unitScope, options.now)
         : { unitItems: [] as HeroMediaItem[], globalItems: [] as HeroMediaItem[] };
-    const resolvedGlobal = resolveItemsWithFallbackScope(options.globalItems ?? [], "global", unitScope);
+    const resolvedGlobal = resolveItemsWithFallbackScope(options.globalItems ?? [], "global", unitScope, options.now);
 
     // Order rule: specific unit items always come before global items.
     return dedupeHeroMediaItems([
@@ -254,7 +324,7 @@ export function composeHeroMediaItems(options: {
     ]);
 }
 
-export function getLocalHeroItemsByScope(variant: HeroMediaVariant, options: { unitSlug?: string | null } = {}): HeroMediaScopeBuckets {
+export function getLocalHeroItemsByScope(variant: HeroMediaVariant, options: { unitSlug?: string | null; now?: Date } = {}): HeroMediaScopeBuckets {
     const unitScope = toUnitScope(options.unitSlug);
     const unitKey = unitScope ? unitScope.slice("unit:".length) : "";
     const unitCampaign = unitKey ? LOCAL_HERO_ITEMS_BY_UNIT[unitKey] : null;
@@ -262,8 +332,8 @@ export function getLocalHeroItemsByScope(variant: HeroMediaVariant, options: { u
     const globalSource = variant === "mobile" ? LOCAL_HERO_ITEMS_MOBILE : LOCAL_HERO_ITEMS_DESKTOP;
     const unitSource = unitCampaign ? (variant === "mobile" ? unitCampaign.mobile : unitCampaign.desktop) : [];
 
-    const fromGlobal = resolveItemsWithFallbackScope(globalSource, "global", unitScope);
-    const fromUnit = unitScope ? resolveItemsWithFallbackScope(unitSource, unitScope, unitScope) : { unitItems: [] as HeroMediaItem[], globalItems: [] as HeroMediaItem[] };
+    const fromGlobal = resolveItemsWithFallbackScope(globalSource, "global", unitScope, options.now);
+    const fromUnit = unitScope ? resolveItemsWithFallbackScope(unitSource, unitScope, unitScope, options.now) : { unitItems: [] as HeroMediaItem[], globalItems: [] as HeroMediaItem[] };
 
     return {
         unitItems: dedupeHeroMediaItems([...fromGlobal.unitItems, ...fromUnit.unitItems]),
@@ -271,12 +341,13 @@ export function getLocalHeroItemsByScope(variant: HeroMediaVariant, options: { u
     };
 }
 
-export function getLocalHeroItems(variant: HeroMediaVariant, options: { unitSlug?: string | null } = {}): HeroMediaItem[] {
+export function getLocalHeroItems(variant: HeroMediaVariant, options: { unitSlug?: string | null; now?: Date } = {}): HeroMediaItem[] {
     const scoped = getLocalHeroItemsByScope(variant, options);
     return composeHeroMediaItems({
         unitSlug: options.unitSlug,
         unitItems: scoped.unitItems,
         globalItems: scoped.globalItems,
+        now: options.now,
     });
 }
 

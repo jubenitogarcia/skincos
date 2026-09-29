@@ -3245,6 +3245,61 @@ body:has(.beautyMovementPage) .header {
   background: linear-gradient(180deg, var(--hero-band-bg-top, var(--hero-band-bg, #050505)), var(--hero-band-bg-bottom, var(--hero-band-bg, #050505)));
 }
 
+.heroMedia--campaign-fallback {
+  aspect-ratio: auto;
+  height: clamp(320px, 35vw, 440px);
+  min-height: 0;
+  background: radial-gradient(ellipse at 50% 45%, #26221d 0%, #111 72%);
+}
+
+.heroMediaFallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(20px, 3vw, 32px);
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  padding: clamp(24px, 6vw, 80px);
+  color: #f5ead8;
+  text-align: center;
+}
+
+.heroMediaFallback__title {
+  max-width: 1000px;
+  margin: 0;
+  color: inherit;
+  font-size: clamp(1.6rem, 4.5vw, 3.5rem);
+  font-weight: 650;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.heroMediaFallback__cta {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 28px;
+  border-radius: 999px;
+  background: #f5ead8;
+  color: #1f1f1f;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-decoration: none;
+}
+
+.heroMediaFallback__cta:hover,
+.heroMediaFallback__cta:focus-visible {
+  background: #fff;
+}
+
+.heroMediaFallback__cta:focus-visible {
+  outline: 2px solid #f5ead8;
+  outline-offset: 4px;
+}
+
 .heroMediaLayer {
   position: absolute;
   inset: 0;
@@ -3277,6 +3332,11 @@ body:has(.beautyMovementPage) .header {
 @media (max-width:900px) {
   .heroMedia {
     aspect-ratio: var(--hero-ar-mobile, var(--hero-ar, 9 / 16));
+  }
+
+  .heroMedia--campaign-fallback {
+    aspect-ratio: auto;
+    height: clamp(260px, 78vw, 360px);
   }
 
   .heroMediaResponsiveLayer--desktop {

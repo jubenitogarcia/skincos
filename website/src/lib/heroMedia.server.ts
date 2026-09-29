@@ -3,7 +3,9 @@ import "server-only";
 import { driveListFolderFiles } from "@/lib/googleDrive";
 import {
     composeHeroMediaItems,
+    filterHeroMediaItemsByCampaignWindow,
     getLocalHeroItemsByScope,
+    normalizeHeroMediaCampaignWindow,
     normalizeHeroMediaScope,
     normalizeHeroUnitSlug,
     resolveScopedHeroMediaItems,
@@ -130,6 +132,7 @@ function parseManifestItem(raw: unknown, defaultScope: HeroMediaScope): HeroMedi
         scope: normalizedScope,
         enabled,
         order: normalizeOrder(obj.order),
+        campaignWindow: normalizeHeroMediaCampaignWindow(obj.campaignWindow) ?? undefined,
         bookingHotspot: parseBookingHotspot(obj.bookingHotspot),
     };
 }
@@ -401,20 +404,21 @@ export async function getHeroMediaItems(
     const cacheKey = getHeroCacheKey(variant, unitSlug);
     const now = Date.now();
     const existing = heroCacheByKey[cacheKey] ?? null;
+    const currentItems = existing ? filterHeroMediaItemsByCampaignWindow(existing.items, new Date(now)) : null;
     if (existing && existing.expiresAtMs > now) {
         return {
-            items: existing.items,
+            items: currentItems ?? [],
             source: existing.source,
-            debug: existing.debug,
+            debug: { ...existing.debug, count: currentItems?.length ?? 0 },
         };
     }
 
     if (existing) {
         void refreshHeroMedia(variant, unitSlug);
         return {
-            items: existing.items,
+            items: currentItems ?? [],
             source: existing.source,
-            debug: existing.debug,
+            debug: { ...existing.debug, count: currentItems?.length ?? 0 },
         };
     }
 
