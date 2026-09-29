@@ -2,7 +2,7 @@
 
 import TrackedBookingLink from "@/components/TrackedBookingLink";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
-import { getHeroMediaAspectRatio, getLocalHeroItems, normalizeHeroUnitSlug, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
+import { filterHeroMediaItemsByCampaignWindow, getHeroMediaAspectRatio, getLocalHeroItems, normalizeHeroUnitSlug, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
@@ -179,11 +179,27 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
     const [bandColors, setBandColors] = useState<HeroFrameColors>(HERO_DEFAULT_FRAME_COLORS);
     const [readyImageSrcs, setReadyImageSrcs] = useState<Record<string, true>>({});
     const [variant, setVariant] = useState<HeroMediaVariant>(startupVariant);
+    const [campaignNow, setCampaignNow] = useState(() => new Date());
     const frameColorCacheRef = useRef<Record<string, HeroFrameColors>>({});
     const aspectRatioCacheRef = useRef<Record<string, string>>({});
     const bandLeadTimeoutRef = useRef<number | null>(null);
     const topBandTextColor = useMemo(() => pickBandTextColor(bandColors.top), [bandColors.top]);
     const bottomBandTextColor = useMemo(() => pickBandTextColor(bandColors.bottom), [bandColors.bottom]);
+
+    useEffect(() => {
+        const refreshCampaignWindow = () => setCampaignNow(new Date());
+        const refreshWhenVisible = () => {
+            if (document.visibilityState === "visible") refreshCampaignWindow();
+        };
+        const interval = window.setInterval(refreshCampaignWindow, 60_000);
+        window.addEventListener("focus", refreshCampaignWindow);
+        document.addEventListener("visibilitychange", refreshWhenVisible);
+        return () => {
+            window.clearInterval(interval);
+            window.removeEventListener("focus", refreshCampaignWindow);
+            document.removeEventListener("visibilitychange", refreshWhenVisible);
+        };
+    }, []);
 
     type HeroStyle = CSSProperties &
         Record<
@@ -223,7 +239,10 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
     const targetUnitSlug = unit?.slug ?? initialUnitSlug ?? null;
     const targetCampaignKey = campaignKey(variant, targetUnitSlug);
     const initialCampaignKey = campaignKey(variant, initialUnitSlug ?? null);
-    const visibleItems = loadedCampaignKey === targetCampaignKey ? items : EMPTY_HERO_ITEMS;
+    const visibleItems = useMemo(
+        () => loadedCampaignKey === targetCampaignKey ? filterHeroMediaItemsByCampaignWindow(items, campaignNow) : EMPTY_HERO_ITEMS,
+        [campaignNow, items, loadedCampaignKey, targetCampaignKey],
+    );
 
     const markImageReady = useCallback((src: string) => {
         if (!src) return;
@@ -297,9 +316,10 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
                 if (!response.ok) throw new Error(`hero_media_http_${response.status}`);
 
                 const payload = (await response.json()) as { items?: HeroMediaItem[] };
-                const nextItems = Array.isArray(payload.items) && payload.items.length > 0 ? payload.items : fallbackItems;
+                const remoteItems = Array.isArray(payload.items) ? filterHeroMediaItemsByCampaignWindow(payload.items) : [];
+                const nextItems = remoteItems.length > 0 ? remoteItems : fallbackItems;
                 if (!cancelled) {
-                    setItems(nextItems);
+                    setItems(filterHeroMediaItemsByCampaignWindow(nextItems));
                     setLoadedCampaignKey(targetCampaignKey);
                 }
             } catch {
@@ -592,7 +612,7 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
     };
 
     return (
-        <div className="heroMedia" style={style}>
+        <div className={`heroMedia${item ? "" : " heroMedia--campaign-fallback"}`} style={style}>
             {visibleItems.length > 1 ? (
                 <>
                     <div className="heroHoverZone heroHoverZone--left" aria-hidden="true" />
@@ -610,7 +630,22 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
                 </>
             ) : null}
 
-            {item ? renderLayer(item, { kind: "active", colors: frameColors }) : null}
+            {item ? renderLayer(item, { kind: "active", colors: frameColors }) : (
+                <div className="heroMediaFallback" role="group" aria-label="Destaque">
+                    <h2 className="heroMediaFallback__title">Harmonização facial com naturalidade</h2>
+                    <TrackedBookingLink
+                        href={bookingHref}
+                        className="heroMediaFallback__cta"
+                        placement="hero_banner"
+                        unitSlug={unit?.slug ?? null}
+                        experience="hero_media"
+                        variant={effectiveVariant}
+                        aria-label="AGENDE"
+                    >
+                        AGENDE
+                    </TrackedBookingLink>
+                </div>
+            )}
             {prevIndex !== null && visibleItems[prevIndex] ? renderLayer(visibleItems[prevIndex]!, { kind: "prev", colors: prevFrameColors }) : null}
 
             {item?.bookingHotspot ? (
