@@ -43,3 +43,7 @@ Até cada publisher e operação serem migrados, a ação que depender deles fic
 tecnicamente inelegível. O agente deve desenvolver e validar o substituto
 necessário dentro da missão autorizada, sem converter a dependência do Actions
 em pedido repetido de permissão.
+
+O [inventário de 2026-09-30](../operations/github-actions-retirement-inventory-2026-09-30.md)
+registra os gatilhos ainda ativos e a ordem de corte. Revalidar seus números
+na API antes de qualquer alteração remota.
