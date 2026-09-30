@@ -15,6 +15,7 @@ import {
 
 const incumbent = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const candidate = "ffffffff-1111-2222-3333-444444444444";
+const currentConfig = { configBindingPresent: true, nextConfigBindingPresent: false, configBearerMode: "current" };
 
 test("candidate upload binds exact version to trusted preview hostname", () => {
   const output = `Worker Version ID: ${candidate}\nVersion Preview URL: https://ffffffff-skincos-token-vault-staging.skincos.workers.dev\n`;
@@ -38,7 +39,7 @@ test("candidate upload records its remote attempt before invoking Wrangler", asy
   const order = [];
   const output = `Worker Version ID: ${candidate}\nVersion Preview URL: https://ffffffff-skincos-token-vault.skincos.workers.dev\n`;
   const result = await uploadCandidate({ target: "production", sourceSha: "a".repeat(40), root: "/repo",
-    transactionDirectory, analyticsBindingPresent: true,
+    transactionDirectory, analyticsBindingPresent: true, ...currentConfig,
     env: { TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "config-bearer" },
     authorize: async () => { order.push("lease"); },
     markAttempt: async () => { order.push("journal"); },
@@ -53,17 +54,29 @@ test("candidate secrets preserve staging isolation and do not duplicate inherite
     TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "config-bearer",
     TOKEN_VAULT_N8N_API_TOKEN: "n".repeat(32),
   };
-  const secrets = candidateSecrets("staging", env, { analyticsBindingPresent: true, seedBearer: "s".repeat(64) });
+  const secrets = candidateSecrets("staging", env, { analyticsBindingPresent: true, seedBearer: "s".repeat(64), ...currentConfig });
   assert.equal(secrets.TOKEN_VAULT_ANALYTICS_API_TOKEN, undefined);
   assert.equal(secrets.TOKEN_VAULT_N8N_API_TOKEN, "n".repeat(32));
-  assert.throws(() => candidateSecrets("staging", { ...env, TOKEN_VAULT_N8N_API_TOKEN: "config-bearer" }, { analyticsBindingPresent: true, seedBearer: "s".repeat(64) }), /invalid or reused/);
-  const production = candidateSecrets("production", env, { analyticsBindingPresent: true });
+  assert.throws(() => candidateSecrets("staging", { ...env, TOKEN_VAULT_N8N_API_TOKEN: "config-bearer" }, { analyticsBindingPresent: true, seedBearer: "s".repeat(64), ...currentConfig }), /invalid or reused/);
+  const production = candidateSecrets("production", env, { analyticsBindingPresent: true, ...currentConfig });
   assert.equal(production.TOKEN_VAULT_N8N_API_TOKEN, undefined);
   assert.equal(production.TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN, undefined);
-  assert.throws(() => candidateSecrets("production", env, { analyticsBindingPresent: false }), /canonical custody/);
+  assert.throws(() => candidateSecrets("production", env, { analyticsBindingPresent: false, ...currentConfig }), /canonical custody/);
   const recovered = candidateSecrets("production", { ...env, TOKEN_VAULT_ANALYTICS_API_TOKEN: "a".repeat(40) },
-    { analyticsBindingPresent: false });
+    { analyticsBindingPresent: false, ...currentConfig });
   assert.equal(recovered.TOKEN_VAULT_ANALYTICS_API_TOKEN, "a".repeat(40));
+});
+
+test("staging overlap adds only the next config bearer and preserves the inherited primary", () => {
+  const env = { TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "r".repeat(48), TOKEN_VAULT_N8N_API_TOKEN: "n".repeat(48) };
+  const overlap = { configBindingPresent: true, nextConfigBindingPresent: false, configBearerMode: "overlap",
+    analyticsBindingPresent: true, seedBearer: "s".repeat(64) };
+  const secrets = candidateSecrets("staging", env, overlap);
+  assert.equal(secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN, undefined);
+  assert.equal(secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT, "r".repeat(48));
+  assert.throws(() => candidateSecrets("production", env, overlap), /staging-only/);
+  assert.throws(() => candidateSecrets("staging", env, { ...overlap, configBindingPresent: false }), /inherited primary/);
+  assert.throws(() => candidateSecrets("staging", env, { ...overlap, nextConfigBindingPresent: true }), /reconciled config binding/);
 });
 
 test("Worker activation and compensation require exact ownership and lease callback", async () => {

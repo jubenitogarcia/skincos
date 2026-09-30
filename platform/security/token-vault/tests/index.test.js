@@ -7,6 +7,7 @@ const TEST_API_TOKEN = ['unit', 'auth', 'token'].join('-');
 const TEST_OPERATIONAL_TOKEN = ['unit', 'operational', 'token'].join('-');
 const TEST_ANALYTICS_TOKEN = ['unit', 'analytics', 'token'].join('-');
 const TEST_META_ADS_CONFIG_TOKEN = ['unit', 'meta', 'ads', 'config', 'token'].join('-');
+const TEST_META_ADS_CONFIG_NEXT_TOKEN = ['unit', 'meta', 'ads', 'config', 'next', 'token'].join('-');
 const TEST_META_ADS_STAGING_SEED_TOKEN = ['unit', 'meta', 'ads', 'staging', 'seed', 'token'].join('-');
 const TEST_ENCRYPTION_KEY = ['unit', 'encryption', 'key', 'with', 'enough', 'length'].join('-');
 const THREADS_TOKEN = ['threads', 'fixture', 'token'].join('-');
@@ -228,6 +229,39 @@ test('configured worker secrets must remain pairwise distinct', async () => {
   );
   assert.equal(response.status, 500);
   assert.equal((await response.json()).error, 'invalid_worker_secret_configuration');
+});
+
+test('staging config overlap accepts both restricted bearers and rejects unsafe environments', async () => {
+  const environment = env(new FakeDb());
+  environment.ENVIRONMENT = 'staging';
+  environment.TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT = TEST_META_ADS_CONFIG_NEXT_TOKEN;
+  for (const bearer of [TEST_META_ADS_CONFIG_TOKEN, TEST_META_ADS_CONFIG_NEXT_TOKEN]) {
+    const response = await handleRequest(new Request(
+      'https://api-staging.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config',
+      { headers: { Authorization: `Bearer ${bearer}` } },
+    ), environment);
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).config_authority_mode, 'legacy_bootstrap');
+  }
+  const denied = await handleRequest(new Request(
+    'https://api-staging.skincos.com.br/internal/token-vault/v1/tokens?active=true',
+    { headers: { Authorization: `Bearer ${TEST_META_ADS_CONFIG_NEXT_TOKEN}` } },
+  ), environment);
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error, 'meta_ads_config_credential_scope_required');
+
+  for (const unsafe of [
+    { ...environment, ENVIRONMENT: 'production' },
+    { ...environment, TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT: TEST_META_ADS_CONFIG_TOKEN },
+    { ...environment, TOKEN_VAULT_META_ADS_CONFIG_TOKEN: '' },
+  ]) {
+    const response = await handleRequest(new Request(
+      'https://api-staging.skincos.com.br/internal/token-vault/health',
+      { headers: authHeaders() },
+    ), unsafe);
+    assert.equal(response.status, 500);
+    assert.equal((await response.json()).error, 'invalid_worker_secret_configuration');
+  }
 });
 
 test('Meta Ads staging seed bearer is staging-only, pairwise distinct, and exclusive to its five POST routes', async () => {

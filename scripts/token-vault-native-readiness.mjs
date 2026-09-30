@@ -43,9 +43,17 @@ export function validateEnvironment(target, env = process.env) {
   const get = (name) => String(env[name] || "");
   const configToken = get("TOKEN_VAULT_META_ADS_CONFIG_TOKEN");
   if (!/^[\x21-\x7e]+$/.test(configToken)) throw new Error("Token Vault config bearer must be printable ASCII without BOM or control characters");
+  const configBearerMode = get("TOKEN_VAULT_CONFIG_BEARER_MODE") || "current";
+  if (!["current", "overlap"].includes(configBearerMode) || (target !== "staging" && configBearerMode !== "current")) {
+    throw new Error("Token Vault config bearer overlap is permitted only for staging");
+  }
+  if (configBearerMode === "overlap" && configToken.length < 32) {
+    throw new Error("staging overlap bearer must have at least 32 characters");
+  }
   const baseName = target === "staging" ? "TOKEN_VAULT_STAGING_BASE_URL" : "TOKEN_VAULT_PRODUCTION_BASE_URL";
   const base = get(baseName);
-  if (!/^https:\/\/[^/]+$/.test(base)) throw new Error(`${baseName} must be an HTTPS origin`);
+  const expectedBase = target === "staging" ? "https://api-staging.skincos.com.br" : "https://api.skincos.com.br";
+  if (base !== expectedBase) throw new Error(`${baseName} must match the canonical Token Vault route`);
   const enabledName = target === "staging" ? "ENABLE_TOKEN_VAULT_DEPLOY_STAGING" : "ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY";
   if (get(enabledName) !== "true") throw new Error(`${enabledName} must be true`);
   if (target === "staging") {
@@ -67,7 +75,7 @@ export function validateEnvironment(target, env = process.env) {
       throw new Error("staging operational bearer is absent, short or reused");
     }
   }
-  return { target, base };
+  return { target, base, configBearerMode };
 }
 
 export function readRemoteFacts(target, root, run = command) {
@@ -102,11 +110,33 @@ export function readRemoteFacts(target, root, run = command) {
     d1TimeTravelBookmark: bookmark,
     analyticsBindingPresent: names.has("TOKEN_VAULT_ANALYTICS_API_TOKEN"),
     configBindingPresent: names.has("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"),
+    nextConfigBindingPresent: names.has("TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT"),
   };
 }
 
+export async function verifyPlannedConfigRotation({ target, baseUrl, bearer, configBindingPresent, nextConfigBindingPresent, fetchImpl = fetch }) {
+  if (target !== "staging" || baseUrl !== "https://api-staging.skincos.com.br"
+    || !/^[\x21-\x7e]{32,}$/.test(String(bearer || ""))
+    || configBindingPresent !== true || nextConfigBindingPresent !== false) {
+    throw new Error("staging config rotation requires an incumbent primary and no prior overlap binding");
+  }
+  const response = await fetchImpl(`${baseUrl}/internal/token-vault/v1/meta-ads-publish/config`, {
+    headers: { Authorization: `Bearer ${bearer}` },
+    cache: "no-store", redirect: "error", signal: AbortSignal.timeout(20_000),
+  });
+  let payload = null;
+  try { payload = await response.json(); } catch {}
+  if (response.status !== 401 || payload?.ok !== false || payload?.error !== "invalid_auth_header"
+    || typeof payload?.requestId !== "string" || !payload.requestId.trim()) {
+    throw new Error("staging replacement bearer did not produce the incumbent's exact authentication rejection");
+  }
+  return { mode: "rotation_planned" };
+}
+
 export async function verifyIncumbentConfigBearer({ target, baseUrl, bearer, fetchImpl = fetch }) {
-  if (!["staging", "production"].includes(target) || !/^https:\/\/[^/]+$/.test(baseUrl)
+  const expectedBase = target === "staging" ? "https://api-staging.skincos.com.br"
+    : target === "production" ? "https://api.skincos.com.br" : null;
+  if (!expectedBase || baseUrl !== expectedBase
     || !/^[\x21-\x7e]+$/.test(String(bearer || ""))) {
     throw new Error("incumbent config authentication request is invalid");
   }
@@ -132,9 +162,14 @@ export function verifyReadinessEvidence(value, expected) {
     || !VERSION.test(String(value.incumbentVersionId || ""))
     || typeof value.analyticsBindingPresent !== "boolean"
     || typeof value.configBindingPresent !== "boolean"
-    || !["binding_absent", "tracking_ready", "legacy_bootstrap"].includes(value.incumbentConfigAuthorityMode)
+    || value.nextConfigBindingPresent !== false
+    || !["current", "overlap"].includes(value.configBearerMode)
+    || (value.target !== "staging" && value.configBearerMode !== "current")
+    || !["binding_absent", "tracking_ready", "legacy_bootstrap", "rotation_planned"].includes(value.incumbentConfigAuthorityMode)
     || (value.configBindingPresent && value.incumbentConfigAuthorityMode === "binding_absent")
     || (!value.configBindingPresent && value.incumbentConfigAuthorityMode !== "binding_absent")
+    || (value.configBearerMode === "overlap" && (!value.configBindingPresent || value.incumbentConfigAuthorityMode !== "rotation_planned"))
+    || (value.configBearerMode === "current" && value.incumbentConfigAuthorityMode === "rotation_planned")
     || !BOOKMARK.test(String(value.d1TimeTravelBookmark || ""))) {
     throw new Error("readiness evidence has an invalid gate result");
   }
@@ -142,7 +177,8 @@ export function verifyReadinessEvidence(value, expected) {
     || createHash("sha256").update(canonicalJson(body)).digest("hex") !== evidenceDigest) {
     throw new Error("readiness evidence digest does not match its contents");
   }
-  for (const key of ["target", "sourceSha", "sourceTree", "releaseInputDigest", "previewEvidenceDigest"]) {
+  for (const key of ["target", "sourceSha", "sourceTree", "releaseInputDigest", "previewEvidenceDigest", "configBearerMode"]) {
+    if (key === "configBearerMode" && expected[key] === undefined) continue;
     if (value[key] !== expected[key]) throw new Error(`readiness evidence ${key} differs from the requested release`);
   }
   return value;
@@ -189,7 +225,7 @@ async function main() {
     throw new Error("Token Vault native readiness must run in Ubuntu-24.04 through the typed WSL boundary");
   }
   const options = parseArgs(process.argv.slice(2));
-  const { base } = validateEnvironment(options.target);
+  const { base, configBearerMode } = validateEnvironment(options.target);
   const root = process.cwd();
   const { identity } = verifyDetachedRelease({ root, sourceSha: options.sourceSha });
   const stat = fs.lstatSync(options.observationFile);
@@ -207,10 +243,14 @@ async function main() {
   });
   const file = outputPath(options.outputFile, options.target, options.sourceSha, root);
   const facts = readRemoteFacts(options.target, root);
-  const incumbentConfigAuthority = facts.configBindingPresent
-    ? await verifyIncumbentConfigBearer({ target: options.target, baseUrl: base,
-      bearer: process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN })
-    : { mode: "binding_absent" };
+  if (facts.nextConfigBindingPresent) throw new Error("existing config overlap binding requires reconciliation before native readiness");
+  const incumbentConfigAuthority = configBearerMode === "overlap"
+    ? await verifyPlannedConfigRotation({ target: options.target, baseUrl: base,
+      bearer: process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN, ...facts })
+    : facts.configBindingPresent
+      ? await verifyIncumbentConfigBearer({ target: options.target, baseUrl: base,
+        bearer: process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN })
+      : { mode: "binding_absent" };
   if (!facts.analyticsBindingPresent) {
     const analytics = String(process.env.TOKEN_VAULT_ANALYTICS_API_TOKEN || "");
     if (analytics.length < 32 || analytics === process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN) {
@@ -227,6 +267,7 @@ async function main() {
     releaseInputDigest: digest,
     previewEvidenceDigest: preview.evidenceDigest,
     ...facts,
+    configBearerMode,
     incumbentConfigAuthorityMode: incumbentConfigAuthority.mode,
     readOnly: true,
     mutationAuthorized: false,

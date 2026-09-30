@@ -103,6 +103,20 @@ nativos. Os exemplos mostram argumentos, nunca valores de credenciais.
    autentica o bearer na rota live, somente para leitura, antes de permitir
    qualquer upload:
 
+   Em staging, se o binding de configuração atual existe mas seu valor não está
+   em custódia recuperável, gere um bearer **novo** em custódia de staging e
+   inclua `TOKEN_VAULT_CONFIG_BEARER_MODE=overlap` no documento protegido.
+   O preflight exige o binding primário presente, nenhum binding `_NEXT`
+   anterior e uma resposta JSON `401 invalid_auth_header` da rota atual ao
+   bearer novo. O upload adiciona somente
+   `TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT`; o binding primário é preservado.
+   A candidata autentica o novo bearer com o mesmo papel restrito, enquanto os
+   consumidores do bearer antigo continuam atendidos. Produção não aceita
+   overlap. Se `_NEXT` já existir, interrompa e reconcilie a versão/consumidores
+   antes de outro release. A retirada do bearer antigo requer uma mudança
+   governada posterior, com inventário dos consumidores e rollback; não remova
+   o primário durante esta promoção.
+
    Se o binding de analytics não existir, o bearer deve estar disponível pela
    custódia nativa canônica e também para seu consumidor privado antes do
    upload. O publicador não gera um valor descartável. A produção aceita

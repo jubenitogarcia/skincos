@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { canonicalJson } from "../codex-autonomy-lib.mjs";
-import { readRemoteFacts, validateEnvironment, verifyIncumbentConfigBearer, verifyReadinessEvidence } from "../token-vault-native-readiness.mjs";
+import { readRemoteFacts, validateEnvironment, verifyIncumbentConfigBearer, verifyPlannedConfigRotation, verifyReadinessEvidence } from "../token-vault-native-readiness.mjs";
 
 const staging = {
   TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "config-bearer",
@@ -20,6 +20,11 @@ const staging = {
 
 test("native staging readiness rejects missing or reused protected inputs", () => {
   assert.equal(validateEnvironment("staging", staging).target, "staging");
+  assert.equal(validateEnvironment("staging", { ...staging, TOKEN_VAULT_CONFIG_BEARER_MODE: "overlap",
+    TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "r".repeat(48) }).configBearerMode, "overlap");
+  assert.throws(() => validateEnvironment("staging", { ...staging, TOKEN_VAULT_CONFIG_BEARER_MODE: "overlap" }), /at least 32/);
+  assert.throws(() => validateEnvironment("staging", { ...staging, TOKEN_VAULT_CONFIG_BEARER_MODE: "unknown" }), /only for staging/);
+  assert.throws(() => validateEnvironment("staging", { ...staging, TOKEN_VAULT_STAGING_BASE_URL: "https://other.example" }), /canonical Token Vault route/);
   assert.throws(() => validateEnvironment("staging", { ...staging, META_ADS_BARRASHOPPPINGSUL_PAGE_ID: "12345" }), /distinct/);
   assert.throws(() => validateEnvironment("staging", { ...staging, TOKEN_VAULT_N8N_API_TOKEN: "config-bearer" }), /short or reused/);
   assert.throws(() => validateEnvironment("staging", { ...staging, TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "\ufeffbad" }), /printable ASCII/);
@@ -33,6 +38,8 @@ test("native production readiness retains its own environment flag", () => {
     ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY: "true",
   };
   assert.equal(validateEnvironment("production", production).target, "production");
+  assert.throws(() => validateEnvironment("production", { ...production, TOKEN_VAULT_CONFIG_BEARER_MODE: "overlap" }), /only for staging/);
+  assert.throws(() => validateEnvironment("production", { ...production, TOKEN_VAULT_PRODUCTION_BASE_URL: "https://other.example" }), /canonical Token Vault route/);
   assert.throws(() => validateEnvironment("production", { ...production, ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY: "false" }), /must be true/);
 });
 
@@ -53,6 +60,7 @@ test("read-only remote facts require exact incumbent, inherited secrets and D1 b
     d1TimeTravelBookmark: "abcde12345abcde12345",
     analyticsBindingPresent: false,
     configBindingPresent: false,
+    nextConfigBindingPresent: false,
   });
   assert.equal(calls.length, 5);
   assert.equal(rows.length, 0);
@@ -70,10 +78,25 @@ test("incumbent config bearer authenticates against the live read-only authority
   assert.equal(result.mode, "legacy_bootstrap");
   assert.equal(request.url.endsWith("/internal/token-vault/v1/meta-ads-publish/config"), true);
   assert.equal(request.options.headers.Authorization, `Bearer ${staging.TOKEN_VAULT_META_ADS_CONFIG_TOKEN}`);
+  await assert.rejects(() => verifyIncumbentConfigBearer({ target: "staging", baseUrl: "https://other.example",
+    bearer: staging.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }), /authentication request is invalid/);
   await assert.rejects(() => verifyIncumbentConfigBearer({ target: "production", baseUrl: "https://api.skincos.com.br",
     bearer: "test-bearer", fetchImpl: async () => new Response(JSON.stringify({ ready: false,
       config_authority_mode: "legacy_bootstrap", config_authority_revision: `legacy:${"a".repeat(64)}` }), { status: 409 }) }),
   /rejected/);
+});
+
+test("staging overlap proves its replacement bearer is unknown to the incumbent", async () => {
+  const base = { target: "staging", baseUrl: staging.TOKEN_VAULT_STAGING_BASE_URL,
+    bearer: "r".repeat(48), configBindingPresent: true, nextConfigBindingPresent: false };
+  assert.deepEqual(await verifyPlannedConfigRotation({ ...base, fetchImpl: async () =>
+    new Response(JSON.stringify({ ok: false, error: "invalid_auth_header", requestId: "request-1" }), { status: 401 }) }),
+  { mode: "rotation_planned" });
+  await assert.rejects(() => verifyPlannedConfigRotation({ ...base, fetchImpl: async () =>
+    new Response(JSON.stringify({ ok: false, error: "missing_auth_header", requestId: "request-1" }), { status: 401 }) }), /exact authentication rejection/);
+  await assert.rejects(() => verifyPlannedConfigRotation({ ...base, fetchImpl: async () =>
+    new Response(JSON.stringify({ ok: true }), { status: 200 }) }), /exact authentication rejection/);
+  await assert.rejects(() => verifyPlannedConfigRotation({ ...base, nextConfigBindingPresent: true }), /no prior overlap binding/);
 });
 
 test("production refuses a missing inherited operational bearer", () => {
@@ -99,6 +122,8 @@ test("readiness record cannot be reused for another target or modified after cap
     d1TimeTravelBookmark: "abcde12345abcde12345",
     analyticsBindingPresent: false,
     configBindingPresent: false,
+    nextConfigBindingPresent: false,
+    configBearerMode: "current",
     incumbentConfigAuthorityMode: "binding_absent",
     readOnly: true,
     mutationAuthorized: false,
@@ -114,4 +139,9 @@ test("readiness record cannot be reused for another target or modified after cap
   assert.equal(verifyReadinessEvidence(authenticatedEvidence, authenticated), authenticatedEvidence);
   assert.throws(() => verifyReadinessEvidence({ ...authenticatedEvidence,
     incumbentConfigAuthorityMode: "binding_absent" }, authenticated), /invalid gate result/);
+  const overlap = { ...authenticated, configBearerMode: "overlap", incumbentConfigAuthorityMode: "rotation_planned" };
+  const overlapEvidence = { ...overlap, evidenceDigest: createHash("sha256").update(canonicalJson(overlap)).digest("hex") };
+  assert.equal(verifyReadinessEvidence(overlapEvidence, overlap), overlapEvidence);
+  assert.throws(() => verifyReadinessEvidence(overlapEvidence, { ...overlap, configBearerMode: "current" }), /configBearerMode differs/);
+  assert.throws(() => verifyReadinessEvidence({ ...overlapEvidence, nextConfigBindingPresent: true }, overlap), /invalid gate result/);
 });

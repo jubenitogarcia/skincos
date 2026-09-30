@@ -562,12 +562,16 @@ function authorizeRequest(request, env) {
   const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
   const analyticsToken = safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN);
   const metaAdsConfigToken = safeString(env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN);
+  const metaAdsConfigNextToken = safeString(env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT);
   const stagingBootstrapToken = safeString(env.TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN);
   const stagingMetaAdsSeedToken = safeString(env.TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN);
   if (stagingBootstrapToken && !stagingBootstrapEligible(env)) {
     return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
   if (stagingMetaAdsSeedToken && !stagingMetaAdsSeedEligible(env)) {
+    return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
+  }
+  if (metaAdsConfigNextToken && (!stagingMetaAdsSeedEligible(env) || !metaAdsConfigToken)) {
     return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
   if (!adminToken && !operationalToken && !analyticsToken && !metaAdsConfigToken && !stagingBootstrapToken && !stagingMetaAdsSeedToken) {
@@ -578,6 +582,7 @@ function authorizeRequest(request, env) {
     operationalToken,
     analyticsToken,
     metaAdsConfigToken,
+    metaAdsConfigNextToken,
     stagingBootstrapToken,
     stagingMetaAdsSeedToken,
   ].filter(Boolean);
@@ -597,6 +602,9 @@ function authorizeRequest(request, env) {
     return { ok: true, role: 'analytics' };
   }
   if (metaAdsConfigToken && constantTimeEqual(authHeader, `${scheme} ${metaAdsConfigToken}`.trim())) {
+    return { ok: true, role: 'meta-ads-config' };
+  }
+  if (metaAdsConfigNextToken && constantTimeEqual(authHeader, `${scheme} ${metaAdsConfigNextToken}`.trim())) {
     return { ok: true, role: 'meta-ads-config' };
   }
   if (stagingBootstrapToken && constantTimeEqual(authHeader, `${scheme} ${stagingBootstrapToken}`.trim())) {

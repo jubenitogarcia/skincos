@@ -43,11 +43,26 @@ function envArgs(target) {
   return target === "staging" ? ["--env", "staging"] : [];
 }
 
-export function candidateSecrets(target, env, { analyticsBindingPresent, seedBearer }) {
+export function candidateSecrets(target, env, {
+  analyticsBindingPresent, configBindingPresent, nextConfigBindingPresent, configBearerMode, seedBearer,
+}) {
   envArgs(target);
   const config = String(env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || "");
   if (!/^[\x21-\x7e]+$/.test(config)) throw new Error("Token Vault config bearer is unavailable or malformed");
-  const secrets = { TOKEN_VAULT_META_ADS_CONFIG_TOKEN: config };
+  if (nextConfigBindingPresent !== false || typeof configBindingPresent !== "boolean"
+    || !["current", "overlap"].includes(configBearerMode)) {
+    throw new Error("candidate upload requires reconciled config binding and bearer mode facts");
+  }
+  if (target === "production" && configBearerMode !== "current") {
+    throw new Error("config bearer overlap is staging-only");
+  }
+  const overlap = configBearerMode === "overlap";
+  if (overlap && (!configBindingPresent || config.length < 32)) {
+    throw new Error("staging config bearer overlap requires an inherited primary and a strong replacement");
+  }
+  const secrets = overlap
+    ? { TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT: config }
+    : { TOKEN_VAULT_META_ADS_CONFIG_TOKEN: config };
   if (analyticsBindingPresent !== true) {
     // The analytics bearer is also consumed by the private service. Generating
     // it only for this upload would make that consumer lose access permanently.
@@ -87,7 +102,8 @@ function privateFile(directory, name) {
   return path.join(directory, name);
 }
 
-export async function uploadCandidate({ target, sourceSha, root, transactionDirectory, analyticsBindingPresent, authorize, markAttempt, run = wrangler, env = process.env }) {
+export async function uploadCandidate({ target, sourceSha, root, transactionDirectory, analyticsBindingPresent,
+  configBindingPresent, nextConfigBindingPresent, configBearerMode, authorize, markAttempt, run = wrangler, env = process.env }) {
   if (typeof authorize !== "function" || typeof markAttempt !== "function") {
     throw new Error("lease authorization and durable attempt journal are required before candidate upload");
   }
@@ -98,7 +114,8 @@ export async function uploadCandidate({ target, sourceSha, root, transactionDire
   const secretsFile = privateFile(transactionDirectory, "candidate-secrets.json");
   let uploadAttempted = false;
   try {
-    const secrets = candidateSecrets(target, env, { analyticsBindingPresent, seedBearer });
+    const secrets = candidateSecrets(target, env, { analyticsBindingPresent, configBindingPresent,
+      nextConfigBindingPresent, configBearerMode, seedBearer });
     fs.writeFileSync(secretsFile, `${JSON.stringify(secrets)}\n`, { mode: 0o600, flag: "wx" });
     await authorize();
     await markAttempt();

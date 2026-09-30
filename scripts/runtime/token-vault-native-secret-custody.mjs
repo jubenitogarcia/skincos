@@ -16,6 +16,7 @@ const TARGET_KEYS = {
     "META_ADS_ACCESS_TOKEN", "META_ADS_ACCOUNT_ID", "META_PIXEL_ID",
     "META_ADS_API_VERSION", "META_ADS_NOVOHAMBURGO_PAGE_ID",
     "META_ADS_BARRASHOPPPINGSUL_PAGE_ID", "TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST",
+    "TOKEN_VAULT_CONFIG_BEARER_MODE",
   ]),
   production: new Set(["TOKEN_VAULT_PRODUCTION_BASE_URL", "ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY"]),
 };
@@ -55,6 +56,10 @@ export function parseNativeCredentials(raw, target) {
   ] : ["TOKEN_VAULT_META_ADS_CONFIG_TOKEN", "TOKEN_VAULT_PRODUCTION_BASE_URL", "ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY"];
   if (required.some((name) => !Object.hasOwn(values, name))) {
     throw new Error("native Token Vault credential custody is incomplete for its target");
+  }
+  if (Object.hasOwn(values, "TOKEN_VAULT_CONFIG_BEARER_MODE")
+    && values.TOKEN_VAULT_CONFIG_BEARER_MODE !== "overlap") {
+    throw new Error("native Token Vault config bearer mode must be staging overlap");
   }
   return values;
 }

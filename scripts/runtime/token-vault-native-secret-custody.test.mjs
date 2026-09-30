@@ -22,6 +22,9 @@ test("native staging custody accepts only its bounded key set", () => {
   const result = parseNativeCredentials(staging, "staging");
   assert.equal(Object.keys(result).length, 11);
   assert.equal(result.META_ADS_ACCESS_TOKEN, "externally-issued");
+  assert.equal(parseNativeCredentials(`${staging}\nTOKEN_VAULT_CONFIG_BEARER_MODE=overlap`, "staging")
+    .TOKEN_VAULT_CONFIG_BEARER_MODE, "overlap");
+  assert.throws(() => parseNativeCredentials(`${staging}\nTOKEN_VAULT_CONFIG_BEARER_MODE=unknown`, "staging"), /must be staging overlap/);
   assert.throws(() => parseNativeCredentials(`${staging}\nTOKEN_VAULT_PRODUCTION_BASE_URL=https://production.example.invalid`, "staging"), /unsafe record/);
   assert.throws(() => parseNativeCredentials(`${staging}\nMETA_ADS_ACCESS_TOKEN=again`, "staging"), /unsafe record/);
   assert.throws(() => parseNativeCredentials(`${staging}\nUNKNOWN_SECRET=x`, "staging"), /unsafe record/);
@@ -46,5 +49,6 @@ test("production custody excludes staging Meta source and requires its own confi
   ].join("\n");
   assert.equal(parseNativeCredentials(production, "production").TOKEN_VAULT_ANALYTICS_API_TOKEN, "separate-analytics");
   assert.throws(() => parseNativeCredentials(`${production}\nMETA_ADS_ACCESS_TOKEN=forbidden`, "production"), /unsafe record/);
+  assert.throws(() => parseNativeCredentials(`${production}\nTOKEN_VAULT_CONFIG_BEARER_MODE=overlap`, "production"), /unsafe record/);
   assert.throws(() => parseNativeCredentials(production.replace("ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY=true", ""), "production"), /incomplete/);
 });
