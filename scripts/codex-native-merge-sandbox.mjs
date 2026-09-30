@@ -15,7 +15,12 @@ function run(executable, args, options = {}) {
     env: options.env || { PATH: process.env.PATH || "/usr/local/bin:/usr/bin:/bin", HOME: "/tmp", GIT_CONFIG_GLOBAL: "/dev/null" },
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${options.label || executable} failed (${result.status ?? "signal"})`);
+  if (result.status !== 0) {
+    const diagnostic = options.captureFailureOutput
+      ? String(result.stderr || result.stdout || "").trim().slice(-4096)
+      : "";
+    throw new Error(`${options.label || executable} failed (${result.status ?? "signal"})${diagnostic ? `: ${diagnostic}` : ""}`);
+  }
   return result;
 }
 
@@ -37,7 +42,7 @@ export function createNativeCandidateSnapshot({ candidateRoot, headSha }) {
   }
 }
 
-export function runInNativeCandidateSandbox({ source, executable, args, label }) {
+export function runInNativeCandidateSandbox({ source, executable, args, label, captureFailureOutput = false }) {
   if (process.platform !== "linux") throw new Error("native candidate sandbox requires Linux");
   if (!fs.existsSync(source) || !fs.statSync(source).isDirectory()) throw new Error("native candidate snapshot is unavailable");
   const unit = `skincos-native-gate-${process.pid}-${++unitSequence}`;
@@ -67,5 +72,5 @@ export function runInNativeCandidateSandbox({ source, executable, args, label })
     "-p", "WorkingDirectory=/run/candidate",
     "/usr/bin/env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp", "XDG_CONFIG_HOME=/tmp/config", "CI=1",
     executable, ...args,
-  ], { label: `isolated ${label}`, stdio: "pipe" });
+  ], { label: `isolated ${label}`, stdio: "pipe", captureFailureOutput });
 }

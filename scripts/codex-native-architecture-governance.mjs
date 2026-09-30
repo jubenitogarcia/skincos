@@ -82,7 +82,7 @@ function run({ requireMain = true } = {}) {
   try {
     if (plan.jobs.includes("influencer")) installLockedDependencies(snapshot.source, snapshot.temporaryRoot);
     for (const { job, command } of plan.commands) {
-      runInNativeCandidateSandbox({ source: snapshot.source, executable: "sh", args: ["-ec", command], label: `${job}: ${command}` });
+      runInNativeCandidateSandbox({ source: snapshot.source, executable: "sh", args: ["-ec", command], label: `${job}: ${command}`, captureFailureOutput: true });
       receipt.checks.push({ job, command, status: "passed" });
     }
     if (nativeGit(ROOT, "rev-parse", "HEAD") !== sha || (requireMain && trustedMainSha() !== sha)) throw new Error("source changed during architecture governance");
@@ -90,7 +90,7 @@ function run({ requireMain = true } = {}) {
     return { status: "passed", sourceSha: sha, checked: receipt.checks.length, receiptPath: persistReceipt({ ...receipt, completedAt: new Date().toISOString() }) };
   } catch (error) {
     receipt.status = "failed";
-    receipt.failure = String(error?.message || error).slice(0, 200);
+    receipt.failure = String(error?.message || error).slice(0, 1200);
     receipt.completedAt = new Date().toISOString();
     const receiptPath = persistReceipt(receipt);
     throw new Error(`${receipt.failure}; receipt: ${receiptPath}`);
