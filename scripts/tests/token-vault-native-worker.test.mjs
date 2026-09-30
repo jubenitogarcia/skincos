@@ -11,11 +11,23 @@ import {
   compensateWorker,
   parseCandidateUpload,
   uploadCandidate,
+  verifyCandidateBindings,
 } from "../token-vault-native-worker.mjs";
 
 const incumbent = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const candidate = "ffffffff-1111-2222-3333-444444444444";
 const currentConfig = { configBindingPresent: true, nextConfigBindingPresent: false, configBearerMode: "current" };
+const candidateBindings = (versionId, { overlap = false, staging = false } = {}) => ({
+  id: versionId,
+  resources: { bindings: [
+    ...["TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY", "TOKEN_VAULT_N8N_API_TOKEN",
+      "TOKEN_VAULT_ANALYTICS_API_TOKEN", "TOKEN_VAULT_META_ADS_CONFIG_TOKEN",
+      ...(overlap ? ["TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT"] : []),
+      ...(staging ? ["TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN"] : []),
+    ].map((name) => ({ name, type: "secret_text" })),
+    { name: "TOKEN_VAULT_DB", type: "d1" },
+  ] },
+});
 
 test("candidate upload binds exact version to trusted preview hostname", () => {
   const output = `Worker Version ID: ${candidate}\nVersion Preview URL: https://ffffffff-skincos-token-vault-staging.skincos.workers.dev\n`;
@@ -43,8 +55,9 @@ test("candidate upload records its remote attempt before invoking Wrangler", asy
     env: { TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "config-bearer" },
     authorize: async () => { order.push("lease"); },
     markAttempt: async () => { order.push("journal"); },
-    run: () => { order.push("wrangler"); return output; } });
-  assert.deepEqual(order, ["lease", "journal", "wrangler"]);
+    run: (args) => { order.push(args[1] === "view" ? "readback" : "wrangler");
+      return args[1] === "view" ? JSON.stringify(candidateBindings(candidate)) : output; } });
+  assert.deepEqual(order, ["lease", "journal", "wrangler", "readback"]);
   assert.equal(result.versionId, candidate);
   assert.equal(fs.existsSync(path.join(transactionDirectory, "candidate-secrets.json")), false);
 });
@@ -77,6 +90,20 @@ test("staging overlap adds only the next config bearer and preserves the inherit
   assert.throws(() => candidateSecrets("production", env, overlap), /staging-only/);
   assert.throws(() => candidateSecrets("staging", env, { ...overlap, configBindingPresent: false }), /inherited primary/);
   assert.throws(() => candidateSecrets("staging", env, { ...overlap, nextConfigBindingPresent: true }), /reconciled config binding/);
+});
+
+test("candidate version readback requires both config bindings in overlap and rejects unexpected next binding", () => {
+  assert.equal(verifyCandidateBindings(candidateBindings(candidate, { staging: true, overlap: true }),
+    { target: "staging", versionId: candidate, configBearerMode: "overlap" }), true);
+  assert.throws(() => verifyCandidateBindings(candidateBindings(candidate, { staging: true }),
+    { target: "staging", versionId: candidate, configBearerMode: "overlap" }), /TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT/);
+  assert.throws(() => verifyCandidateBindings(candidateBindings(candidate, { staging: true, overlap: true }),
+    { target: "staging", versionId: candidate, configBearerMode: "current" }), /unexpectedly carries/);
+  assert.throws(() => verifyCandidateBindings({ ...candidateBindings(candidate), id: incumbent },
+    { target: "production", versionId: candidate, configBearerMode: "current" }), /invalid identity/);
+  assert.throws(() => verifyCandidateBindings({ id: candidate, resources: { bindings: [
+    ...candidateBindings(candidate).resources.bindings.filter((item) => item.name !== "TOKEN_VAULT_META_ADS_CONFIG_TOKEN"),
+  ] } }, { target: "production", versionId: candidate, configBearerMode: "current" }), /TOKEN_VAULT_META_ADS_CONFIG_TOKEN/);
 });
 
 test("Worker activation and compensation require exact ownership and lease callback", async () => {

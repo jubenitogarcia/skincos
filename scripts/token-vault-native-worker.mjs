@@ -10,6 +10,11 @@ const PREVIEW_SUFFIX = {
   staging: "-skincos-token-vault-staging.skincos.workers.dev",
   production: "-skincos-token-vault.skincos.workers.dev",
 };
+const REQUIRED_SECRET_BINDINGS = [
+  "TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY",
+  "TOKEN_VAULT_N8N_API_TOKEN", "TOKEN_VAULT_ANALYTICS_API_TOKEN",
+  "TOKEN_VAULT_META_ADS_CONFIG_TOKEN",
+];
 
 export function cloudflareCliEnvironment(env = process.env) {
   const allowed = ["PATH", "HOME", "LANG", "WSL_DISTRO_NAME", "CLOUDFLARE_API_TOKEN",
@@ -96,6 +101,41 @@ export function parseCandidateUpload(output, target) {
   return { versionId, previewUrl };
 }
 
+export function verifyCandidateBindings(value, { target, versionId, configBearerMode }) {
+  const expectedVersion = requiredVersion(versionId, "candidate");
+  const bindings = value?.resources?.bindings;
+  if (String(value?.id || "").toLowerCase() !== expectedVersion || !Array.isArray(bindings)) {
+    throw new Error("candidate version binding readback has an invalid identity");
+  }
+  const counts = new Map();
+  for (const binding of bindings) {
+    if (typeof binding?.name !== "string" || typeof binding?.type !== "string") {
+      throw new Error("candidate version binding readback is malformed");
+    }
+    const key = `${binding.name}:${binding.type}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const requireBinding = (name, type) => {
+    if (counts.get(`${name}:${type}`) !== 1 || bindings.some((binding) => binding.name === name && binding.type !== type)) {
+      throw new Error(`candidate version is missing or misconfigures required binding ${name}`);
+    }
+  };
+  for (const name of REQUIRED_SECRET_BINDINGS) requireBinding(name, "secret_text");
+  requireBinding("TOKEN_VAULT_DB", "d1");
+  if (target === "staging") {
+    requireBinding("TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN", "secret_text");
+    if (configBearerMode === "overlap") requireBinding("TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT", "secret_text");
+    else if (configBearerMode !== "current") throw new Error("candidate config bearer mode is invalid");
+  } else if (target !== "production" || configBearerMode !== "current") {
+    throw new Error("candidate config bearer mode is invalid");
+  }
+  if ((target !== "staging" || configBearerMode !== "overlap")
+    && bindings.some((binding) => binding.name === "TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT")) {
+    throw new Error("candidate unexpectedly carries a config overlap binding");
+  }
+  return true;
+}
+
 function privateFile(directory, name) {
   const stat = fs.statSync(directory);
   if (!stat.isDirectory() || (stat.mode & 0o077) !== 0) throw new Error("Token Vault transaction directory must be private");
@@ -125,7 +165,16 @@ export async function uploadCandidate({ target, sourceSha, root, transactionDire
       "--secrets-file", secretsFile, "--message", `token-vault:deploy:${sourceSha}`,
       ...envArgs(target),
     ], root);
-    return { ...parseCandidateUpload(output, target), seedFile };
+    const candidate = parseCandidateUpload(output, target);
+    let version;
+    try {
+      version = JSON.parse(run(["versions", "view", candidate.versionId, "--json", "--config", CONFIG,
+        ...envArgs(target)], root));
+    } catch {
+      throw new Error("candidate version binding readback is unavailable after upload");
+    }
+    verifyCandidateBindings(version, { target, versionId: candidate.versionId, configBearerMode });
+    return { ...candidate, seedFile };
   } finally {
     // The candidate version retains its own secrets. Keep only the ephemeral
     // seed bearer under private transaction custody for bounded reconciliation.

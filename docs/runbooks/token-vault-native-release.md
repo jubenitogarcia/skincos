@@ -110,7 +110,9 @@ nativos. Os exemplos mostram argumentos, nunca valores de credenciais.
    anterior e uma resposta JSON `401 invalid_auth_header` da rota atual ao
    bearer novo. O upload adiciona somente
    `TOKEN_VAULT_META_ADS_CONFIG_TOKEN_NEXT`; o binding primário é preservado.
-   A candidata autentica o novo bearer com o mesmo papel restrito, enquanto os
+   Antes da ativação, o readback da versão candidata exige ambos os nomes de
+   binding como segredos, além dos demais bindings necessários; nenhum valor
+   é lido nessa verificação. A candidata autentica o novo bearer com o mesmo papel restrito, enquanto os
    consumidores do bearer antigo continuam atendidos. Produção não aceita
    overlap. Se `_NEXT` já existir, interrompa e reconcilie a versão/consumidores
    antes de outro release. A retirada do bearer antigo requer uma mudança
