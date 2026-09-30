@@ -6,9 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalJson } from "./codex-autonomy-lib.mjs";
+import { authorityState } from "./token-vault-native-authority.mjs";
+import { cloudflareCliEnvironment } from "./token-vault-native-worker.mjs";
+import { verifyDetachedRelease } from "./token-vault-native-release-identity.mjs";
+import { verifySourceObservation } from "./token-vault-native-observe.mjs";
 import {
-  releaseInputDigest,
-  sourceIdentity,
   verifyPreviewEvidence,
 } from "./token-vault-native-preview.mjs";
 
@@ -21,6 +23,7 @@ const CONFIG = "platform/security/token-vault/wrangler.toml";
 function command(args, cwd) {
   const result = spawnSync("npx", ["--yes", WRANGLER, ...args], {
     cwd,
+    env: cloudflareCliEnvironment(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 8 * 1024 * 1024,
@@ -98,7 +101,26 @@ export function readRemoteFacts(target, root, run = command) {
     incumbentVersionId: incumbent.toLowerCase(),
     d1TimeTravelBookmark: bookmark,
     analyticsBindingPresent: names.has("TOKEN_VAULT_ANALYTICS_API_TOKEN"),
+    configBindingPresent: names.has("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"),
   };
+}
+
+export async function verifyIncumbentConfigBearer({ target, baseUrl, bearer, fetchImpl = fetch }) {
+  if (!["staging", "production"].includes(target) || !/^https:\/\/[^/]+$/.test(baseUrl)
+    || !/^[\x21-\x7e]+$/.test(String(bearer || ""))) {
+    throw new Error("incumbent config authentication request is invalid");
+  }
+  const response = await fetchImpl(`${baseUrl}/internal/token-vault/v1/meta-ads-publish/config`, {
+    headers: { Authorization: `Bearer ${bearer}` },
+    cache: "no-store", redirect: "error", signal: AbortSignal.timeout(20_000),
+  });
+  let payload = null;
+  try { payload = await response.json(); } catch {}
+  const state = authorityState({ response, payload });
+  if (!state || (target === "production" && state.mode !== "tracking_ready")) {
+    throw new Error("incumbent Token Vault rejected the protected config bearer or its authority is invalid");
+  }
+  return state;
 }
 
 export function verifyReadinessEvidence(value, expected) {
@@ -109,6 +131,10 @@ export function verifyReadinessEvidence(value, expected) {
     || value.readOnly !== true || value.mutationAuthorized !== false
     || !VERSION.test(String(value.incumbentVersionId || ""))
     || typeof value.analyticsBindingPresent !== "boolean"
+    || typeof value.configBindingPresent !== "boolean"
+    || !["binding_absent", "tracking_ready", "legacy_bootstrap"].includes(value.incumbentConfigAuthorityMode)
+    || (value.configBindingPresent && value.incumbentConfigAuthorityMode === "binding_absent")
+    || (!value.configBindingPresent && value.incumbentConfigAuthorityMode !== "binding_absent")
     || !BOOKMARK.test(String(value.d1TimeTravelBookmark || ""))) {
     throw new Error("readiness evidence has an invalid gate result");
   }
@@ -127,18 +153,20 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
-    if (!["--target", "--source-sha", "--preview-evidence", "--file"].includes(key) || !value || options[key]) {
-      throw new Error("usage: token-vault-native-readiness.mjs --target staging|production --source-sha <sha> --preview-evidence <private file> [--file <private output>]");
+    if (!["--target", "--source-sha", "--preview-evidence", "--observation-file", "--file"].includes(key) || !value || options[key]) {
+      throw new Error("usage: token-vault-native-readiness.mjs --target staging|production --source-sha <sha> --preview-evidence <private file> --observation-file <private file> [--file <private output>]");
     }
     options[key] = value;
   }
-  if (!options["--target"] || !options["--preview-evidence"] || !SHA.test(String(options["--source-sha"] || "").toLowerCase())) {
-    throw new Error("target, preview evidence and a full source SHA are required");
+  if (!options["--target"] || !options["--preview-evidence"] || !options["--observation-file"]
+    || !SHA.test(String(options["--source-sha"] || "").toLowerCase())) {
+    throw new Error("target, preview evidence, fresh observation and a full source SHA are required");
   }
   return {
     target: options["--target"],
     sourceSha: options["--source-sha"].toLowerCase(),
     previewFile: path.resolve(options["--preview-evidence"]),
+    observationFile: path.resolve(options["--observation-file"]),
     outputFile: options["--file"],
   };
 }
@@ -156,21 +184,33 @@ function outputPath(requested, target, sourceSha, root) {
   return file;
 }
 
-function main() {
+async function main() {
   if (process.platform !== "linux" || process.env.WSL_DISTRO_NAME !== "Ubuntu-24.04") {
     throw new Error("Token Vault native readiness must run in Ubuntu-24.04 through the typed WSL boundary");
   }
   const options = parseArgs(process.argv.slice(2));
-  validateEnvironment(options.target);
+  const { base } = validateEnvironment(options.target);
   const root = process.cwd();
-  const source = sourceIdentity(options.sourceSha, root);
-  const digest = releaseInputDigest(options.sourceSha, root);
+  const { identity } = verifyDetachedRelease({ root, sourceSha: options.sourceSha });
+  const stat = fs.lstatSync(options.observationFile);
+  if (!options.observationFile.startsWith(`${path.join(os.homedir(), ".local", "state", "skincos", "token-vault")}/`)
+    || !stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid()
+    || (stat.mode & 0o777) !== 0o600) {
+    throw new Error("native readiness source observation is outside private operator custody");
+  }
+  verifySourceObservation(JSON.parse(fs.readFileSync(options.observationFile, "utf8")), identity);
+  const source = { sourceSha: identity.sourceSha, sourceTree: identity.sourceTree };
+  const digest = identity.releaseInputDigest;
   const preview = verifyPreviewEvidence(JSON.parse(fs.readFileSync(options.previewFile, "utf8")), {
     ...source,
     releaseInputDigest: digest,
   });
   const file = outputPath(options.outputFile, options.target, options.sourceSha, root);
   const facts = readRemoteFacts(options.target, root);
+  const incumbentConfigAuthority = facts.configBindingPresent
+    ? await verifyIncumbentConfigBearer({ target: options.target, baseUrl: base,
+      bearer: process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN })
+    : { mode: "binding_absent" };
   if (!facts.analyticsBindingPresent) {
     const analytics = String(process.env.TOKEN_VAULT_ANALYTICS_API_TOKEN || "");
     if (analytics.length < 32 || analytics === process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN) {
@@ -187,6 +227,7 @@ function main() {
     releaseInputDigest: digest,
     previewEvidenceDigest: preview.evidenceDigest,
     ...facts,
+    incumbentConfigAuthorityMode: incumbentConfigAuthority.mode,
     readOnly: true,
     mutationAuthorized: false,
     createdAt: new Date().toISOString(),
@@ -197,5 +238,5 @@ function main() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  try { main(); } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
+  try { await main(); } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }

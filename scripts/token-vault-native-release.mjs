@@ -16,7 +16,7 @@ import {
   waitRouteAuthority,
 } from "./token-vault-native-authority.mjs";
 import { verifyPreviewEvidence } from "./token-vault-native-preview.mjs";
-import { readRemoteFacts, validateEnvironment, verifyReadinessEvidence } from "./token-vault-native-readiness.mjs";
+import { readRemoteFacts, validateEnvironment, verifyIncumbentConfigBearer, verifyReadinessEvidence } from "./token-vault-native-readiness.mjs";
 import { verifyDetachedRelease } from "./token-vault-native-release-identity.mjs";
 import { sealedEvidencePath } from "./token-vault-native-evidence-custody.mjs";
 import {
@@ -102,7 +102,8 @@ function buildLease({ root, sourceSha, target, transactionId, checkoutRoot, prev
   const cleanRootEnv = { PATH: "/usr/bin:/bin", HOME: "/root", LANG: "C", WSL_DISTRO_NAME: "Ubuntu-24.04" };
   const observation = () => {
     const file = path.join(STATE_ROOT, "observations", `${transactionId}-${randomBytes(12).toString("hex")}.json`);
-    command("node", [observer, "--source-sha", sourceSha, "--file", file], checkoutRoot);
+    command("node", [observer, "--source-sha", sourceSha, "--file", file], checkoutRoot,
+      { PATH: "/usr/bin:/bin", HOME: os.homedir(), LANG: "C", WSL_DISTRO_NAME: "Ubuntu-24.04" });
     return file;
   };
   const leaseCall = (mode, args = []) => command("sudo", ["-n", helper, mode, ...args], root, cleanRootEnv);
@@ -126,8 +127,8 @@ function operationBindings({ target, root, sourceSha, transactionId, transaction
     migrate: (authorize) => applyAdditiveMigrations({ target, root, transactionDirectory,
       expectedBookmark: readiness.d1TimeTravelBookmark, authorize }),
     readMigrationJournal: async () => [...appliedMigrationNames(target, root)],
-    upload: (authorize) => uploadCandidate({ target, sourceSha, root, transactionDirectory,
-      analyticsBindingPresent: readiness.analyticsBindingPresent, authorize, env }),
+    upload: (authorize, markAttempt) => uploadCandidate({ target, sourceSha, root, transactionDirectory,
+      analyticsBindingPresent: readiness.analyticsBindingPresent, authorize, markAttempt, env }),
     attest: (candidate) => attestStagingSource({ previewUrl: candidate.previewUrl, seedFile: candidate.seedFile,
       sourceSha, transactionId, env }),
     reconcileSeed: (candidate, authorize) => reconcileStagingSeed({ previewUrl: candidate.previewUrl,
@@ -187,8 +188,16 @@ async function main() {
   const live = readRemoteFacts(target, root);
   if (live.incumbentVersionId !== readiness.incumbentVersionId
     || live.d1TimeTravelBookmark !== readiness.d1TimeTravelBookmark
-    || live.analyticsBindingPresent !== readiness.analyticsBindingPresent) {
+    || live.analyticsBindingPresent !== readiness.analyticsBindingPresent
+    || live.configBindingPresent !== readiness.configBindingPresent) {
     throw new Error("Token Vault remote incumbent, D1 bookmark or bindings changed after readiness");
+  }
+  if (live.configBindingPresent) {
+    const incumbentAuthority = await verifyIncumbentConfigBearer({ target, baseUrl: base,
+      bearer: process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN });
+    if (incumbentAuthority.mode !== readiness.incumbentConfigAuthorityMode) {
+      throw new Error("Token Vault incumbent config authority changed after readiness");
+    }
   }
   const stagingEvidence = target === "production" ? verifyPromotionEvidence(sealedStagingEvidence(options["--staging-evidence"], sourceSha), {
     target: "staging", sourceSha, sourceTree: identity.sourceTree,

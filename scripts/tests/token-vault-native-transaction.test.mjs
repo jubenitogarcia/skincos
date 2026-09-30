@@ -35,7 +35,7 @@ async function fixture(run) {
     };
     const operations = {
       migrate: async (authorize) => { await authorize(); calls.push("migrate"); return { applied: [] }; },
-      upload: async (authorize) => { await authorize(); calls.push("upload"); return candidate; },
+      upload: async (authorize, markAttempt) => { await authorize(); await markAttempt(); calls.push("upload"); return candidate; },
       attest: async () => { calls.push("attest"); return "meta-ads-staging-seed:operation"; },
       reconcileSeed: async (_, authorize) => { await authorize(); calls.push("reconcile"); },
       seed: async (_, authorize, markAttempt) => {
@@ -111,6 +111,27 @@ test("ambiguous D1 mutation reads its journal and remains forward-only pending r
   assert.equal(calls.includes("d1-readback"), true);
   assert.equal(calls.includes("upload"), false);
   assert.equal(calls.includes("release"), false);
+}));
+
+test("ambiguous candidate upload retains the lease and requires version inventory reconciliation", async () => fixture(async ({ journal, calls, lease, operations }) => {
+  operations.upload = async (_authorize, markAttempt) => {
+    await markAttempt();
+    throw new Error("Wrangler upload response was lost");
+  };
+  await assert.rejects(() => runNativeTransaction({ target: "staging", identity, preview, readiness,
+    transactionId, journal, lease, operations, evidenceFile: path.join(journal.directory, "promotion.json") }), /manual reconciliation/);
+  assert.equal(journal.state.status, "indeterminate");
+  assert.equal(journal.state.events.some((event) => event.event === "worker_upload_attempted"), true);
+  assert.equal(calls.includes("release"), false);
+}));
+
+test("unknown lease acquisition does not create a false compensated journal", async () => fixture(async ({ journal, calls, lease, operations }) => {
+  lease.acquire = async () => { throw new Error("coordinator response was lost"); };
+  await assert.rejects(() => runNativeTransaction({ target: "staging", identity, preview, readiness,
+    transactionId, journal, lease, operations, evidenceFile: path.join(journal.directory, "promotion.json") }), /manual reconciliation/);
+  assert.equal(journal.state.status, "indeterminate");
+  assert.equal(journal.state.events.some((event) => event.event === "lease_acquire_attempted"), true);
+  assert.equal(calls.includes("upload"), false);
 }));
 
 test("production promotion requires exact staging predecessor", () => {

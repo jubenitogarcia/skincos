@@ -156,6 +156,8 @@ export async function runNativeTransaction({ target, identity, preview, readines
   const sourceSha = identity.sourceSha;
   const incumbentVersionId = readiness.incumbentVersionId;
   let leaseHeld = false;
+  let leaseAcquisitionAttempted = false;
+  let leaseAcquisitionConfirmed = false;
   let candidate = null;
   let seedAttempted = false;
   let seedOperationKey = "";
@@ -168,6 +170,7 @@ export async function runNativeTransaction({ target, identity, preview, readines
   let releaseAttempted = false;
   let d1MigrationAttempted = false;
   let d1MigrationReadback = false;
+  let uploadAttempted = false;
   try {
     if (target === "production") {
       verifyPromotionEvidence(stagingEvidence, { target: "staging", sourceSha,
@@ -178,7 +181,10 @@ export async function runNativeTransaction({ target, identity, preview, readines
         throw new Error("staging predecessor is no longer the active Worker version");
       }
     }
+    leaseAcquisitionAttempted = true;
+    journal.record("lease_acquire_attempted");
     await lease.acquire();
+    leaseAcquisitionConfirmed = true;
     leaseHeld = true;
     journal.record("lease_acquired");
     const authorize = () => lease.check();
@@ -188,8 +194,11 @@ export async function runNativeTransaction({ target, identity, preview, readines
     d1MigrationReadback = true;
     journal.record("d1_migration_readback", { applied: migrations.applied.length });
     if (migrations.applied.length) journal.record("d1_schema_forward_only", { applied: migrations.applied.length });
-    journal.record("worker_upload_attempted");
-    candidate = await operations.upload(authorize);
+    journal.record("worker_upload_prepared");
+    candidate = await operations.upload(authorize, async () => {
+      uploadAttempted = true;
+      journal.record("worker_upload_attempted");
+    });
     journal.record("worker_candidate_selected", { candidateVersionId: candidate.versionId });
     if (target === "staging") {
       seedOperationKey = await operations.attest(candidate);
@@ -266,7 +275,8 @@ export async function runNativeTransaction({ target, identity, preview, readines
         }
         safeToCompensate = false;
       }
-      if (releaseAttempted || (fixtureAttempted && !fixtureSucceeded)
+      if ((leaseAcquisitionAttempted && !leaseAcquisitionConfirmed)
+        || (uploadAttempted && !candidate) || releaseAttempted || (fixtureAttempted && !fixtureSucceeded)
         || (bootstrapAttempted && bootstrap?.status !== "applied")) {
         // An accepted request with lost response may have modified D1. Keep
         // the candidate and require operation-key reconciliation.
@@ -293,8 +303,11 @@ export async function runNativeTransaction({ target, identity, preview, readines
     } catch (compensationError) {
       journal.record("compensation_failed", { stage: journal.state.events.at(-1)?.event || "unknown" });
       journal.terminal("indeterminate");
+      const leaseState = releaseAttempted ? "release outcome is unknown"
+        : !leaseAcquisitionConfirmed ? "acquisition outcome is unknown"
+          : "was retained until expiry";
       throw new AggregateError([error, compensationError],
-        `Token Vault transaction requires manual reconciliation; lease ${releaseAttempted ? "release outcome is unknown" : "was retained until expiry"}`);
+        `Token Vault transaction requires manual reconciliation; lease ${leaseState}`);
     }
     throw error;
   }

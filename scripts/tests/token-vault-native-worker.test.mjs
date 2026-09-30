@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   activeVersion,
   activateCandidate,
   candidateSecrets,
+  cloudflareCliEnvironment,
   compensateWorker,
   parseCandidateUpload,
+  uploadCandidate,
 } from "../token-vault-native-worker.mjs";
 
 const incumbent = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -18,6 +23,29 @@ test("candidate upload binds exact version to trusted preview hostname", () => {
     previewUrl: "https://ffffffff-skincos-token-vault-staging.skincos.workers.dev",
   });
   assert.throws(() => parseCandidateUpload(output.replace("ffffffff-skincos", "eeeeeeee-skincos"), "staging"), /preview URL differs/);
+});
+
+test("Wrangler child environment excludes Meta and Token Vault bearer material", () => {
+  const selected = cloudflareCliEnvironment({ PATH: "/usr/bin", HOME: "/home/admin",
+    META_ADS_ACCESS_TOKEN: "external", TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "internal",
+    TOKEN_VAULT_N8N_API_TOKEN: "operational", CLOUDFLARE_ACCOUNT_ID: "account" });
+  assert.deepEqual(selected, { PATH: "/usr/bin", HOME: "/home/admin", CLOUDFLARE_ACCOUNT_ID: "account" });
+});
+
+test("candidate upload records its remote attempt before invoking Wrangler", async (t) => {
+  const transactionDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-tv-upload-"));
+  t.after(() => fs.rmSync(transactionDirectory, { recursive: true, force: true }));
+  const order = [];
+  const output = `Worker Version ID: ${candidate}\nVersion Preview URL: https://ffffffff-skincos-token-vault.skincos.workers.dev\n`;
+  const result = await uploadCandidate({ target: "production", sourceSha: "a".repeat(40), root: "/repo",
+    transactionDirectory, analyticsBindingPresent: true,
+    env: { TOKEN_VAULT_META_ADS_CONFIG_TOKEN: "config-bearer" },
+    authorize: async () => { order.push("lease"); },
+    markAttempt: async () => { order.push("journal"); },
+    run: () => { order.push("wrangler"); return output; } });
+  assert.deepEqual(order, ["lease", "journal", "wrangler"]);
+  assert.equal(result.versionId, candidate);
+  assert.equal(fs.existsSync(path.join(transactionDirectory, "candidate-secrets.json")), false);
 });
 
 test("candidate secrets preserve staging isolation and do not duplicate inherited bindings", () => {

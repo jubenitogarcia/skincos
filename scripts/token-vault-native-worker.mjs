@@ -11,6 +11,13 @@ const PREVIEW_SUFFIX = {
   production: "-skincos-token-vault.skincos.workers.dev",
 };
 
+export function cloudflareCliEnvironment(env = process.env) {
+  const allowed = ["PATH", "HOME", "LANG", "WSL_DISTRO_NAME", "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+    "https_proxy", "http_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
+  return Object.fromEntries(allowed.filter((name) => env[name]).map((name) => [name, env[name]]));
+}
+
 function requiredVersion(value, label) {
   const normalized = String(value || "").toLowerCase();
   if (!VERSION.test(normalized)) throw new Error(`${label} is not an immutable Worker version ID`);
@@ -20,6 +27,7 @@ function requiredVersion(value, label) {
 export function wrangler(args, root) {
   const result = spawnSync("npx", ["--yes", WRANGLER, ...args], {
     cwd: root,
+    env: cloudflareCliEnvironment(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 8 * 1024 * 1024,
@@ -79,8 +87,10 @@ function privateFile(directory, name) {
   return path.join(directory, name);
 }
 
-export async function uploadCandidate({ target, sourceSha, root, transactionDirectory, analyticsBindingPresent, authorize, run = wrangler, env = process.env }) {
-  if (typeof authorize !== "function") throw new Error("lease authorization is required before candidate upload");
+export async function uploadCandidate({ target, sourceSha, root, transactionDirectory, analyticsBindingPresent, authorize, markAttempt, run = wrangler, env = process.env }) {
+  if (typeof authorize !== "function" || typeof markAttempt !== "function") {
+    throw new Error("lease authorization and durable attempt journal are required before candidate upload");
+  }
   if (!/^[0-9a-f]{40}$/.test(String(sourceSha || ""))) throw new Error("candidate source SHA is invalid");
   const seedFile = target === "staging" ? privateFile(transactionDirectory, "staging-seed-bearer") : null;
   const seedBearer = target === "staging" ? randomBytes(48).toString("base64url") : null;
@@ -91,6 +101,7 @@ export async function uploadCandidate({ target, sourceSha, root, transactionDire
     const secrets = candidateSecrets(target, env, { analyticsBindingPresent, seedBearer });
     fs.writeFileSync(secretsFile, `${JSON.stringify(secrets)}\n`, { mode: 0o600, flag: "wx" });
     await authorize();
+    await markAttempt();
     uploadAttempted = true;
     const output = run([
       "versions", "upload", "--config", CONFIG, "--keep-vars", "--strict",

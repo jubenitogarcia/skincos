@@ -36,6 +36,14 @@ checkout, Git, log, PR ou artefato.
   O helper da release lê a custódia fixa em
   `/etc/skincos/global-coordination/native-runtime.env`; seu valor nunca sai
   para o publisher ou para o checkout.
+- Credenciais de destino: `/etc/skincos/token-vault/native-staging.env` e
+  `native-production.env`, em diretório root:root `0700`, arquivos root:root
+  `0600`, com nomes de chaves permitidos por ambiente. O helper da release
+  verifica sua própria tree antes de ler o arquivo e inicia o publicador como
+  `admin` com variáveis de processo, sem passar valores em argumentos. Seu modo
+  `provision --source-sha <SHA> --target <ambiente>` recebe o documento completo
+  somente por stdin protegido, cria o arquivo uma vez e recusa sobrescrever;
+  rotação exige plano separado com recuperação do valor anterior.
 
 ## Sequência do operador
 
@@ -64,12 +72,36 @@ nativos. Os exemplos mostram argumentos, nunca valores de credenciais.
 3. Valide o candidate com `scripts/runtime/install-token-vault-native-source.mjs`
    em dry run; só aplique a instalação após a árvore e o archive conferirem.
    O installer publica um novo diretório root-owned e não substitui o runtime
-   ativo. O instalador não deve executar código do archive como root.
+   ativo. O instalador não executa código do archive como root. `--apply`
+   exige o mesmo SHA ainda na `main`, verifica novamente os bytes copiados,
+   instala os sidecars e registra o checkpoint da ACL anterior.
+
+   ```powershell
+   $candidate = "/home/admin/.local/state/skincos/token-vault/candidates/release-source-$sha"
+   & "$repo\scripts\invoke-skincos-wsl.ps1" -ProjectRoot $repo -Executable node -Argument @('scripts/runtime/install-token-vault-native-source.mjs','--candidate',$candidate,'--source-sha',$sha)
+   & "$repo\scripts\invoke-skincos-wsl.ps1" -ProjectRoot $repo -Executable node -Argument @('scripts/runtime/install-token-vault-native-source.mjs','--candidate',$candidate,'--source-sha',$sha,'--apply')
+   ```
+
+   A instalação altera somente a ACL do parent `/opt/skincos/releases` para
+   `u:admin:--x`, permitindo atravessar um SHA conhecido. O caminho
+   `aclCheckpoint` retornado contém a ACL anterior. Uma eventual restauração
+   com `sudo -n setfacl --restore=<checkpoint>` requer confirmar primeiro que
+   nenhuma release Token Vault dependente desse acesso está em uso.
 
 4. Provisione as credenciais de staging/produção pelo mecanismo canônico
-   protegido, em processos Ubuntu do operador. O preflight somente leitura
+   protegido diretamente nos arquivos nativos acima, sem usar checkout,
+   Windows, argumento, log ou artefato. O arquivo de staging requer fonte Meta
+   externa autorizada e seletores do ambiente; não reutilize o token Orb de
+   produção. Use o modo `provision` da release a partir do emissor autorizado,
+   passando o documento por stdin protegido. Se o arquivo já existir, não
+   substitua seu valor por conveniência. Gere uma observação nova de
+   `origin/main` sem credenciais antes do
+   preflight. O preflight somente leitura
    verifica o token de configuração, a fonte sintética isolada de staging,
-   flags, secrets herdados do Worker, incumbent exato e bookmark D1 Time Travel:
+   flags, secrets herdados do Worker, incumbent exato e bookmark D1 Time Travel.
+   Quando o incumbent já possui o binding de configuração, o preflight
+   autentica o bearer na rota live, somente para leitura, antes de permitir
+   qualquer upload:
 
    Se o binding de analytics não existir, o bearer deve estar disponível pela
    custódia nativa canônica e também para seu consumidor privado antes do
@@ -77,12 +109,14 @@ nativos. Os exemplos mostram argumentos, nunca valores de credenciais.
    apenas autoridade `tracking_ready`; bootstrap legado é exclusivo de staging.
 
    ```powershell
-   & "$repo\scripts\invoke-skincos-wsl.ps1" -ProjectRoot $repo -Executable node -Argument @('scripts/token-vault-native-readiness.mjs','--target','staging','--source-sha',$sha,'--preview-evidence',"/home/admin/.local/state/skincos/token-vault/$sha-preview.json")
+   $observation = "/home/admin/.local/state/skincos/token-vault/observations/$sha-$([guid]::NewGuid().ToString('N')).json"
+   & "$repo\scripts\invoke-skincos-wsl.ps1" -ProjectRoot $repo -Executable node -Argument @('scripts/token-vault-native-observe.mjs','--source-sha',$sha,'--file',$observation)
+   & "$repo\scripts\invoke-skincos-wsl.ps1" -ProjectRoot $repo -Executable bash -Argument @('scripts/runtime/invoke-token-vault-native-release.sh','readiness','--target','staging','--source-sha',$sha,'--preview-evidence',"/home/admin/.local/state/skincos/token-vault/$sha-preview.json",'--observation-file',$observation)
    ```
 
-5. Publique com `scripts/runtime/invoke-token-vault-native-release.sh` pelo
+5. Publique com `scripts/runtime/invoke-token-vault-native-release.sh publish` pelo
    wrapper tipado. Esse launcher apenas seleciona o SHA; o publisher roda da
-   release imutável. Passe `--checkout-root` com o caminho WSL do checkout
+   release imutável após carregar a custódia do destino. Passe `--checkout-root` com o caminho WSL do checkout
    limpo, usado **somente** para Git/readback sem privilégios. Staging exige
    Preview e readiness da mesma revisão. Produção acrescenta
    `--staging-evidence` apontando para a cópia root-sealed de staging.
@@ -105,7 +139,9 @@ Falhas com resultado conhecido revertem bootstrap e seed de staging nessa
 ordem, depois restauram o Worker incumbent **somente quando a transação ainda
 possui o tráfego**. Migrations D1 são aditivas e **forward-only**; um timeout
 durante D1 exige readback do journal e reconciliação, jamais retry cego ou
-alegação de rollback. Timeout em bootstrap ou fixture retém o candidato e
+alegação de rollback. Se o upload perder a resposta, reconcilie o inventário
+de versões antes de tentar novamente; a transação não afirma que a versão foi
+descartada. Timeout em bootstrap ou fixture retém o candidato e
 marca a transação indeterminada para investigação. Se a liberação do lease ou
 o selo root da evidência falhar, a promoção também fica indeterminada até
 readback/reconciliação. A evidência root-owned de staging é a única entrada
