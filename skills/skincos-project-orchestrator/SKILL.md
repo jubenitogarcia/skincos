@@ -1,6 +1,6 @@
 ---
 name: skincos-project-orchestrator
-description: Autonomously resume and execute the next safe SKINCOS milestone, including supervised automatic continuation. Use for retomar, continuar, revisar, auditar, handoffs, PR/CI/deploy follow-up, planning versus staging, “retome o SKINCOS”, “continue o projeto”, “prossiga do ponto atual”, “execute o próximo passo”, “supervisor-cycle”, or “use o orquestrador”. Default to resume-execute; use read-only status only when explicitly requested.
+description: Autonomously resume and execute the next safe SKINCOS milestone, including supervised automatic continuation. Use for retomar, continuar, revisar, auditar, handoffs, PR/native-validation/deploy follow-up, planning versus staging, “retome o SKINCOS”, “continue o projeto”, “prossiga do ponto atual”, “execute o próximo passo”, “supervisor-cycle”, or “use o orquestrador”. Default to resume-execute; use read-only status only when explicitly requested.
 ---
 
 # SKINCOS Project Orchestrator
@@ -24,7 +24,7 @@ and `references/evidence-model.md`. For `supervisor-cycle`, also read
 
 ## Loop
 
-1. Read `AGENTS.md` and the autonomy policy, load the canonical operational snapshot when available, and inspect Git. On a root mission or an absent/stale snapshot, reconstruct only the relevant durable context, queue/ledger and remote sources; fetch refs and inspect the Git/worktree, PR/CI, deployment/runtime/D1/PostgreSQL surfaces needed by the mission.
+1. Read `AGENTS.md` and the autonomy policy, load the canonical operational snapshot when available, and inspect Git. On a root mission or an absent/stale snapshot, reconstruct only the relevant durable context, queue/ledger and remote sources; fetch refs and inspect the Git/worktree, PR/native-check, deployment/runtime/D1/PostgreSQL surfaces needed by the mission.
 2. Run `scripts/collect-state.sh` or `.ps1` when available. If unavailable/failing, collect directly; do not repeat a broad reconstruction or depend on one collector when its valid inputs and blocker fingerprint have not changed.
    For every non-read-only milestone, run `scripts/validate-skincos-worktree.ps1 -ProjectRoot (Get-Location).Path -TaskSlug <task-slug> -Mode edit` first. The canonical shared checkout is context-only; a missing or mismatched task/worktree/branch identity is a fail-closed local blocker.
 3. Classify local, branch, PR, main, preview, staging, production, or unproven. A 200 is not a journey; worktree is not main; merged PR is not staging; staging is not production.
@@ -69,7 +69,7 @@ compatibility decisions.
 Authorization comes from the current explicit mission under
 `docs/decisions/codex-autonomy-policy.md`, not from an implicit
 `resume-execute` default. It persists through worktrees, compaction,
-CI, merge and supervisor continuation. Within the mission's declared scope, it
+native validation, merge and supervisor continuation. Within the mission's declared scope, it
 may cover code/config/tests/docs, branches/PRs, GitHub, Cloudflare, synthetic
 resources, additive migrations, staging, canary, production, secrets and
 rollback. Secret values and PII are never exposed or versioned.

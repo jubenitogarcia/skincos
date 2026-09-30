@@ -8,7 +8,7 @@ while the Skill executes it.
 ## Mission and continuation
 
 - Do not ask again for authorization that the active mission already grants.
-  It remains valid through worktrees, compaction, continuation, CI correction,
+  It remains valid through worktrees, compaction, continuation, native validation correction,
   merge and environment transition.
 - A Stop-generated continuation transports the existing mission; it does not
   create authorization or broaden the objective.

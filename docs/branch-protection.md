@@ -8,7 +8,7 @@ reconciliado com o ruleset live antes de aplicar qualquer payload. Ver
 Objetivo: bloquear atualizações incompatíveis em `main` e exigir PR com a
 autoridade global de integração.
 
-## Checklist (Settings → Branches → Add rule)
+## Checklist histórica (não aplicar sem reconciliar com a autoridade nativa)
 
 - Branch name pattern: `main`
 - Require a pull request before merging

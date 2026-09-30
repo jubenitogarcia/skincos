@@ -11,7 +11,7 @@ gates técnicos de cada domínio.
 
 A missão explícita atual do usuário é uma autorização persistente para executar
 o objetivo dentro do escopo que ela declara. Ela continua válida após
-compactação, continuação automática, mudança de worktree, correção de CI,
+compactação, continuação automática, mudança de worktree, correção de validação nativa,
 commit, merge e recarga de contexto. O agente não pede novamente uma
 autorização já concedida nem converte uma pendência técnica em pergunta de
 permissão.
@@ -51,7 +51,7 @@ para pedir autorização duplicada.
 
 Quando previstos pela missão, são ações dentro do escopo: criar worktree e
 branch; editar código, documentação, políticas, skills, hooks e configuração
-local suportada; commits, push, PR, CI e merge; recursos sintéticos; ações em
+local suportada; commits, push, PR, validação nativa e merge; recursos sintéticos; ações em
 GitHub e Cloudflare; migrations aditivas; preview, staging, pilot, canary,
 produção, smoke, rollback e cleanup.
 
