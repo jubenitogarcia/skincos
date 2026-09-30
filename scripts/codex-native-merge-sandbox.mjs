@@ -71,6 +71,7 @@ export function runInNativeCandidateSandbox({ source, executable, args, label, c
     "-p", `BindReadOnlyPaths=${source}:/run/candidate`,
     "-p", "WorkingDirectory=/run/candidate",
     "/usr/bin/env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp", "XDG_CONFIG_HOME=/tmp/config", "CI=1",
+    "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=/run/candidate",
     executable, ...args,
   ], { label: `isolated ${label}`, stdio: "pipe", captureFailureOutput });
 }
