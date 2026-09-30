@@ -108,8 +108,10 @@ export function stageNativeScheduledRelease({ canonical = false } = {}) {
     }
     git(source, "archive", "--format=tar", `--output=${temporaryArchive}`, sha);
     const archiveSha256 = sha256(temporaryArchive);
-    seal(source);
     fs.renameSync(source, destination);
+    // A directory moved across parents needs its write bit to update '..'.
+    // Seal only after placing it at its final immutable identity.
+    seal(destination);
     fs.renameSync(temporaryArchive, archive);
     fs.chmodSync(archive, 0o400);
     const record = { schemaVersion: 1, repository: REMOTE, sourceSha: sha, tree, archiveSha256, releasePath: destination, artifactPath: archive, stagedAt: new Date().toISOString() };
