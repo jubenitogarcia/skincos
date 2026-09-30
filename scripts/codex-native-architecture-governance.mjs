@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { buildFullArchitectureGovernancePlan } from "../.github/scripts/architecture-governance.mjs";
 import { createNativeCandidateSnapshot, runInNativeCandidateSandbox } from "./codex-native-merge-sandbox.mjs";
 import { nativeGit } from "./codex-native-git-worktree.mjs";
+import { publicMainSha } from "./codex-native-scheduled-source.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const RECEIPTS = path.join(os.homedir(), ".local/state/skincos-native-architecture-receipts");
@@ -21,13 +22,7 @@ function assertPrivateDirectory(directory) {
 }
 
 function trustedMainSha() {
-  const result = spawnSync("gh", ["api", `repos/${REPOSITORY}/git/ref/heads/main`, "--jq", ".object.sha"], {
-    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024,
-  });
-  if (result.error || result.status !== 0) throw new Error("live main SHA is unavailable");
-  const sha = String(result.stdout || "").trim().toLowerCase();
-  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("live main SHA is invalid");
-  return sha;
+  return publicMainSha();
 }
 
 function installLockedDependencies(source, temporaryRoot) {
@@ -75,14 +70,14 @@ function persistReceipt(receipt) {
   return file;
 }
 
-function run({ requireMain = true } = {}) {
+function run({ requireMain = true, candidateRoot = ROOT } = {}) {
   if (process.platform !== "linux") throw new Error("native architecture governance requires Ubuntu/Linux");
   const plan = fullNativeArchitecturePlan();
-  const sha = nativeGit(ROOT, "rev-parse", "HEAD");
-  if (nativeGit(ROOT, "status", "--porcelain", "--untracked-files=normal")) throw new Error("native architecture source checkout must be clean");
+  const sha = nativeGit(candidateRoot, "rev-parse", "HEAD");
+  if (nativeGit(candidateRoot, "status", "--porcelain", "--untracked-files=normal")) throw new Error("native architecture source checkout must be clean");
   if (requireMain && sha !== trustedMainSha()) throw new Error("native architecture source must be the exact live main SHA");
-  const sourceTree = nativeGit(ROOT, "rev-parse", `${sha}^{tree}`);
-  const snapshot = createNativeCandidateSnapshot({ candidateRoot: ROOT, headSha: sha });
+  const sourceTree = nativeGit(candidateRoot, "rev-parse", `${sha}^{tree}`);
+  const snapshot = createNativeCandidateSnapshot({ candidateRoot, headSha: sha });
   const receipt = { version: 1, kind: "native-architecture-governance", mode: requireMain ? "live-main" : "rehearsal", sourceSha: sha, sourceTree, startedAt: new Date().toISOString(), jobs: plan.jobs, checks: [], status: "running" };
   try {
     if (plan.jobs.includes("influencer")) installLockedDependencies(snapshot.source, snapshot.temporaryRoot);
@@ -90,7 +85,7 @@ function run({ requireMain = true } = {}) {
       runInNativeCandidateSandbox({ source: snapshot.source, executable: "sh", args: ["-ec", command], label: `${job}: ${command}`, captureFailureOutput: true });
       receipt.checks.push({ job, command, status: "passed" });
     }
-    if (nativeGit(ROOT, "rev-parse", "HEAD") !== sha || (requireMain && trustedMainSha() !== sha)) throw new Error("source changed during architecture governance");
+    if (nativeGit(candidateRoot, "rev-parse", "HEAD") !== sha || (requireMain && trustedMainSha() !== sha)) throw new Error("source changed during architecture governance");
     receipt.status = "passed";
     return { status: "passed", sourceSha: sha, checked: receipt.checks.length, receiptPath: persistReceipt({ ...receipt, completedAt: new Date().toISOString() }) };
   } catch (error) {
@@ -113,8 +108,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
     if (mode === "plan" && process.argv.length === 3) {
       const plan = fullNativeArchitecturePlan();
       process.stdout.write(`${JSON.stringify({ jobs: plan.jobs, commandCount: plan.commands.length }, null, 2)}\n`);
-    } else if (["run", "rehearsal"].includes(mode) && process.argv.length === 3) {
-      process.stdout.write(`${JSON.stringify(run({ requireMain: mode === "run" }), null, 2)}\n`);
+    } else if (["run", "rehearsal"].includes(mode) && [3, 5].includes(process.argv.length)) {
+      const candidateRoot = process.argv.length === 5 && process.argv[3] === "--candidate" ? process.argv[4] : ROOT;
+      if (process.argv.length === 5 && (mode !== "run" || process.argv[3] !== "--candidate")) throw new Error("candidate override requires run mode");
+      process.stdout.write(`${JSON.stringify(run({ requireMain: mode === "run", candidateRoot }), null, 2)}\n`);
     } else throw new Error("mode must be plan, rehearsal or run");
   } catch (error) {
     process.stderr.write(`${String(error?.message || error)}\n`);

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
-import { weeklySecurityPlan } from "../codex-native-security-audit.mjs";
+import { scannerJson, weeklySecurityPlan } from "../codex-native-security-audit.mjs";
 
 function isolatedGitEnv() {
   const env = { ...process.env };
@@ -55,4 +55,22 @@ test("expired scanner exception fails before a scan", () => {
     fs.writeFileSync(path.join(root, ".github/security/bandit-exceptions.csv"), "backend/x.py,B101,2026-09-29,temporary\n");
     assert.throws(() => weeklySecurityPlan(root, "2026-09-30"), /expired security exception/);
   } finally { removeFixture(root); }
+});
+
+test("scanner JSON tolerates progress prefix but rejects missing or corrupt reports", () => {
+  assert.deepEqual(scannerJson('progress 100%\n{"results": []}\n'), { results: [] });
+  assert.throws(() => scannerJson("progress only"), /no JSON object/);
+  assert.throws(() => scannerJson('{"results": []} trailing'), SyntaxError);
+});
+
+test("synthetic Git fixture never uses inherited worktree or index custody", () => {
+  const previous = Object.fromEntries(["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"].map((name) => [name, process.env[name]]));
+  try {
+    for (const name of Object.keys(previous)) process.env[name] = "/unavailable/not-the-fixture";
+    const root = fixture();
+    try { assert.deepEqual(weeklySecurityPlan(root, "2026-09-30").requirements, ["requirements.txt"]); }
+    finally { removeFixture(root); }
+  } finally {
+    for (const [name, value] of Object.entries(previous)) value === undefined ? delete process.env[name] : process.env[name] = value;
+  }
 });
