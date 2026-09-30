@@ -11,7 +11,10 @@ código nem motivo para interromper uma missão já autorizada.
 
 - Validar a revisão exata com Codex em Ubuntu/WSL nativo ou executor independente
   equivalente. Selecionar verificações versionadas proporcionais ao risco e
-  registrar SHA, comandos, resultados e limitações.
+  registrar SHA, comandos, resultados e limitações. Código de PR que ainda não
+  é confiável só pode executar em sandbox sem acesso à custódia do operador,
+  arquivos de autenticação ou rede não autorizada; limpar variáveis de ambiente
+  sozinho não estabelece esse isolamento.
 - Manter PR, revisão, regras de branch, proveniência, checks realmente exigidos,
   custódia de segredos, lease global, staging, rollback e readback aplicáveis.
   Um resultado local não autoriza fabricar um status remoto.
