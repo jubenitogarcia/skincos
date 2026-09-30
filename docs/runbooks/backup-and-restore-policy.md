@@ -37,6 +37,13 @@ e os logs de transferência ficam exclusivamente em
   cópia do material de recuperação fica como GitHub Actions Environment Secret
   no environment `recovery`, separado do Drive e da Cloudflare; ela não pode
   existir como secret genérico do repositório;
+
+  **Migração de custódia:** essa cópia no Environment é legado e não constitui
+  um mecanismo nativo de recuperação do valor. Antes de aposentar o fluxo
+  antigo de restore, estabelecer escrow independente com custódia separada,
+  testar restore do mesmo material e registrar rollback sem revelar a chave.
+  Não disparar Actions como atalho; ver
+  [`github-actions-retirement.md`](../decisions/github-actions-retirement.md).
 - cada rotação cria um `keyId` novo e um Secret de escrow novo antes do primeiro
   upload. Chaves anteriores permanecem por `retenção + 30 dias`; revogação,
   suspeita de exposição ou perda de operador força rotação imediata.
