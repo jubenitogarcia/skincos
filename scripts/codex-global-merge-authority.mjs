@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -11,6 +12,10 @@ import {
   releaseGlobalLease,
 } from "./codex-global-coordination-client.mjs";
 import { loadMergeCandidate } from "./codex-github-integration-candidate.mjs";
+import { assertNativeGateEvidence } from "./codex-native-merge-contract.mjs";
+import { assertNoActionsTriggeredByMerge } from "./codex-native-actions-audit.mjs";
+import { assertNativeMergeReceipt } from "./codex-native-merge-receipt.mjs";
+import { createNativeCandidateSnapshot } from "./codex-native-merge-sandbox.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 function requiredEnv(name) {
@@ -90,20 +95,29 @@ export function assertMergeReadback({
   return { mergeCommitSha: mergeSha, expectedHeadSha: expectedHead, expectedBaseSha: expectedBase };
 }
 
-async function setMergeAuthorityStatus(repository, headSha, state, description) {
+async function setMergeAuthorityStatus(repository, headSha, state, description, nativeEvidence = null) {
   return githubJson(repository, `/statuses/${headSha}`, {
     method: "POST",
     body: JSON.stringify({
       state,
-      context: "global-merge-authority",
+      context: nativeEvidence ? "codex-native-merge-result" : "global-merge-authority",
       description: String(description).slice(0, 140),
-      target_url: `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${repository}/actions/workflows/global-merge-authority.yml`,
+      ...(nativeEvidence ? {} : { target_url: `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${repository}/actions/workflows/global-merge-authority.yml` }),
     }),
   }, "SKINCOS_STATUS_TOKEN");
 }
 
 function waitableLeaseReason(reason) {
   return ["resource-lease-held", "incompatible-release-lease"].includes(String(reason || ""));
+}
+
+async function auditMergeActions({ repository, nativeEvidence, headSha, changedPaths }) {
+  const snapshot = createNativeCandidateSnapshot({ candidateRoot: nativeEvidence.candidateRoot, headSha });
+  try {
+    return await assertNoActionsTriggeredByMerge({ repository, candidateRoot: snapshot.source, changedPaths });
+  } finally {
+    fs.rmSync(snapshot.temporaryRoot, { recursive: true, force: true });
+  }
 }
 
 export async function acquireMergeLease({ request, url, maxWaitMs = 15 * 60_000, pollMs = 15_000, acquireImpl = acquireGlobalLease }) {
@@ -122,7 +136,11 @@ export async function acquireMergeLease({ request, url, maxWaitMs = 15 * 60_000,
   throw new Error(`merge:main lease remained unavailable: ${lastReason || "unknown"}`);
 }
 
-async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, mergeMethod = "squash" }) {
+async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, mergeMethod = "squash", nativeEvidence = null }) {
+  if (process.env.GITHUB_ACTIONS === "true") throw new Error("GitHub Actions is not an authorized merge executor");
+  if (!nativeEvidence) {
+    throw new Error("native merge requires in-process validation evidence from codex-native-merge-gate.mjs");
+  }
   if (String(process.env.SKINCOS_GLOBAL_COORDINATION_REQUIRED || "").trim().toLowerCase() !== "true") {
     throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for merge:main");
   }
@@ -134,6 +152,9 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
   const candidate = await loadMergeCandidate({ repository, pullNumber, expectedHeadSha });
   const initial = candidate.pull;
   const { headSha, baseSha, request, closure } = candidate;
+  assertNativeGateEvidence(nativeEvidence, { repository, pullNumber, ...candidate });
+  assertNativeMergeReceipt(nativeEvidence);
+  await auditMergeActions({ repository, nativeEvidence, headSha, changedPaths: candidate.changedPaths });
   const coordinatorProtocol = await probeCoordinatorProtocol({ url });
   // A 404 is the explicit compatibility signal from the pre-readiness Worker;
   // any other unavailable or malformed response fails closed in the probe.
@@ -176,11 +197,8 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
       },
     });
     if (checked.passed !== true) throw new Error(`merge:main mutation authorization failed: ${checked.reason || "unknown"}`);
-    await setMergeAuthorityStatus(repository, headSha, "success", "merge:main lease and dependency closure authorized");
-    // GitHub rulesets evaluate a newly published commit status asynchronously.
-    // Give the required global-merge-authority status a bounded propagation
-    // window before the protected-ref merge mutation.
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    // Native validation is a private, in-process authorization. A success
+    // status is published only after the merge mutation and readback succeed.
     const [finalMain, finalPull] = await Promise.all([
       githubJson(repository, "/commits/main"),
       githubJson(repository, `/pulls/${pullNumber}`),
@@ -203,6 +221,8 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
       },
     });
     if (finalLease.passed !== true) throw new Error(`merge:main final mutation authorization failed: ${finalLease.reason || "unknown"}`);
+    assertNativeMergeReceipt(nativeEvidence);
+    await auditMergeActions({ repository, nativeEvidence, headSha, changedPaths: candidate.changedPaths });
     merged = await githubJson(repository, `/pulls/${pullNumber}/merge`, {
       method: "PUT",
       body: JSON.stringify({ sha: headSha, merge_method: mergeMethod }),
@@ -225,25 +245,28 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
       mergeMethod,
     });
     mergeSucceeded = true;
+    let statusPublished = false;
+    try {
+      await auditMergeActions({ repository, nativeEvidence, headSha, changedPaths: candidate.changedPaths });
+      await setMergeAuthorityStatus(repository, headSha, "success", `native merge verified; receipt ${nativeEvidence.receiptDigest.slice(0, 16)}`, nativeEvidence);
+      statusPublished = true;
+    } catch (error) {
+      process.stderr.write(`merge:main readback succeeded; post-merge Actions audit or result status did not complete: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
     return {
       merged: true,
       pullNumber: String(pullNumber),
       mergeCommitSha,
+      statusPublished,
       resource,
       fencingToken: proof.fencingToken,
     };
   } catch (error) {
-    if (!mergeSucceeded) {
-      try {
-        await setMergeAuthorityStatus(
-          repository,
-          headSha,
-          "failure",
-          mergeMutated ? "merge:main mutation occurred but post-mutation readback failed" : "merge:main authorization did not complete",
-        );
-      } catch {
-        // Preserve the original failure; the lease release below remains mandatory.
-      }
+    // A failure status would itself fire an Actions `status` event if remote
+    // workflow state changed since the last audit. Keep the private receipt
+    // and report the original error without another GitHub mutation.
+    if (mergeMutated && !mergeSucceeded) {
+      throw new Error(`merge:main mutation occurred but post-mutation readback failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
     throw error;
   } finally {
@@ -269,6 +292,7 @@ export async function mergePullRequest({
   mergeMethod = "squash",
   maxAttempts = 3,
   retryDelayMs = 5000,
+  nativeEvidence = null,
 }) {
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) {
     throw new Error("maxAttempts must be an integer between 1 and 5");
@@ -279,7 +303,7 @@ export async function mergePullRequest({
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, mergeMethod });
+      return await mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, mergeMethod, nativeEvidence });
     } catch (error) {
       lastError = error;
       if (!retryableMergeDrift(error) || attempt === maxAttempts) throw error;
