@@ -17,8 +17,8 @@ test("scheduled units keep daily architecture and weekly security outside checko
   const sha = "a".repeat(40);
   const units = nativeScheduledUnits(sha);
   assert.equal(Object.keys(units).length, 4);
-  assert.match(units["skincos-native-architecture-audit.timer"], /OnCalendar=\*-\*-\* 03:17:00 UTC/);
-  assert.match(units["skincos-native-security-audit.timer"], /OnCalendar=Mon \*-\*-\* 03:17:00 UTC/);
+  assert.match(units["skincos-native-architecture-audit.timer"], /OnCalendar=\*-\*-\* 04:15:00 UTC/);
+  assert.match(units["skincos-native-security-audit.timer"], /OnCalendar=Mon \*-\*-\* 04:45:00 UTC/);
   for (const name of ["skincos-native-architecture-audit.service", "skincos-native-security-audit.service"]) {
     assert.match(units[name], new RegExp(`releases/${sha}/scripts/run-native-scheduled-gate\\.mjs`));
     assert.match(units[name], /ProtectHome=tmpfs/);

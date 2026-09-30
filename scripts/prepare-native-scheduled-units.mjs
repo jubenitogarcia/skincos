@@ -11,7 +11,7 @@ export function nativeScheduledUnits(sha, operatorHome = "/home/admin") {
   return Object.fromEntries(["architecture", "security"].flatMap((gate) => {
     const unit = `skincos-native-${gate}-audit`;
     const service = `[Unit]\nDescription=SKINCOS native ${gate} audit (trusted ${sha})\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nUser=admin\nGroup=admin\nWorkingDirectory=${source}\nUMask=0077\nEnvironment=HOME=${operatorHome}\nEnvironment=PATH=/usr/local/bin:/usr/bin:/bin\nExecStart=/usr/bin/flock --nonblock ${base}/${gate}.lock /usr/bin/node ${source}/scripts/run-native-scheduled-gate.mjs ${gate} run\nTimeoutStartSec=4h\nKillMode=control-group\nProtectSystem=strict\nProtectHome=tmpfs\nBindPaths=${base}\nBindPaths=${operatorHome}/.local/state/skincos-native-architecture-receipts\nBindPaths=${operatorHome}/.local/state/skincos-native-security-audit\nBindReadOnlyPaths=${operatorHome}/.local/share/skincos-native-security-tools\nReadWritePaths=/var/tmp\nInaccessiblePaths=/mnt/c /mnt/wslg /etc/skincos /var/lib/skincos-runtime /opt/skincos /run/credentials\nProtectKernelTunables=yes\nProtectControlGroups=yes\nProtectKernelModules=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n\n[Install]\nWantedBy=multi-user.target\n`;
-    const calendar = gate === "architecture" ? "*-*-* 03:17:00 UTC" : "Mon *-*-* 03:17:00 UTC";
+    const calendar = gate === "architecture" ? "*-*-* 04:15:00 UTC" : "Mon *-*-* 04:45:00 UTC";
     const timer = `[Unit]\nDescription=SKINCOS native ${gate} schedule\n\n[Timer]\nOnCalendar=${calendar}\nPersistent=true\nAccuracySec=1min\nUnit=${unit}.service\n\n[Install]\nWantedBy=timers.target\n`;
     return [[`${unit}.service`, service], [`${unit}.timer`, timer]];
   }));
