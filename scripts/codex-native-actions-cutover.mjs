@@ -54,6 +54,11 @@ function privateFile(file) {
   const resolved = path.resolve(file);
   const root = fs.realpathSync(privateDir());
   if (!resolved.startsWith(`${root}${path.sep}`)) throw new Error("cutover snapshot must stay in the private state directory");
+  const parent = path.dirname(resolved);
+  const parentStat = fs.lstatSync(parent);
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || parentStat.uid !== process.getuid() || (parentStat.mode & 0o777) !== 0o700 || fs.realpathSync(parent) !== parent) {
+    throw new Error("cutover snapshot parent custody is unsafe");
+  }
   const stat = fs.lstatSync(resolved);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600) {
     throw new Error("cutover snapshot permissions are unsafe");
