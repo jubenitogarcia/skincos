@@ -49,3 +49,24 @@ bootstrap independente descrito em `native-merge-authority.md`; desabilitar um
 workflow de proteção antes disso removeria uma defesa ativa. Não desabilitar o
 Actions do repositório inteiro enquanto schedules, escritores e recuperações
 dependerem dele.
+
+## Continuidade das PRs abertas
+
+`scripts/codex-native-pr-admission-inventory.mjs` lê todas as PRs abertas e
+compara cada cabeça com o `main` live, sem alterar branches, statuses ou jobs.
+O relatório privado registra apenas identidade de SHA, número da PR,
+ancestralidade e estado de draft. A cabeça precisa conter o `main` atual,
+pertencer ao mesmo repositório e, para o gate nativo versionado, a âncora de
+base informada pela API também precisa coincidir com esse SHA. Uma PR antiga
+deve ser atualizada e validada de novo no SHA resultante, somente depois que
+os gatilhos automáticos forem neutralizados.
+
+```powershell
+& .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path `
+  -Executable node -Argument @('scripts/codex-native-pr-admission-inventory.mjs')
+```
+
+Na leitura de 2026-09-30, o `main` era `cc7b7e496457a612cb63a9728233e52cc98cb3c3`:
+60 PRs não draft estavam divergentes desse commit, sete eram draft e nenhuma
+era elegível ao gate nativo sem atualização. Este número é um retrato, não um
+estado fixo nem autorização para atualizar branches automaticamente.
