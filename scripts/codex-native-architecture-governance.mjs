@@ -70,22 +70,22 @@ function persistReceipt(receipt) {
   return file;
 }
 
-function run() {
+function run({ requireMain = true } = {}) {
   if (process.platform !== "linux") throw new Error("native architecture governance requires Ubuntu/Linux");
   const plan = fullNativeArchitecturePlan();
   const sha = nativeGit(ROOT, "rev-parse", "HEAD");
   if (nativeGit(ROOT, "status", "--porcelain", "--untracked-files=normal")) throw new Error("native architecture source checkout must be clean");
-  if (sha !== trustedMainSha()) throw new Error("native architecture source must be the exact live main SHA");
+  if (requireMain && sha !== trustedMainSha()) throw new Error("native architecture source must be the exact live main SHA");
   const sourceTree = nativeGit(ROOT, "rev-parse", `${sha}^{tree}`);
   const snapshot = createNativeCandidateSnapshot({ candidateRoot: ROOT, headSha: sha });
-  const receipt = { version: 1, kind: "native-architecture-governance", sourceSha: sha, sourceTree, startedAt: new Date().toISOString(), jobs: plan.jobs, checks: [], status: "running" };
+  const receipt = { version: 1, kind: "native-architecture-governance", mode: requireMain ? "live-main" : "rehearsal", sourceSha: sha, sourceTree, startedAt: new Date().toISOString(), jobs: plan.jobs, checks: [], status: "running" };
   try {
     if (plan.jobs.includes("influencer")) installLockedDependencies(snapshot.source, snapshot.temporaryRoot);
     for (const { job, command } of plan.commands) {
       runInNativeCandidateSandbox({ source: snapshot.source, executable: "sh", args: ["-ec", command], label: `${job}: ${command}` });
       receipt.checks.push({ job, command, status: "passed" });
     }
-    if (nativeGit(ROOT, "rev-parse", "HEAD") !== sha || trustedMainSha() !== sha) throw new Error("main changed during architecture governance");
+    if (nativeGit(ROOT, "rev-parse", "HEAD") !== sha || (requireMain && trustedMainSha() !== sha)) throw new Error("source changed during architecture governance");
     receipt.status = "passed";
     return { status: "passed", sourceSha: sha, checked: receipt.checks.length, receiptPath: persistReceipt({ ...receipt, completedAt: new Date().toISOString() }) };
   } catch (error) {
@@ -108,9 +108,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
     if (mode === "plan" && process.argv.length === 3) {
       const plan = fullNativeArchitecturePlan();
       process.stdout.write(`${JSON.stringify({ jobs: plan.jobs, commandCount: plan.commands.length }, null, 2)}\n`);
-    } else if (mode === "run" && process.argv.length === 3) {
-      process.stdout.write(`${JSON.stringify(run(), null, 2)}\n`);
-    } else throw new Error("mode must be plan or run");
+    } else if (["run", "rehearsal"].includes(mode) && process.argv.length === 3) {
+      process.stdout.write(`${JSON.stringify(run({ requireMain: mode === "run" }), null, 2)}\n`);
+    } else throw new Error("mode must be plan, rehearsal or run");
   } catch (error) {
     process.stderr.write(`${String(error?.message || error)}\n`);
     process.exitCode = 1;

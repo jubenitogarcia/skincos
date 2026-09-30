@@ -91,3 +91,5 @@ O modo `run` exige checkout limpo no SHA live de `main`; a instalação do timer
 nativo e uma execução terminal de todos os 22 comandos ainda são necessários
 antes de retirar o `schedule` do workflow histórico. O modo `plan` é só uma
 verificação estática, não comprova a auditoria agendada.
+`rehearsal` usa o SHA limpo da branch atual e grava recibo marcado como ensaio;
+não autoriza o corte do gatilho agendado.
