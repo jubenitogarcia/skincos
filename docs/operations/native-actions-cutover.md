@@ -93,3 +93,45 @@ antes de retirar o `schedule` do workflow histórico. O modo `plan` é só uma
 verificação estática, não comprova a auditoria agendada.
 `rehearsal` usa o SHA limpo da branch atual e grava recibo marcado como ensaio;
 não autoriza o corte do gatilho agendado.
+
+O sandbox reconhece apenas `/run/candidate` como diretório Git confiável via
+variáveis do próprio processo; não altera a configuração compartilhada do Git.
+Os testes Node preservam todos os arquivos e são limitados a duas execuções
+paralelas para caber no limite de processos da unidade isolada.
+
+## Auditoria semanal de segurança
+
+`scripts/codex-native-security-audit.mjs` reproduz a matriz semanal de escopo
+com Gitleaks no histórico completo e na árvore atual, auditoria npm dos três
+lockfiles existentes, Trivy no lockfile backend, pip-audit nos requisitos
+rastreados, Bandit em todos os diretórios do workflow e Semgrep em SARIF. As
+exceções de pip-audit e Bandit continuam sujeitas às datas dos CSVs versionados.
+Cada scanner roda em unidade systemd sem credenciais, com código-fonte somente
+leitura; scanners que consultam avisos ou regras têm rede, enquanto Gitleaks e
+Bandit não têm. Saídas, inclusive possíveis achados sensíveis, ficam em arquivos
+privados `0600` sob `~/.local/state/skincos-native-security-audit/`.
+
+Os binários oficiais de Gitleaks 8.30.1 e Trivy 0.74.0 são fixados por SHA-256
+e conferidos com os arquivos de checksum das releases. pip-audit 2.10.1,
+Bandit 1.9.4 e Semgrep 1.178.0 são instalados em área própria do operador, sem
+tocar nos ambientes de produção. `provision-native-security-tools.sh` recusa
+sobrescrever uma instalação existente; `--finalize-existing` valida uma
+instalação parcial antes de publicar o ponteiro `current`.
+
+```powershell
+& .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path `
+  -Executable node -Argument @('scripts/codex-native-security-audit.mjs', 'plan')
+& .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path `
+  -Executable node -Argument @('scripts/codex-native-security-audit.mjs', 'preflight')
+```
+
+`rehearsal` executa os scans na branch local e marca o recibo como ensaio.
+`run` exige um checkout limpo no SHA exato do `main` live. Mesmo que todos os
+scans locais passem, seu estado permanece
+`local-passed-sarif-publication-pending`: a publicação do SARIF em code scanning
+e a confirmação de custódia `security-events:write` ainda precisam de uma
+implementação e readback independentes. Instalar um timer semanal em fonte
+Ubuntu imutável, executar um ciclo terminal no SHA live e verificar a entrega
+do SARIF são condições antes de retirar o `schedule` histórico. A auditoria de
+segurança e os eventos de PR/push desse workflow só podem ser retirados após
+as verificações equivalentes no gate nativo estarem instaladas e comprovadas.

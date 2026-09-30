@@ -141,16 +141,15 @@ function isolatedScan({ source, toolsRoot, executable, args, label, online, repo
   return { label, status: result.error ? "failed" : accepted.includes(result.status) ? "passed" : "failed", exitCode: result.status, outputDigest, stdout, stderr, error: result.error?.code || null };
 }
 
-function run() {
+function run({ requireMain = true } = {}) {
   if (process.platform !== "linux") throw new Error("weekly security audit requires native Ubuntu/Linux");
   const sha = nativeGit(ROOT, "rev-parse", "HEAD");
-  if (nativeGit(ROOT, "status", "--porcelain", "--untracked-files=normal") || sha !== liveMainSha()) {
-    throw new Error("weekly security audit requires a clean checkout at exact live main SHA");
-  }
+  if (nativeGit(ROOT, "status", "--porcelain", "--untracked-files=normal")) throw new Error("weekly security audit requires a clean checkout");
+  if (requireMain && sha !== liveMainSha()) throw new Error("weekly security audit requires the exact live main SHA");
   const toolsRoot = assertTools();
   const snapshot = createNativeCandidateSnapshot({ candidateRoot: ROOT, headSha: sha });
   const reportDir = privateDirectory(path.join(privateDirectory(RECEIPTS), `${sha}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`));
-  const receipt = { schemaVersion: 1, kind: "skincos-native-weekly-security-audit", sourceSha: sha, startedAt: new Date().toISOString(), scans: [], status: "running" };
+  const receipt = { schemaVersion: 1, kind: "skincos-native-weekly-security-audit", mode: requireMain ? "live-main" : "rehearsal", sourceSha: sha, startedAt: new Date().toISOString(), scans: [], status: "running" };
   try {
     if (gitIn(snapshot.source, "rev-parse", "--is-shallow-repository") !== "false") throw new Error("weekly security snapshot has incomplete Git history");
     const plan = weeklySecurityPlan(snapshot.source);
@@ -186,7 +185,7 @@ function run() {
       bandit.findingCount = unresolved.length;
     } catch { bandit.status = "failed"; }
     scan("semgrep", "/run/tools/bin/semgrep", ["scan", "--config", "auto", "--sarif"]);
-    if (sha !== liveMainSha() || nativeGit(ROOT, "rev-parse", "HEAD") !== sha) throw new Error("main changed during weekly security audit");
+    if (nativeGit(ROOT, "rev-parse", "HEAD") !== sha || (requireMain && sha !== liveMainSha())) throw new Error("source changed during weekly security audit");
     receipt.status = receipt.scans.every((result) => result.status === "passed") ? "local-passed-sarif-publication-pending" : "failed";
     receipt.completedAt = new Date().toISOString();
     savePrivate(path.join(reportDir, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
@@ -235,9 +234,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
       process.stdout.write(`${JSON.stringify({ scanners: plan.scanners, requirements: plan.requirements.length, skippedRequirements: plan.skippedRequirements.length, fullScan: plan.scope.fullScan }, null, 2)}\n`);
     } else if (mode === "preflight" && process.argv.length === 3) {
       process.stdout.write(`${JSON.stringify(preflight(), null, 2)}\n`);
-    } else if (mode === "run" && process.argv.length === 3) {
-      process.stdout.write(`${JSON.stringify(run(), null, 2)}\n`);
-    } else throw new Error("mode must be plan, preflight or run");
+    } else if (["run", "rehearsal"].includes(mode) && process.argv.length === 3) {
+      process.stdout.write(`${JSON.stringify(run({ requireMain: mode === "run" }), null, 2)}\n`);
+    } else throw new Error("mode must be plan, preflight, rehearsal or run");
   } catch (error) {
     process.stderr.write(`${String(error?.message || error)}\n`);
     process.exitCode = 1;
