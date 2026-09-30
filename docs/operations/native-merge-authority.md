@@ -23,7 +23,7 @@ resultado editável não autoriza merge.
   `ProtectHome` e montagens Windows, runtime e segredos inacessíveis. Se esse
   isolamento não estiver disponível, a validação falha fechada.
 - O gate grava um recibo privado criado uma vez por digest em
-  `~/.local/state/skincos/native-merge-receipts/`. O recibo registra base,
+  `~/.local/state/skincos-native-merge-receipts/`. O recibo registra base,
   cabeça, closure, classificação, comandos e resultados. É somente leitura e
   vinculado pelo SHA-256; a autoridade o relê antes da mutação.
 

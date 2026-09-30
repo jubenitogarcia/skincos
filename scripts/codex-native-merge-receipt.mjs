@@ -6,7 +6,17 @@ import path from "node:path";
 const DIGEST = /^[0-9a-f]{64}$/;
 
 function receiptRoot() {
-  return path.join(os.homedir(), ".local", "state", "skincos", "native-merge-receipts");
+  return path.join(os.homedir(), ".local", "state", "skincos-native-merge-receipts");
+}
+
+function assertReceiptRoot({ create = false } = {}) {
+  const root = receiptRoot();
+  if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const stats = fs.lstatSync(root);
+  if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== process.getuid() || (stats.mode & 0o777) !== 0o700) {
+    throw new Error("native merge receipt directory custody is invalid");
+  }
+  return root;
 }
 
 function receiptPayload(evidence) {
@@ -34,9 +44,7 @@ function receiptPayload(evidence) {
 }
 
 export function persistNativeMergeReceipt(evidence) {
-  const root = receiptRoot();
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  fs.chmodSync(root, 0o700);
+  const root = assertReceiptRoot({ create: true });
   const body = `${JSON.stringify(receiptPayload(evidence), null, 2)}\n`;
   const digest = crypto.createHash("sha256").update(body).digest("hex");
   const receiptPath = path.join(root, `${digest}.json`);
@@ -56,7 +64,7 @@ export function persistNativeMergeReceipt(evidence) {
 }
 
 export function assertNativeMergeReceipt(evidence) {
-  const root = receiptRoot();
+  const root = assertReceiptRoot();
   const digest = String(evidence?.receiptDigest || "");
   if (!DIGEST.test(digest) || evidence?.receiptPath !== path.join(root, `${digest}.json`)) {
     throw new Error("native merge receipt reference is invalid");

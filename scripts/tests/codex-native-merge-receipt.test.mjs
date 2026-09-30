@@ -29,8 +29,25 @@ test("private native merge receipt is content addressed and tamper evident", (t)
   assert.deepEqual(assertNativeMergeReceipt({ ...evidence, ...reference }), reference);
   assert.deepEqual(persistNativeMergeReceipt(evidence), reference);
   assert.equal(fs.statSync(reference.receiptPath).mode & 0o777, 0o400);
+  assert.equal(fs.statSync(path.dirname(reference.receiptPath)).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.dirname(reference.receiptPath)).uid, process.getuid());
   fs.chmodSync(reference.receiptPath, 0o600);
   fs.appendFileSync(reference.receiptPath, "\n");
   fs.chmodSync(reference.receiptPath, 0o400);
   assert.throws(() => assertNativeMergeReceipt({ ...evidence, ...reference }), /digest does not match/);
+});
+
+test("native merge receipt refuses a symlinked private directory", (t) => {
+  if (process.platform !== "linux") return t.skip("native receipt custody is Linux only");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-receipt-link-"));
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  t.after(() => {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  fs.mkdirSync(path.join(home, ".local", "state"), { recursive: true });
+  fs.symlinkSync(home, path.join(home, ".local", "state", "skincos-native-merge-receipts"));
+  assert.throws(() => persistNativeMergeReceipt({}), /directory custody is invalid/);
 });
