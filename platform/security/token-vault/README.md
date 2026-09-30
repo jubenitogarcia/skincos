@@ -291,10 +291,17 @@ feita depois pelo router Meta-only, com timeout de 12 s e retry seguro limitado.
 
 ## Governed deploy
 
-Use `.github/workflows/deploy-token-vault.yml` for every staging or production
-promotion. It creates an immutable Worker candidate, preserves inherited
-production bindings, and activates only after its environment-specific gates
-and rollback evidence pass.
+**Migração sem GitHub Actions:** não dispare o workflow histórico para resolver
+um bloqueio de orçamento e não publique por `wrangler deploy` direto. O
+[runbook nativo](../../../docs/runbooks/token-vault-native-release.md) descreve
+Preview, release Linux imutável, lease sob custódia root, transação com
+compensação e evidência root-sealed. Esse caminho ainda exige custódia nativa
+dos bearers e validação live em staging antes de produção. O texto restante
+desta seção descreve o contrato histórico de segurança a preservar.
+
+Historicamente, `.github/workflows/deploy-token-vault.yml` criava o candidato
+imutável, preservava os bindings herdados e ativava somente após os gates do
+ambiente e a evidência de rollback.
 
 Staging has no Orb consumer for the Token Vault operational bearer. Its
 `TOKEN_VAULT_N8N_API_TOKEN` is therefore an independent, high-entropy protected
@@ -313,7 +320,7 @@ bootstrap or the reversible fixture exercise; the preview proves candidate
 authentication, while the canonical-route check proves data-plane auth
 readiness.
 
-O Token Vault é publicado exclusivamente por
+O caminho histórico de publicação era
 `.github/workflows/deploy-token-vault.yml`: Preview -> Staging -> Production.
 O workflow exige o gate imutável de promoção, lease global
 `release:token-vault`, bookmark D1 Time Travel antes das migrations aditivas,
