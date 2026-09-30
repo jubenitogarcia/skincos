@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { publicGitEnvironment } from "../codex-native-scheduled-source.mjs";
 import { nativeScheduledUnits } from "../prepare-native-scheduled-units.mjs";
+import { validateReleaseSymlink } from "../stage-native-scheduled-release.mjs";
 
 test("scheduled source reads exclude tokens, inherited checkout and auth custody", () => {
   const env = publicGitEnvironment();
@@ -26,4 +27,11 @@ test("scheduled units keep daily architecture and weekly security outside checko
     assert.doesNotMatch(units[name], /Actions|GITHUB_TOKEN|\.codex\/worktrees|DrvFS/);
   }
   assert.throws(() => nativeScheduledUnits("main"), /identity/);
+});
+
+test("immutable source preserves internal tracked pointers without accepting external targets", () => {
+  validateReleaseSymlink("/source", "/source/backend/app/runtime", "../../var/runtime");
+  assert.throws(() => validateReleaseSymlink("/source", "/source/link", "/etc/skincos"), /relative/);
+  assert.throws(() => validateReleaseSymlink("/source", "/source/link", "C:/private"), /relative/);
+  assert.throws(() => validateReleaseSymlink("/source", "/source/app/link", "../../private"), /escaped/);
 });

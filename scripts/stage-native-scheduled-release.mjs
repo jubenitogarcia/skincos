@@ -29,17 +29,37 @@ function git(cwd, ...args) {
   return String(result.stdout || "").trim();
 }
 
-function seal(root) {
+export function validateReleaseSymlink(sourceRoot, file, target) {
+  if (path.isAbsolute(target) || /^[A-Za-z]:/.test(target)) throw new Error("native scheduled release symlink must be relative");
+  const lexical = path.resolve(path.dirname(file), target);
+  if (lexical !== sourceRoot && !lexical.startsWith(`${sourceRoot}${path.sep}`)) throw new Error("native scheduled release symlink escaped source");
+  try {
+    const resolved = fs.realpathSync(file);
+    if (resolved !== sourceRoot && !resolved.startsWith(`${sourceRoot}${path.sep}`)) throw new Error("native scheduled release symlink resolves outside source");
+  } catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+    // Tracked example/runtime pointers can be dangling within the snapshot.
+  }
+}
+
+function seal(root, sourceRoot = root) {
   const entries = fs.readdirSync(root, { withFileTypes: true });
   for (const entry of entries) {
     const file = path.join(root, entry.name);
     const stat = fs.lstatSync(file);
-    if (stat.isSymbolicLink()) throw new Error(`native scheduled release contains a symlink: ${path.relative(root, file)}`);
-    if (stat.isDirectory()) seal(file);
+    if (stat.isSymbolicLink()) { validateReleaseSymlink(sourceRoot, file, fs.readlinkSync(file)); continue; }
+    if (stat.isDirectory()) seal(file, sourceRoot);
     else if (stat.isFile()) fs.chmodSync(file, stat.mode & ~0o222);
     else throw new Error("native scheduled release contains an unsupported file");
   }
   fs.chmodSync(root, fs.statSync(root).mode & ~0o222);
+}
+
+function writableDirectories(root) {
+  const stat = fs.lstatSync(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+  fs.chmodSync(root, stat.mode | 0o700);
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) if (entry.isDirectory()) writableDirectories(path.join(root, entry.name));
 }
 
 function sha256(file) {
@@ -100,6 +120,7 @@ export function stageNativeScheduledRelease({ canonical = false } = {}) {
     if (!/^\.stage-[A-Za-z0-9]+$/.test(path.basename(temporary)) || path.dirname(temporary) !== releases) {
       throw new Error("native scheduled temporary cleanup target is invalid");
     }
+    writableDirectories(temporary);
     fs.rmSync(temporary, { recursive: true, force: true });
     if (!promoted && fs.existsSync(destination)) {
       process.stderr.write(`Native scheduled release was partially staged at ${destination}; activation remains blocked.\n`);
