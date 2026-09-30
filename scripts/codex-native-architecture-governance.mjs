@@ -56,7 +56,12 @@ export function fullNativeArchitecturePlan() {
   if (plan.full !== true || plan.failClosed !== true || !Array.isArray(plan.jobs) || plan.jobs.length !== 7) {
     throw new Error("full architecture governance plan is incomplete");
   }
-  const commands = plan.jobs.flatMap((job) => (plan.commands[job] || []).map((command) => ({ job, command })));
+  const commands = plan.jobs.flatMap((job) => (plan.commands[job] || []).map((command) => ({
+    job,
+    // Preserve every test while bounding Node's process and thread fanout in
+    // the native systemd unit. Hosted runners had a smaller CPU allocation.
+    command: command.startsWith("node --test ") ? command.replace("node --test ", "node --test --test-concurrency=2 ") : command,
+  })));
   if (commands.length < 20 || commands.some(({ command }) => !/^node (?:--test |--check )?/.test(command))) {
     throw new Error("full architecture governance command set is invalid");
   }

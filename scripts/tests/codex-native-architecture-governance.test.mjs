@@ -8,4 +8,5 @@ test("native scheduled architecture plan keeps the full seven-job matrix", () =>
   assert.equal(plan.commands.length, 22);
   assert.ok(plan.commands.some(({ command }) => command.includes("validate-promotion-source-ref.test.mjs")));
   assert.ok(plan.commands.some(({ command }) => command.includes("ponto-pages-promotion-environment.test.mjs")));
+  assert.ok(plan.commands.filter(({ command }) => command.startsWith("node --test ")).every(({ command }) => command.startsWith("node --test --test-concurrency=2 ")));
 });
