@@ -590,6 +590,26 @@ function validateArchiveGitProvenance({ archiveFile, sourceCommit, sourceTree })
   }
 }
 
+// The archive parser is independent of the Messaging release envelope. Native
+// publishers may reuse its bounded extraction and complete Git-tree check
+// without running source code from an untrusted archive.
+export function validateGitSourceArchive({ archiveFile, sourceCommit, sourceTree }) {
+  return validateArchiveGitProvenance({ archiveFile, sourceCommit, sourceTree });
+}
+
+export function validateMaterializedGitTree({ sourceRoot, sourceTree }) {
+  return reconstructedTreeEntries(sourceRoot, sourceTree);
+}
+
+export function materializeVerifiedGitSourceArchive({ archiveFile, sourceCommit, sourceTree, stageDirectory }) {
+  if (archiveGitCommit(archiveFile) !== sourceCommit) {
+    fail("Release source archive Git commit differs from the requested immutable source SHA.");
+  }
+  const sourceRoot = materializeGitArchive(archiveFile, stageDirectory, sourceCommit);
+  const entries = reconstructedTreeEntries(sourceRoot, sourceTree);
+  return { sourceRoot, entries };
+}
+
 function externalRegularFile(candidate, label) {
   const resolved = path.resolve(String(candidate || ""));
   let entry;
