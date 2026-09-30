@@ -25,5 +25,7 @@ seu console, Core API, banco e deploy vivem no repositório independente
   usar migrações aditivas com readback e rollback do mesmo artefato.
 - Ações locais de Node passam por `scripts/invoke-skincos-wsl.ps1`; os atalhos
   compartilhados não iniciam runtimes de produto externo.
-- CI e Actions são auxiliares. A validação local equivalente é obrigatória
-  antes de qualquer promoção.
+- GitHub Actions não é executor nem gate autorizado para novos trabalhos.
+  Validação versionada independente em Ubuntu/WSL, merge com autoridade e
+  custódia próprias, staging, rollback e readback seguem
+  `docs/decisions/github-actions-retirement.md`.

@@ -1,5 +1,12 @@
 # Governança global de concorrência e release
 
+**Atualização de 2026-09-30:** as descrições de jobs, runners, checks e
+publishers do GitHub Actions abaixo registram a implementação anterior. Não
+devem ser usadas para novos trabalhos. A decisão vigente está em
+[`github-actions-retirement.md`](github-actions-retirement.md); toda troca
+de executor preserva lease, fencing, fechamento, artefato, custódia, rollback
+e readback antes de desativar o writer antigo.
+
 **Status:** Fundação das Fases 1–5 implementada; esta hardening final adiciona
 fencing de autoridade, recovery fail-closed, gate de merge com rechecagem final,
 closure automática e rastreamento transitive de writers. O coordination plane

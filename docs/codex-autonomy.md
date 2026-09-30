@@ -2,6 +2,11 @@
 
 This project is set up so Codex can implement, validate, ship, and verify changes with minimal human intervention.
 
+GitHub Actions is retired as an executor and gate for new work. Follow
+[`github-actions-retirement.md`](decisions/github-actions-retirement.md) for
+independent validation, merge and release; older workflow descriptions below
+are historical inventory, not commands to dispatch.
+
 For Codex App plugin routing, local Browser QA, Sites prototyping, and headless agent commands, see `docs/codex-app-native.md`.
 
 The delivery-first local entry point is `scripts/run-skincos-codex.ps1`. It
@@ -14,7 +19,7 @@ launcher unless App configuration is explicitly overridden.
 
 - WSL GitHub CLI auth for this repo: `gh auth status`
 - Local Cloudflare auth: `npx wrangler whoami`
-- GitHub deploy secrets:
+- Historical GitHub deploy secret inventory (presence is not native custody):
   - `CLOUDFLARE_API_TOKEN`
   - `CLOUDFLARE_ACCOUNT_ID`
   - `GH_TOKEN`
@@ -41,15 +46,12 @@ scripts/codex-preflight.sh --strict
 
 Strict mode exits non-zero for warnings as well as failures. Use it for release readiness. Normal mode is better during local development because it reports local dirty files as warnings.
 
-## GitHub preflight
+## Native preflight
 
-Workflow:
-
-```text
-.github/workflows/codex-autonomy-preflight.yml
-```
-
-It runs weekly and can be triggered manually from GitHub Actions. It verifies that the CI environment still has the secrets, variables, endpoints, workflows, and security exception dates needed for autonomous operation.
+Use the repository's versioned preflight through
+`scripts/invoke-skincos-wsl.ps1` from the exact target revision. Record its
+result with the deployment receipt. Do not dispatch the former
+`codex-autonomy-preflight.yml` workflow.
 
 ## Operational model
 
@@ -58,12 +60,17 @@ Preferred flow:
 1. Codex creates a `codex/*` branch.
 2. Codex implements changes and validates locally.
 3. Codex pushes and opens a PR.
-4. GitHub checks and security gates run.
+4. Codex runs the versioned independent checks for the exact revision and
+   records evidence; a required remote check must have a legitimate
+   independent producer.
 5. Codex uses the smallest gate selected by the changed paths: static/diff checks for docs, one focused test or build for normal code, and a focal journey plus rollback for elevated changes. Full suites, staging drills, deep scans and unrelated modules are not ritual merge gates.
-6. After-merge workflows publish only monorepo-owned Workers/Pages. CRM is deployed from `C:\CodexShared\Projetos\crm` through its own publisher.
+6. A versioned native publisher promotes only eligible monorepo-owned
+   Workers/Pages. CRM is deployed from `C:\CodexShared\Projetos\crm` through
+   its own publisher.
 7. Codex verifies the relevant domain health endpoints.
 
-Manual deploys through local Wrangler are allowed when needed, but GitHub Actions are the preferred path because they are auditable and repeatable.
+Direct Wrangler commands are not a substitute for the surface's publisher,
+staging evidence, rollback or live readback.
 
 ## When to rotate credentials
 
@@ -71,7 +78,7 @@ Rotate deploy credentials if:
 
 - `scripts/codex-preflight.sh` reports missing or invalid Cloudflare/GitHub auth.
 - `GitHub Auth Status` shows WSL auth is not ready for `jubenitogarcia/skincos`.
-- GitHub deploy workflows fail with missing or unauthorized Cloudflare credentials.
+- A native publisher reports missing or unauthorized Cloudflare credentials.
 - Cloudflare token scope changes are required.
 - The normal 90-day rotation window from `docs/secrets-rotation.md` is reached.
 
@@ -79,12 +86,12 @@ After rotation, run:
 
 ```bash
 npm run codex:preflight
-gh workflow run codex-autonomy-preflight.yml
 ```
 
 ## Scope required for the Cloudflare token
 
-The token used by GitHub Actions should allow the current deployment surface:
+An externally issued token used by an approved native publisher needs only the
+scopes required by its target surface:
 
 - Account read
 - Workers scripts write
@@ -111,7 +118,8 @@ The preflight checks these endpoints:
 
 ## Human-only responsibilities
 
-Codex can operate the repo, CI, deploys, and Cloudflare resources when credentials are valid. Humans still own:
+Codex can operate the repo, native checks, eligible deploys, and Cloudflare
+resources when credentials are valid. Humans still own:
 
 - Creating or revoking provider accounts.
 - Approving new third-party billing or paid products.

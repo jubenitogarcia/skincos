@@ -77,7 +77,12 @@ a ausência ou divergência interrompe o fluxo antes do rollback. A reconciliaç
 da nomenclatura/ligação no Cloudflare deve ser feita pelo publisher canônico e
 atestado novamente antes de uma nova tentativa.
 
-O resultado é o artefato GitHub Actions
+O trecho abaixo descreve o artefato histórico do Actions. Para novo trabalho,
+preservar o mesmo contrato de evidência em store nativo imutável conforme
+[`github-actions-retirement.md`](../decisions/github-actions-retirement.md);
+não disparar a workflow antiga.
+
+O resultado histórico é o artefato GitHub Actions
 `ponto-core-staging-candidate-<SHA>/ponto-core-staging-candidate.json`. Ele
 contém apenas identidade de fonte, serviços, UUIDs, tags, exposição, readiness
 e referências de recuperação, sem credenciais, PII, dumps ou dados de clientes.

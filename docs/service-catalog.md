@@ -38,6 +38,7 @@ publisher.
 
 ## Operação
 
-Secrets, dados de produção e estado de runtime ficam fora do Git. GitHub Actions
-é apenas executor opcional; validações equivalentes podem ser executadas no
-Codex/WSL.
+Secrets, dados de produção e estado de runtime ficam fora do Git. GitHub
+Actions está aposentado para novos trabalhos; validação e publicação usam
+Codex/WSL ou outro executor independente com os gates de
+[`github-actions-retirement.md`](decisions/github-actions-retirement.md).

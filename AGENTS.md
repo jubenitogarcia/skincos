@@ -71,11 +71,19 @@
 - If the user asks briefly ("proceda", "verifique", "publique", "corrija"),
   infer the standard Skincos flow instead of asking them to restate context.
 - Use `skills/skincos-project-orchestrator` for SKINCOS handoff, audit, status,
-  PR/CI/deploy review, or next-step requests. “retome o SKINCOS”, “continue o
+  PR/validation/deploy review, or next-step requests. “retome o SKINCOS”, “continue o
   projeto”, “prossiga do ponto atual”, “execute o próximo passo” and “use o
   orquestrador” mean `resume-execute`; only `status`, “somente audite”, or
-  “somente analise” mean read-only. Continue authorized work through PR/CI and
+  “somente analise” mean read-only. Continue authorized work through PR, native validation and
   staging evidence instead of stopping at a report.
+- GitHub Actions está aposentado como executor e gate de novos trabalhos neste
+  repositório e no Orb. Não iniciar, reexecutar ou aguardar jobs para validar,
+  integrar, publicar ou concluir uma missão; esgotamento da cota não é falha
+  do código. Aplicar
+  [a decisão de aposentadoria](docs/decisions/github-actions-retirement.md):
+  validação versionada em Ubuntu/WSL nativo ou executor independente,
+  autoridade de merge, custódia, staging, rollback e readback conforme a
+  superfície. Não fabricar checks nem contornar proteções substantivas.
 - In `supervisor-cycle`, keep orchestration intelligence in the Skill and use
   the project `Stop` hook only as a deterministic structured-state gate. A
   continued cycle never invents or expands scope: it carries the persistent
@@ -159,8 +167,8 @@
   tests, and component refactors.
 - Cloudflare: use for Workers, Pages, D1, route bindings, deploys, logs, token
   health, and live endpoint verification.
-- GitHub: use for PRs, checks, automerge, workflow runs, CI failures, releases,
-  and deployment evidence.
+- GitHub: use for PRs, regras de branch, revisão, checks independentes quando
+  configurados e evidência de releases. Não usar jobs do Actions como executor.
 - Sites: use for prototypes, temporary demos, or static artifacts only. Do not
   replace the production `espacofacial.com` Cloudflare/OpenNext pipeline unless
   the user explicitly approves a migration.

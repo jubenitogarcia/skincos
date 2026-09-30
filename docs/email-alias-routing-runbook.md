@@ -71,8 +71,8 @@ Cloudflare deve permanecer apenas como DNS neste fluxo. Nao ative Cloudflare
 Email Routing para resolver aliases enquanto o dominio continua recebendo pelo
 iCloud.
 
-GitHub Actions pode automatizar auditoria futura, mas GitHub nao encaminha email
-e nao substitui a configuracao do iCloud.
+Uma auditoria futura pode usar Codex/WSL ou outro executor independente;
+GitHub nao encaminha email e nao substitui a configuracao do iCloud.
 
 ## Futuras inclusoes
 

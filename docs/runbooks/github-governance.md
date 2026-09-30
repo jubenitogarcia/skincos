@@ -1,12 +1,18 @@
 # Runbook — governança do repositório GitHub
 
+**Atenção:** os payloads e comandos de Actions abaixo documentam o modelo
+anterior. GitHub Actions não deve ser iniciado, reexecutado ou aguardado para
+novo trabalho. Antes de aplicar uma ruleset, reconciliar o estado live e trocar
+checks/atores de Actions por evidência e autoridade independentes, conforme
+[`github-actions-retirement.md`](../decisions/github-actions-retirement.md).
+
 ## Fonte reproduzível
 
 - `CODEOWNERS` e `.github/scripts/validate-github-governance.mjs` definem e verificam a ownership local.
 - `.github/governance/rulesets/main-enterprise-baseline.json` é o payload canônico da ruleset da `main`.
 - `.github/governance/environments/{staging,production}.json` são os payloads dos environments; `.github/governance/environments/main-branch-policy.json` é a policy customizada aplicada aos dois environments; segredos não são versionados.
 
-Os arquivos representam a baseline de coordenação global: bloqueio de
+Os arquivos históricos representam a baseline de coordenação global: bloqueio de
 force-push e exclusão, PR obrigatória, resolução de conversas, o check
 `codex-autonomy-gate`, o `global-merge-authority` e o
 `skincos-integration-gate`. O update rule impede mutações diretas de `main` e
@@ -38,18 +44,16 @@ gh api "repos/jubenitogarcia/skincos/environments/production/deployment-branch-p
 
 Todo `uses:` externo deve apontar para SHA completo de 40 caracteres. Referências locais (`./`) são permitidas. Tags, branches e SHAs curtos bloqueiam CI e não podem ser promovidos à `main`.
 
-## Aplicar ruleset e environments
+## Reconciliar ruleset e environments
 
-Use somente após comparar o estado remoto com os arquivos versionados. Para atualizar a ruleset existente, obtenha o ID pelo nome e faça `PUT`; para criar, use `POST` uma única vez.
+Antes de qualquer escrita, comparar os payloads versionados com os recursos
+remotos. A ruleset versionada antiga contém checks e ator de Actions; não a
+reaplicar enquanto não houver payload revisto para a autoridade independente e
+prova do gate nativo. Registrar ID, revisão, diff, rollback e readback de cada
+recurso alterado. Environments não devem ser atualizados por consequência de
+uma revisão apenas da ruleset.
 
-```powershell
-$ruleset = gh api repos/jubenitogarcia/skincos/rulesets | ConvertFrom-Json | Where-Object name -eq 'main-enterprise-baseline'
-gh api --method PUT "repos/jubenitogarcia/skincos/rulesets/$($ruleset.id)" --input .github/governance/rulesets/main-enterprise-baseline.json
-gh api --method PUT repos/jubenitogarcia/skincos/environments/staging --input .github/governance/environments/staging.json
-gh api --method PUT repos/jubenitogarcia/skincos/environments/production --input .github/governance/environments/production.json
-```
-
-Para Ponto, execute os dois `PUT` somente após comparar a versão e confirmar
+Para Ponto, altere environments somente após comparar a versão e confirmar
 que a autorização persistente da missão cobre a alteração. O aceite remoto é
 mais estrito que "branch protegida": `deployment_branch_policy` deve usar
 custom policies e a listagem deve conter exatamente uma policy `main`;
@@ -59,18 +63,13 @@ a release fail-closed. Depois, confirme também que secrets têm a custódia por
 environment documentada e que nenhuma credencial de produção existe em
 staging. Nunca registre valores de secrets em Git, logs ou PRs.
 
-## Exigir SHA completo para Actions
+## Aposentadoria dos workflows
 
-Ative somente depois de uma PR com o validador verde e todos os workflows de `main` compatíveis. Preserve as permissões existentes ao atualizar o campo:
-
-```powershell
-$permissions = gh api repos/jubenitogarcia/skincos/actions/permissions | ConvertFrom-Json
-$body = @{ enabled = $permissions.enabled; allowed_actions = $permissions.allowed_actions; sha_pinning_required = $true } | ConvertTo-Json -Compress
-$body | gh api --method PUT repos/jubenitogarcia/skincos/actions/permissions --input -
-gh api repos/jubenitogarcia/skincos/actions/permissions
-```
-
-Aceite: `sha_pinning_required` é `true`; uma execução de CI da `main` inicia sem erro de resolução de Action; o validador continua verde. Rollback: repetir o comando com `sha_pinning_required = $false` somente para restaurar a execução e abrir uma PR corretiva imediata que repine a referência ofensora.
+Depois de migrar cada rotina e provar seu substituto, desativar seu gatilho no
+GitHub com checkpoint e readback. Não iniciar uma execução de CI para validar
+o pin de uma Action antiga. A política de SHA completo continua relevante
+apenas enquanto arquivos históricos permanecerem habilitados; não os tratar
+como publishers autorizados.
 
 ## Revisão periódica
 

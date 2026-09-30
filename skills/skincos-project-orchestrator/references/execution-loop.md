@@ -1,6 +1,6 @@
 # Execution loop
 
-Persist an internal mission before mutation. Keep the same milestone active until done or a real human decision is needed. Fix introduced CI failures; separate a safely-fixable global unblock into its own PR. Do not open an unrelated architecture front.
+Persist an internal mission before mutation. Keep the same milestone active until done or a real human decision is needed. Fix introduced failures in the versioned native checks; separate a safely-fixable global unblock into its own PR. Never start, rerun or wait for GitHub Actions. Do not open an unrelated architecture front.
 
 In `supervisor-cycle`, the original thread objective and later commitments take
 precedence over unrelated ready queue items. Execute one minimum safe milestone

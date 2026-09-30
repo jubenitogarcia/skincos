@@ -1,6 +1,11 @@
 # Codex App native operations
 
-Este repositório deve continuar usando o código local como fonte da verdade e Cloudflare/GitHub como trilha oficial de produção. Os plugins do Codex App entram como aceleradores de inspeção, QA, deploy assistido e prototipação, sem substituir contratos de produção sem plano explícito.
+Este repositório usa código versionado como fonte da verdade e Cloudflare/GitHub
+como trilha de produção. GitHub Actions está aposentado como executor de novos
+trabalhos; aplicar
+[`github-actions-retirement.md`](decisions/github-actions-retirement.md).
+Os plugins do Codex App apoiam inspeção, QA e operação sem dispensar os
+contratos de produção.
 
 ## Superfícies do projeto
 
@@ -10,7 +15,7 @@ Este repositório deve continuar usando o código local como fonte da verdade e 
 | CRM `crm.skincos.com.br` | `C:\CodexShared\Projetos\crm` (`jubenitogarcia/crm`) | Browser, GitHub, Cloudflare | comandos do repositório independente |
 | Site EF | `website/` e APIs de tracking | Browser, Build Web Apps | `npm run codex:site:check` |
 | Meta Ads | `ads/meta/` e Token Vault | Browser, GitHub, Cloudflare | validações do domínio Meta Ads |
-| Deploy e secrets | `.github/workflows/`, `scripts/codex-preflight.sh` | GitHub, Cloudflare | `npm run codex:preflight` |
+| Deploy e secrets | publishers nativos versionados, `scripts/codex-preflight.sh` | GitHub, Cloudflare | `npm run codex:preflight` |
 
 ## Uso dos plugins
 
@@ -21,7 +26,7 @@ Este repositório deve continuar usando o código local como fonte da verdade e 
 | "verifique o site" | Rodar `npm run codex:context:online`, inspecionar `website/`, validar endpoint live e usar Browser se houver UI envolvida. |
 | "verifique o CRM" | Abrir o projeto independente `C:\CodexShared\Projetos\crm`, identificar módulo e usar smoke/Browser conforme necessidade visual. |
 | "proceda com commit/push/pr/merge/deploy" | Criar branch `codex/*`, preservar alterações não relacionadas, validar, abrir PR, acompanhar checks, mergear e validar deploy live. |
-| "publique" | Preferir GitHub Actions/deploy auditável; usar Wrangler local só se o fluxo oficial não cobrir o alvo. |
+| "publique" | Usar o publisher nativo versionado da superfície com staging, rollback e readback; não disparar Actions nem substituir os gates por Wrangler isolado. |
 | "melhore a dashboard" | Usar Build Web Apps + Browser, preservar padrões visuais dos módulos existentes e validar responsivo. |
 | "problema de tracking/Meta/WhatsApp" | Tratar como fluxo cross-system: website, CRM, D1, CAPI, consentimento, dedupe e live endpoint. |
 | "crie protótipo/site temporário" | Usar Sites quando for demo/artefato isolado; portar para `website/` antes de produção. |
@@ -67,14 +72,14 @@ scripts/cloudflare-token-health.sh --strict
 
 ### GitHub
 
-Use GitHub para PR, checks, merge controlado e auditoria de deploy. O fluxo preferido continua:
+Use GitHub para PR, regras de branch, merge controlado e auditoria de deploy:
 
 1. branch `codex/*`;
 2. commit pequeno e verificável;
 3. PR;
-4. checks verdes;
-5. merge controlado após checar segurança, rollback e superfícies afetadas;
-6. deploy por GitHub Actions;
+4. validação independente versionada, vinculada ao SHA;
+5. merge pela autoridade nativa após checar segurança, rollback e superfícies afetadas;
+6. deploy pelo publisher nativo da superfície;
 7. smoke live.
 
 ### Sites
@@ -114,7 +119,8 @@ npm run codex:site:release-check
 ## Decisões padrão para reduzir explicações
 
 - Se a tarefa for de implementação, executar até validação local sempre que possível.
-- Se a tarefa afetar produção e o usuário disser "proceda", fazer PR/deploy/smoke completo usando GitHub Actions.
+- Se a tarefa afetar produção e o usuário disser "proceda", fazer PR, validação
+  nativa, merge elegível, deploy versionado e smoke/readback completo.
 - Se houver worktree sujo, separar alterações por escopo e nunca incluir arquivos não relacionados.
 - Se houver dúvida entre local e produção, verificar ambos.
 - Se envolver tokens, secrets, OAuth ou credenciais, validar presença/escopo sem revelar valores.

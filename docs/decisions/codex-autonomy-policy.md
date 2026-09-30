@@ -2,7 +2,7 @@
 
 **Status:** obrigatória
 **Aplica-se a:** missões explícitas do Codex no SKINCOS, inclusive compactação,
-retomada, supervisor, worktrees, CI, PRs, promoção e rollback.  
+retomada, supervisor, worktrees, validação independente, PRs, promoção e rollback.
 **Fonte canônica para autorização:** esta política interpreta e preserva a
 autorização da missão atual. Ela não substitui controles da plataforma nem os
 gates técnicos de cada domínio.
@@ -112,9 +112,11 @@ nome da ferramenta, para escolher o gate:
   para no gate excepcional até haver decisão específica.
 
 Workflow, Worker, segredo, migration, GitHub, Cloudflare ou MCP não são críticos
-automaticamente. O gate agregado `codex-autonomy-gate` é o único check obrigatório
-da branch; os demais workflows usam filtros de caminho e só rodam quando o
-domínio alterado é relevante.
+automaticamente. A evidência dos gates selecionados deve vir da revisão exata e
+do executor independente indicado em
+[`github-actions-retirement.md`](github-actions-retirement.md). Não se deve
+presumir que um check do Actions é obrigatório ou que seu resultado substitui
+a validação nativa.
 
 ## 4. Exceções humanas
 
@@ -167,35 +169,20 @@ prossiga quando o gate estiver satisfeito.
 
 ### 6.1 Custódia e fila de entrega
 
-O caminho canônico para custódia GitHub -> mini-PC é o runner confiável
-`skincos-native-custody` e o workflow dispatch-only
-`.github/workflows/provision-native-global-coordination-custody.yml`. O runner
-usa um usuário de serviço sem login e pode chamar somente o helper root que
-escreve o arquivo privado de coordenação por stdin, atomicamente e sem emitir o
-valor. A ausência de custódia no mini-PC é, portanto, uma recuperação técnica
-executável; não é uma espera humana recorrente. Um `INTERNAL GENERATED SECRET`
-ausente segue a classificação desta política e é gerado quando a missão e a
-escrita no store canônico o permitem. Somente a emissão indisponível de uma
-`EXTERNALLY ISSUED CREDENTIAL`, MFA/reautenticação ou confiança de plataforma
-fora do alcance continua sendo exceção humana.
+A custódia nativa permanece em armazenamento privado fora do checkout. Segredos
+internos ausentes são gerados e gravados no store canônico quando a missão e a
+permissão de escrita o permitem; valores nunca atravessam logs, argumentos,
+artefatos ou mensagens. Uma credencial emitida externamente só é recuperada
+pelo mecanismo autenticado da autoridade emissora. A antiga ponte por runner e
+`.github/workflows/provision-native-global-coordination-custody.yml` não
+é caminho autorizado para missões novas.
 
-Quando a sessão GitHub já autenticada e o acesso root nativo existem, o
-bootstrap do runner também é uma ação autônoma: use
-`scripts/bootstrap-native-custody-runner.ps1`, que fixa/verifica o digest do
-runner, obtém o token efêmero somente quando necessário e o transporta por
-stdin em memória através do gateway tipado. O gateway precisa enviar UTF-8 sem
-BOM para contratos de tokens opacos; o token não entra em argv do Windows,
-arquivo, log ou artefato. O `config.sh` upstream necessariamente o recebe
-como argumento local de curta duração durante o registro, sem persistência ou
-emissão. O instalador cria previamente apenas o
-diretório privado exigido pelo sandbox systemd; a workflow continua sendo a
-única escritora do arquivo de custódia.
-
-PRs Codex com o marcador persistente `automerge/enabled` entram na fila oficial
-quando a API reporta estado `clean`. A fila pode atualizar a branch sob o lease
-`merge:main` e redisparar a autoridade; o workflow oficial ainda revalida
-SHA/base/head, closure, checks e fencing imediatamente antes do merge. A fila
-não concede bypass nem transforma `concurrency` em autoridade.
+Um PR só é integrado por autoridade independente após confirmar SHA de head e
+base, fechamento de dependências, checks exigidos de fato, evidência nativa,
+fencing válido de `merge:main` e readback. Marcador de auto-merge, estado
+`clean` ou um check histórico não substituem esses gates. A fila antiga do
+Actions é legado até ser desativada; não a redisparar para compensar uma lacuna
+da autoridade nativa.
 
 O resumo executável e os caminhos de recuperação estão em
 [`autonomous-delivery-standard.md`](../operations/autonomous-delivery-standard.md).

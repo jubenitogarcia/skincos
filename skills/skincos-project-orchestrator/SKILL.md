@@ -5,7 +5,7 @@ description: Autonomously resume and execute the next safe SKINCOS milestone, in
 
 # SKINCOS Project Orchestrator
 
-Default mode is `resume-execute`: reconstruct state, choose one eligible priority milestone, execute, test, publish, follow CI to terminal state, merge when permitted, verify the target environment, and persist evidence. An audit is phase one, never the result when safe work remains.
+Default mode is `resume-execute`: reconstruct state, choose one eligible priority milestone, execute, run versioned independent validation, publish when technically eligible, merge through the authorized native path, verify the target environment, and persist evidence. An audit is phase one, never the result when safe work remains. GitHub Actions jobs are retired for new work; see `docs/decisions/github-actions-retirement.md`.
 
 ## Modes
 
@@ -29,13 +29,13 @@ and `references/evidence-model.md`. For `supervisor-cycle`, also read
    For every non-read-only milestone, run `scripts/validate-skincos-worktree.ps1 -ProjectRoot (Get-Location).Path -TaskSlug <task-slug> -Mode edit` first. The canonical shared checkout is context-only; a missing or mismatched task/worktree/branch identity is a fail-closed local blocker.
 3. Classify local, branch, PR, main, preview, staging, production, or unproven. A 200 is not a journey; worktree is not main; merged PR is not staging; staging is not production.
 4. Select the smallest eligible milestone within the current explicit mission. Define objective, scope, deliverables, allowed/prohibited actions, tests, evidence and done definition; do not switch to an unrelated queue item or invent a separate mission.
-5. Execute continuously: scoped fixes, tests, commit, push, single-purpose PR, terminal CI, introduced-failure fixes, merge when technical gates permit, and the authorized environment verification. Do not stop after plan, commit, PR, running check, timeout, or first CI failure.
+5. Execute continuously: scoped fixes, proportionate native validation at the exact SHA, commit, push, single-purpose PR, introduced-failure fixes, native merge authority when technical gates permit, and the authorized environment verification. Do not start, rerun or wait for Actions jobs; do not stop after plan, commit, PR, a pending check or timeout.
 6. Verify the relevant environment and persist only material queue, generated-state, blocker and evidence changes. After compaction, load the snapshot and continue without duplicating volatile state across historical documents.
 
 When a native release or coordination operation reports missing custody, first
-run the canonical guarded recovery path in
-`docs/operations/autonomous-delivery-standard.md` and
-`.github/workflows/provision-native-global-coordination-custody.yml`. Do not
+run the canonical independent recovery path in
+`docs/operations/autonomous-delivery-standard.md`. The former Actions
+custody workflow is historical and must not be dispatched. Do not
 turn an existing GitHub secret, a branch update, staging, rollback, shadow, or
 active promotion into a repeated human wait. Stop only at the explicit
 platform/bootstrap exceptions in the autonomy policy.

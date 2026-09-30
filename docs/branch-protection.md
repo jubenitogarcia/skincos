@@ -1,5 +1,10 @@
 # Proteção de branch (GitHub)
 
+**Política vigente:** GitHub Actions não é executor ou gate para novos
+trabalhos. Este documento conserva o desenho histórico e precisa ser
+reconciliado com o ruleset live antes de aplicar qualquer payload. Ver
+[`github-actions-retirement.md`](decisions/github-actions-retirement.md).
+
 Objetivo: bloquear atualizações incompatíveis em `main` e exigir PR com a
 autoridade global de integração.
 
@@ -26,21 +31,22 @@ autoridade global de integração.
 
 ## Estado live verificado
 
-Em 2026-08-10, o ruleset ativo `main-enterprise-baseline` (ID `19631459`)
+No registro histórico de 2026-08-10, o ruleset `main-enterprise-baseline`
+(ID `19631459`)
 foi lido no GitHub e contém `deletion`, `non_fast_forward`, `pull_request`
 com somente `squash` e os três checks obrigatórios. Ele não contém ainda a
 regra live `update` nem bypass actors. A tentativa de aplicar a configuração
 versionada foi recusada pelo GitHub porque este repositório pessoal não pode
 usar a integração GitHub Actions como actor de bypass de ruleset.
 
-Assim, o arquivo versionado é o estado-alvo, não uma afirmação de que a regra
-`update` já está ativa. Até a transferência para uma organização ou instalação
-de uma GitHub App/integração que o GitHub aceite como owner do ruleset, a única
-autoridade suportada para integrar `main` continua sendo
-`global-merge-authority.yml`, protegida pelos checks obrigatórios e pela
-revalidação do lease. Não adicionar bypass humano para compensar a limitação.
-Depois de provisionar a autoridade compatível, reaplicar o ruleset completo e
-confirmar o readback antes de remover este blocker.
+Assim, o arquivo versionado histórico não prova o estado live. Uma leitura
+autenticada em 2026-09-30 encontrou a regra de PR ativa, mas nenhum status check
+obrigatório. A autoridade antiga `global-merge-authority.yml` não pode ser
+disparada como fallback. A autoridade nativa deve provar base/head, fechamento,
+validação independente, lease e readback; até isso existir, merge fica
+fail-closed. Não adicionar bypass humano para compensar a limitação. Antes de
+reaplicar qualquer ruleset, comparar payload e estado remoto, reconciliar o
+ator permitido e confirmar readback.
 
 ## Shadow de freshness e dependency closure
 
@@ -78,12 +84,12 @@ for instalada e lida de volta.
 ## Observações
 
 - Se precisar de aprovações no futuro: usar `CODEOWNERS` + “Require review from Code Owners” e um usuário humano/bot dedicado para reviews.
-- Para deploy automático: manter os workflows de deploy disparando apenas após merge em `main` (nunca em PR).
+- Para deploy nativo: publicar somente a partir da revisão elegível de `main`
+  pelo publisher versionado da superfície, com staging, rollback e readback.
 - Auto-merge não é uma autoridade de integração. Enquanto o repositório não
-  tiver uma fila de merge compatível com a ownership global, mantenha-o
-  desativado e use somente `global-merge-authority.yml`; a manutenção de PR
-  pode atualizar uma branch quando possui `merge:main`, mas não pode integrar
-  a PR.
+  tiver uma fila nativa compatível com a ownership global, mantenha-o
+  desativado; a manutenção de PR pode atualizar uma branch quando possui
+  `merge:main`, mas não pode integrar a PR.
 - `codex-keep-prs-mergeable` admite somente PRs explicitamente prontas
   (`draft: false`) para lease, `updateBranch` e dispatch da autoridade. Drafts
   ou estado de prontidão desconhecido não consomem `merge:main` nem provocam
