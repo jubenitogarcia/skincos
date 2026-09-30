@@ -74,7 +74,7 @@ jobs:
 
       - name: Setup production opt-in verifier Node
         if: ${{ inputs.target == 'production' && inputs.enable_schedule_public_read }}
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.12.0"
 
@@ -166,7 +166,7 @@ jobs:
 
       - name: Setup Node
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.12.0"
 
@@ -534,7 +534,7 @@ jobs:
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
       - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.12.0"
       - name: Revalidate manifest and distinct core custody
