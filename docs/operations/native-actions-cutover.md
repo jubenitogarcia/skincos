@@ -70,3 +70,24 @@ Na leitura de 2026-09-30, o `main` era `cc7b7e496457a612cb63a9728233e52cc98cb3c3
 60 PRs não draft estavam divergentes desse commit, sete eram draft e nenhuma
 era elegível ao gate nativo sem atualização. Este número é um retrato, não um
 estado fixo nem autorização para atualizar branches automaticamente.
+
+## Auditoria arquitetural agendada
+
+`scripts/codex-native-architecture-governance.mjs` executa o plano **completo**
+de sete grupos e 22 comandos da auditoria arquitetural em uma cópia nativa do
+SHA exato de `main`. Instala dependências do lockfile sem scripts de instalação
+e sem variáveis de autenticação; cada verificação roda em sandbox de systemd,
+com rede privada e fonte somente leitura. Guarda recibo privado de sucesso ou
+falha. O plano inclui dois contratos que estavam no workflow histórico mas
+faltavam na tabela de comandos: política de fonte de promoção e ambiente
+dedicado do Ponto Pages.
+
+```powershell
+& .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path `
+  -Executable node -Argument @('scripts/codex-native-architecture-governance.mjs', 'plan')
+```
+
+O modo `run` exige checkout limpo no SHA live de `main`; a instalação do timer
+nativo e uma execução terminal de todos os 22 comandos ainda são necessários
+antes de retirar o `schedule` do workflow histórico. O modo `plan` é só uma
+verificação estática, não comprova a auditoria agendada.
