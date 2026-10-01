@@ -2,7 +2,46 @@ from abc import ABC, abstractmethod
 import re
 from collections import Counter
 import string
-from .model_loader import load_nltk_punkt
+
+
+_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "were",
+    "with",
+}
+
+
+def _sentence_split(text: str) -> list[str]:
+    """Split sentences without loading caller-controlled NLTK model paths."""
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+|\n{2,}", text.strip())
+        if sentence.strip()
+    ]
+
+
+def _word_tokens(text: str) -> list[str]:
+    return re.findall(r"[\w']+", text.lower())
 
 # Define the abstract base class for chunking strategies
 class ChunkingStrategy(ABC):
@@ -69,30 +108,29 @@ class NlpSentenceChunking(ChunkingStrategy):
 
     def __init__(self, **kwargs):
         """
-        Initialize the NlpSentenceChunking object.
+        Initialize the sentence chunker.
+
+        Sentence splitting is intentionally implemented with the standard
+        library. The previous NLTK model loader accepted arbitrary artifact
+        paths and is not required for this strategy.
         """
-        from crawl4ai.le.legacy.model_loader import load_nltk_punkt
-        load_nltk_punkt()
+        super().__init__()
 
     def chunk(self, text: str) -> list:
-        # Improved regex for sentence splitting
-        # sentence_endings = re.compile(
-        #     r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<![A-Z][A-Z]\.)(?<![A-Za-z]\.)(?<=\.|\?|\!|\n)\s'
-        # )
-        # sentences = sentence_endings.split(text)
-        # sens =  [sent.strip() for sent in sentences if sent]
-        from nltk.tokenize import sent_tokenize
-
-        sentences = sent_tokenize(text)
-        sens = [sent.strip() for sent in sentences]
-
-        return list(set(sens))
+        # Preserve source order while removing duplicate sentences.
+        seen: set[str] = set()
+        sentences = []
+        for sentence in _sentence_split(text):
+            if sentence not in seen:
+                seen.add(sentence)
+                sentences.append(sentence)
+        return sentences
 
 
 # Topic-based segmentation using TextTiling
 class TopicSegmentationChunking(ChunkingStrategy):
     """
-    Chunking strategy that segments text into topics using NLTK's TextTilingTokenizer.
+        Chunking strategy that segments text into topic-sized paragraphs.
 
     How it works:
     1. Segment the text into topics using TextTilingTokenizer
@@ -106,26 +144,24 @@ class TopicSegmentationChunking(ChunkingStrategy):
         Args:
             num_keywords (int): The number of keywords to extract for each topic segment.
         """
-        import nltk as nl
-
-        self.tokenizer = nl.tokenize.TextTilingTokenizer()
+        self.tokenizer = lambda text: [
+            segment.strip()
+            for segment in re.split(r"\n{2,}", text)
+            if segment.strip()
+        ]
         self.num_keywords = num_keywords
 
     def chunk(self, text: str) -> list:
         # Use the TextTilingTokenizer to segment the text
-        segmented_topics = self.tokenizer.tokenize(text)
-        return segmented_topics
+        return self.tokenizer(text)
 
     def extract_keywords(self, text: str) -> list:
-        # Tokenize and remove stopwords and punctuation
-        import nltk as nl
-
-        tokens = nl.toknize.word_tokenize(text)
+        # Tokenize and remove stopwords and punctuation without an external
+        # model/artifact loader.
         tokens = [
-            token.lower()
-            for token in tokens
-            if token not in nl.corpus.stopwords.words("english")
-            and token not in string.punctuation
+            token
+            for token in _word_tokens(text)
+            if token not in _STOP_WORDS and token not in string.punctuation
         ]
 
         # Calculate frequency distribution

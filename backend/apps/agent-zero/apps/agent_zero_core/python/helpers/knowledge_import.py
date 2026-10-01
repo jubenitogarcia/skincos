@@ -23,10 +23,10 @@ class KnowledgeImport(TypedDict):
 
 
 def calculate_checksum(file_path: str) -> str:
-    hasher = hashlib.md5()
+    hasher = hashlib.sha256()
     with open(file_path, "rb") as f:
-        buf = f.read()
-        hasher.update(buf)
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            hasher.update(chunk)
     return hasher.hexdigest()
 
 

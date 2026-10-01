@@ -22,7 +22,9 @@ class SSHInteractiveSession:
         self.username = username
         self.password = password
         self.client = paramiko.SSHClient()
-        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # SSH execution is opt-in; operators must provision the target key.
+        self.client.load_system_host_keys()
+        self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
         self.shell = None
         self.full_output = b""
         self.last_command = b""
