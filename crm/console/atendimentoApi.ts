@@ -1406,6 +1406,124 @@ export function rejectClinicalApproval(id: string, payload: { expectedRevision: 
   return api<{ rule: ClinicalApprovalRule }>(`/clinical/approvals/${encodeURIComponent(id)}/reject`, { method: 'POST', body: payload, headers: { 'Idempotency-Key': payload.idempotencyKey } })
 }
 
+export type CommercialAnalyticsSafety = {
+  commercialContactWritesEnabled: false
+  messagesEnabled: false
+  autonomousMessagingEnabled: false
+  consentWritesEnabled: false
+}
+
+export type CommercialAnalyticsReadiness = {
+  ready: boolean
+  migrationId: string
+  relationsReady: boolean
+  appendOnlyReady: boolean
+  grantsReady: boolean
+  migrationReady: boolean
+  readinessUnavailable?: boolean
+  safety: CommercialAnalyticsSafety
+}
+
+export type CommercialAnalyticsCoverage = {
+  unit: string
+  identities: number
+  confirmedIdentityCount: number
+  permissionCount: number
+  phoneCorrelatedCount: number
+  salesClassifiedCount: number
+}
+
+export type CommercialAnalyticsQuality = {
+  scope: { units: string[]; global: boolean }
+  days: number
+  coverage: CommercialAnalyticsCoverage[]
+  findings: Array<{
+    key: string; severity: string; status: string; observedCount: number; firstDetectedAt: string | null; lastObservedAt: string | null
+    acknowledgedAt: string | null; resolvedAt: string | null; slaDueAt: string | null; startedAt: string | null; ageHours: number; recognitionHours: number | null
+    startHours: number | null; resolutionHours: number | null; reopenCount: number; reopenRate: number; ownerAssigned: boolean; slaBreached: boolean
+  }>
+  series: Array<{ key: string; observedOn: string; observedCount: number; eventCount: number }>
+  events: Array<{ key: string; eventType: string; status: string; observedCount: number; createdAt: string | null }>
+  freshness: Array<{
+    sourceId: string; status: string; snapshotComplete: boolean; validatedAt: string | null; appliedAt: string | null; lastReadAt: string | null
+    recordsRead: number; recordsApplied: number; divergences: number; retries: number; consecutiveFailures: number; errorCode: string | null; freshnessHours: number | null
+  }>
+  partial: boolean
+  partialReason?: string
+  safety: CommercialAnalyticsSafety
+}
+
+export type CommercialAnalyticsFunnel = {
+  scope: { units: string[]; global: boolean }
+  filters: { campaignId: string | null; segmentVersionId: string | null; offerId: string | null; policyVersion: string | null; channel: string | null; startAt: string | null; endAt: string | null }
+  observed: Record<string, number>
+  attributed: Record<string, number> | null
+  attributionWindow: { id: string; key: string; revision: number; responseDays: number; scheduledDays: number; attendedDays: number; purchasedDays: number; returnedDays: number } | null
+  incremental: null
+  caveats: string[]
+  safety: CommercialAnalyticsSafety
+}
+
+export type CommercialAnalyticsSegment = {
+  id: string; unit: string; key: string; name: string; criteria: Record<string, unknown>; status: string; revision: number
+  currentVersionId: string | null; currentVersion: number | null; populationCount: number; snapshotAt: string | null; updatedAt: string | null
+}
+
+export type CommercialAnalyticsAttributionWindow = {
+  id: string; unit: string; key: string; revision: number; state: string; startsAt: string | null; endsAt: string | null
+  responseDays: number; scheduledDays: number; attendedDays: number; purchasedDays: number; returnedDays: number; updatedAt: string | null
+}
+
+export type CommercialAnalyticsExperiment = {
+  id: string; unit: string; name: string; state: string; revision: number; segmentVersionId: string; attributionWindowId: string
+  controlGroupPercent: number; startsAt: string | null; endsAt: string | null; policyVersion: string; assignments: number
+  treatmentAssignments: number; controlAssignments: number; excludedAssignments: number; updatedAt: string | null
+}
+
+export type CommercialAnalyticsExperimentMetrics = {
+  experiment: CommercialAnalyticsExperiment
+  attribution: { windowId: string; key: string; purchasedDays: number }
+  observed: { treatment: { population: number; conversions: number; revenue: number; conversionRate: number | null }; control: { population: number; conversions: number; revenue: number; conversionRate: number | null } }
+  attributed: { treatment: { population: number; conversions: number; revenue: number; conversionRate: number | null }; control: { population: number; conversions: number; revenue: number; conversionRate: number | null } }
+  incremental: { conversionLift: number | null; incrementalConversions: number | null; incrementalRevenue: number | null; confidenceInterval95: { lower: number; upper: number } | null; adequateSample: boolean; warning: string | null }
+  safety: CommercialAnalyticsSafety
+}
+
+function analyticsQuery(filters: Record<string, string | number | undefined | null>) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => { if (value != null && value !== '') params.set(key, String(value)) })
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export function fetchCommercialAnalyticsReadiness() {
+  return api<CommercialAnalyticsReadiness>('/commercial/analytics/readiness')
+}
+
+export function fetchCommercialAnalyticsQuality(filters: { unit?: string; days?: number } = {}) {
+  return api<CommercialAnalyticsQuality>(`/commercial/analytics/quality${analyticsQuery(filters)}`)
+}
+
+export function fetchCommercialAnalyticsFunnel(filters: { unit?: string; campaignId?: string; segmentVersionId?: string; attributionWindowId?: string; offerId?: string; policyVersion?: string; owner?: string; channel?: 'whatsapp'; startAt?: string; endAt?: string } = {}) {
+  return api<CommercialAnalyticsFunnel>(`/commercial/analytics/funnel${analyticsQuery(filters)}`)
+}
+
+export function fetchCommercialAnalyticsSegments(filters: { unit?: string } = {}) {
+  return api<{ scope: { units: string[]; global: boolean }; segments: CommercialAnalyticsSegment[]; safety: CommercialAnalyticsSafety }>(`/commercial/analytics/segments${analyticsQuery(filters)}`)
+}
+
+export function fetchCommercialAnalyticsAttributionWindows(filters: { unit?: string } = {}) {
+  return api<{ scope: { units: string[]; global: boolean }; windows: CommercialAnalyticsAttributionWindow[]; safety: CommercialAnalyticsSafety }>(`/commercial/analytics/attribution-windows${analyticsQuery(filters)}`)
+}
+
+export function fetchCommercialAnalyticsExperiments(filters: { unit?: string } = {}) {
+  return api<{ scope: { units: string[]; global: boolean }; experiments: CommercialAnalyticsExperiment[]; safety: CommercialAnalyticsSafety }>(`/commercial/analytics/experiments${analyticsQuery(filters)}`)
+}
+
+export function fetchCommercialAnalyticsExperimentMetrics(experimentId: string) {
+  return api<CommercialAnalyticsExperimentMetrics>(`/commercial/analytics/experiments/${encodeURIComponent(experimentId)}/metrics`)
+}
+
 export const __testables = {
   normalizeApiError,
   parseJson,
