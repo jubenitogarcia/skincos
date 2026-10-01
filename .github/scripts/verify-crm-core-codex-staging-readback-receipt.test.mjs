@@ -85,7 +85,7 @@ function policyFor(keyPair, keyId) {
       contract: CRM_CORE_CODEX_STAGING_READBACK_RECEIPT_CONTRACT,
       custodyContract: 'skincos-crm/codex-local-artifact-custody/v2',
       readbackOutputContract: 'skincos-crm/codex-staging-readback-output/v1',
-      signatureContract: 'skincos-crm/codex-staging-readback-receipt-signature-metadata/v1',
+      signatureContract: 'skincos-crm/codex-staging-readback-receipt-signature/v2',
       state: 'verified-external-readback',
       environment: 'staging',
       origin: 'https://skincos-crm-core-staging.skincos.workers.dev',
@@ -139,12 +139,14 @@ import path from 'node:path'
 import process from 'node:process'
 
 const values = new Map()
+const allowedArguments = new Set(['--receipt', '--custody-receipt', '--readback-output', '--expected-sha', '--expected-tree'])
 for (let index = 2; index < process.argv.length; index += 1) {
+  if (!allowedArguments.has(process.argv[index])) process.exit(29)
   values.set(process.argv[index], process.argv[index + 1])
   index += 1
 }
 if (${failVerifier ? 'true' : 'false'}) process.exit(23)
-for (const name of ['--receipt', '--custody-receipt', '--readback-output', '--expected-sha', '--expected-tree', '--expected-external-signer', '--expected-public-key-fingerprint']) {
+for (const name of ['--receipt', '--custody-receipt', '--readback-output', '--expected-sha', '--expected-tree']) {
   if (!values.get(name)) process.exit(24)
 }
 const custodyDirectory = path.dirname(values.get('--custody-receipt'))
@@ -160,9 +162,7 @@ if (actualRecheckEntries.length !== 2 || actualRecheckEntries[0] !== 'console' |
   || !fs.existsSync(path.join(custodyDirectory, 'console', 'index.html'))) process.exit(28)
 const receipt = JSON.parse(fs.readFileSync(values.get('--receipt'), 'utf8'))
 if (values.get('--expected-sha') !== receipt.source.sha
-  || values.get('--expected-tree') !== receipt.source.tree
-  || values.get('--expected-external-signer') !== receipt.signature.externalSigner
-  || values.get('--expected-public-key-fingerprint') !== receipt.signature.publicKeyFingerprint) process.exit(25)
+  || values.get('--expected-tree') !== receipt.source.tree) process.exit(25)
 if (${mutateOriginalFile ? 'true' : 'false'}) fs.appendFileSync(process.env.CRM_CORE_TEST_MUTATE_RECEIPT, '\\n', 'utf8')
 if (${mutateOriginalBundleFile ? 'true' : 'false'}) fs.appendFileSync(process.env.CRM_CORE_TEST_MUTATE_BUNDLE_FILE, '\\n', 'utf8')
 if (${mutateSnapshotFile ? 'true' : 'false'}) fs.appendFileSync(values.get('--receipt'), '\\n', 'utf8')
@@ -188,7 +188,11 @@ process.stdout.write(JSON.stringify({
   git(coreRoot, ['add', '.'])
   git(coreRoot, ['commit', '-m', 'fixture core verifier'])
   git(coreRoot, ['remote', 'add', 'origin', 'https://github.com/jubenitogarcia/skincos-crm-core.git'])
+  const sourceSha = git(coreRoot, ['rev-parse', 'HEAD'])
+  git(coreRoot, ['checkout', '-b', 'fixture-origin-main'])
+  git(coreRoot, ['commit', '--allow-empty', '-m', 'advance tracked origin main'])
   git(coreRoot, ['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+  git(coreRoot, ['checkout', '--detach', sourceSha])
   return coreRoot
 }
 
@@ -202,7 +206,7 @@ function createFixture(options = {}) {
   const sourceSha = git(coreRoot, ['rev-parse', 'HEAD'])
   const sourceTree = git(coreRoot, ['rev-parse', 'HEAD^{tree}'])
   const signing = crypto.generateKeyPairSync('ed25519')
-  const keyId = 'crm-core-staging-readback-fixture-v1'
+  const keyId = 'crm-core-staging-readback-fixture-v2'
   const policy = policyFor(signing, keyId)
   const policyFile = path.join(root, 'policy.json')
   writeJson(policyFile, policy)
@@ -284,12 +288,13 @@ function createFixture(options = {}) {
   const metadata = {
     ...statement,
     signature: {
-      contract: 'skincos-crm/codex-staging-readback-receipt-signature-metadata/v1',
+      contract: 'skincos-crm/codex-staging-readback-receipt-signature/v2',
       algorithm: 'Ed25519',
       externalSigner: 'codex-local-custody',
       keyId,
       publicKeyFingerprint: policy.keyRing.publicKeys[keyId].spkiFingerprint,
       signedStatementDigest: canonicalCrmCoreCodexStagingReadbackDigest(statement),
+      value: crypto.sign(null, Buffer.from(canonicalCrmCoreCodexStagingReadbackJson(statement), 'utf8'), signing.privateKey).toString('base64url'),
     },
   }
   const receiptFile = path.join(externalRoot, 'codex-staging-readback-receipt.json')
@@ -348,7 +353,7 @@ function failure(result) {
   return result.stderr.trim()
 }
 
-test('accepts the isolated Codex receipt only after the exact clean Core verifier and raw Ed25519 audit both pass', () => {
+test('accepts the isolated v2 Codex receipt only after the exact detached Core verifier plus both Ed25519 signatures pass', () => {
   const fixture = createFixture()
   try {
     const result = verifyFixture(fixture)
@@ -380,7 +385,7 @@ test('accepts the isolated Codex receipt only after the exact clean Core verifie
   }
 })
 
-test('rejects authority, metadata, audit, public-key, and raw-signature tampering before any custody handoff', () => {
+test('rejects authority, metadata, inline receipt signature, audit, public-key, and raw-signature tampering before any custody handoff', () => {
   const mutations = [
     {
       name: 'authority',
@@ -397,6 +402,23 @@ test('rejects authority, metadata, audit, public-key, and raw-signature tamperin
         writeJson(fixture.receiptFile, fixture.metadata)
       },
       code: 'RECEIPT_SIGNATURE_INVALID',
+    },
+    {
+      name: 'v1 metadata-only signature',
+      apply: (fixture) => {
+        fixture.metadata.signature.contract = 'skincos-crm/codex-staging-readback-receipt-signature-metadata/v1'
+        delete fixture.metadata.signature.value
+        writeJson(fixture.receiptFile, fixture.metadata)
+      },
+      code: 'RECEIPT_SIGNATURE_INVALID',
+    },
+    {
+      name: 'inline receipt signature',
+      apply: (fixture) => {
+        fixture.metadata.signature.value = `${fixture.metadata.signature.value.startsWith('A') ? 'B' : 'A'}${fixture.metadata.signature.value.slice(1)}`
+        writeJson(fixture.receiptFile, fixture.metadata)
+      },
+      code: 'RECEIPT_SIGNATURE_MISMATCH',
     },
     {
       name: 'audit statement',
@@ -448,7 +470,7 @@ test('rejects authority, metadata, audit, public-key, and raw-signature tamperin
   }
 })
 
-test('pins the clean-clone main tuple and detects replacement after the Core verifier reads snapshots', () => {
+test('accepts a detached historical Core candidate when origin/main advanced, and rejects an unrelated or missing tracked main', () => {
   const custodyMismatch = createFixture()
   try {
     const custody = JSON.parse(fs.readFileSync(custodyMismatch.custodyReceiptFile, 'utf8'))
@@ -459,13 +481,30 @@ test('pins the clean-clone main tuple and detects replacement after the Core ver
     removeFixture(custodyMismatch)
   }
 
+  const attachedHead = createFixture()
+  try {
+    git(attachedHead.coreRoot, ['checkout', 'main'])
+    assert.match(failure(verifyFixture(attachedHead)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CORE_ROOT_NOT_DETACHED/)
+  } finally {
+    removeFixture(attachedHead)
+  }
+
   const trackedRefMismatch = createFixture()
   try {
     const tree = git(trackedRefMismatch.coreRoot, ['rev-parse', 'HEAD^{tree}'])
-    git(trackedRefMismatch.coreRoot, ['update-ref', 'refs/remotes/origin/main', tree])
-    assert.match(failure(verifyFixture(trackedRefMismatch)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CORE_ROOT_CANONICAL_MAIN_MISMATCH/)
+    const unrelated = git(trackedRefMismatch.coreRoot, ['commit-tree', tree, '-m', 'unrelated tracked main'])
+    git(trackedRefMismatch.coreRoot, ['update-ref', 'refs/remotes/origin/main', unrelated])
+    assert.match(failure(verifyFixture(trackedRefMismatch)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CORE_ROOT_CANONICAL_MAIN_NOT_DESCENDANT/)
   } finally {
     removeFixture(trackedRefMismatch)
+  }
+
+  const missingTrackedMain = createFixture()
+  try {
+    git(missingTrackedMain.coreRoot, ['update-ref', '-d', 'refs/remotes/origin/main'])
+    assert.match(failure(verifyFixture(missingTrackedMain)), /CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CORE_ROOT_CANONICAL_MAIN_UNAVAILABLE/)
+  } finally {
+    removeFixture(missingTrackedMain)
   }
 
   const replaced = createFixture({ mutateOriginalFile: true })
@@ -547,10 +586,12 @@ test('rejects receipt inputs retained in a separate Git worktree', () => {
   }
 })
 
-test('pins the reviewed local-Codex JWK/SPKI policy while keeping the separate GitHub v1 verifier contract present', () => {
+test('pins the reviewed local-Codex v2 JWK/SPKI policy while keeping the separate GitHub v1 verifier contract present', () => {
   const policy = readCrmCoreCodexStagingReadbackCustodyPolicy()
   assert.equal(policy.contract, CRM_CORE_CODEX_STAGING_READBACK_CUSTODY_CONTRACT)
-  assert.equal(policy.keyRing.activeKeyId, 'crm-core-staging-readback-20260914')
+  assert.equal(policy.receipt.contract, CRM_CORE_CODEX_STAGING_READBACK_RECEIPT_CONTRACT)
+  assert.equal(policy.receipt.signatureContract, 'skincos-crm/codex-staging-readback-receipt-signature/v2')
+  assert.equal(policy.keyRing.activeKeyId, 'crm-core-staging-readback-operator-v1')
   assert.deepEqual(policy.keyRing.publicKeys[policy.keyRing.activeKeyId].jwk, {
     kty: 'OKP',
     crv: 'Ed25519',
