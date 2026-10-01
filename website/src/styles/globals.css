@@ -8844,3 +8844,35 @@ video.heroMediaEl {
     justify-content: center;
   }
 }
+
+@media (max-width:360px) {
+  .header > .container {
+    width: min(100% - 24px, 1100px);
+  }
+
+  .header .nav {
+    gap: 8px;
+  }
+
+  .header .navLeft {
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .header .headerActions {
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .header .unitChooserBtn {
+    max-width: 104px;
+    padding: 8px;
+    font-size: 11px;
+  }
+
+  .header .headerActions .cta--agende {
+    min-width: 108px;
+    padding: 9px 10px;
+    font-size: 11px;
+  }
+}

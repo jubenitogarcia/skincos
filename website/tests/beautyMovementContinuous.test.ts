@@ -116,6 +116,18 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(experience, /BeautyMovementModalReading/);
     assert.doesNotMatch(experience, /finaleCardGridSettled/);
     assert.match(experience, /aria-label=\{finaleStage === "result" \? "Carta especial do benefício"/);
+    assert.match(experience, /specialCardGiftKit/);
+    assert.match(experience, /src="\/images\/beauty-movement\/gift-kit\.png"/);
+    assert.match(experience, /Kit de brindes com garrafa, espelhinho, rolinho de jade e ecobag dourada Espaço Facial/);
+    assert.match(experience, /Garrafa · espelhinho · rolinho de jade · ecobag dourada/);
+    assert.match(experience, /https:\/\/esfa\.co\/playlist\/BelezaEmMovimento/);
+    assert.match(experience, /src="\/images\/beauty-movement\/playlist-cover\.png"/);
+    assert.match(experience, /Escutar a playlist oficial Beleza em Movimento no Apple Music/);
+    assert.match(experience, /Escute Beleza em Movimento/);
+    assert.match(styles, /\.playlistLink/);
+    assert.match(styles, /\.playlistCover/);
+    assert.match(globalStyles, /@media \(max-width:360px\)[\s\S]*\.header \.headerActions \.cta--agende/);
+    assert.match(globalStyles, /\.header \.unitChooserBtn \{[\s\S]*max-width: 104px/);
     assert.match(experience, /className=\{styles\.cardSparkles\}/);
     assert.match(experience, /className=\{styles\.deckStage\}/);
     assert.match(experience, /type HandStage =\s*\|\s*"waiting"/);
@@ -221,6 +233,8 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.specialCardConfirmation/);
     assert.match(styles, /\.finaleHoldStatus/);
     assert.match(styles, /\.specialCard/);
+    assert.match(styles, /\.specialCardGiftKit/);
+    assert.match(styles, /\.specialCardGiftImage/);
     assert.match(styles, /@keyframes specialCardFlip/);
     assert.match(styles, /@keyframes specialCardIconFloat/);
     assert.match(styles, /\.inlineFinale/);

@@ -110,6 +110,77 @@
   text-wrap: balance;
 }
 
+.playlistLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: min(100%, 320px);
+  margin: clamp(16px, 2vw, 22px) auto 0;
+  padding: 5px 11px 5px 5px;
+  border: 1px solid rgba(130, 89, 0, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 242, 189, 0.52);
+  color: var(--bm-ink);
+  text-decoration: none;
+  box-shadow: 0 7px 16px rgba(48, 48, 48, 0.08);
+  transition: background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.playlistLink:hover {
+  background: rgba(255, 242, 189, 0.82);
+  box-shadow: 0 10px 20px rgba(48, 48, 48, 0.12);
+  transform: translateY(-2px);
+}
+
+.playlistLink:focus-visible {
+  outline: 3px solid var(--bm-yellow);
+  outline-offset: 4px;
+}
+
+.playlistCover {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 9px;
+  object-fit: cover;
+}
+
+.playlistCopy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  text-align: left;
+}
+
+.playlistEyebrow {
+  color: var(--bm-yellow-ink);
+  font-family: var(--font-brand-ui);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.playlistCopy strong {
+  overflow: hidden;
+  font-family: var(--font-brand-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlistArrow {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  color: var(--bm-yellow-ink);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
 .progressRow {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -700,8 +771,8 @@
 .specialCardStage {
   display: grid;
   gap: 18px;
-  width: min(100%, 520px);
-  min-height: 430px;
+  width: min(100%, 560px);
+  min-height: 540px;
   place-items: center;
   margin: 2px auto 0;
 }
@@ -771,8 +842,8 @@
 }
 
 .specialCard {
-  width: min(100%, 360px);
-  min-height: 430px;
+  width: min(100%, 410px);
+  min-height: 540px;
   perspective: 1200px;
   animation: specialCardEnter 820ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
 }
@@ -885,6 +956,12 @@
   color: var(--bm-ink);
 }
 
+.specialCardFront .specialCardIllustration {
+  width: 78px;
+  height: 78px;
+  margin: 0;
+}
+
 .specialCardIllustration {
   display: grid;
   width: 122px;
@@ -902,16 +979,55 @@
 }
 
 .specialCardCopy {
-  max-width: 275px;
+  max-width: 320px;
   color: var(--bm-muted);
   font-family: var(--font-brand-text);
-  line-height: 1.5;
+  line-height: 1.35;
+}
+
+.specialCardGiftKit {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  width: min(100%, 320px);
+  margin-top: 2px;
+  padding: 7px 12px 8px;
+  border: 1px solid rgba(92, 77, 35, 0.2);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.specialCardGiftImage {
+  display: block;
+  width: 196px;
+  height: 116px;
+  border-radius: 8px;
+  object-fit: contain;
+  object-position: center;
+}
+
+.specialCardGiftLabel {
+  color: var(--bm-ink);
+  font-family: var(--font-brand-ui);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.specialCardGiftKit small {
+  max-width: 290px;
+  color: var(--bm-muted);
+  font-family: var(--font-brand-text);
+  font-size: 0.72rem;
+  line-height: 1.25;
 }
 
 .specialCardMeta {
   display: inline-flex;
   max-width: 280px;
-  padding: 8px 12px;
+  margin-top: 1px;
+  padding: 7px 12px;
   border: 1px solid var(--bm-line);
   border-radius: 999px;
   color: var(--bm-ink);
@@ -2140,6 +2256,10 @@
     font-size: clamp(2.75rem, 14vw, 4.6rem);
   }
 
+  .playlistLink {
+    max-width: min(100%, 300px);
+  }
+
   .progressRow {
     grid-template-columns: 1fr;
     gap: 2px;
@@ -2217,11 +2337,20 @@
 
   .specialCardStage,
   .specialCard {
-    min-height: 410px;
+    min-height: 520px;
   }
 
   .specialCardFace {
     padding: 24px;
+  }
+
+  .specialCardGiftImage {
+    width: 176px;
+    height: 104px;
+  }
+
+  .specialCardGiftKit small {
+    max-width: 250px;
   }
 
   .cardGrid .cardButton {
@@ -2299,6 +2428,39 @@
 
   .cardButton {
     min-height: 280px;
+  }
+
+  .specialCardStage,
+  .specialCard {
+    min-height: 500px;
+  }
+
+  .specialCardFace {
+    gap: 9px;
+    padding: 18px;
+  }
+
+  .specialCardFront .specialCardIllustration {
+    width: 64px;
+    height: 64px;
+  }
+
+  .specialCardGiftKit {
+    width: min(100%, 280px);
+    padding-inline: 8px;
+  }
+
+  .specialCardGiftImage {
+    width: 160px;
+    height: 94px;
+  }
+
+  .specialCardGiftLabel {
+    font-size: 0.66rem;
+  }
+
+  .specialCardGiftKit small {
+    font-size: 0.68rem;
   }
 
   .cardFront,

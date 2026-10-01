@@ -10,6 +10,7 @@ import {
     useRef,
     useState,
 } from "react";
+import Image from "next/image";
 import {
     BEAUTY_MOVEMENT_ACTS,
     BEAUTY_MOVEMENT_ACT_DEFINITIONS,
@@ -32,6 +33,8 @@ import type {
 } from "@/lib/beautyMovementRewards";
 import { BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate } from "@/lib/beautyMovementMotion";
 import styles from "./BeautyMovementExperience.module.css";
+
+const BEAUTY_MOVEMENT_PLAYLIST_URL = "https://esfa.co/playlist/BelezaEmMovimento";
 
 export type BeautyMovementBenefit = {
     type: BeautyMovementRewardType;
@@ -1607,6 +1610,18 @@ export default function BeautyMovementExperience({
                         </span>
                         <strong>{title}</strong>
                         <span className={styles.specialCardCopy}>{description}</span>
+                        <div className={styles.specialCardGiftKit}>
+                            <Image
+                                className={styles.specialCardGiftImage}
+                                src="/images/beauty-movement/gift-kit.png"
+                                alt="Kit de brindes com garrafa, espelhinho, rolinho de jade e ecobag dourada Espaço Facial"
+                                width={220}
+                                height={150}
+                                sizes="(max-width: 640px) 180px, 220px"
+                            />
+                            <span className={styles.specialCardGiftLabel}>Kit de celebração incluso</span>
+                            <small>Garrafa · espelhinho · rolinho de jade · ecobag dourada</small>
+                        </div>
                         <span className={styles.specialCardMeta}>{meta}</span>
                     </div>
                 </div>
@@ -1763,6 +1778,28 @@ export default function BeautyMovementExperience({
                         </button>
                     ) : null}
                     <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
+                    <a
+                        className={styles.playlistLink}
+                        href={BEAUTY_MOVEMENT_PLAYLIST_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="Escutar a playlist oficial Beleza em Movimento no Apple Music"
+                    >
+                        <Image
+                            className={styles.playlistCover}
+                            src="/images/beauty-movement/playlist-cover.png"
+                            alt=""
+                            width={52}
+                            height={52}
+                        />
+                        <span className={styles.playlistCopy}>
+                            <span className={styles.playlistEyebrow}>Trilha oficial · Apple Music</span>
+                            <strong>Escute Beleza em Movimento</strong>
+                        </span>
+                        <span className={styles.playlistArrow} aria-hidden="true">
+                            ↗
+                        </span>
+                    </a>
                 </header>
 
                 <section
