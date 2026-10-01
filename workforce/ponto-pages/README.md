@@ -49,6 +49,12 @@ the inventory, target mapping and release evidence required before the
 publisher can be used. No Pages project, domain, secret or deployment is
 configured by this source package itself.
 
+The repository-level manual
+[`ponto-pages-secret-bridge`](../../docs/runbooks/ponto-pages-secret-bridge.md)
+can seed the dedicated GitHub-environment inputs only after a matching
+root-custody receipt exists. It never deploys Pages or enables publication; the
+guarded publisher remains the only Cloudflare mutator for these projects.
+
 On the shared Windows workspace, invoke Node commands through
 `scripts/invoke-skincos-wsl.ps1` from the repository root, with
 `-WorkingDirectory workforce/ponto-pages`.

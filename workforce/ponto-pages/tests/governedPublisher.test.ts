@@ -58,6 +58,23 @@ describe('Ponto Pages governed publisher', () => {
       receiptFile: 'ponto-pages-staging-same-artifact-rollback.json',
       contractId: 'skincos/ponto-pages-staging-same-artifact-rollback/v1',
     })
+    expect(contract.secretBridge).toMatchObject({
+      contractId: 'skincos/ponto-pages-environment-secret-bridge/v1',
+      workflowPath: '.github/workflows/ponto-pages-secret-bridge.yml',
+      manualOnly: true,
+      requiresExplicitApply: true,
+      sourceEnvironmentByTarget: { staging: 'staging', production: 'production' },
+      targetEnvironmentByTarget: { staging: 'ponto-pages-staging', production: 'ponto-pages-production' },
+      requiresRootCustodyWorkflow: '.github/workflows/cloudflare-workers-sync-ponto-secrets.yml',
+      transport: 'gh-environment-secret-api-stdin-only',
+      doesNotMutateCloudflare: true,
+      doesNotEnablePublication: true,
+    })
+    expect(contract.secretBridge.derivationDomains).toEqual({
+      PONTO_PAGES_ACTOR_HMAC_KEY: 'skincos/ponto/actor/v1',
+      PONTO_PAGES_NETWORK_CONTEXT_KEY: 'skincos/ponto/network-context/v1',
+      PONTO_PAGES_RELEASE_PROBE_HMAC_KEY: 'skincos/ponto/release-probe/v1',
+    })
     for (const target of Object.values(environmentTemplate.targets) as Array<{ secrets: string[] }>) {
       expect(target.secrets).toContain('PONTO_PAGES_CLOUDFLARE_ACCOUNT_ID')
       expect(target.secrets).toContain('PONTO_PAGES_CLOUDFLARE_API_TOKEN')
