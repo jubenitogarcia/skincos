@@ -47,6 +47,11 @@ import {
     rollbackClientIdentityMaterializationMigration,
 } from '../server/atendimento/clientIdentityMaterializationMigration.js'
 import {
+    applyCrmCoreProjectionDeltaMigration,
+    rollbackCrmCoreProjectionDeltaMigration,
+    CRM_CORE_PROJECTION_DELTA_MIGRATION_ID,
+} from '../server/atendimento/crmCoreProjectionDeltaMigration.js'
+import {
     applyCommercialActionLedgerMigration,
     rollbackCommercialActionLedgerMigration,
 } from '../server/atendimento/commercialActionLedgerMigration.js'
@@ -108,6 +113,7 @@ export const ATENDIMENTO_STAGING_MIGRATIONS = Object.freeze([
     { id: '20260804_commercial_contact_controls_v1', apply: applyCommercialContactMigration, rollback: rollbackCommercialContactMigration },
     { id: '20260804_commercial_contact_rollout_v1', apply: applyCommercialContactRolloutMigration, rollback: rollbackCommercialContactRolloutMigration },
     { id: '20260805_client_identity_materialization_schema_v1', apply: applyClientIdentityMaterializationMigration, rollback: rollbackClientIdentityMaterializationMigration },
+    { id: CRM_CORE_PROJECTION_DELTA_MIGRATION_ID, apply: applyCrmCoreProjectionDeltaMigration, rollback: rollbackCrmCoreProjectionDeltaMigration },
     { id: '20260805_commercial_action_ledger_v1', apply: applyCommercialActionLedgerMigration, rollback: rollbackCommercialActionLedgerMigration },
     { id: '20260805_commercial_data_quality_queue_v1', apply: applyCommercialDataQualityMigration, rollback: rollbackCommercialDataQualityMigration },
     { id: '20260807_clientes_source_operations_v2', apply: applyClientesSourceOperationsMigration, rollback: rollbackClientesSourceOperationsMigration },

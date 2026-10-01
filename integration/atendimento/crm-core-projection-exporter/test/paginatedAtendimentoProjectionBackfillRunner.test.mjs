@@ -16,7 +16,7 @@ import {
   createPaginatedAtendimentoProjectionBackfillRunner,
 } from '../src/paginatedAtendimentoProjectionBackfillRunner.mjs'
 
-const HMAC_KEY = 'synthetic-atendimento-paginated-export-key-at-least-32-bytes'
+const HMAC_KEY = `synthetic-paginated-backfill-test-${'x'.repeat(40)}`
 const TARGET = Object.freeze({
   environment: 'staging',
   release: 'a'.repeat(40),

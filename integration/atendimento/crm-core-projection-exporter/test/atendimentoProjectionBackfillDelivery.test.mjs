@@ -14,7 +14,7 @@ import {
   createAtendimentoProjectionBackfillHttpTransport,
 } from '../src/atendimentoProjectionBackfillHttpTransport.mjs'
 
-const HMAC_KEY = 'synthetic-atendimento-projection-export-key-at-least-32-bytes'
+const HMAC_KEY = `synthetic-backfill-delivery-test-${'x'.repeat(40)}`
 const TARGET = Object.freeze({
   environment: 'staging',
   release: 'a'.repeat(40),

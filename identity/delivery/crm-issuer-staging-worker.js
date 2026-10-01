@@ -19,6 +19,13 @@ const stagingWorker = createIdentityCrmIssuerWorker({
     auth: 'IDENTITY_STAGING_REQUEST_AUTH_INVALID',
     crypto: 'IDENTITY_STAGING_CRYPTO_UNAVAILABLE',
   },
+  caller: {
+    enabled: 'IDENTITY_CRM_DELIVERY_CALLER_ENABLED',
+    id: 'IDENTITY_CRM_DELIVERY_CALLER_ID',
+    hmac: 'IDENTITY_CRM_DELIVERY_CALLER_HMAC',
+    expectedId: 'crm-api-staging-v1',
+    header: 'x-skincos-identity-issuer-caller',
+  },
 });
 
 export default { fetch: stagingWorker };

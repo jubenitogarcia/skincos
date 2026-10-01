@@ -112,6 +112,46 @@ Ainda é necessário que o operador provisione externamente o principal
 essa consulta usa. Este repositório não cria usuário, senha, grant, conexão ou
 qualquer acesso ao banco de produção.
 
+## Delta incremental e tombstones
+
+O caminho de backfill acima é somente o snapshot inicial. Para alterações
+posteriores, o owner Atendimento mantém uma tabela de estado
+`crm_atendimento.crm_core_projection_memberships` e o outbox append-only
+`crm_atendimento.crm_core_projection_outbox`, criados pela migration
+`20260908_crm_core_projection_delta_v1`. A reconciliação ocorre em uma
+transação `REPEATABLE READ` protegida por `pg_advisory_xact_lock`: novos ou
+alterados vínculos geram `upsert`, e vínculos ausentes geram uma única revisão
+`revoke` retida como tombstone. Uma execução repetida sem mudança não cria
+eventos.
+
+`atendimentoProjectionDeltaExporter.mjs` expõe o contrato versionado
+`atendimento/crm-core/projection-delta-source/v1` e monta lotes
+`skincos-crm/projection-delta-batch/v1`. O outbox é consultado somente por
+`event_order`, sem `OFFSET`, com limite de 20 eventos e high-watermark fixo. A
+ordenação precisa ser estritamente crescente dentro de cada página; intervalos
+vazios são aceitos porque o PostgreSQL pode consumir um valor de identidade em
+uma transação que depois sofreu rollback. O outbox é append-only e não permite
+deleções, então um intervalo vazio não representa um evento perdido. O runner
+mantém a retomada pelo último `event_order` efetivamente lido e continua com a
+mesma garantia de rejeição de regressão de revisão. Cada evento usa o
+contrato CRM Core `crm-projection-event/v2`, com operação exclusivamente
+`upsert` ou `revoke`; o UUID do outbox e o UUID da identidade só participam do
+HMAC e nunca são serializados no lote.
+
+`paginatedAtendimentoProjectionDeltaRunner.mjs` é um runner de staging
+opt-in. Ele recebe pool, chave HMAC, signer, transporte e checkpoint privado
+por injeção, repete exatamente um pacote pendente antes de abrir nova leitura,
+vincula cada recibo ao artefato alvo e não possui defaults de URL, ambiente,
+segredo, banco ou deploy. O transporte HTTPS separado usa a rota futura
+`/crm/_internal/delta/atendimento`; a rota e a aplicação do Core continuam
+desativadas até que o owner do CRM Core publique o consumidor correspondente e
+prove o mesmo ciclo de artefato, smoke e rollback em staging.
+
+Nenhuma migration, reconciliação, drenagem de outbox ou cópia de dados reais é
+executada por estes módulos automaticamente. O grant do principal
+`crm_core_projection_exporter` deve ser concedido pelo operador de banco com
+menor privilégio e registrado no recibo operacional antes de qualquer ativação.
+
 ## Preflight reutilizável e preparação sintética
 
 `preflightAtendimentoProjectionSource(client, { maxRows, source })` é a parte

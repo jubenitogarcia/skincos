@@ -16,7 +16,7 @@ import {
   readSyntheticAtendimentoProjectionReceipts,
 } from '../src/syntheticStagingPreparationRunner.mjs'
 
-const HMAC_KEY = 'synthetic-atendimento-staging-preparation-key-at-least-32-bytes'
+const HMAC_KEY = `synthetic-staging-preparation-test-${'x'.repeat(40)}`
 const TARGET = Object.freeze({
   environment: 'staging',
   release: 'a'.repeat(40),

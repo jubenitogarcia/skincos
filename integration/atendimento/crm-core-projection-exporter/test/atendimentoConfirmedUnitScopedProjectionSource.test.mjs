@@ -13,7 +13,7 @@ import {
   exportAtendimentoClientProjectionBatch,
 } from '../src/atendimentoProjectionExporter.mjs'
 
-const HMAC_KEY = 'synthetic-atendimento-confirmed-unit-source-key-at-least-32-bytes'
+const HMAC_KEY = `synthetic-confirmed-unit-test-${'x'.repeat(40)}`
 const TARGET = Object.freeze({
   environment: 'staging',
   release: 'a'.repeat(40),
