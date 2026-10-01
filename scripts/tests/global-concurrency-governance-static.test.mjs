@@ -589,6 +589,22 @@ test("general CRM Pages checks out trusted local coordination actions before usi
   assert.match(workflow.slice(checkout, authorization), /inputs\.release_scope == 'general'/);
 });
 
+test("the retired general CRM publisher is rejected before it can acquire coordination or credentials", () => {
+  const workflow = read(".github/workflows/deploy-crm-pages.yml");
+  const freeze = jobBlock(workflow, "legacy-general-publisher-freeze");
+  const coordination = jobBlock(workflow, "coordination");
+
+  assert.match(freeze, /RELEASE_SCOPE: \$\{\{ inputs\.release_scope \}\}/);
+  assert.match(freeze, /\[\[ "\$RELEASE_SCOPE" != "ponto" \]\]/);
+  assert.match(freeze, /Legacy CRM publisher frozen/);
+  assert.match(freeze, /cannot acquire a lease, read deployment credentials, or mutate Cloudflare/);
+  assert.match(coordination, /needs: legacy-general-publisher-freeze/);
+  assert.ok(
+    workflow.indexOf("legacy-general-publisher-freeze:") < workflow.indexOf("  coordination:"),
+    "freeze must run before the reusable coordination job",
+  );
+});
+
 test("the reusable orchestrator gate exposes global lease outputs to callers", () => {
   const workflow = read(".github/workflows/ponto-orchestrator-gate.yml");
 
