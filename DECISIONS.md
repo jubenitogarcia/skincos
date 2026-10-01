@@ -1,5 +1,20 @@
 # DECISIONS
 
+## 2026-08-24 - Separar Orb/n8n do repositório SKINCOS
+
+- Decisão: o Orb/n8n passa a ser mantido exclusivamente no repositório privado
+  [jubenitogarcia/orb](https://github.com/jubenitogarcia/orb), com histórico
+  preservado por split de `orb/engine`. O SKINCOS mantém somente contratos de
+  integração, URLs e observabilidade.
+- Consequência: não há submodule, mirror, cópia sincronizada, acesso direto ao
+  banco do Orb ou publisher nativo do Orb neste repositório. O runtime do Orb
+  usa seus próprios caminhos, banco PostgreSQL, releases, backup/restore e
+  pipeline.
+- Gate: a ativação/corte live continua pendente de exportação n8n autenticada,
+  reconciliação com o ledger de execuções, restore verificado e staging. Os
+  registros abaixo que citam o publisher antigo são evidências históricas e não
+  instruções operacionais atuais.
+
 ## 2026-07-31 - Broker close-only independente
 
 - PR #945 foi integrada em `d34488afc5b8ea668241382e24f30c745798e033` apos

@@ -29,14 +29,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadWritePaths=/var/lib/skincos-runtime/github-actions-runner
 ReadWritePaths=/etc/skincos/global-coordination
 ReadWritePaths=/var/lib/skincos/ponto-jit
-# Root-only Meta Ads release custody: full workflow checkpoints, the scoped
-# maintenance lock, two private lease-proof roots, and only the current-source
-# pointer. The unprivileged runner remains blocked by POSIX permissions.
-ReadWritePaths=/var/lib/skincos-runtime/orb/exports/workflow-patches
-ReadWritePaths=/var/lib/skincos-runtime/orb/state/livia-maintenance
 ReadWritePaths=/var/lib/skincos-runtime/global-coordination
-ReadWritePaths=/var/lib/skincos-runtime/orb/global-coordination
-ReadWritePaths=/opt/skincos/current
 UMask=0077
 
 [Install]

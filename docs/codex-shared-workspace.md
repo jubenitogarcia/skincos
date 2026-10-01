@@ -47,7 +47,7 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
    powershell -ExecutionPolicy Bypass -File .\scripts\validate-shared-codex-workspace.ps1
    ```
 
-3. Validar o runtime nativo do Orb:
+3. Validar o runtime nativo do SKINCOS:
 
    ```powershell
    .\scripts\invoke-skincos-wsl.ps1 `
@@ -65,15 +65,7 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
    `C:\ProgramData`, o instalador cai automaticamente para o Menu Iniciar do
    usuario atual em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Skincos Codex`.
 
-5. Pelo PowerShell, rodar o bootstrap da conta humana no backend Ubuntu:
-
-   ```powershell
-   .\scripts\invoke-skincos-wsl.ps1 `
-     -ScriptPath orb/engine/scripts/bootstrap-imported-wsl-account.sh `
-     -SkipBootstrapCheck
-   ```
-
-6. Para este workspace, autenticar o GitHub CLI do backend pelo gateway:
+5. Para este workspace, autenticar o GitHub CLI do backend pelo gateway:
 
    ```powershell
    .\scripts\invoke-skincos-wsl.ps1 `
@@ -103,7 +95,6 @@ O layout principal expõe sete atalhos de topo:
 - `CRM – Prévia da Thread`
 - `CRM – Prévia Usuários Equipe Thread`
 - `EF App`
-- `Orb`
 
 `CRM – Local` é uma ação direta e não pede variáveis técnicas. Os demais
 atalhos de agrupamento abrem menus curtos por domínio.
@@ -183,21 +174,12 @@ checkpoint antigo. O resumo de cada execução registra a cobertura da lista UI
 visível, mas não declara escopo histórico completo nem permite tratar ausência
 como aposentadoria de cadastro.
 
-### Orb
+### Orb/n8n
 
-- `Status`
-- `Restart`
-- `Logs`
-- `Validate`
-- `Business Validate`
-- `Audit`
-- `Repair`
-- `Support Services Apply`
-- `Import Clinic Workflows Live -> Dry Run | Apply`
-
-`Support Services Apply` reaplica exclusivamente as units finais a partir da
-release nativa. `Repair` recria o layout nativo, reaplica essas units, reinicia
-e executa os smokes. Nenhuma ação inicia serviços a partir do checkout.
+Orb/n8n não possui mais atalhos nem código neste repositório. Releases,
+workflows, exportações autenticadas, banco PostgreSQL, backup/restore e
+readiness são operados em [github.com/jubenitogarcia/orb](https://github.com/jubenitogarcia/orb).
+O SKINCOS apenas observa a URL pública e mantém os contratos externos.
 
 ## Botões do topo no Codex App
 
@@ -269,14 +251,14 @@ Usado para status, restart, logs e validação do runtime nativo.
 - resolve código pela release imutável `/opt/skincos/current/source`;
 - usa estado em `/var/lib/skincos-runtime`, configuração privada em
   `/etc/skincos` e logs em `/var/log/skincos`;
-- executa via units de sistema `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`,
-  `booking`, `cloudflare-orb` e `cloudflare-runtime`;
+- executa via units de sistema `messaging-whatsapp`, `crm`, `booking` e
+  `cloudflare-runtime`;
 - não depende de `systemctl --user`, checkout, worktree ou DrvFS;
-- usa PostgreSQL local para o Orb e publica somente backups restore-verified em
-  `C:\CodexRuntime\backups\orb\daily`.
+- não acessa o banco ou os backups privados do Orb; essa custódia pertence ao
+  repositório independente.
 
-Quando o contrato estiver desalinhado, `Orb Repair` recria o layout nativo,
-reaplica as units finais, reinicia e executa os smokes suportados.
+Quando o contrato do Orb estiver desalinhado, siga o runbook do repositório
+independente; não tente repará-lo a partir deste checkout.
 
 ## Status rápido e worktrees
 
@@ -324,8 +306,8 @@ npm run codex:footprint:audit
 ```
 
 Ela confere worktrees limpos/mesclados, caminhos aposentados, tarefas
-agendadas, backup Orb, espaço em disco, `git fsck` e health local/público
-de Orb e CRM. Use `npm run codex:footprint:validate` em uma sessão elevada
+agendadas, espaço em disco, `git fsck` e health do CRM. O health do Orb é uma
+observação externa. Use `npm run codex:footprint:validate` em uma sessão elevada
 somente quando todos os legados reportados tiverem sido removidos.
 
 Quando o worktree é aberto no Codex App, os botões do topo passam a chamar os
@@ -339,10 +321,10 @@ próprio workspace. Eles não dependem de um executável interno estável do Cod
 App instalado no mini-PC, porque não foi encontrada uma instalação local
 canônica do aplicativo para usar como alvo suportado.
 
-`Orb Validate` faz retry curto nos health checks do orb para evitar falso
+O healthcheck externo do Orb faz retry curto para evitar falso
 negativo logo após um restart saudável do stack.
 
-`Orb Repair` não move dados nem recria segredos: ele garante o layout nativo,
+O runtime SKINCOS não move dados nem recria segredos: ele garante o layout nativo,
 reaplica as units da release promovida, reinicia e roda health/smoke.
 
 Critério oficial de pronto:

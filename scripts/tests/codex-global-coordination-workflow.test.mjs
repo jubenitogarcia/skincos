@@ -28,12 +28,12 @@ test("workflow adapter binds the lease to source closure, owner, and selected re
 
 test("workflow adapter accepts a detached immutable closure attestation", () => {
   const source = "HEAD";
-  const closure = dependencyClosureForSource({ module: "orb", sourceCommit: source });
+  const closure = dependencyClosureForSource({ module: "native-runtime", sourceCommit: source });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-global-closure-"));
-  const file = path.join(directory, "orb.json");
+    const file = path.join(directory, "native-runtime.json");
   fs.writeFileSync(file, `${JSON.stringify(closure)}\n`, { mode: 0o600 });
   try {
-    const loaded = closureFromFile(["--closure-file", file], { module: "orb", source });
+    const loaded = closureFromFile(["--closure-file", file], { module: "native-runtime", source });
     assert.equal(loaded.sourceCommit, closure.sourceCommit);
     assert.equal(loaded.sourceTree, closure.sourceTree);
     assert.equal(loaded.digest, closure.digest);
@@ -43,32 +43,32 @@ test("workflow adapter accepts a detached immutable closure attestation", () => 
 });
 
 test("workflow adapter carries exact release identity for promotion operations", () => {
-  const closure = dependencyClosureForSource({ module: "orb", sourceCommit: "HEAD" });
+  const closure = dependencyClosureForSource({ module: "native-runtime", sourceCommit: "HEAD" });
   const releaseIdentity = {
     schemaVersion: 1,
-    module: "orb",
+    module: "native-runtime",
     sourceCommit: closure.sourceCommit,
     sourceTree: closure.sourceTree,
     dependencyClosureDigest: closure.digest,
     artifacts: [{ name: "native-source", id: closure.sourceCommit, digest: "d".repeat(64) }],
   };
   const { request } = buildWorkflowLeaseRequest({
-    resource: "release:orb",
-    module: "orb",
+    resource: "release:native-runtime",
+    module: "native-runtime",
     source: "HEAD",
     operation: "promotion",
     releaseIdentity,
   });
   assert.deepEqual(request.intent.releaseIdentity, releaseIdentity);
   assert.throws(() => buildWorkflowLeaseRequest({
-    resource: "release:orb",
-    module: "orb",
+    resource: "release:native-runtime",
+    module: "native-runtime",
     source: "HEAD",
     operation: "promotion",
   }), /release identity is required/);
   assert.throws(() => buildWorkflowLeaseRequest({
-    resource: "release:orb",
-    module: "orb",
+    resource: "release:native-runtime",
+    module: "native-runtime",
     source: "HEAD",
     operation: "promotion",
     releaseIdentity: { ...releaseIdentity, dependencyClosureDigest: "e".repeat(64) },

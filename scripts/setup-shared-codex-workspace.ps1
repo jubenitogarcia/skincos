@@ -95,7 +95,6 @@ Ensure-Directory -Path $OperatorRuntimeRoot
 
 $runtimeDirs = @(
     $RuntimeRoot,
-    (Join-Path $RuntimeRoot "backups\orb\daily"),
     (Join-Path $RuntimeRoot "operator\admin\skincos"),
     (Join-Path $RuntimeRoot "tmp")
 )

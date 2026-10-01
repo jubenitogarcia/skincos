@@ -2,7 +2,7 @@
 
 This runbook covers only the additive PostgreSQL artifacts under
 `social/influencer-intelligence/migrations/`. It does not register the module,
-enable `INFLUENCER_INTELLIGENCE_ENABLED`, start Orb collection, call Meta,
+enable `INFLUENCER_INTELLIGENCE_ENABLED`, start external automation collection, call Meta,
 grant CRM access, or touch production.
 
 ## Admission contract
@@ -34,7 +34,7 @@ usage/create/DML privilege on the new schema. No runtime grant is created by
 this operation.
 
 For the global lease, the wrapper reads only the root-owned
-`/etc/skincos/global-coordination/orb-backup.env` custody file. It accepts the
+`/etc/skincos/global-coordination/native-runtime.env` custody file. It accepts the
 legacy shared-secret record or the explicit active-key/key-id pair produced by
 the dispatch-only native custody workflow, and owns the fixed mission, thread
 and actor identity for this staging operation. It never accepts a coordinator

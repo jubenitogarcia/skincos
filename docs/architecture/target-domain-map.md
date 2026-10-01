@@ -17,7 +17,6 @@ the former source path and public route must be removed rather than aliased.
 | `integration` | external connectors, browser sessions and technical jobs | business data ownership |
 | `inventory` | supplies and stock | the gateway implementation |
 | `messaging` | inbox and channel adapters | social publishing |
-| `orb` | workflows, scheduling, retries and operator automation | public API ownership |
 | `service` | clinical treatment delivery and follow-up | system services or infrastructure |
 | `social` | editorial publishing and publishing integrations | inbox conversations |
 | `website` | public web experience | direct programmatic APIs after cutover |
@@ -44,7 +43,8 @@ accepted by the semantic owner:
 - Website and CRM keep their UI deployments, but no longer expose separate
   programmatic API surfaces after their cutovers.
 - `api/internal/*` has two callers: a CRM-authenticated human action or a
-  private service identity used by Workers, Orb and integration executors.
+  private service identity used by Workers, the external automation contract
+  and integration executors.
 - The gateway owns transport, request validation, authorization, correlation
   and error envelopes.  A domain owns its data model, migrations and business
   invariants.

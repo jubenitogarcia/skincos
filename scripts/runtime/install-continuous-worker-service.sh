@@ -66,9 +66,9 @@ if [[ "$APPLY" == "1" ]]; then
     echo 'Immutable source release SHA is invalid.' >&2
     exit 78
   }
-  COORDINATION_CLOSURE="${SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE:-$SOURCE_ROOT/.skincos-global-coordination-orb.json}"
+  COORDINATION_CLOSURE="${SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE:-$SOURCE_ROOT/.skincos-global-coordination-native-runtime.json}"
   [[ -f "$COORDINATION_CLOSURE" ]] || {
-    echo "Immutable Orb coordination closure is unavailable: $COORDINATION_CLOSURE" >&2
+    echo "Immutable native-runtime coordination closure is unavailable: $COORDINATION_CLOSURE" >&2
     exit 78
   }
 elif [[ "$SOURCE_ROOT" != "$ROOT_DIR" && ! "$SOURCE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]]; then
@@ -105,8 +105,8 @@ sed \
 systemd-analyze verify "$rendered"
 
 if [[ "$APPLY" == "1" ]]; then
-  native_coordination_init release:orb orb "$coordination_source_sha" "$COORDINATION_CLOSURE" mutation
-  native_coordination_acquire "mini-pc:release:orb:continuous-worker:$coordination_source_sha:$$" >/dev/null
+  native_coordination_init release:crm-continuous-worker crm-continuous-worker "$coordination_source_sha" "$COORDINATION_CLOSURE" mutation
+  native_coordination_acquire "mini-pc:release:crm-continuous-worker:$coordination_source_sha:$$" >/dev/null
   coordination_acquired=1
   native_coordination_check
   if sudo -n test -f "$UNIT_DEST/crm-jobs.service"; then

@@ -5,7 +5,7 @@
 - Code: `C:\CodexShared\Projetos\skincos` on `main`; edit-bearing work uses `C:\CodexShared\Worktrees\skincos\admin\<task>`.
 - Durable operator evidence: `C:\CodexRuntime\operator\admin\skincos`; secrets and mutable runtime state never belong in Git or `C:\CodexShared`.
 - Human operator: Windows/WSL `admin`. Linux `skincos` is non-interactive and owns system services.
-- Product roots are `ads`, `api`, `booking`, `crm`, `finance`, `integration`, `inventory`, `messaging`, `orb`, `service`, `social`, `website` and `workforce`; neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.
+- Product roots are `ads`, `api`, `booking`, `crm`, `finance`, `integration`, `inventory`, `messaging`, `service`, `social`, `website` and `workforce`; Orb/n8n is maintained in the independent repository `https://github.com/jubenitogarcia/orb`. Neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.
 - Codex runs natively on Windows with PowerShell as its integrated terminal.
   Windows Node/Python support general agent tools; SKINCOS dependencies,
   builds, tests, Playwright, Wrangler and runtime operations remain in
@@ -18,27 +18,22 @@
 - Source release: `/opt/skincos/current/source`, an atomic link to the reviewed `main` SHA. It is populated from a Windows-created, checksum-verified archive transferred through `\\wsl$`; services never execute from DrvFS or a worktree.
 - WhatsApp release: `/opt/skincos/current/messaging-whatsapp`; the only supported implementation is `messaging/channels/whatsapp/engine`.
 - Mutable state: `/var/lib/skincos-runtime`; private config/secrets: `/etc/skincos`; logs: `/var/log/skincos`; temporary runtime: `/var/tmp/skincos`.
-- Active units: `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb` and `cloudflare-runtime`.
+- SKINCOS-owned active units: `messaging-whatsapp`, `crm`, `booking` and `cloudflare-runtime`. Orb units and its database are owned by the independent repository.
 - Windows keepalive: scheduled task `SkincosWslRuntimeKeepalive`; its single
   anchor uses native cwd `/`, while Linux service supervision remains under
   `systemd`.
-- The runtime survived a full WSL shutdown/start cycle with state and sessions preserved. Orb, CRM, Booking, WhatsApp and both Cloudflare tunnels passed local/public health checks with zero service restarts after promotion.
+- The SKINCOS runtime survived a full WSL shutdown/start cycle with state and sessions preserved. Orb health is observed separately and is not evidence of a SKINCOS release.
 
 ## Backup and rollback
 
-- Restore-verified Orb backup: the newest timestamped directory under
-  `C:\CodexRuntime\backups\orb\daily`; the scheduled publisher retains a
-  snapshot only after a real PostgreSQL restore and storage hash validation
-  succeed.
 - Restore-verified lifecycle backup:
   `C:\CodexRuntime\backups\runtime\20260715T231622Z`; it contains private
   config, native Booking/CRM/WhatsApp state and PostgreSQL dumps. Restore tests
   recreated 37 WhatsApp tables and 17 CRM tables in temporary databases, and
   every Windows-published artifact matched its native SHA-256.
-- Scheduled backup owner: Windows task `SkincosOrbBackup`. It triggers a native
-  `/var/backups/skincos/orb/daily` snapshot and publishes it to
-  `C:\CodexRuntime\backups\orb\daily` only after restore, database checksum and
-  storage checksum validation. No WSL backup timer is installed.
+- Orb backup owner, PostgreSQL restore and n8n encryption-key custody belong to
+  the independent Orb repository and its private runtime. SKINCOS does not
+  copy, publish or delete `C:\CodexRuntime\n8n` or Orb evidence.
 - Cutover checkpoint: `C:\CodexRuntime\backups\runtime-cutover\20260715T182203Z`; it preserves the pre-cutover unit/config evidence while the active and prior immutable releases provide operational rollback.
 - Native releases are immutable. Rollback repoints `/opt/skincos/current/*` to the prior release, restores the captured units/config and restarts only the affected services.
 - Cross-filesystem transfer is Windows-owned. Do not recursively traverse `C:`
@@ -57,12 +52,10 @@
   isolated Evolution test reached `DELIVERY_ACK`; Telegram remains independent.
   The historical journal has 110 terminal runs and zero active locks or
   `reconciliation_required` rows; see
-  `orb/engine/docs/meta-ads-publish-historical-run-audit-2026-07-29.md`.
-- The native Orb source release resolves to the current `main` merge
-  `a32cf1a9034ccd4872cfbde1ae089e56355300c4` (PR #854). Its immutable archive,
-  verified descendant lineage from `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89`,
-  and rollback evidence are private under
-  `C:\CodexRuntime\operator\admin\skincos\native-promotions\`.
+  the independent Orb repository's retained execution ledger.
+- Orb releases resolve to the independent repository's immutable release
+  artifacts. Live workflow parity and the production cutover remain separate
+  gates; the local JSON snapshots in either project are not live truth.
 - PR #674 (`codex/admin/github-codex-autonomy`) remains a deliberate draft for
   the optional GitHub autonomy broker; it is not part of the production
   runtime and has no deployment dependency.
@@ -81,10 +74,12 @@
 - Context: `npm run codex:context:online`
 - Architecture/security: `npm run architecture:test`, `npm run quality:security`
 - Runtime: `backend/scripts/e2e.sh health` and `backend/scripts/e2e.sh smoke`
-- Native cutover/recovery: `docs/runbooks/lifecycle-runtime-cutover.md`
+- Native SKINCOS-owned releases: the module-specific runbooks under `docs/runbooks/`
 - Shared workspace: `npm run codex:shared:validate`
 
 ## Remaining business-only follow-up
 
-- The inactive clinic Orb workflows still require product-owned Google Calendar OAuth/scope confirmation, `GOOGLE_CALENDAR_ID` and safe test data before a real booking side effect is allowed.
+- The inactive clinic workflows in the independent Orb repository still require
+  product-owned Google Calendar OAuth/scope confirmation, `GOOGLE_CALENDAR_ID`
+  and safe test data before a real booking side effect is allowed.
 - Never activate workflows or create a real booking merely to validate infrastructure.

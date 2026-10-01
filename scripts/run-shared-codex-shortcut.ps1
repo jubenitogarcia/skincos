@@ -5,12 +5,9 @@ param(
         "ContextMenu",
         "LocalMenu",
         "EfAppMenu",
-        "OrbMenu",
         "SharedSetup",
         "SharedValidate",
         "RuntimeSetup",
-        "RuntimeValidate",
-        "WslAccountBootstrap",
         "GitHubAuthLoginWsl",
         "GitHubAuthStatus",
         "SharedStatus",
@@ -53,17 +50,7 @@ param(
         "EfAppProcedures",
         "EfAppClientRegistration",
         "EfAppRecorder",
-        "EfAppRotateAgendaSyncToken",
-        "OrbStatus",
-        "OrbRestart",
-        "OrbRepair",
-        "OrbLogs",
-        "MetaAdsPublishPreflight",
-        "OrbValidate",
-        "OrbBusinessValidate",
-        "OrbAudit",
-        "OrbSupportServicesApply",
-        "OrbImportClinicWorkflowsLive"
+        "EfAppRotateAgendaSyncToken"
     )]
     [string]$Action,
     [string]$ProjectRoot,
@@ -3684,12 +3671,6 @@ function Invoke-ShortcutActionInternal {
         "SharedSetup" { Invoke-RepoPowerShellScript -ScriptName "setup-shared-codex-workspace.ps1" }
         "SharedValidate" { Invoke-RepoPowerShellScript -ScriptName "validate-shared-codex-workspace.ps1" }
         "RuntimeSetup" { & (Join-Path $scriptRoot "setup-shared-runtime.ps1") }
-        "RuntimeValidate" { & (Join-Path $scriptRoot "validate-shared-runtime.ps1") }
-        "WslAccountBootstrap" {
-            Invoke-ShortcutWsl `
-                -ScriptPath "orb/engine/scripts/bootstrap-imported-wsl-account.sh" `
-                -SkipBootstrapCheck
-        }
         "GitHubAuthLoginWsl" {
             Invoke-ShortcutWsl `
                 -Executable gh `
@@ -3899,66 +3880,10 @@ function Invoke-ShortcutActionInternal {
                 -SkipNodeCheck `
                 -SkipNpmCheck
         }
-        "OrbStatus" {
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("status")
-        }
-        "OrbRestart" {
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("restart")
-        }
-        "OrbRepair" {
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/prepare-lifecycle-layout.sh" -ArgumentList @("--apply")
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/install-lifecycle-units.sh" -ArgumentList @("--apply")
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("restart")
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("validate")
-        }
-        "OrbLogs" {
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("logs", "200")
-        }
-        "MetaAdsPublishPreflight" {
-            Invoke-ShortcutWsl -ScriptPath "orb/engine/scripts/validate-meta-ads-publish-preflight.sh"
-        }
-        "OrbValidate" {
-            Invoke-ShortcutWsl -ScriptPath "scripts/runtime/manage-native-runtime.sh" -ArgumentList @("validate")
-        }
-        "OrbBusinessValidate" {
-            Invoke-ShortcutWsl -ScriptPath "orb/engine/scripts/validate-mini-pc-business-readiness.sh"
-        }
-        "OrbAudit" {
-            Invoke-ShortcutWsl -ScriptPath "orb/engine/scripts/audit-mini-pc-service-footprint.sh"
-        }
-        "OrbSupportServicesApply" {
-            Invoke-ShortcutWsl -ScriptPath "./scripts/runtime/install-lifecycle-units.sh" -ArgumentList @("--apply")
-        }
-        "OrbImportClinicWorkflowsLive" {
-            $importChoice = Read-MenuSelection `
-                -Title "Import Clinic Workflows Live" `
-                -Options @(
-                    (New-MenuOption -Label "Dry Run" -Action "DryRun"),
-                    (New-MenuOption -Label "Apply" -Action "Apply")
-                ) `
-                -CancelLabel "Cancelar"
-            if ($null -eq $importChoice) {
-                return
-            }
-
-            $projectId = Read-Host "Project ID do n8n live (ENTER para detectar automaticamente)"
-            $importArguments = @()
-            if ($importChoice.Action -eq "Apply") {
-                $importArguments += "--apply"
-            }
-            if (-not [string]::IsNullOrWhiteSpace($projectId)) {
-                $importArguments += @("--project-id", $projectId)
-            }
-
-            Invoke-ShortcutWsl `
-                -ScriptPath "orb/engine/scripts/import-clinic-workflows-live.sh" `
-                -ArgumentList $importArguments
-        }
         "WorkspaceMenu" { Show-WorkspaceMenu }
         "ContextMenu" { Show-ContextMenu }
         "LocalMenu" { Show-LocalMenu }
         "EfAppMenu" { Show-EfAppMenu }
-        "OrbMenu" { Show-OrbMenu }
         default {
             throw "Unsupported action: $SelectedAction"
         }
@@ -3976,7 +3901,7 @@ function Invoke-MenuAction {
         Write-Host ("ERRO: {0}" -f $_.Exception.Message) -ForegroundColor Red
     }
 
-    if ($SelectedAction -notin @("WorkspaceMenu", "ContextMenu", "LocalMenu", "EfAppMenu", "OrbMenu")) {
+    if ($SelectedAction -notin @("WorkspaceMenu", "ContextMenu", "LocalMenu", "EfAppMenu")) {
         Pause-AfterMenuAction
     }
 }
@@ -3989,8 +3914,6 @@ function Show-WorkspaceMenu {
                 (New-MenuOption -Label "Shared Setup" -Action "SharedSetup"),
                 (New-MenuOption -Label "Shared Validate" -Action "SharedValidate"),
                 (New-MenuOption -Label "Runtime Setup" -Action "RuntimeSetup"),
-                (New-MenuOption -Label "Runtime Validate" -Action "RuntimeValidate"),
-                (New-MenuOption -Label "WSL Account Bootstrap" -Action "WslAccountBootstrap"),
                 (New-MenuOption -Label "GitHub Auth Login (WSL)" -Action "GitHubAuthLoginWsl"),
                 (New-MenuOption -Label "GitHub Auth Status" -Action "GitHubAuthStatus")
             )
@@ -4088,29 +4011,6 @@ function Show-EfAppMenu {
                 (New-MenuOption -Label "Client Registration" -Action "EfAppClientRegistration"),
                 (New-MenuOption -Label "Recorder" -Action "EfAppRecorder"),
                 (New-MenuOption -Label "Rotate Agenda Sync Token" -Action "EfAppRotateAgendaSyncToken")
-            )
-        if ($null -eq $selection) {
-            return
-        }
-        Invoke-MenuAction -SelectedAction $selection.Action
-    }
-}
-
-function Show-OrbMenu {
-    while ($true) {
-        $selection = Read-MenuSelection `
-            -Title "Orb" `
-            -Options @(
-                (New-MenuOption -Label "Status" -Action "OrbStatus"),
-                (New-MenuOption -Label "Restart" -Action "OrbRestart"),
-                (New-MenuOption -Label "Logs" -Action "OrbLogs"),
-                (New-MenuOption -Label "Meta Ads Publish Preflight" -Action "MetaAdsPublishPreflight"),
-                (New-MenuOption -Label "Validate" -Action "OrbValidate"),
-                (New-MenuOption -Label "Business Validate" -Action "OrbBusinessValidate"),
-                (New-MenuOption -Label "Audit" -Action "OrbAudit"),
-                (New-MenuOption -Label "Repair" -Action "OrbRepair"),
-                (New-MenuOption -Label "Support Services Apply" -Action "OrbSupportServicesApply"),
-                (New-MenuOption -Label "Import Clinic Workflows Live" -Action "OrbImportClinicWorkflowsLive")
             )
         if ($null -eq $selection) {
             return

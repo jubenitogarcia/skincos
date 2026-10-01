@@ -46,7 +46,7 @@ readonly COORDINATION_CLOSURE="$RELEASE_ROOT/.skincos-global-coordination-influe
 readonly COORDINATION_ADAPTER="$RELEASE_ROOT/scripts/runtime/global-coordination-native.sh"
 readonly COORDINATION_CLIENT="$RELEASE_ROOT/scripts/runtime/global-coordination-mini-pc.sh"
 readonly CHECKPOINT_ROOT='/var/backups/skincos/influencer-intelligence/staging'
-readonly COORDINATION_ENV_FILE='/etc/skincos/global-coordination/orb-backup.env'
+readonly COORDINATION_ENV_FILE='/etc/skincos/global-coordination/native-runtime.env'
 
 [[ "$RELEASE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || { echo 'Immutable staging release root is invalid.' >&2; exit 64; }
 run_sudo_clean /usr/bin/test -f "$RUNNER" || { echo 'Influencer Intelligence staging runner is unavailable in the immutable release.' >&2; exit 78; }
@@ -66,7 +66,7 @@ cleanup_coordination() {
 }
 
 load_private_coordination_environment() {
-  [[ "$COORDINATION_ENV_FILE" == '/etc/skincos/global-coordination/orb-backup.env' ]] || {
+  [[ "$COORDINATION_ENV_FILE" == '/etc/skincos/global-coordination/native-runtime.env' ]] || {
     echo 'Influencer Intelligence coordination environment path is not fixed.' >&2
     exit 78
   }

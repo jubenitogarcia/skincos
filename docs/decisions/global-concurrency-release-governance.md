@@ -240,7 +240,7 @@ o contrato exige fail-closed antes de nova promoção.
   `skincos-native-custody`, instalado por
   `scripts/runtime/install-native-custody-runner.sh`. O runner aceita somente
   workflows dispatch-only da `main` e possui um único sudoers command para o
-  helper atômico de `/etc/skincos/global-coordination/orb-backup.env`, com
+  helper atômico de `/etc/skincos/global-coordination/native-runtime.env`, com
   custódia legada ou par active-key/key-id; não há mais ponte manual GitHub ->
   WSL para o secret existente.
 
@@ -264,15 +264,14 @@ broker de emergência close-only permanece a única pré-condição anterior ao
 lease, porque o fail-close não pode ficar impedido por uma disputa de recurso;
 as mutações de materialização e rollback continuam sob lease remoto.
 
-O caminho nativo também é técnico: a preparação instala os atestados
+O caminho nativo dos módulos SKINCOS também é técnico: os wrappers instalam os atestados
 `.skincos-global-coordination-<module>.json` junto da release; a promoção do
-Orb, a promoção do artefato WhatsApp, a promoção/rollback do gateway MCP, o
-backup do Orb, a migration Harmonia, o rollback/instalação de Atendimento e as
+artefato WhatsApp, a migration Harmonia, o rollback/instalação de Atendimento e as
 rotas Cloudflare dedicadas adquirem, renovam e verificam leases antes das
 mutações. O atestado é rejeitado se o SHA, source tree, módulo, material ou
-digest não coincidirem. O publicador Windows do backup só inicia a unidade
-nativa através do wrapper coordenado; ausência de custody ou closure interrompe
-a operação antes da geração do artefato.
+digest não coincidirem. Orb, seu banco e seus backups usam a custódia do
+repositório independente; ausência de custody ou closure interrompe a operação
+SKINCOS antes da geração do artefato.
 
 A fila `codex-keep-prs-mergeable` dispara a autoridade oficial para PRs
 `automerge/enabled` que estejam `clean`. Isso elimina redispatch manual após

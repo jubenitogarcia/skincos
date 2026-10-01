@@ -19,7 +19,7 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const domainRoot = path.resolve(here, '..');
-const workflowPath = path.resolve(domainRoot, '..', '..', 'orb', 'engine', 'workflows', 'influencer-intelligence-snapshot.json');
+const architecturePath = path.join(domainRoot, 'architecture.mjs');
 const migrationPath = path.join(domainRoot, 'migrations', '20260811_influencer_intelligence_scheduler_v1.up.sql');
 
 const baseConfig = {
@@ -150,21 +150,11 @@ test('result receipts preserve unavailable coverage and never synthesize zero', 
   assert.equal(event.coverage.ratio, null);
 });
 
-test('workflow is inactive, internal-only, bounded, and contains no provider credentials or write action', () => {
-  const raw = fs.readFileSync(workflowPath, 'utf8');
-  const workflow = JSON.parse(raw);
-  assert.equal(workflow.active, false);
-  assert.equal(workflow.meta.active_default, false);
-  assert.equal(workflow.meta.max_concurrency, 1);
-  assert.equal(workflow.meta.publish_allowed, false);
-  assert.equal(workflow.meta.instagram_write, false);
-  assert.equal(workflow.meta.provider_transport, false);
-  assert.equal(workflow.nodes.some((node) => node.credentials), false);
-  assert.equal(workflow.nodes.some((node) => /graph\.facebook|graph\.instagram|instaloader/i.test(JSON.stringify(node))), false);
-  assert.equal(workflow.nodes.some((node) => /follow|like|comment|direct.message|publish|scrap/i.test(JSON.stringify(node.parameters))), false);
-  assert.equal(workflow.nodes.filter((node) => node.type === 'n8n-nodes-base.httpRequest').length, 1);
-  assert.equal(workflow.nodes.find((node) => node.name === '01_Cron_6h').parameters.triggerTimes.item[0].value, 6);
-  assert.equal(workflow.nodes.find((node) => node.name === '06_Dispatch_And_Register_Snapshot').parameters.options.timeout, 30_000);
+test('scheduler contract delegates inactive workflow source to the independent Orb repository', () => {
+  const architecture = fs.readFileSync(architecturePath, 'utf8');
+  assert.match(architecture, /owner: 'independent Orb repository'/);
+  assert.match(architecture, /external Orb read-only gateway contract/);
+  assert.equal(fs.existsSync(path.resolve(domainRoot, '..', '..', 'orb')), false);
 });
 
 test('scheduler migration is additive and defaults monitoring off', () => {

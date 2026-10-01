@@ -9,7 +9,7 @@ Evidence refreshed on 2026-07-29 after PR #870 was integrated into `main` as
   `Music Composition Studio (Unified)`.
 - Operational import package: exactly that one workflow.
 - Archive: 11 inactive predecessor descriptors under
-  `orb/engine/archived-workflows/music-composition-studio`, outside the import
+  independent Orb repository's `archived-workflows/music-composition-studio`, outside the import
   package.
 - Live Orb: healthy on n8n 2.8.3, but no workflow named Music Composition
   Studio is imported or active.

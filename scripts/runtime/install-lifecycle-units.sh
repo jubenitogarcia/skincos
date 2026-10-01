@@ -29,9 +29,9 @@ installs, enables and daemon-reloads the final units.
 
 Default native roots are /var/lib/skincos-runtime, /etc/skincos,
 /var/log/skincos, /var/tmp/skincos and /var/backups/skincos. Runtime source is
-read from /opt/skincos/current/source. A Windows Scheduled Task publishes each
-verified native backup to C:\CodexRuntime; the WSL service never traverses C:.
-The Windows task is the only backup scheduler; no WSL backup timer is installed.
+read from /opt/skincos/current/source. The native lifecycle contains only
+SKINCOS-owned services; the independent Orb repository owns its own runtime,
+backup and release units.
 EOF
 }
 
@@ -93,16 +93,10 @@ artifact_escaped="$(sed_escape "$ARTIFACT_ROOT")"
 backup_escaped="$(sed_escape "$BACKUP_ROOT")"
 
 units=(
-  orb.service
-  orb-ccg-executor.service
-  orb-proxy.service
   messaging-whatsapp.service
   crm.service
   booking.service
-  cloudflare-orb.service
   cloudflare-runtime.service
-  orb-backup.service
-  orb-restart-fence.service
 )
 
 render_dir="$(mktemp -d)"
@@ -155,5 +149,5 @@ if [[ "$APPLY" == "1" ]]; then
   sudo -n systemctl daemon-reload
   native_coordination_check
   sudo -n systemctl enable "${units[@]}" >/dev/null
-  echo "Lifecycle units installed. Windows Task Scheduler exclusively owns the Orb backup schedule."
+  echo "SKINCOS lifecycle units installed. Orb units are owned by the standalone Orb repository."
 fi

@@ -1,9 +1,8 @@
 # Influencer Intelligence snapshot scheduler
 
-The scheduler is a bounded Orb orchestration contract, not a provider or
-analytics runtime. The pure contract lives in [`scheduler.mjs`](./scheduler.mjs)
-and the inactive n8n export lives in
-[`orb/engine/workflows/influencer-intelligence-snapshot.json`](../../orb/engine/workflows/influencer-intelligence-snapshot.json).
+The scheduler is a bounded external Orb orchestration contract, not a provider
+or analytics runtime. The pure contract lives in [`scheduler.mjs`](./scheduler.mjs)
+and the inactive n8n export is maintained in the [independent Orb repository](https://github.com/jubenitogarcia/orb).
 
 ## Safety boundary
 

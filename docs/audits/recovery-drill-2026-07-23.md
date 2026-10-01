@@ -1,5 +1,9 @@
 # Recovery drill — 2026-07-23
 
+Este exercício é evidência histórica pré-separação. O recovery atual do Orb,
+incluindo banco PostgreSQL, backup/restore e custódia da chave n8n, pertence ao
+[repositório independente do Orb](https://github.com/jubenitogarcia/orb).
+
 Escopo: `skincos-db` (D1), `n8n_runtime` (PostgreSQL), configuração nativa do
 runtime e transporte cifrado em R2. Evidência privada, sem conteúdo pessoal ou
 segredos: `C:\CodexRuntime\operator\admin\skincos\recovery-drills\20260723T223442Z`.

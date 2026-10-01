@@ -7,9 +7,12 @@ Skincos is moving from top-level technical buckets to a domain-first envelope.
 - `website/`
 - `crm/console/`
 - `crm/api/`
-- `orb/engine/`
 - `ads/meta/`
 - `messaging/channels/whatsapp/`
+
+Orb/n8n is an external product boundary maintained in
+[the independent Orb repository](https://github.com/jubenitogarcia/orb); this
+envelope keeps only its integration contracts and observability references.
 
 ## Transitional roots
 

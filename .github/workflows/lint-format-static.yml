@@ -99,7 +99,6 @@ jobs:
         run: |
           set -euxo pipefail
           python3 scripts/check-large-artifacts.py --allowlist .github/allowlists/large-artifacts.txt --max-bytes 5242880
-          python3 scripts/validate-n8n-workflows.py
           node scripts/check-js-security-exceptions.mjs
           bash backend/scripts/ci-no-demo-guard.sh
 

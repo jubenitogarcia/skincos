@@ -6,7 +6,11 @@
 
 ## Baseline atual
 
-O repositório contém CRM, API, Workers de Inventory e Ponto, domínio de Financeiro, site público, Orb/n8n e integrações. A `main` tinha checks obrigatórios para CI, E2E, JS/TS, auditoria de dependências e Gitleaks; force push e exclusão estavam protegidos. A proteção consultada não exigia revisão de CODEOWNERS e não havia evidência desta auditoria de aprovações de environment para staging/produção.
+Este documento é um baseline histórico anterior à separação. Na data da
+auditoria o repositório continha CRM, API, Workers de Inventory e Ponto,
+domínio de Financeiro, site público, Orb/n8n e integrações. Desde 2026-08-24 o
+Orb/n8n é mantido no [repositório independente](https://github.com/jubenitogarcia/orb);
+os demais checks e conclusões deste documento permanecem históricos.
 
 Os endpoints e contratos de saúde não eram uniformes na verificação anterior: Inventory e Ponto respondiam health, Financeiro exigia autenticação, CRM expunha HTML em `/health` e `/ready` da API não era um contrato disponível. Isso impede um gate operacional único até haver health, readiness, dependências e versão por unidade.
 

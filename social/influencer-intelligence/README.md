@@ -166,12 +166,13 @@ persist provider failures as explicit `collector_evidence`, retain append-only
 profile/media observations, and return freshness, coverage, limitations and
 provider evidence. They do not schedule themselves and do not open a transport.
 
-The inactive Orb export in [`orb/engine/workflows/influencer-intelligence-snapshot.json`](../../orb/engine/workflows/influencer-intelligence-snapshot.json)
-is orchestration-only. It selects explicitly opted-in identities, sends one
-bounded batch to the internal snapshot service, and emits a redacted result
-receipt. The six-hour trigger, one-at-a-time service lease, feature flag,
-two-attempt retry policy, and 30-second timeout are conservative source
-defaults; the workflow is not imported or activated by this milestone.
+The inactive Orb export is maintained in the [independent Orb repository](https://github.com/jubenitogarcia/orb), under its
+`workflows/` source tree. It is orchestration-only: it selects explicitly
+opted-in identities, sends one bounded batch to the internal snapshot service,
+and emits a redacted result receipt. The six-hour trigger, one-at-a-time
+service lease, feature flag, two-attempt retry policy, and 30-second timeout
+are conservative source defaults; the workflow is not imported or activated
+by this milestone.
 
 Snapshot artifact keys are deterministic for creator/provider/media/observed-time
 bucket. A repeat in the same bucket is a no-op; a later bucket records a new
@@ -204,7 +205,7 @@ Codex
   -> PostgreSQL append-only snapshots (M1/M3)
   -> deterministic analytics and scoring (M4/M5)
   -> read-only CRM contract and dashboard (M8+)
-  -> Orb scheduling/orchestration only (M3)
+  -> external Orb scheduling/orchestration only (M3)
 ```
 
 The provider boundary is intentionally closed in M0 to the two already
@@ -218,7 +219,7 @@ deployment hardening.
 ## M6 decision: read-only MCP adapter
 
 [`mcp-readonly.mjs`](./mcp-readonly.mjs) implements the domain-side adapter for
-the existing `orb/engine/mcp-readonly-gateway` pattern. It exposes bounded
+the external Orb repository's authenticated read-only gateway contract. It exposes bounded
 `search_creators`, `get_creator_profile`, `get_creator_snapshots`,
 `get_creator_media`, `get_creator_analytics`, `get_creator_score`, and
 `get_campaign_fit` and `compare_creators` tools through an injected internal
@@ -382,7 +383,7 @@ production configuration.
 | M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; registry artifact only, not applied |
 | Architecture | Canonical architecture v1 | Merged in #1310; runtime-free manifest |
 | M2 | Official-first router and controlled collectors | Canonical router #1324 (supersedes #1305); injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, inactive Orb scheduler #1335, and disabled service binding; workflow import pending |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, independent Orb scheduler #1335, and disabled service binding; workflow import remains an external deployment concern |
 | M4 | Robust analytics and outlier-resistant metrics | Merged in #1333; pure deterministic engine, golden fixtures, and formula documentation |
 | M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Source adapter, protocol tests, and disabled loopback transport registration |

@@ -14,10 +14,10 @@ source registration.
 | Internal service/API | `runtime/server.mjs` | loopback `127.0.0.1:8899`, flag off | owns fixed routes, auth, grant, PostgreSQL boundary, audit and snapshot operation dispatch |
 | Read-only MCP | `runtime/mcp-server.mjs` | loopback `127.0.0.1:8767`, flag off and bearer empty | validates bearer/grant and delegates every tool to the internal service |
 | CRM upstream | `crm/console/functions/api/influencer-intelligence/[[path]].ts` | server flag false; no grant assignment | signs only allowlisted internal paths with actor scope and the fixed module grant; public `/analysis` maps to CRM-only `/dashboard` |
-| Orb scheduler | `orb/engine/workflows/influencer-intelligence-snapshot.json` | `active: false`, shadow source only | selects, bounds, retries and records; it never owns providers, analytics or scoring |
+| Orb scheduler | independent Orb repository (`https://github.com/jubenitogarcia/orb`) | `active: false`, shadow source only | selects, bounds, retries and records; it never owns providers, analytics or scoring |
 
-The existing `orb/engine/mcp-readonly-gateway` remains a separate gateway for
-Orb inspection tools. The Influencer Intelligence MCP unit does not widen that
+The external Orb read-only gateway remains a separate gateway for Orb
+inspection tools. The Influencer Intelligence MCP unit does not widen that
 surface; it reuses the same read-only controls through the domain adapter and
 delegates to the internal service.
 

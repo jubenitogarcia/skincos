@@ -37,5 +37,5 @@ n8n.
 
 The builder is authoritative. It emits one inactive inline workflow and a
 one-item import package. Archive descriptors live under
-`orb/engine/archived-workflows/music-composition-studio`, outside
+the Orb repository's `archived-workflows/music-composition-studio`, outside
 `generated-workflows/music-composition-studio`.

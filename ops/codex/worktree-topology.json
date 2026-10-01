@@ -52,49 +52,9 @@
       }
     ]
   },
-  "orb": {
-    "unit": "workflow-family",
-    "sourceRoot": "orb/engine",
-    "subworkflowPolicy": "map-to-family-without-independent-physical-slot",
-    "pilot": ["livia", "meta-ads-publish"],
-    "families": [
-      {
-        "id": "livia",
-        "label": "Livia",
-        "mainWorkflowIds": ["WGXr4vYkv9UoJ8zc"],
-        "subworkflowIds": [],
-        "subworkflowDiscovery": "active-workflow-entity-and-runtime-manifest",
-        "sourceFiles": ["orb/engine/compose2-current.js", "orb/engine/scripts/livia"],
-        "runtimeSource": "immutable-release-manifest",
-        "status": "active"
-      },
-      {
-        "id": "meta-ads-publish",
-        "label": "Meta Ads Publish",
-        "mainWorkflowIds": ["eFJhFg79lyaycjlm"],
-        "subworkflowIds": [],
-        "relatedWorkflowIds": ["xN8juRoQBMa4JKOd", "yTatSnzUqtKuAjuM"],
-        "subworkflowDiscovery": "active-workflow-entity-and-runtime-manifest",
-        "sourceFiles": ["orb/engine/workflows/meta-ads-publish.current.json"],
-        "runtimeSource": "immutable-release-manifest",
-        "status": "inactive-candidate"
-      },
-      {
-        "id": "clinic-scheduling",
-        "label": "Clinic Scheduling",
-        "mainWorkflowIds": [],
-        "subworkflowIds": [],
-        "subworkflowDiscovery": "workflow-files-and-live-workflow-entity",
-        "sourceFiles": ["orb/engine/workflows/WORKFLOW_01_INBOUND_TRIAGEM.json", "orb/engine/workflows/WORKFLOW_02_AGENDAMENTO.json", "orb/engine/workflows/WORKFLOW_03_LEMBRETES_E_CONFIRMACAO.json", "orb/engine/workflows/WORKFLOW_04_NOSHOW_REATIVACAO.json"],
-        "runtimeSource": "immutable-release-manifest",
-        "status": "catalogued-not-pilot"
-      }
-    ]
-  },
   "retention": {
     "manualWorktreeRemoval": "git-worktree-remove-only",
     "runtimeSourceRemoval": "source-in-use-lease-manifest-quarantine",
-    "orbReleaseGuard": "scripts/runtime/assert-workflow-runtime-retention.sh",
     "protectedStates": ["dirty", "detached", "open-pr", "manifest-reference", "active-process", "active-lease", "unproven"]
   }
 }

@@ -137,7 +137,6 @@ $status = [pscustomobject]@{
     operatorRuntimeOwner = if ($operatorRuntimeAcl) { $operatorRuntimeAcl.Owner } else { $null }
     nativeStateRoot = "/var/lib/skincos-runtime"
     nativeConfigRoot = "/etc/skincos"
-    backupRoot = (Join-Path $RuntimeRoot "backups\orb\daily")
 }
 
 $status | ConvertTo-Json -Depth 5

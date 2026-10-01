@@ -23,7 +23,7 @@ const requiredFields = [
 ];
 const governedModuleIds = [
   "ads", "api", "booking", "crm", "finance", "identity", "integration", "inventory", "messaging",
-  "ops", "orb", "platform", "service", "shared", "social", "website", "workforce",
+  "ops", "platform", "service", "shared", "social", "website", "workforce",
 ];
 
 const errors = [];

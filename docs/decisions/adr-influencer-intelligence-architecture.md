@@ -33,12 +33,13 @@ Codex skill
   -> PostgreSQL registry and append-only evidence snapshots
   -> deterministic analytics and scoring
   -> read-only CRM contract and dashboard
-  -> Orb scheduling, retry, resume, and recovery only
+  -> independent Orb scheduling, retry, resume, and recovery only
 ```
 
 The architecture is provider-agnostic at the analytics boundary. Meta Graph,
 instagrapi, and any future provider return the same normalized contracts. No
-provider-specific response shape may leak into scoring, CRM, MCP, or Orb.
+provider-specific response shape may leak into scoring, CRM, MCP, or the
+independent Orb scheduler.
 
 The architecture PR versions the boundaries, provider interface, data model,
 provenance, score envelope, API contract, MCP tools, feature/release model,
@@ -58,11 +59,11 @@ written:
 | Official Graph integration | `crm/console/functions/_lib/instagramGraph.ts` provides Graph GET and POST helpers and places connection material in the incumbent transport request. Instagram routes use it for metrics, media, comments, publishing, OAuth, and status. | The official source is preferred, but the existing helper is not an analytics-only boundary. A future read-only transport must isolate fields, secrets, timeouts, errors, and audit. |
 | Instagram connection state | `crm/console/functions/_lib/instagramStore.ts` reads and writes encrypted R2 connection state for the CRM integration. | Connection custody remains with the incumbent integration or an approved Token Vault action; the analytics contract receives no credential material. |
 | Token Vault | `platform/security/token-vault/src/index.js` and `social-publish.js` implement internal authenticated credential storage and social publication forwarding. | The existing publish-oriented gateway must not silently become an analytics gateway. A separate read-only analytics action and provider allowlist are required. |
-| MCP gateway pattern | `orb/engine/mcp-readonly-gateway/server.mjs` and its sanitizer/role policy implement authentication, bounded tools, rate limiting, abort/timeout, sanitized output, read-only SQL policy, and JSONL audit. | Influencer Intelligence MCP must reuse the pattern and delegate to the domain service; it must not add scraping, shell, arbitrary SQL, or workflow mutation. |
-| Orb source of truth | `orb/engine/README-WORKFLOWS.md` states that local workflow files are snapshots/exportations and the current browser/live n8n workflow is canonical. Orb runtime is PostgreSQL-backed and native-release based. | Orb schedules and recovers domain jobs only. Local JSON is never imported as live workflow truth by this mission. |
+| MCP gateway pattern | The independent Orb repository's read-only gateway and its sanitizer/role policy implement authentication, bounded tools, rate limiting, abort/timeout, sanitized output, read-only SQL policy, and JSONL audit. | Influencer Intelligence MCP must reuse the pattern and delegate to the domain service; it must not add scraping, shell, arbitrary SQL, or workflow mutation. |
+| Orb source of truth | The independent Orb repository documents that local workflow files are snapshots/exportations and the current browser/live n8n workflow is canonical. Orb runtime is PostgreSQL-backed and independently released. | Orb schedules and recovers domain jobs only. Local JSON is never imported as live workflow truth by this mission. |
 | PostgreSQL conventions | The M1 registry artifact is additive and scoped. `crm/api/server/clinical/clinicalApprovalMigration.js` demonstrates destination checks, advisory locking, timeouts, schema ledgers, append-only triggers, and non-destructive rollback. | Future snapshot tables must follow additive migration, destination/grant gates, append-only evidence, and evidence-preserving rollback. No migration is applied by this ADR. |
-| Module/release policy | `docs/architecture/module-catalog.md` and `module-catalog.json` keep new modules experimental and require a disabled flag, grants, evidence, fallback, SLO, and rollback. CRM authorization is server-side in `crm/console/authPolicy.ts` and `crmRoleAccess.ts`. | Influencer Intelligence remains under the social capability and experimental/off until a later CRM milestone adds the required catalog and grant evidence. |
-| Runtime topology | `CODEX_CONTEXT.md`, `orb/engine/CODEX_CONTEXT.md`, and the delivery policies require immutable native releases, private runtime state, isolated worktrees, exact SHA evidence, and no production claim from health alone. | The service/MCP bindings are registered on loopback only, disabled by default, and any promotion must use the existing immutable release and rollback controls. |
+| Module/release policy | `docs/architecture/module-catalog.json` keeps new modules experimental and requires a disabled flag, grants, evidence, fallback, SLO, and rollback. CRM authorization is server-side in `crm/console/authPolicy.ts` and `crmRoleAccess.ts`. | Influencer Intelligence remains under the social capability and experimental/off until a later CRM milestone adds the required catalog and grant evidence. |
+| Runtime topology | `CODEX_CONTEXT.md`, the independent Orb repository and the delivery policies require immutable releases, private runtime state, isolated worktrees, exact SHA evidence, and no production claim from health alone. | The service/MCP bindings are registered on loopback only, disabled by default, and any promotion must use the owning repository's immutable release and rollback controls. |
 
 ## 3. Boundaries
 
@@ -283,7 +284,7 @@ provider-debug endpoint in this contract.
 ## 9. MCP read-only contract
 
 M6 adds a source-only domain adapter for the existing
-`orb/engine/mcp-readonly-gateway` security pattern. The current tool registry
+the independent Orb repository's read-only gateway security pattern. The current tool registry
 is intentionally limited to artifacts that already exist and delegates to an
 authenticated internal read service:
 

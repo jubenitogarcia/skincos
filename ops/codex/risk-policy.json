@@ -61,7 +61,7 @@
     },
     {
       "id": "runtime",
-      "patterns": ["platform/**", "ops/runtime/**", "orb/**", "messaging/**", "service/**"],
+      "patterns": ["platform/**", "ops/runtime/**", "messaging/**", "service/**"],
       "releaseInput": true
     }
   ],
@@ -117,7 +117,6 @@
     "booking/**",
     "platform/**",
     "ops/runtime/**",
-    "orb/**",
     "messaging/**",
     "service/**",
     "ads/meta/**",

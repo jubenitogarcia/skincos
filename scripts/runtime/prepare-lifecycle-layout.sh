@@ -34,9 +34,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 directories=(
-  "$STATE_ROOT/orb"
-  "$STATE_ROOT/orb/n8n-home"
-  "$STATE_ROOT/orb/ccg-executor"
   "$STATE_ROOT/messaging-whatsapp/instances"
   "$STATE_ROOT/messaging-whatsapp/store"
   "$STATE_ROOT/crm/var"
@@ -45,21 +42,15 @@ directories=(
   "$STATE_ROOT/artifacts/booking/debug"
   "$STATE_ROOT/cache/npm"
   "$STATE_ROOT/cache/crm-api"
-  "$CONFIG_ROOT/cloudflare/orb"
   "$CONFIG_ROOT/cloudflare/runtime"
-  "$LOG_ROOT/orb"
   "$LOG_ROOT/messaging-whatsapp"
   "$LOG_ROOT/crm"
   "$LOG_ROOT/booking"
-  "$LOG_ROOT/cloudflare-orb"
   "$LOG_ROOT/cloudflare-runtime"
-  "$TMP_ROOT/orb"
   "$TMP_ROOT/messaging-whatsapp"
   "$TMP_ROOT/crm"
   "$TMP_ROOT/booking"
   "$ARTIFACT_ROOT/booking"
-  "$ARTIFACT_ROOT/orb/ccg-executor"
-  "$BACKUP_ROOT/orb/daily"
 )
 
 printf 'Native lifecycle directories:\n'
@@ -91,9 +82,7 @@ fi
 }
 native_coordination_init global:native-runtime native-runtime "$SOURCE_SHA" "$COORDINATION_CLOSURE" mutation
 coordination_acquired=0
-overlay=''
 cleanup() {
-  [[ -z "$overlay" ]] || rm -f "$overlay"
   if [[ "$coordination_acquired" == '1' ]]; then
     native_coordination_cleanup || true
     coordination_acquired=0
@@ -109,18 +98,7 @@ for directory in "${directories[@]}"; do
   sudo -n install -d -o skincos -g skincos -m 0750 "$directory"
 done
 native_coordination_check
-sudo -n chown root:skincos "$CONFIG_ROOT" "$CONFIG_ROOT/cloudflare" "$BACKUP_ROOT" "$BACKUP_ROOT/orb"
+sudo -n chown root:skincos "$CONFIG_ROOT" "$CONFIG_ROOT/cloudflare" "$BACKUP_ROOT"
 native_coordination_check
-sudo -n chmod 0750 "$CONFIG_ROOT" "$CONFIG_ROOT/cloudflare" "$BACKUP_ROOT" "$BACKUP_ROOT/orb"
-
-overlay="$(mktemp)"
-cat >"$overlay" <<EOF
-N8N_RESTRICT_FILE_ACCESS_TO=/tmp
-META_REVIEW_STORE_PATH=$STATE_ROOT/orb/meta-review-store.json
-N8N_USER_FOLDER=$STATE_ROOT/orb/n8n-home
-N8N_STORAGE_PATH=$STATE_ROOT/orb/n8n-home/.n8n/storage
-N8N_LOG_FILE_LOCATION=$LOG_ROOT/orb/n8n.log
-EOF
-native_coordination_check
-sudo -n install -o root -g skincos -m 0640 "$overlay" "$CONFIG_ROOT/orb-runtime-paths.env"
+sudo -n chmod 0750 "$CONFIG_ROOT" "$CONFIG_ROOT/cloudflare" "$BACKUP_ROOT"
 echo 'Native lifecycle layout prepared.'

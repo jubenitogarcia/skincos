@@ -23,9 +23,6 @@ readonly PROTECTED_SERVICES=(
   'crm-atendimento-production.service'
   'crm-jobs.service'
   'cloudflare-runtime.service'
-  'cloudflare-orb.service'
-  'orb.service'
-  'orb-proxy.service'
 )
 
 RELEASE_SHA=''

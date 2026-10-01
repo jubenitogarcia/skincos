@@ -32,8 +32,8 @@ This review covers the source currently present in:
 - `social/instagram`: existing Meta/private transport boundary and the legacy
   module that contains instagrapi and an Instaloader content-download path;
 - `platform/security/token-vault`: existing credential custody boundary;
-- `orb/engine/mcp-readonly-gateway`: authenticated, bounded read-only gateway
-  pattern.
+- the independent Orb repository: authenticated, bounded read-only gateway
+  contract.
 
 The analysis does not treat fixtures, the legacy simulator, or an uncollected
 snapshot as live evidence. Historical data cannot be reconstructed before the

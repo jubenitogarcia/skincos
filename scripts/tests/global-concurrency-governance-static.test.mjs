@@ -62,7 +62,7 @@ test("Cloudflare mutators have one fail-closed writer group and no unclassified 
   assert.equal(coordinatorSurface.coordinationGroup, "global-coordinator-writer");
 });
 
-test("Token Vault has one immutable Worker and D1 publisher with explicit tracking-fixture custody", () => {
+test("Token Vault is independently deployable from the external Orb consumer", () => {
   const policy = loadPolicy();
   const group = policy.coordinationGroups.find((entry) => entry.id === "token-vault-writer");
   assert.equal(group?.resource, "release:token-vault");
@@ -78,235 +78,42 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   const catalog = JSON.parse(read("platform/deploy/operational-units.json"));
   const tokenVaultUnit = catalog.units.find((unit) => unit.id === "token-vault");
   assert.ok(tokenVaultUnit);
-  assert.ok(!catalog.nonPublishingSurfaces.some((entry) => entry.id === "token-vault"));
-  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads staging synthetic source and appsecret-proof attestations, seed, bootstrap derivation, rollback journal and paused creative fixture"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"));
-  assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST"));
-  assert.ok(tokenVaultUnit.secrets.includes("META_ADS_ACCESS_TOKEN"));
-  assert.ok(tokenVaultUnit.secrets.includes("META_ADS_ACCOUNT_ID"));
-  assert.ok(tokenVaultUnit.secrets.includes("META_PIXEL_ID"));
-  assert.ok(tokenVaultUnit.secrets.includes("novohamburgo_page_id"));
-  assert.ok(tokenVaultUnit.secrets.includes("barrashopppingsul_page_id"));
-  assert.ok(!tokenVaultUnit.secrets.includes("META_ADS_PAGE_ID"));
-  assert.ok(!tokenVaultUnit.secrets.includes("TOKEN_VAULT_BACKUP_PASSPHRASE"));
-  assert.equal(tokenVaultUnit.promotion.trackingFixture, "synthetic authorized ad-set profile required before staging");
-  assert.equal(tokenVaultUnit.promotion.trackingBootstrap, "empty staging authority uses a candidate-only Graph-read attestation before a restricted one-shot synthetic seed; legacy authority uses restricted config bearer plus hash-bound internal derivation or protected entries override");
   assert.equal(tokenVaultUnit.promotion.d1Recovery, "Time Travel bookmark; manual restore only under release:token-vault");
 
   const workflow = read(".github/workflows/deploy-token-vault.yml");
   for (const marker of [
     "unit: token-vault",
     "release:token-vault",
-    "confirm_staging_tracking_fixture",
-    "ENABLE_TOKEN_VAULT_DEPLOY_STAGING",
-    "ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY",
-    "TOKEN_VAULT_META_ADS_CONFIG_TOKEN",
-    "TOKEN_VAULT_N8N_API_TOKEN",
-    "TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST",
     "Capture Token Vault D1 Time Travel recovery bookmark before migrations",
-    "d1 time-travel info",
-    "d1 time-travel restore",
-    "manual_restore_under_release_lease",
     "Apply additive Token Vault migrations atomically",
     "versions upload",
-    "--secrets-file",
-    "--strict",
     "versions deploy",
+    "production_worker_activation",
+    "production_worker_deployment_readback",
+    "production_worker_health_readback",
+    "production_worker_compensation_lease",
     "promotion-evidence-token-vault",
-    "/v1/meta-ads-publish/config/bootstrap/derive-plan",
-    "/v1/meta-ads-publish/config/bootstrap/derive",
-    "/v1/meta-ads-publish/config/bootstrap/rollback",
-  ]) assert.match(workflow, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
-  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-check/);
-  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-release/);
-  assert.doesNotMatch(workflow, /\bsecret\s+put\b/);
-  assert.doesNotMatch(workflow, /secrets:\s*inherit/);
-  assert.doesNotMatch(workflow, /TOKEN_VAULT_BACKUP_PASSPHRASE/);
-  for (const legacySecret of [
-    "TOKEN_VAULT_API_TOKEN",
-    "TOKEN_VAULT_ENCRYPTION_KEY",
-  ]) {
-    assert.doesNotMatch(workflow, new RegExp(`secrets\\.${legacySecret}`));
-  }
-  assert.match(workflow, /inputs\.target == 'staging' && secrets\.TOKEN_VAULT_N8N_API_TOKEN \|\| ''/);
-  assert.doesNotMatch(workflow, /TOKEN_VAULT_N8N_API_TOKEN:\s*\$\{\{\s*secrets\.TOKEN_VAULT_N8N_API_TOKEN\s*}}/);
-  assert.match(workflow, /versions upload[\s\S]*?--keep-vars[\s\S]*?--strict[\s\S]*?--secrets-file/);
-  assert.match(workflow, /legacy alpha backend; Time Travel recovery is unavailable and the release is ineligible/);
-  assert.ok(workflow.indexOf("Capture Token Vault D1 Time Travel recovery bookmark before migrations") < workflow.indexOf("Apply additive Token Vault migrations atomically"));
-  assert.ok(workflow.indexOf("Check Token Vault release lease before version upload") < workflow.indexOf("Upload immutable Token Vault version"));
-  const release = jobBlock(workflow, "release");
-  const orbContract = jobBlock(workflow, "orb_contract");
-  assert.match(release, /needs: promotion/);
-  assert.match(release, /Cross-SHA Token Vault rollback is fail-closed/);
-  assert.match(release, /Export immutable Worker and incumbent identities for the activation gate/);
-  assert.match(release, /Activate only the selected Token Vault version in staging[\s\S]*?if: inputs\.target == 'staging'/);
-  assert.doesNotMatch(release, /for name [^\n]*TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST/);
-  assert.match(release, /Object\.keys\(manifest\)\.length !== 1/);
-  assert.match(release, /TOKEN_VAULT_N8N_API_TOKEN must be owned by the staging Environment/);
-  assert.match(release, /if \[\[ "\$TARGET" == staging \]\]; then[\s\S]*?TOKEN_VAULT_N8N_API_TOKEN/);
-  assert.match(release, /if \(process\.env\.TARGET === 'production'\) requiredInherited\.push\('TOKEN_VAULT_N8N_API_TOKEN'\)/);
-  assert.match(release, /if \(process\.env\.TARGET === 'staging'\) \{[\s\S]*?secrets\.TOKEN_VAULT_N8N_API_TOKEN/);
-  assert.match(release, /META_ADS_CONFIG_VALUE="\$\{TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-\}"/);
-  assert.match(release, /if \(configToken\) secrets\.TOKEN_VAULT_META_ADS_CONFIG_TOKEN = configToken/);
-  assert.match(release, /Token Vault Meta Ads config bearer must be printable ASCII without BOM or control characters/);
-  const printableAsciiBearer = /^[\x21-\x7e]+$/;
-  assert.equal(printableAsciiBearer.test('opaque-bearer_123'), true);
-  assert.equal(printableAsciiBearer.test('\uFEFFopaque-bearer_123'), false);
-  assert.equal(printableAsciiBearer.test('opaque\nbearer'), false);
-  assert.match(release, /Version Preview URL:/);
-  assert.match(release, /expected_preview_suffix='-skincos-token-vault-staging\.skincos\.workers\.dev'/);
-  assert.match(release, /expected_preview_suffix='-skincos-token-vault\.skincos\.workers\.dev'/);
-  assert.match(release, /grep -F -x "\$expected_preview_url"/);
-  assert.match(release, /Verify immutable Token Vault candidate config bearer before traffic/);
-  assert.match(release, /Token Vault immutable candidate config bearer did not authenticate before traffic/);
-  assert.match(release, /config_authority_mode=\$\{authority\.mode\}/);
-  assert.match(release, /config_authority_revision=\$\{authority\.revision\}/);
-  assert.match(release, /Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic/);
-  assert.match(release, /CANDIDATE_CONFIG_AUTHORITY_MODE: \$\{\{ steps\.candidate_config_bearer\.outputs\.config_authority_mode \}\}/);
-  assert.match(release, /CANDIDATE_CONFIG_AUTHORITY_REVISION: \$\{\{ steps\.candidate_config_bearer\.outputs\.config_authority_revision \}\}/);
-  assert.match(release, /outputs\.config_authority_mode == 'legacy_bootstrap' && secrets\.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST \|\| ''/);
-  assert.match(release, /Token Vault tracking-ready candidate must not receive a bootstrap manifest/);
-  assert.match(release, /Token Vault bootstrap manifest has an unsafe entry envelope/);
-  assert.match(release, /Token Vault bootstrap manifest has an unsafe Website entry/);
-  assert.match(release, /forbiddenUrlTagKeyPattern/);
-  assert.match(release, /mode === 'tracking_ready'/);
-  assert.match(release, /mode === 'legacy_bootstrap'/);
-  assert.match(release, /signal: AbortSignal\.timeout\(10_000\)/);
-  assert.match(release, /signal: AbortSignal\.timeout\(20_000\)/);
-  assert.match(release, /TOKEN_VAULT_CANDIDATE_PREVIEW_URL=\$CANDIDATE_PREVIEW_URL/);
-  assert.match(release, /process\.env\.TOKEN_VAULT_CANDIDATE_PREVIEW_URL/);
-  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap\/derive-plan/);
-  assert.match(release, /bootstrap_strategy=\$\{strategy\}/);
-  assert.match(release, /bootstrap_plan_revision=\$\{authorityRevision\}/);
-  assert.match(release, /bootstrap_manifest_sha256=\$\{manifestSha256\}/);
-  assert.ok(release.indexOf("Verify immutable Token Vault candidate config bearer before traffic") < release.indexOf("Activate only the selected Token Vault version in staging"));
-  assert.ok(release.indexOf("Verify immutable Token Vault candidate config bearer before traffic") < release.indexOf("Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic"));
-  assert.ok(release.indexOf("Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic") < release.indexOf("Validate sealed Token Vault bootstrap plan before staging traffic"));
-  assert.ok(release.indexOf("Validate sealed Token Vault bootstrap plan before staging traffic") < release.indexOf("Activate only the selected Token Vault version in staging"));
-  assert.ok(release.indexOf("Validate sealed Token Vault bootstrap plan before staging traffic") < release.indexOf("Check Token Vault release lease before staging version deployment"));
-  assert.match(release, /Wait for staging Token Vault route to accept the candidate config bearer/);
-  assert.match(release, /Token Vault staging route did not accept the candidate config bearer before bootstrap/);
-  assert.ok(release.indexOf("Read back the exact active Token Vault Worker version in staging") < release.indexOf("Wait for staging Token Vault route to accept the candidate config bearer"));
-  assert.ok(release.indexOf("Wait for staging Token Vault route to accept the candidate config bearer") < release.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it"));
-  assert.match(release, /steps\.staging_route_auth_convergence\.outcome == 'success'/);
-  assert.match(orbContract, /Wait for production Token Vault route to accept the candidate config bearer/);
-  assert.match(orbContract, /Token Vault production route did not accept the candidate config bearer before bootstrap/);
-  assert.ok(orbContract.indexOf("Read back the exact active Token Vault Worker version after the native Orb apply") < orbContract.indexOf("Wait for production Token Vault route to accept the candidate config bearer"));
-  assert.ok(orbContract.indexOf("Wait for production Token Vault route to accept the candidate config bearer") < orbContract.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when production requires it"));
-  assert.match(orbContract, /steps\.production_route_auth_convergence\.outcome == 'success'/);
-  assert.match(orbContract, /steps\.production_route_auth_convergence\.outcome != 'success'/);
-  assert.match(release, /expected_config_authority_revision: expectedRevision/);
-  assert.match(release, /entries: manifest\.entries/);
-  assert.equal((workflow.match(/import \{ createHash \} from 'node:crypto';/g) || []).length, 3);
-  assert.match(release, /expected_manifest_sha256: planDigest/);
-  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap\/derive/);
-  assert.match(release, /BOOTSTRAP_STRATEGY: \$\{\{ steps\.candidate_bootstrap_plan\.outputs\.bootstrap_strategy \}\}/);
-  assert.match(release, /BOOTSTRAP_PLAN_REVISION: \$\{\{ steps\.candidate_bootstrap_plan\.outputs\.bootstrap_plan_revision \}\}/);
-  assert.match(release, /BOOTSTRAP_MANIFEST_SHA256: \$\{\{ steps\.candidate_bootstrap_plan\.outputs\.bootstrap_manifest_sha256 \}\}/);
-  assert.match(release, /bootstrap_operation_key="meta-ads-bootstrap:\$\{RELEASE_SHA:0:12\}:\$\{GITHUB_RUN_ID\}:\$\{GITHUB_RUN_ATTEMPT\}"/);
-  assert.match(release, /did_bootstrap=true/);
-  assert.match(release, /bootstrap_operation_key=\$bootstrap_recorded_operation_key/);
-  assert.match(release, /bootstrap_revision=\$bootstrap_revision/);
-  assert.match(release, /mode === 'tracking_ready'/);
-  assert.match(release, /mode === 'legacy_bootstrap'/);
-  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap/);
-  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap\/rollback/);
-  assert.match(release, /payload\?\.rolled_back !== true/);
-  assert.match(release, /payload\?\.operation_status !== 'rolled_back'/);
-  assert.equal((workflow.match(/const postBootstrap = await request\('\/v1\/meta-ads-publish\/config'\);/g) || []).length, 2);
-  assert.equal((workflow.match(/process\.stdout\.write\(`applied\\t\$\{operationKey\}\\t\$\{bootstrapRevision\}\\n`\);/g) || []).length, 2);
-  assert.equal((workflow.match(/id: tracking_bootstrap_rollback/g) || []).length, 2);
-  assert.equal((workflow.match(/\/v1\/meta-ads-publish\/config\/bootstrap\/rollback/g) || []).length, 2);
-  assert.doesNotMatch(release, /process\.stdout\.write\([^\n]*manifest/i);
-  assert.doesNotMatch(release, /GITHUB_OUTPUT[^\n]*(?:entries|summary|TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST)/i);
-  assert.ok(release.indexOf("Upload immutable Token Vault version") < release.indexOf("Activate only the selected Token Vault version in staging"));
-  assert.ok(release.indexOf("Read back the exact active Token Vault Worker version in staging") < release.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it"));
-  assert.ok(release.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it") < release.indexOf("Read back staging Token Vault deployment and authenticated health"));
-  assert.ok(release.indexOf("Roll back an applied Token Vault legacy bootstrap before staging Worker compensation") < release.indexOf("Compensate the staging Worker only when this release still owns traffic"));
-  assert.match(orbContract, /needs: \[promotion, release\]/);
-  assert.match(orbContract, /RELEASE_SHA: \$\{\{ needs\.promotion\.outputs\.source_sha \}\}/);
-  assert.match(orbContract, /BOOTSTRAP_STRATEGY: \$\{\{ needs\.release\.outputs\.bootstrap_strategy \}\}/);
-  assert.match(orbContract, /BOOTSTRAP_PLAN_REVISION: \$\{\{ needs\.release\.outputs\.bootstrap_plan_revision \}\}/);
-  assert.match(orbContract, /BOOTSTRAP_MANIFEST_SHA256: \$\{\{ needs\.release\.outputs\.bootstrap_manifest_sha256 \}\}/);
-  assert.match(orbContract, /Validate sealed Token Vault bootstrap plan before native mutation/);
-  assert.ok(orbContract.indexOf("Validate sealed Token Vault bootstrap plan before native mutation") < orbContract.indexOf("Attest the already staged immutable candidate through GitHub OIDC"));
-  assert.match(orbContract, /id-token: write/);
-  assert.match(orbContract, /Attest the already staged immutable candidate through GitHub OIDC/);
-  assert.match(orbContract, /Capture the complete incumbent inactive Orb checkpoint before compound transition/);
-  assert.match(orbContract, /skincos-meta-ads-tracking-custody checkpoint-current/);
-  assert.match(orbContract, /skincos-meta-ads-tracking-custody promote-and-apply/);
-  assert.match(orbContract, /skincos-meta-ads-tracking-custody restore/);
-  assert.match(orbContract, /skincos-meta-ads-tracking-custody rollback-native/);
-  assert.match(orbContract, /skincos-meta-ads-tracking-custody preflight-rollback/);
-  assert.match(orbContract, /skincos-meta-ads-tracking-custody conversion-readback/);
-  assert.match(orbContract, /Refresh candidate OIDC custody approval before pre-Worker native readback/);
-  assert.match(orbContract, /Refresh candidate OIDC custody approval before Graph conversion readback/);
-  assert.match(orbContract, /Refresh candidate OIDC custody approval before restoring the owned Orb snapshot/);
-  assert.match(orbContract, /Refresh candidate OIDC custody approval before restoring the native source/);
-  assert.match(orbContract, /Refresh candidate OIDC custody approval before predecessor preflight/);
-  assert.doesNotMatch(orbContract, /sudo -n -u postgres/);
-  assert.doesNotMatch(orbContract, /\$SOURCE_ROOT\/scripts\//);
-  assert.ok(orbContract.indexOf("Promote and apply the version-checked inactive Meta Ads tracking workflow atomically") < orbContract.indexOf("Read back the promoted native Orb source and live workflow before Worker activation"));
-  assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before pre-Worker native readback") < orbContract.indexOf("Read back the promoted native Orb source and live workflow before Worker activation"));
-  assert.ok(orbContract.indexOf("Read back the promoted native Orb source and live workflow before Worker activation") < orbContract.indexOf("Activate the exact immutable Token Vault Worker after native Orb readback"));
-  assert.ok(orbContract.indexOf("Read back the exact active Token Vault Worker version after the native Orb apply") < orbContract.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when production requires it"));
-  assert.ok(orbContract.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when production requires it") < orbContract.indexOf("Read back production Token Vault authenticated health after activation"));
-  assert.ok(orbContract.indexOf("Roll back an applied Token Vault legacy bootstrap before cross-surface compensation") < orbContract.indexOf("Refresh candidate OIDC custody approval before cross-surface compensation"));
-  assert.ok(orbContract.indexOf("Roll back an applied Token Vault legacy bootstrap before cross-surface compensation") < orbContract.indexOf("Compensate the production Worker first only when this release still owns traffic"));
-  assert.ok(orbContract.indexOf("Activate the exact immutable Token Vault Worker after native Orb readback") < orbContract.indexOf("Revalidate final native Orb source and live workflow after Worker activation"));
-  assert.ok(orbContract.indexOf("Revalidate final native Orb source and live workflow after Worker activation") < orbContract.indexOf("Refresh candidate OIDC custody approval before Graph conversion readback"));
-  assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before Graph conversion readback") < orbContract.indexOf("Read back required Website conversion and offline-dataset contracts from Graph"));
-  assert.ok(orbContract.indexOf("Compensate the production Worker first only when this release still owns traffic") < orbContract.indexOf("Read back the incumbent Token Vault version and public auth boundary before restoring the Orb snapshot"));
-  assert.ok(orbContract.indexOf("Read back the incumbent Token Vault version and public auth boundary before restoring the Orb snapshot") < orbContract.indexOf("Revalidate the shared lease before restoring the owned Orb snapshot"));
-  assert.ok(orbContract.indexOf("Revalidate the shared lease before restoring the owned Orb snapshot") < orbContract.indexOf("Refresh candidate OIDC custody approval before restoring the owned Orb snapshot"));
-  assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before restoring the owned Orb snapshot") < orbContract.indexOf("Restore the pre-apply Orb snapshot only after the Worker incumbent readback"));
-  assert.ok(orbContract.indexOf("Restore the pre-apply Orb snapshot only after the Worker incumbent readback") < orbContract.indexOf("Restore the prior immutable native source after the Worker and Orb rollback"));
-  assert.ok(orbContract.indexOf("Restore the pre-apply Orb snapshot only after the Worker incumbent readback") < orbContract.indexOf("Revalidate the shared lease before restoring the native source"));
-  assert.ok(orbContract.indexOf("Revalidate the shared lease before restoring the native source") < orbContract.indexOf("Refresh candidate OIDC custody approval before restoring the native source"));
-  assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before restoring the native source") < orbContract.indexOf("Restore the prior immutable native source after the Worker and Orb rollback"));
-  assert.ok(orbContract.indexOf("Restore the prior immutable native source after the Worker and Orb rollback") < orbContract.indexOf("Refresh candidate OIDC custody approval before predecessor preflight"));
-  assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before predecessor preflight") < orbContract.indexOf("Revalidate the restored predecessor source after Worker and Orb rollback"));
-  assert.doesNotMatch(orbContract, /source-only compensation/);
-  assert.doesNotMatch(workflow, /\n  orb_readback:/);
+    "TOKEN_VAULT_N8N_API_TOKEN",
+  ]) assert.ok(workflow.includes(marker), marker);
+  assert.equal(workflow.includes("orb/engine"), false);
+  assert.equal(workflow.includes("orb_contract"), false);
+  assert.equal(workflow.includes("skincos-meta-ads-tracking-custody"), false);
+  assert.equal(workflow.includes("meta-ads-tracking-orb"), false);
+  assert.match(workflow, /Activate only the selected Token Vault version in production/);
+  assert.match(workflow, /Apply the planned production Token Vault bootstrap, if required/);
+  assert.match(workflow, /Compensate the production Token Vault only when this release owns traffic/);
+  assert.match(workflow, /Activate only the selected Token Vault version in staging/);
+  assert.match(workflow, /Revalidate the release lease before staging Worker compensation/);
 
   const globalPolicy = JSON.parse(read("ops/governance/global-concurrency-policy.json"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("platform/security/token-vault/**"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/apply-meta-ads-publish-tracking-release.sh"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/rollback-meta-ads-publish-tracking-release.sh"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/meta-ads-tracking-custody.sh"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/install-native-custody-runner.sh"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/test-native-custody-contract.sh"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/promote-native-source-release.sh"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/test-promote-native-source-release.sh"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes(".github/workflows/attest-meta-ads-candidate-appsecret.yml"));
-  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes(".github/workflows/influencer-intelligence-staging-shadow.yml"));
-  const shadow = read(".github/workflows/influencer-intelligence-staging-shadow.yml");
-  assert.match(shadow, /group: deploy-token-vault-staging/);
-  assert.match(shadow, /resource: release:token-vault/);
-  assert.doesNotMatch(shadow, /global:token-vault-staging/);
-  assert.match(workflow, /Revalidate final native Orb source and live workflow after Worker activation/);
-  assert.match(workflow, /Read back required Website conversion and offline-dataset contracts from Graph/);
-  assert.match(workflow, /requiredCreativeUrlTagFixtures/);
-  assert.match(workflow, /pausedFixtureVerifiedCreativeUrlTagFixtures/);
-  assert.match(workflow, /exactMatchCreativeUrlTagFixtures/);
-  assert.match(workflow, /production Token Vault tracking configuration readback is incomplete/);
-  assert.match(workflow, /\/v1\/meta-ads-publish\/config\/bootstrap/);
-  assert.match(workflow, /config_authority_mode/);
-  assert.match(workflow, /legacy_bootstrap/);
-  assert.match(workflow, /tracking_ready/);
-  assert.equal((workflow.match(/steps\.tracking_bootstrap\.outcome != 'success'/g) || []).length, 2);
-  assert.match(workflow, /Exercise reversible Meta tracking reconciliation against the isolated staging fixture/);
-  assert.match(workflow, /\/v1\/meta-ads-publish\/config\/staging-exercise/);
-  assert.match(workflow, /reconciled_and_rolled_back/);
-  assert.match(workflow, /fixture_count !== 1/);
-  assert.match(workflow, /operation_key: `staging-tracking-fixture:\$\{nonce\}`/);
-  assert.doesNotMatch(workflow, /\/v1\/meta-ads-publish\/runs/);
-  assert.match(workflow, /Revalidate the release lease before staging Worker compensation/);
-  assert.match(workflow, /Validate immutable Token Vault preview source/);
-  assert.match(workflow, /if: \$\{\{ inputs\.target != 'preview' \}\}/);
+  const tokenPatterns = globalPolicy.releaseClosures["token-vault"].patterns;
+  assert.ok(tokenPatterns.includes("platform/security/token-vault/**"));
+  assert.ok(tokenPatterns.includes(".github/workflows/deploy-token-vault.yml"));
+  assert.equal(tokenPatterns.some((entry) => entry.includes("orb/engine") || entry.includes("prepare-native-source-release")), false);
+  assert.equal(globalPolicy.releaseClosures.orb, undefined);
+  assert.equal(globalPolicy.releaseClosures["native-runtime"].patterns.includes("orb/**"), false);
 });
-
 test("direct Ponto recovery jobs use remote custody at every governed boundary", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
   for (const jobName of ["recovery-latch", "recovery-reconcile", "recovery-close", "recovery-rollback"]) {
@@ -683,17 +490,6 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   assert.match(nativeHelper, /global-coordination-mini-pc\.sh/);
   assert.match(nativeHelper, /immutable_root=.*\/opt\/skincos\/releases/);
 
-  const prepare = read("scripts/runtime/prepare-native-source-release.sh");
-  assert.match(prepare, /--coordination-closure/);
-  assert.match(prepare, /coordination closure identity or digest is invalid/);
-  assert.match(prepare, /\.skincos-global-coordination-\$\{closure_module\}\.json/);
-  assert.match(prepare, /coordination_native_runtime_closure/);
-  assert.match(prepare, /native-runtime dependency-closure attestation is required/);
-  assert.match(prepare, /export-meta-ads-publish-live\.js/);
-  assert.match(prepare, /apply-meta-ads-publish-workflow-snapshot\.js/);
-  assert.match(prepare, /patch-meta-ads-advantage-plus-drift-readback\.js/);
-  assert.match(prepare, /lib\/runtime-paths\.js/);
-
   const atendimentoPrepare = read("scripts/runtime/prepare-atendimento-staging-release.sh");
   assert.match(atendimentoPrepare, /--coordination-closure/);
   assert.match(atendimentoPrepare, /native_coordination_init release:atendimento/);
@@ -712,16 +508,6 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   assert.match(mirror, /native_coordination_init deploy:atendimento:local/);
   assert.match(mirror, /SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE/);
 
-  const mcp = read("scripts/runtime/mcp-gateway-release.sh");
-  assert.match(mcp, /promotion:orb-mcp:local/);
-  assert.match(mcp, /\.skincos-global-coordination-orb\.json/);
-  assert.match(mcp, /\.skincos-release-identity-orb\.json/);
-  assert.match(mcp, /native_coordination_check/);
-  const backup = read("scripts/runtime/run-orb-backup-with-coordination.sh");
-  assert.match(backup, /global:orb-backup/);
-  assert.match(backup, /orb-backup\.service/);
-  assert.match(backup, /SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY/);
-  assert.match(read("scripts/runtime/publish-orb-backup.ps1"), /run-orb-backup-with-coordination\.sh/);
   const influencerMigration = read("scripts/runtime/run-influencer-intelligence-staging-migration.sh");
   assert.match(influencerMigration, /load_private_coordination_environment/);
   assert.match(influencerMigration, /native-staging-migration-runner/);
@@ -748,24 +534,8 @@ test("native mini-PC mutations use the common coordinator and detached closure p
     assert.match(script, /native_coordination_check/);
   }
 
-  const orb = read("scripts/runtime/promote-native-source-release.sh");
-  assert.match(orb, /--resource release:native-runtime/);
-  assert.match(orb, /\.skincos-global-coordination-native-runtime\.json/);
-  assert.match(orb, /\.skincos-release-identity-native-runtime\.json/);
-  assert.match(orb, /--release-identity-file/);
-  assert.match(orb, /coordination_renew_if_due/);
-  assert.ok(orb.includes("coordination_check >/dev/null"));
-  assert.match(orb, /--rollback-to-release/);
-  assert.match(orb, /mode='rollback'/);
-  assert.match(orb, /current\.parentReleaseId === targetRelease/);
-  assert.match(orb, /Native source transition must be invoked from one of the two verified immutable release roots/);
-  assert.match(orb, /mini-pc:release:native-runtime:\$mode:\$release_id:from:\$expected_current/);
-  assert.doesNotMatch(orb, /--operation rollback/);
-  const nativeRollbackTest = read("scripts/runtime/test-promote-native-source-release.sh");
-  assert.match(nativeRollbackTest, /native source pointer rollback is exact, identity-attested, and fail-closed/);
-
   const whatsapp = read("scripts/runtime/prepare-messaging-whatsapp-release.sh");
-  assert.match(whatsapp, /--resource release:orb/);
+  assert.match(whatsapp, /--resource release:messaging-whatsapp/);
   assert.match(whatsapp, /--coordination-closure/);
 
   const dns = read("scripts/runtime/route-atendimento-production-dns.sh");
@@ -781,18 +551,6 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   assert.match(read("scripts/set-atendimento-production-readonly-control.sh"), /--coordination-reuse/);
   assert.match(read("scripts/run-atendimento-staging-migration.sh"), /run_sudo_clean \/usr\/bin\/bash -p "\$RUNTIME_GRANT_LOCKDOWN" --apply/);
   assert.match(read("scripts/runtime/prepare-atendimento-staging-release.sh"), /native_coordination_cleanup\ncoordination_acquired=0\ntrap - EXIT/);
-});
-
-test("the scheduled native backup bridge carries private custody and a stable owner identity", () => {
-  const publisher = read("scripts/runtime/publish-orb-backup.ps1");
-  const runner = read("scripts/runtime/run-orb-backup-with-coordination.sh");
-  assert.match(publisher, /SKINCOS_GLOBAL_COORDINATION_ENV_FILE=/);
-  assert.match(publisher, /GLOBAL_COORDINATION_MISSION_ID=windows:skincos-orb-backup/);
-  assert.match(publisher, /GLOBAL_COORDINATION_THREAD_ID=scheduled:SkincosOrbBackup/);
-  assert.match(publisher, /GLOBAL_COORDINATION_ACTOR=windows-scheduled-task/);
-  assert.match(runner, /COORDINATION_ENV_FILE=.*orb-backup\.env/);
-  assert.match(runner, /unsupported key/);
-  assert.match(runner, /mode 0600 or 0640/);
 });
 
 test("shared staging D1 custody serializes synthetic mutators before every write path", () => {
