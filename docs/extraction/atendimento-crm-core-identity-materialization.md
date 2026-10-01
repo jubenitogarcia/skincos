@@ -20,6 +20,11 @@ ou entrega.
 
 - A identidade é ancorada em um UUID de cliente canônico que foi explicitamente
   reconciliado; o componente é sempre `attendance-client:<uuid>`.
+- Antes de qualquer chamada futura ao writer, o owner de Atendimento deve
+  entregar um lote UUID-only revisado conforme o
+  [contrato de lote de revisão](atendimento-crm-core-identity-review-batch.md).
+  Esse contrato não invoca o writer, não prova por si só a revisão humana e não
+  autoriza backfill ou cutover.
 - `client_name`, apelidos e qualquer aproximação textual não podem gerar UUID,
   criar link ou alterar uma associação existente.
 - Uma presença em `crm_core_attendance_client_links` só entra na projeção quando o
