@@ -1181,7 +1181,7 @@ export default {
                 p.startsWith('/prefs/') ||
                 p === '/share' ||
                 p.startsWith('/share/') ||
-                // The CRM shell loads the category policy list when the local
+                // The web client loads the category policy list when the local
                 // Insumos module opens. Writes still require the normal session.
                 (request.method === 'GET' && (p === '/admin/categories' || p.startsWith('/admin/categories/')))
             );
@@ -1334,7 +1334,7 @@ export default {
                     JSON.stringify({
                         ok: false,
                         error: "PONTO_DISABLED",
-                        hint: "Ponto está centralizado no CRM API. Atualize PONTO_API_TARGET para o backend do CRM."
+                        hint: "Ponto pertence ao domínio Workforce. Use o Worker workforce/timekeeping ou habilite PONTO_INSUMOS_ENABLED somente para a ponte de compatibilidade aprovada."
                     }),
                     { status: 410, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } },
                     appOrigin

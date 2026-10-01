@@ -21,7 +21,7 @@ jobs:
 
       - name: Smoke check Ponto endpoints
         env:
-          BASE_URL: https://crm.skincos.com.br
+          BASE_URL: https://skincos-ponto.pages.dev
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |

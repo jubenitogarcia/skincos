@@ -5,19 +5,19 @@ import path from "node:path";
 import test from "node:test";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const journeyScript = path.join(repositoryRoot, "crm", "console", "scripts", "ponto-staging-journey.cjs");
+const journeyScript = path.join(repositoryRoot, "workforce", "ponto-pages", "scripts", "ponto-staging-journey.cjs");
 
 function validateOrigin({ origin, pagesSurface } = {}) {
   const env = { ...process.env };
   for (const key of [
-    "PONTO_STAGING_CRM_URL",
+    "PONTO_STAGING_URL",
     "PONTO_STAGING_PAGES_SURFACE",
     "PONTO_STAGING_EXPECTED_RELEASE_SHA",
     "PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID",
     "PONTO_STAGING_FIXTURES_FILE",
     "PONTO_STAGING_REPORT_FILE",
   ]) delete env[key];
-  env.PONTO_STAGING_CRM_URL = origin;
+  env.PONTO_STAGING_URL = origin;
   if (pagesSurface !== undefined) env.PONTO_STAGING_PAGES_SURFACE = pagesSurface;
   return spawnSync(process.execPath, [journeyScript], {
     cwd: repositoryRoot,
@@ -38,16 +38,17 @@ function assertOriginRejected(result, message) {
   assert.match(`${result.stdout}${result.stderr}`, message);
 }
 
-test("legacy immutable Pages candidates remain accepted by default", () => {
-  assertOriginAccepted(validateOrigin({
-    origin: "https://candidate.skincos-staging.pages.dev/",
-  }));
-});
-
-test("the dedicated Ponto Pages origin requires its explicit surface selector", () => {
+test("the dedicated Ponto Pages surface is required explicitly", () => {
   assertOriginRejected(
     validateOrigin({ origin: "https://skincos-ponto-staging.pages.dev/" }),
-    /PONTO_STAGING_CRM_URL must be an immutable skincos-staging\.pages\.dev HTTPS origin/,
+    /PONTO_STAGING_PAGES_SURFACE must be dedicated-ponto-pages/,
+  );
+});
+
+test("the dedicated Ponto Pages origin is accepted with its explicit surface selector", () => {
+  assertOriginRejected(
+    validateOrigin({ origin: "https://skincos-ponto-staging.pages.dev/" }),
+    /PONTO_STAGING_PAGES_SURFACE must be dedicated-ponto-pages/,
   );
   assertOriginAccepted(validateOrigin({
     origin: "https://skincos-ponto-staging.pages.dev/",
@@ -57,14 +58,14 @@ test("the dedicated Ponto Pages origin requires its explicit surface selector", 
 
 test("the dedicated selector rejects other or malformed origins", () => {
   for (const origin of [
-    "https://candidate.skincos-staging.pages.dev/",
+    "https://candidate.skincos-ponto-staging.pages.dev/",
     "https://skincos-ponto-staging.pages.dev.invalid/",
     "https://skincos-ponto-staging.pages.dev/not-an-origin",
     "https://user@skincos-ponto-staging.pages.dev/",
   ]) {
     assertOriginRejected(
       validateOrigin({ origin, pagesSurface: "dedicated-ponto-pages" }),
-      /PONTO_STAGING_CRM_URL must be (the exact dedicated Ponto Pages staging origin|an immutable skincos-staging\.pages\.dev HTTPS origin)/,
+      /PONTO_STAGING_URL must be (the exact dedicated Ponto Pages staging origin|a valid immutable staging URL)|PONTO_STAGING_PAGES_SURFACE must be dedicated-ponto-pages/,
     );
   }
   assertOriginRejected(
@@ -72,6 +73,6 @@ test("the dedicated selector rejects other or malformed origins", () => {
       origin: "https://skincos-ponto-staging.pages.dev/",
       pagesSurface: "any-pages-origin",
     }),
-    /PONTO_STAGING_PAGES_SURFACE must be either legacy or dedicated-ponto-pages/,
+      /PONTO_STAGING_PAGES_SURFACE must be dedicated-ponto-pages/,
   );
 });

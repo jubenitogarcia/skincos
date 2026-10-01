@@ -1,6 +1,7 @@
 # Meta Ads (subprojeto)
 
-Este modulo e um subprojeto isolado que futuramente sera integrado ao CRM do `skincos`.
+Este módulo é um subprojeto isolado. Consumidores usam o contrato Meta Ads do
+gateway e não importam a implementação de outro produto.
 
 ## Setup rapido
 1. Copie os envs (use o template):
@@ -12,7 +13,7 @@ cp ../../config/templates/modules/meta-ads/.env.example ./apps/worker/.env
 
 2. Ajuste `DATABASE_URL`, `REDIS_URL` e `ENCRYPTION_MASTER_KEY`.
 
-3. Suba o banco/redis (separado do CRM):
+3. Suba o banco/redis isolados:
 
 ```
 docker compose up -d
@@ -31,14 +32,16 @@ pnpm --filter @meta/db seed
 - OAuth: `http://localhost:4000/api/meta/oauth/*`
 - Bulk ops: `/api/bulk/*`
 
-## UI no CRM
-A interface esta no frontend do CRM (`skincos/frontend`) no modulo **Meta Ads**.
-O CRM faz proxy para o Meta Ads via `/api/meta-ads/*`.
-Se precisar apontar direto para outro host, use `VITE_META_ADS_API_URL`.
+## Integração de UI
+A interface consumidora usa o contrato `/api/meta-ads/*` do gateway. O serviço
+Meta Ads não conhece o checkout ou a sessão de outro produto. Se precisar
+apontar diretamente para outro host em desenvolvimento, use
+`VITE_META_ADS_API_URL`.
 
 ## Observacao
 - O app usa Postgres e Redis isolados.
-- `apps/web` (Next.js) permanece apenas como referencia e nao e usado no CRM.
+- `apps/web` (Next.js) permanece apenas como referência e não participa do
+  Worker de ingestão.
 
 ## Ingestao Cloudflare para Performance Report
 

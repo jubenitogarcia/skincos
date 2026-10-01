@@ -113,7 +113,7 @@ function context(path: string, init: RequestInit = {}, withCsrf = true) {
     put: async (key: string, value: string) => { usedProbeNonces.set(key, value) },
   }
   return {
-    request: new Request(`https://crm.skincos.com.br${path}`, { ...init, headers }),
+    request: new Request(`https://skincos-ponto.pages.dev${path}`, { ...init, headers }),
     env,
   }
 }

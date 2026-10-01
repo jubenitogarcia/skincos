@@ -2,7 +2,7 @@
 
 ## Fonte de verdade e propriedade
 
-`finance/` é o único dono de movimentos, partidas, importações, conciliação, auditoria e relatórios. O gateway encaminha apenas `/finance/*` por service binding; `crm/console` não calcula nem persiste regras financeiras. `Identity` valida a sessão existente e entrega ao Financeiro somente um ator autenticado e seus escopos por contrato assinado de curta duração. O domínio não lê usuários, hashes, sessões ou D1 de Inventory.
+`finance/` é o único dono de movimentos, partidas, importações, conciliação, auditoria e relatórios. O gateway encaminha apenas `/finance/*` por service binding; nenhuma interface de outro domínio calcula ou persiste regras financeiras. `Identity` valida a sessão existente e entrega ao Financeiro somente um ator autenticado e seus escopos por contrato assinado de curta duração. O domínio não lê usuários, hashes, sessões ou D1 de Inventory.
 
 O antigo `backend/apps/actual-server` não é serviço, banco, autenticação ou dependência do Financeiro. Sua licença MIT permite referência seletiva, mas não há código nem estado importado dele.
 

@@ -158,34 +158,18 @@ class AgentZeroIntegration {
             }
         }
         
-        // CRM integration
-        if (lowerMessage.includes('crm') || context.source === 'crm') {
-            if (lowerMessage.includes('status') || lowerMessage.includes('verificar')) {
-                try {
-                    const crmStatus = await this.checkCRMStatus();
-                    return `📊 Status CRM: ${crmStatus.status || 'Ativo'}\n\nPosso ajudá-lo a gerenciar clientes, vendas e relatórios do seu CRM.`;
-                } catch (error) {
-                    return '⚠️ Não foi possível verificar o status do CRM no momento. Como posso ajudá-lo?';
-                }
-            }
-            
-            if (lowerMessage.includes('cliente') || lowerMessage.includes('vendas')) {
-                return '💼 Gestão CRM disponível:\n\n• Cadastro e gestão de clientes\n• Controle de vendas e pipeline\n• Relatórios e analytics\n• Automações de follow-up\n• Integração com WhatsApp e Instagram\n\nQue funcionalidade do CRM você precisa?';
-            }
-        }
-        
         // General system queries
         if (lowerMessage.includes('sistema') || lowerMessage.includes('status') || lowerMessage.includes('ajuda')) {
-            return `🎯 **SKINCOS AI - Central de Controle**\n\nEstou aqui para ajudá-lo a gerenciar todos os módulos:\n\n📱 **WhatsApp**: Mensagens e automações\n📸 **Instagram**: Análise OSINT e automação\n📊 **CRM**: Gestão de clientes e vendas\n🔧 **Sistema**: Monitoramento e configurações\n\nO que você gostaria de fazer?`;
+            return `🎯 **SKINCOS AI - Central de Controle**\n\nEstou aqui para ajudá-lo a gerenciar os módulos de comunicação e operação:\n\n📱 **WhatsApp**: Mensagens e automações\n📸 **Instagram**: Análise OSINT e automação\n🔧 **Sistema**: Monitoramento e configurações\n\nO que você gostaria de fazer?`;
         }
         
         // Greeting responses
         if (lowerMessage.includes('oi') || lowerMessage.includes('olá') || lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
-            return `👋 Olá! Sou o **SKINCOS AI Agent**, sua IA central para gerenciamento de WhatsApp, Instagram e CRM.\n\nPosso ajudá-lo a:\n• Automatizar mensagens e posts\n• Analisar dados e métricas\n• Gerenciar campanhas\n• Monitorar o sistema\n\nComo posso ajudá-lo hoje?`;
+            return `👋 Olá! Sou o **SKINCOS AI Agent**, sua IA central para gerenciamento de WhatsApp e Instagram.\n\nPosso ajudá-lo a:\n• Automatizar mensagens e posts\n• Analisar dados e métricas\n• Gerenciar campanhas\n• Monitorar o sistema\n\nComo posso ajudá-lo hoje?`;
         }
         
         // Default intelligent response
-        return `🤖 Entendi sua solicitação. Como sua IA central, posso ajudá-lo a integrar e automatizar processos entre WhatsApp, Instagram e sistemas CRM.\n\nPara melhor atendê-lo, pode me dizer especificamente:\n• Qual módulo você quer gerenciar?\n• Que tipo de automação precisa?\n• Alguma análise específica?\n\nEstou aqui para otimizar seu fluxo de trabalho!`;
+        return `🤖 Entendi sua solicitação. Como sua IA central, posso ajudá-lo a integrar e automatizar processos entre WhatsApp e Instagram.\n\nPara melhor atendê-lo, pode me dizer especificamente:\n• Qual módulo você quer gerenciar?\n• Que tipo de automação precisa?\n• Alguma análise específica?\n\nEstou aqui para otimizar seu fluxo de trabalho!`;
     }
 
     async checkWhatsAppStatus() {
@@ -200,15 +184,6 @@ class AgentZeroIntegration {
     async checkInstagramStatus() {
         try {
             const response = await axios.get('http://localhost:3003/health', { timeout: 3000 });
-            return response.data;
-        } catch (error) {
-            return { status: 'unknown', error: error.message };
-        }
-    }
-
-    async checkCRMStatus() {
-        try {
-            const response = await axios.get('http://localhost:3100/api/status', { timeout: 3000 });
             return response.data;
         } catch (error) {
             return { status: 'unknown', error: error.message };
@@ -245,7 +220,6 @@ class AgentZeroIntegration {
             agent_zero: { status: 'healthy', initialized: this.isInitialized },
             whatsapp: await this.checkWhatsAppStatus(),
             instagram: await this.checkInstagramStatus(),
-            crm: await this.checkCRMStatus(),
             conversations_active: this.conversations.size,
             memory_entries: this.memory.size,
             uptime: process.uptime()

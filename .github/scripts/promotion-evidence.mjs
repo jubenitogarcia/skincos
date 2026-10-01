@@ -16,12 +16,10 @@ const SAFE_TEXT = /^[^\u0000-\u001f\u007f]+$/;
 
 const releaseSurfacesByUnit = {
   "timekeeping": ["timekeeping"],
-  "crm-pages": ["timekeeping"],
   "core-api": ["timekeeping"],
   "core-inventory": ["timekeeping"],
   "finance": ["runtime"],
   "token-vault": ["runtime", "github-governance"],
-  "finance-ui": ["website"],
   "escala-api": ["runtime"],
   // The adapter has an isolated Worker/Durable Object artifact.  Its source
   // is neither a generic runtime nor the core Schedule release surface; bind
@@ -31,8 +29,8 @@ const releaseSurfacesByUnit = {
   "public-website-release": ["website"],
   "beauty-movement-production-activation": ["website"],
   "beauty-movement-campaign-copy-update": ["website"],
-  // Atendimento is promoted as an isolated native CRM runtime.  Its release
-  // identity spans the CRM/API source, native runtime custody and the
+  // Atendimento is promoted as a read-only commercial-catalog release.  Its
+  // identity spans the external product contract, API gateway and the
   // main-custodied workflow validators; keeping all three inputs in the
   // digest prevents a predecessor evidence record from being reused after a
   // contract or runtime change.
@@ -40,7 +38,7 @@ const releaseSurfacesByUnit = {
   "atendimento-availability": ["timekeeping", "runtime", "github-governance"],
   // Ponto Pages is its own direct-uploaded Cloudflare Pages surface.  Its
   // release identity must bind the app, dedicated publisher, single-writer
-  // policy and coordinator instead of inheriting the legacy CRM Pages scope.
+  // policy and coordinator instead of inheriting the legacy composite scope.
   "ponto-pages": ["ponto-pages", "global-coordination", "github-governance"],
 };
 

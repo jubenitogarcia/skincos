@@ -8,7 +8,7 @@ Cloudflare audit (skincos)
 Checks (best-effort):
   - Workers scripts exist: skincos-api, skincos-insumos
   - Zone routes point to those scripts
-  - Pages project build filters: path_includes=["crm/console/**"]
+  - no source-repository Pages publisher is enabled for an external product host
 
 Required env:
   CLOUDFLARE_API_TOKEN
@@ -16,7 +16,6 @@ Required env:
 
 Optional env:
   CLOUDFLARE_ZONE_NAME (default: skincos.com.br)
-  CLOUDFLARE_PAGES_PROJECT (default: skincos)
 
 Example:
   CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... backend/scripts/cloudflare-audit.sh
@@ -26,7 +25,6 @@ EOF
 token="${CLOUDFLARE_API_TOKEN:-}"
 account="${CLOUDFLARE_ACCOUNT_ID:-}"
 zone_name="${CLOUDFLARE_ZONE_NAME:-skincos.com.br}"
-pages_project="${CLOUDFLARE_PAGES_PROJECT:-skincos}"
 
 if [[ -z "$token" || -z "$account" ]]; then
   echo "[cloudflare-audit] Missing CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID" >&2
@@ -71,15 +69,6 @@ else
   echo "$routes"
   echo "$routes" | grep -Eq '^api\.skincos\.com\.br/\* -> skincos-api$' || { echo "[cloudflare-audit] FAIL: missing route api.skincos.com.br/* -> skincos-api" >&2; fail=1; }
   echo "$routes" | grep -Eq '^api\.skincos\.com\.br/insumos/\* -> skincos-insumos$' || { echo "[cloudflare-audit] FAIL: missing route api.skincos.com.br/insumos/* -> skincos-insumos" >&2; fail=1; }
-fi
-
-echo "[cloudflare-audit] Checking Pages build filters..."
-pi_all="$(cf_get_json "https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${pages_project}" | jq -r '.result.source.config.path_includes[]?' || true)"
-if ! echo "$pi_all" | grep -Eq '^crm/console/\*\*$'; then
-  echo "[cloudflare-audit] FAIL: Pages path_includes missing crm/console/** (got: ${pi_all:-<empty>})" >&2
-  fail=1
-else
-  echo "[cloudflare-audit] OK: Pages path_includes=crm/console/**"
 fi
 
 if [[ "$fail" -ne 0 ]]; then

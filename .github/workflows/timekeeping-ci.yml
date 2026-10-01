@@ -15,21 +15,19 @@ on:
       - 'inventory/wrangler.toml'
       - 'shared/identity-runtime/**'
       - 'shared/module-availability/**'
-      - 'crm/console/functions/api/ponto/**'
-      - 'crm/console/PontoModule.tsx'
-      - 'crm/console/crmRoleAccess.ts'
-      - 'crm/console/moduleAvailability.ts'
-      - 'crm/console/pontoApi.ts'
-      - 'crm/console/pontoTypes.ts'
-      - 'crm/console/tests/ponto*.test.ts'
-      - 'crm/console/tests/crmRoleAccess.test.ts'
-      - 'crm/console/tests/moduleRegistry.test.ts'
-      - 'crm/console/scripts/ponto-staging-journey.cjs'
+      - 'workforce/ponto-pages/functions/api/ponto/**'
+      - 'workforce/ponto-pages/PontoModule.tsx'
+      - 'workforce/ponto-pages/moduleAvailability.ts'
+      - 'workforce/ponto-pages/pontoApi.ts'
+      - 'workforce/ponto-pages/pontoTypes.ts'
+      - 'workforce/ponto-pages/tests/ponto*.test.ts'
+      - 'workforce/ponto-pages/tests/moduleRegistry.test.ts'
+      - 'workforce/ponto-pages/scripts/ponto-staging-journey.cjs'
       - 'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs'
       - '.github/workflows/timekeeping-staging-journey.yml'
       - '.github/workflows/deploy-timekeeping.yml'
       - '.github/workflows/deploy-core-workers.yml'
-      - '.github/workflows/deploy-crm-pages.yml'
+      - '.github/workflows/ponto-pages-governed-publisher.yml'
       - '.github/workflows/module-availability.yml'
       - '.github/workflows/ponto-*.yml'
       - '.github/scripts/ponto-*.mjs'
@@ -38,12 +36,6 @@ on:
       - 'scripts/runtime/install-ponto-jit-runner.sh'
       - 'scripts/runtime/ponto-jit-*.mjs'
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
-      - 'scripts/runtime/ponto-legacy-snapshot-custody.mjs'
-      - 'scripts/runtime/provision-ponto-legacy-snapshot-custody.sh'
-      - 'scripts/runtime/provision-ponto-legacy-absence-attestation.sh'
-      - 'scripts/runtime/install-ponto-legacy-snapshot-custody.sh'
-      - 'scripts/tests/ponto-legacy-snapshot-custody.test.mjs'
-      - 'scripts/tests/ponto-legacy-absence-attestation.test.mjs'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
       - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
@@ -70,21 +62,19 @@ on:
       - 'inventory/wrangler.toml'
       - 'shared/identity-runtime/**'
       - 'shared/module-availability/**'
-      - 'crm/console/functions/api/ponto/**'
-      - 'crm/console/PontoModule.tsx'
-      - 'crm/console/crmRoleAccess.ts'
-      - 'crm/console/moduleAvailability.ts'
-      - 'crm/console/pontoApi.ts'
-      - 'crm/console/pontoTypes.ts'
-      - 'crm/console/tests/ponto*.test.ts'
-      - 'crm/console/tests/crmRoleAccess.test.ts'
-      - 'crm/console/tests/moduleRegistry.test.ts'
-      - 'crm/console/scripts/ponto-staging-journey.cjs'
+      - 'workforce/ponto-pages/functions/api/ponto/**'
+      - 'workforce/ponto-pages/PontoModule.tsx'
+      - 'workforce/ponto-pages/moduleAvailability.ts'
+      - 'workforce/ponto-pages/pontoApi.ts'
+      - 'workforce/ponto-pages/pontoTypes.ts'
+      - 'workforce/ponto-pages/tests/ponto*.test.ts'
+      - 'workforce/ponto-pages/tests/moduleRegistry.test.ts'
+      - 'workforce/ponto-pages/scripts/ponto-staging-journey.cjs'
       - 'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs'
       - '.github/workflows/timekeeping-staging-journey.yml'
       - '.github/workflows/deploy-timekeeping.yml'
       - '.github/workflows/deploy-core-workers.yml'
-      - '.github/workflows/deploy-crm-pages.yml'
+      - '.github/workflows/ponto-pages-governed-publisher.yml'
       - '.github/workflows/module-availability.yml'
       - '.github/workflows/ponto-*.yml'
       - '.github/scripts/ponto-*.mjs'
@@ -93,12 +83,6 @@ on:
       - 'scripts/runtime/install-ponto-jit-runner.sh'
       - 'scripts/runtime/ponto-jit-*.mjs'
       - 'scripts/runtime/provision-ponto-jit-custody.sh'
-      - 'scripts/runtime/ponto-legacy-snapshot-custody.mjs'
-      - 'scripts/runtime/provision-ponto-legacy-snapshot-custody.sh'
-      - 'scripts/runtime/provision-ponto-legacy-absence-attestation.sh'
-      - 'scripts/runtime/install-ponto-legacy-snapshot-custody.sh'
-      - 'scripts/tests/ponto-legacy-snapshot-custody.test.mjs'
-      - 'scripts/tests/ponto-legacy-absence-attestation.test.mjs'
       - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
       - 'scripts/tests/timekeeping-ci-inventory-rpc.test.mjs'
       - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
@@ -127,7 +111,7 @@ jobs:
             workforce/timekeeping/package-lock.json
             api/package-lock.json
             inventory/pnpm-lock.yaml
-            crm/console/package-lock.json
+            workforce/ponto-pages/package-lock.json
       - name: Verify Inventory/API RPC CI coverage
         run: node --test .github/scripts/inventory-legacy-jobs-release-guard.test.mjs scripts/tests/timekeeping-ci-inventory-rpc.test.mjs
       - name: Install pinned Timekeeping toolchain
@@ -175,30 +159,22 @@ jobs:
           set -euo pipefail
           node --test \
             .github/scripts/ponto-*.test.mjs \
-            scripts/tests/ponto-legacy-snapshot-custody.test.mjs \
-            scripts/tests/ponto-legacy-absence-attestation.test.mjs \
             scripts/tests/ponto-jit-custody-runner.test.mjs \
             workforce/timekeeping/scripts/ponto-staging-journey-fixtures.test.mjs \
             shared/identity-runtime/workforce-onboarding.test.mjs \
             inventory/tests/releaseHealth.test.mjs
-          for script in .github/scripts/ponto-*.mjs scripts/runtime/ponto-jit-*.mjs scripts/runtime/ponto-legacy-snapshot-custody.mjs; do node --check "$script"; done
+          for script in .github/scripts/ponto-*.mjs scripts/runtime/ponto-jit-*.mjs; do node --check "$script"; done
           bash -n scripts/runtime/install-ponto-jit-runner.sh
           bash -n scripts/runtime/provision-ponto-jit-custody.sh
-          bash -n scripts/runtime/install-ponto-legacy-snapshot-custody.sh
-          bash -n scripts/runtime/provision-ponto-legacy-snapshot-custody.sh
-          bash -n scripts/runtime/provision-ponto-legacy-absence-attestation.sh
           bash -n ops/runtime/github-actions-runner/ponto-jit-before-job.sh
           bash -n ops/runtime/github-actions-runner/ponto-jit-after-job.sh
           node .github/scripts/validate-progressive-release.mjs
-      - name: Typecheck and test CRM proxy
+      - name: Typecheck and test Ponto Pages
         run: |
           set -euo pipefail
-          npm --prefix crm/console ci
-          npm --prefix crm/console run typecheck
-          npm --prefix crm/console run lint
-          npm --prefix crm/console test
-          npm --prefix crm/console run build
-          if PONTO_STAGING_CRM_URL='https://user@candidate.skincos-staging.pages.dev/' node crm/console/scripts/ponto-staging-journey.cjs 2>/dev/null; then
-            echo 'Ponto staging journey accepted an origin with userinfo.' >&2
-            exit 1
-          fi
+          npm --prefix workforce/ponto-pages ci
+          npm --prefix workforce/ponto-pages run typecheck
+          npm --prefix workforce/ponto-pages run lint
+          npm --prefix workforce/ponto-pages test
+          npm --prefix workforce/ponto-pages run build
+          node workforce/ponto-pages/scripts/verify-surface.mjs

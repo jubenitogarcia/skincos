@@ -2,14 +2,15 @@
 
 Este módulo incorpora o projeto "Insumos" no monorepo do SKINCOS, usando Cloudflare Workers + D1 + R2.
 
-O objetivo é manter o CRM `crm.skincos.com.br` consumindo a API por `same-origin` (`/api/insumos/*`) e deixando o Worker como backend único para o domínio `api.skincos.com.br`.
+O objetivo é manter os consumidores usando o contrato same-origin (`/api/insumos/*`)
+e deixar o Worker como backend único do domínio `api.skincos.com.br`.
 
 ## Entrypoint
 
-- Worker: [inventory/workers/index.js](../apps/insumos/workers/index.js)
-- Config (Wrangler): [inventory/wrangler.toml](../apps/insumos/wrangler.toml)
-- Migrações D1: [inventory/migrations](../apps/insumos/migrations)
-- Store D1 (lógica): [inventory/src/d1Store.js](../apps/insumos/src/d1Store.js)
+- Worker: [inventory/src/worker.js](../../inventory/src/worker.js)
+- Config (Wrangler): [inventory/wrangler.toml](../../inventory/wrangler.toml)
+- Migrações D1: [inventory/migrations](../../inventory/migrations)
+- Store D1 (lógica): [inventory/src/d1Store.js](../../inventory/src/d1Store.js)
 
 ## Rotas públicas
 
@@ -126,9 +127,9 @@ INSUMOS_CSRF_TOKEN="..." \
 ./backend/scripts/backup-verify.sh --api-url https://api.skincos.com.br/insumos --unidade novo-hamburgo
 ```
 
-## Consumo no CRM
+## Consumo por aplicações
 
-Para evitar CORS e manter o padrão same-origin do CRM, o backend do CRM expõe proxy:
+Para evitar CORS, o gateway do consumidor expõe as rotas same-origin:
 
 - `GET/POST/... /api/insumos/*` → `https://api.skincos.com.br/insumos/*`
 - `GET/POST... /api/auth/*` → `https://api.skincos.com.br/insumos/auth/*` (alias de login/registro/sessão)
@@ -142,17 +143,13 @@ Variável opcional:
 - `AUTH_RESET_CODE_PEPPER` (segredo obrigatório para recuperação; usado para HMAC do código/grant)
 - `AUTH_RESET_SMTP_HOST`, `AUTH_RESET_SMTP_PORT` (default `465`), `AUTH_RESET_SMTP_USERNAME`, `AUTH_RESET_SMTP_PASSWORD`, `AUTH_RESET_EMAIL_FROM` (SMTP de envio; enquanto ausentes, a recuperação falha com `PASSWORD_RECOVERY_UNAVAILABLE` sem criar código)
 
-### Nota: crm-api (backend/apps/crm-api)
+### Nota: serviços externos
 
-O `crm-api` (Node/Express) não é o backend de Insumos. Ele serve outras partes do CRM (ex.: WhatsApp/orquestrador) e possui um stack de auth próprio.
+Serviços de outros produtos não são o backend de Insumos. O módulo de Insumos
+mantém seu próprio contrato, autenticação e armazenamento; integrações externas
+devem ocorrer por APIs versionadas, sem importar código de outro produto.
 
 Para Insumos, a autenticação e RBAC ficam no Worker `skincos-insumos` (cookies `session` + `csrfToken`) e os dados ficam em D1/R2.
-
-### Frontend: onde fica
-
-- Módulo: [frontend/InsumosModule.tsx](../../frontend/InsumosModule.tsx)
-- Registro do módulo / bloqueio de abas: [frontend/App.tsx](../../frontend/App.tsx)
-- Action registry global (pequeno): [frontend/actionsRegistry.ts](../../frontend/actionsRegistry.ts)
 
 ## Desenvolvimento local
 
@@ -164,9 +161,7 @@ Preferir via scripts canônicos do monorepo:
 
 Observação: o deploy usa `--keep-vars` para não apagar variáveis configuradas no Dashboard.
 
-Para usar o Worker local no CRM (proxy via CRM API), rode o Worker e aponte o target:
-
-- `INSUMOS_API_TARGET=http://127.0.0.1:8787 ./backend/scripts/dev.sh crm`
+Para usar o Worker local, aponte o consumidor para `INSUMOS_API_TARGET=http://127.0.0.1:8787`.
 
 Modo dev (somente leitura, útil para auditoria local):
 
@@ -192,9 +187,8 @@ inclui os dados de negócio de Insumos necessários para métricas e jornadas
 operacionais, mas exclui credenciais, usuários, auditoria, IPs, notificações e
 histórico de compartilhamento. As coleções permitidas são lidas em um único
 lote remoto; o Worker local recalcula o digest canônico, exige a allowlist
-exata e só então restaura as tabelas. A ação `CRM – Prévia Insumos Thread`
-executa esse passo automaticamente antes de iniciar a prévia e registra no
-manifesto somente origem, digest e contagens, sem expor registros. Se o
+exata e só então restaura as tabelas. O fluxo local registra no manifesto
+somente origem, digest e contagens, sem expor registros. Se o
 runtime novo falhar após a troca, o launcher tenta restaurar automaticamente a
 prévia anterior; a falha permanece visível no log privado da ação.
 O checkpoint de rollback guarda somente o manifesto saudável em runtime
@@ -243,7 +237,7 @@ O projeto roda em D1 (ver `INSUMOS_STORAGE=d1` em `wrangler.toml`). Sheets é **
 
 Para habilitar integração com Google Sheets localmente:
 
-- Copie o arquivo [inventory/.dev.vars.example](../apps/insumos/.dev.vars.example) para `inventory/.dev.vars`
+- Copie o arquivo [inventory/.dev.vars.example](../../inventory/.dev.vars.example) para `inventory/.dev.vars`
 - Preencha `SPREADSHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL` e `GOOGLE_PRIVATE_KEY`
 
 Depois reinicie:

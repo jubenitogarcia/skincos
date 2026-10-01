@@ -13,6 +13,11 @@ Cada módulo declara obrigatoriamente:
 - serviços, bancos/armazenamentos, rotas e health checks;
 - comandos de teste, feature flag, fallback, SLO e rollback.
 
+Módulos com `executionBoundary: "external"` são contratos de integração com
+outro repositório e não representam código executável neste monorepo. O CRM é
+o único módulo nessa categoria; sua implementação, publicação e dados vivem
+exclusivamente em `jubenitogarcia/crm`.
+
 Uma feature flag ausente é registrada como `not-yet-implemented`. Isso é uma
 lacuna explícita, não uma autorização implícita para publicar uma capacidade:
 uma mudança que exponha comportamento novo precisa introduzir uma flag

@@ -20,22 +20,21 @@ function plan(files, options = {}) {
 }
 
 test("low presentation changes select only delta/static validation", () => {
-  const result = plan(["crm/console/styles/panel.css"]);
+  const result = plan(["workforce/ponto-pages/src/styles/panel.css"]);
   assert.equal(result.lane, "low");
   assert.equal(result.forcedFull, false);
   assert.deepEqual(result.plan.map((item) => item.type), ["diff-check", "static-parse", "secret-delta"]);
 });
 
 test("a UI component in an explicit component path gets focal checks", () => {
-  const result = plan(["crm/console/components/LocalCard.tsx"]);
+  const result = plan(["workforce/ponto-pages/src/LocalCard.tsx"]);
   assert.equal(result.lane, "low");
-  assert.match(result.plan.map((item) => item.label).join("\n"), /CRM console focal lint/);
-  assert.match(result.plan.map((item) => item.label).join("\n"), /CRM console focal typecheck/);
+  assert.match(result.plan.map((item) => item.label).join("\n"), /Ponto Pages typecheck/);
   assert.equal(result.forcedFull, false);
 });
 
 test("auth and dependency paths remain fail-closed in the full lane", () => {
-  for (const file of ["crm/console/AuthScreen.tsx", "crm/console/package.json"]) {
+  for (const file of ["workforce/ponto-pages/src/AuthScreen.tsx", "workforce/ponto-pages/package.json"]) {
     const result = plan([file]);
     assert.equal(result.forcedFull, true, file);
     assert.equal(result.lane, "high", file);

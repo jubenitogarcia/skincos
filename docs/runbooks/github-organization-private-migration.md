@@ -33,9 +33,11 @@ webhooks e permissões diretas imediatamente antes da transferência.
    repositório `skincos`.
 2. Convidar e confirmar **dois owners distintos**. Não conte convite pendente
    como owner; registre as duas confirmações no ticket privado.
-3. Criar os times do plano: `skincos-platform`, `skincos-crm`,
-   `skincos-finance`, `skincos-workforce`, `skincos-inventory`, `skincos-web`
-   e `skincos-security`. Conceder somente as permissões previstas no plano.
+3. Criar os times do plano: `skincos-platform`, `skincos-finance`,
+   `skincos-workforce`, `skincos-inventory`, `skincos-web` e
+   `skincos-security`. O CRM independente mantém ownership no repositório
+   `jubenitogarcia/crm` e não recebe permissões por este monorepo. Conceder
+   somente as permissões previstas no plano.
 4. Criar `staging`, `production`, `preview`, `recovery` e `copilot` no destino;
    separar secrets/variables por environment e configurar branches protegidas.
    Não copie valores para Git, logs ou ticket.

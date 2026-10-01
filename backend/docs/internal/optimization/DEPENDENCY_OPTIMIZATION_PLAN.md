@@ -21,8 +21,8 @@ References:
 ### Phase 1: Low-risk hygiene (1-2 PRs)
 - Node:
   - Fix body-parser version in `a0/package.json` from ^2.2.0 to ^1.20.3.
-  - Align axios to ^1.12.2 across root and CRM.
-  - Add helmet to CRM API (if missing) and ensure basic CORS/security defaults.
+  - Align axios to ^1.12.2 across the API and adapters.
+  - Add helmet to the API (if missing) and ensure basic CORS/security defaults.
 - Python:
   - Add constraints pins for fastapi, uvicorn, httpx (e.g., fastapi==0.114.x, uvicorn==0.30.x, httpx==0.27.x) and recommend installing with `-c constraints.txt`.
   - Ensure only `pypdf` is used (no PyPDF2 elsewhere).
@@ -33,7 +33,7 @@ References:
   - Downgrade root/a0/whatsapp-backup from 5.1.0 → 4.21.1 where used for dev servers.
   - Keep a branch to evaluate 5.x migration later with comprehensive tests.
 
-Rationale: CRM and WA module already use 4.x; standardizing reduces divergent middleware behaviors.
+Rationale: the API and WA module already use 4.x; standardizing reduces divergent middleware behaviors.
 
 ### Phase 3: Cleanup and consolidation
 - Create a top-level `scripts/deps/` with utilities to:

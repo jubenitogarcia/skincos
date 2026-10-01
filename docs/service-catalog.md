@@ -1,80 +1,43 @@
-# Catálogo De Serviços
+# Catálogo de serviços
 
-Este catálogo define os serviços críticos do repositório, suas dependências, os checks mínimos e o runbook de referência. O objetivo é reduzir operação implícita.
+Este catálogo descreve os donos atuais. O monorepo não publica nem executa o
+CRM: o único projeto CRM é `jubenitogarcia/crm`, em
+`C:\\CodexShared\\Projetos\\crm`.
 
-## Website público
+## CRM independente
 
-- Caminho: `website/`
-- Dono primário: `@jubenitogarcia`
-- Backup operacional: `TBD (criar time GitHub antes de exigir review de code owner por domínio)`
-- Propósito: site público, agenda, APIs de booking e integrações de marketing.
-- Dependências críticas: Cloudflare Workers/Pages, D1 do booking, Turnstile, provedores de e-mail/notificação, analytics/pixels.
-- SLO alvo: disponibilidade 99,9%; p95 de `/api/booking/status` <= 800 ms.
-- Gates mínimos: `npm --prefix website run lint`, `typecheck`, `test`, `build`.
-- Runbooks: `docs/observability.md`, `docs/staging.md`.
+- Repositório: <https://github.com/jubenitogarcia/crm>
+- Interfaces: `https://crm.skincos.com.br` e
+  `https://api.skincos.com.br/crm/*`.
+- Dados, Worker, Pages, D1, autenticação de aplicação e rollback pertencem ao
+  repositório independente.
+- O gateway `api/` apenas valida o envelope externo e encaminha `/crm/*`; não
+  há cópia de código, banco, cookie ou segredo do CRM neste monorepo.
 
-## CRM / Escala / Ponto
+## API e domínios
 
-- Caminho: `frontend/`
-- Dono primário: `@jubenitogarcia`
-- Backup operacional: `TBD`
-- Propósito: CRM interno, módulos Escala, Ponto, Social e operações administrativas.
-- Dependências críticas: Cloudflare Pages Functions, CRM API, Escala API, R2, autenticação local controlada.
-- SLO alvo: disponibilidade 99,5%; `/_proxy-status` íntegro em produção e preview.
-- Gates mínimos: `npm --prefix frontend run lint`, `typecheck`, `test`, `build`, Playwright para fluxos sensíveis.
-- Runbooks: `docs/escala-runbook.md`, `docs/ponto-runbook.md`, `docs/observability.md`.
+- `api/`: único limite HTTP de `api.skincos.com.br`; encaminha contratos para
+  Financeiro, Inventário, Ponto e CRM independente.
+- `finance/`: ledger, contas, obrigações, importações e auditoria financeira.
+- `inventory/`: insumos, estoque e movimentos.
+- `workforce/`: Escala e Ponto.
+- `messaging/`: engine e adaptadores de WhatsApp.
+- `booking/`: disponibilidade e reservas.
+- `website/`: experiência pública e APIs do site.
+- `ads/`, `social/`: campanhas, relatórios e publicação editorial.
+- `integration/atendimento/commercial-catalog/`: contrato somente-leitura
+  `crm-commercial-catalog/v1` para automações; não é CRM e não grava dados.
 
-## CRM API
+## Validação local
 
-- Caminho: `crm/api/`
-- Dono primário: `@jubenitogarcia`
-- Backup operacional: `TBD`
-- Propósito: backend operacional do CRM, autenticação, módulos de apoio e integrações.
-- Dependências críticas: PostgreSQL/serviços externos, OAuth, páginas do CRM, segredos locais controlados.
-- SLO alvo: disponibilidade 99,5%; endpoints críticos com erro < 1% em janelas de 5 minutos.
-- Gates mínimos: `npm --prefix crm/api test`.
-- Runbooks: `docs/observability.md`, `docs/auth.md`.
+Use os scripts raiz e os testes do dono correspondente. Os checks principais
+são `npm run architecture:validate`, `npm run module-catalog:validate`,
+`npm run domain-boundaries:validate`, `npm run api:test` e os testes de cada
+domínio. O repositório independente possui seu próprio `npm test`, build e
+publisher.
 
-## Clientes / Atendimento isolado (não promovido)
+## Operação
 
-- Caminho: `crm/api/server/atendimentoRuntime.js`, `ops/runtime/units/crm-atendimento-*.service`.
-- Propósito: superfície de Clientes/Atendimento independente, inicialmente só
-  leitura, com HMAC v2, replay persistente, controle local fail-closed e
-  shutdown gracioso. Não inicia Harmonia nem o worker contínuo.
-- Bind: somente loopback (`8111` staging, `8110` produção); health PII-free é
-  independente do banco e readiness é interno/tokenizado.
-- Dependências críticas: banco dedicado/role read-only, controle SHA, ledger de
-  replay, migrations aditivas de fontes e aprovação clínica, antes de qualquer
-  rota pública dedicada.
-- Estado: template e testes versionados; nenhuma instalação, túnel, DNS,
-  migration ou promoção é inferida deste catálogo.
-- Gates mínimos: `npm --prefix crm/api test`, testes do proxy do console,
-  `node scripts/tests/clientes-production-readonly-runtime.test.mjs`, smoke
-  assinado do SHA instalado e rollback comprovado.
-- Runbook: `docs/runbooks/clientes-production-readonly-runtime.md`.
-
-## Escala API
-
-- Caminho: `workforce/schedule/`
-- Dono primário: `@jubenitogarcia`
-- Backup operacional: `TBD`
-- Propósito: persistência e consulta da agenda/equipe da Escala.
-- Dependências críticas: Cloudflare Worker, D1, `ESCALA_ACTOR_HMAC_KEY`.
-- SLO alvo: disponibilidade 99,5%; `/api/escala/health` <= 800 ms.
-- Gates mínimos: smoke via CRM e deploy controlado.
-- Runbooks: `docs/escala-runbook.md`, `docs/staging.md`.
-
-## Automações Python centrais
-
-- Caminho: `backend/config/`, `backend/libs/`, `backend/apps/automations/`
-- Dono primário: `@jubenitogarcia`
-- Backup operacional: `TBD`
-- Propósito: automações operacionais e bibliotecas compartilhadas.
-- Dependências críticas: `config.json`, Google APIs, Umbler, WhatsApp, runners locais/GitHub.
-- Gates mínimos: `cd backend && python -m pytest tests/unit --cov=config --cov-fail-under=80`.
-- Runbooks: `docs/secrets-rotation.md`, `docs/observability.md`.
-
-## Lacuna atual
-
-- O repositório ainda não tem times GitHub separados para enforcement real de ownership por domínio.
-- Até isso existir, o catálogo acima é a fonte operacional e `CODEOWNERS` continua centralizado no único owner disponível.
+Secrets, dados de produção e estado de runtime ficam fora do Git. GitHub Actions
+é apenas executor opcional; validações equivalentes podem ser executadas no
+Codex/WSL.

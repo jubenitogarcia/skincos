@@ -29,7 +29,7 @@ from the `skincos` service account and is never used by pull-request workflows.
 - the separate `/usr/local/sbin/skincos-attest-ponto-legacy-absence
   attest-absence` command is available only to `skincos-actions`. It accepts a
   distinct signed, short-lived authorization on stdin and is bound by a
-  separate root-owned policy to `crm.service`, `disabled`, an immutable native
+  separate root-owned policy to the legacy Ponto service, `disabled`, an immutable native
   release SHA/metadata, release hashes and the fixed legacy pair. It verifies
   the native process cgroup, command, working directory, start time and safe
   environment twice around the fixed `lstat ENOENT` observations, writes a
@@ -64,7 +64,7 @@ explicitly permits the Ponto absence helper's root-private policy directory
 `/etc/skincos/ponto-legacy-absence-attestation` and its one-use
 ledger/receipt directory `/var/lib/skincos/ponto-legacy-absence-attestation`;
 neither path is writable by the runner account. This bootstrap does not
-restart `crm.service` or publish a release.
+restart a domain service or publish a release.
 
 ## Independent Orb custody
 

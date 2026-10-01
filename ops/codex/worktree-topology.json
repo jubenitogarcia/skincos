@@ -9,49 +9,6 @@
     "canonicalRole": "stable-preview-or-qualification",
     "ephemeralRole": "task-or-pr"
   },
-  "crm": {
-    "unit": "local-launch-catalog-plus-explicit-registry-exceptions",
-    "catalogSource": "crm/console/modules/localLaunchCatalog.json",
-    "registrySource": "crm/console/modules/registry.tsx",
-    "pilot": ["users", "atendimento", "clientes"],
-    "surfaces": [
-      { "id": "insumos", "label": "Insumos", "route": "/?module=insumos", "source": "local-launch-catalog" },
-      { "id": "conversa", "label": "Conversa", "route": "/?module=conversa", "source": "local-launch-catalog" },
-      { "id": "atendimento", "label": "Atendimento", "route": "/?module=atendimento", "source": "local-launch-catalog" },
-      { "id": "ponto", "label": "Ponto", "route": "/?module=ponto", "source": "local-launch-catalog" },
-      { "id": "clientes", "label": "Clientes", "route": "/?module=clientes", "source": "local-launch-catalog" },
-      { "id": "caixa", "label": "Caixa", "route": "/?module=caixa", "source": "local-launch-catalog" },
-      { "id": "faturamento", "label": "Faturamento", "route": "/?module=faturamento", "source": "local-launch-catalog" },
-      { "id": "procedimentos", "label": "Procedimentos", "route": "/?module=procedimentos", "source": "local-launch-catalog" },
-      { "id": "unit-monitor", "label": "Unit Monitor", "route": "/?module=unit-monitor", "source": "local-launch-catalog" },
-      { "id": "instagram-studio", "label": "Redes Sociais", "route": "/?module=instagram-studio", "source": "local-launch-catalog" },
-      {
-        "id": "influencer-intelligence",
-        "label": "Influencer Intelligence",
-        "route": "/?module=influencer-intelligence",
-        "source": "local-launch-catalog",
-        "reason": "gated surface remains disabled online until its internal API dependency is released"
-      },
-      { "id": "meta-pages-review", "label": "Meta Review", "route": "/?module=meta-pages-review", "source": "local-launch-catalog" },
-      { "id": "meta-ads", "label": "Meta Ads", "route": "/?module=meta-ads", "source": "local-launch-catalog" },
-      { "id": "site-tracking", "label": "Site EF", "route": "/?module=site-tracking", "source": "local-launch-catalog" },
-      { "id": "escala-profissionais", "label": "Escala", "route": "/?module=escala-profissionais", "source": "local-launch-catalog" },
-      {
-        "id": "users",
-        "label": "Usuários",
-        "route": "/?module=users",
-        "source": "registry-exception",
-        "reason": "registry surface has a validated local preview but is absent from localLaunchCatalog"
-      },
-      {
-        "id": "clinical-approvals",
-        "label": "Aprovações clínicas",
-        "route": "/?module=clinical-approvals",
-        "source": "local-launch-catalog",
-        "reason": "disabled online but still defined by the local catalog and registry"
-      }
-    ]
-  },
   "retention": {
     "manualWorktreeRemoval": "git-worktree-remove-only",
     "runtimeSourceRemoval": "source-in-use-lease-manifest-quarantine",

@@ -1,4 +1,4 @@
-name: Sync Escala auth secret (Pages + Worker)
+name: Sync Escala auth secret (Worker)
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: ponto-surface-mutation
+  group: escala-worker-secret-sync
   cancel-in-progress: false
 
 permissions:
@@ -17,34 +17,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Guard Cloudflare credentials + Escala secret
+      - name: Guard Cloudflare credentials and Escala secret
         id: guard
         env:
           TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ vars.CRM_PAGES_PROJECT }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
         run: |
           set -euo pipefail
-          if [[ -z "${TOKEN:-}" || -z "${ACCOUNT_ID:-}" ]]; then
-            echo "::error::Cloudflare secrets missing (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID)."
-            exit 1
-          fi
-          if [[ -z "${ESCALA_ACTOR_HMAC_KEY:-}" ]]; then
-            echo "::error::Missing GitHub secret ESCALA_ACTOR_HMAC_KEY."
-            exit 1
-          fi
-          echo "project=${PROJECT:-skincos}" >> "$GITHUB_OUTPUT"
+          [[ -n "${TOKEN:-}" && -n "${ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are not configured'; exit 1; }
+          [[ -n "${ESCALA_ACTOR_HMAC_KEY:-}" ]] || { echo 'ESCALA_ACTOR_HMAC_KEY is not configured'; exit 1; }
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: ${{ steps.guard.outputs.ready == 'true' }}
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: ${{ steps.guard.outputs.ready == 'true' }}
         with:
-          node-version: "22.12.0"
+          node-version: '22.12.0'
 
-      - name: Checkout (for worker wrangler config)
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Acquire Escala API release lease
+      - name: Acquire Escala Worker secret lease
+        if: ${{ steps.guard.outputs.ready == 'true' }}
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -52,126 +46,43 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-          resource: global:crm-cloudflare-writer
+          resource: global:escala-writer
           module: escala-api
           source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
 
-      - name: Check Escala API release lease before Pages-secret mutation
+      - name: Check lease before Worker-secret mutation
+        if: ${{ steps.guard.outputs.ready == 'true' }}
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
-          resource: global:crm-cloudflare-writer
+          resource: global:escala-writer
           module: escala-api
           source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PRODUCTION_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
 
-      - name: Sync Pages secret (Escala) by environment
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ steps.guard.outputs.project }}
-          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-        run: |
-          set -euo pipefail
-          for env_name in production preview; do
-            printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 pages secret put ESCALA_ACTOR_HMAC_KEY --project-name "$PROJECT" --env "$env_name" >/dev/null
-            echo "Synced ESCALA_ACTOR_HMAC_KEY for env=$env_name"
-          done
-
-      - name: Check Escala API release lease before duplicate-binding cleanup
-        uses: ./.github/actions/global-coordination-check
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
-          resource: global:crm-cloudflare-writer
-          module: escala-api
-          source_sha: ${{ github.sha }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-
-      - name: Cleanup duplicate production secret binding (Escala target)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ steps.guard.outputs.project }}
-        run: |
-          set -euo pipefail
-          # ESCALA_API_TARGET is defined in crm/console/wrangler.toml for production.
-          # Keep dashboard free of duplicate secret bindings for this key.
-          npx --yes wrangler@4 pages secret delete ESCALA_API_TARGET --project-name "$PROJECT" --env production >/dev/null || true
-          echo "Ensured no duplicate secret binding for ESCALA_API_TARGET in production."
-
-      - name: Check Escala API release lease before Worker-secret mutation
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: ./.github/actions/global-coordination-check
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
-          resource: global:crm-cloudflare-writer
-          module: escala-api
-          source_sha: ${{ github.sha }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-
-      - name: Sync Worker secret (Escala API) by environment
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Sync Escala Worker secret
+        if: ${{ steps.guard.outputs.ready == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
         run: |
           set -euo pipefail
-          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml >/dev/null
-          echo "Synced ESCALA_ACTOR_HMAC_KEY for worker env=production"
-          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml --env staging >/dev/null
-          echo "Synced ESCALA_ACTOR_HMAC_KEY for worker env=staging"
+          printf '%s' "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml >/dev/null
+          printf '%s' "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml --env staging >/dev/null
+          echo 'Escala Worker secret synchronized for production and staging.'
 
-      - name: Verify Pages env var presence (Escala)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ steps.guard.outputs.project }}
-        run: |
-          set -euo pipefail
-          curl -sS \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PROJECT}" \
-            > pages_project.json
-          python - <<'PY'
-          import json
-          with open("pages_project.json", "r", encoding="utf-8") as f:
-            payload = json.load(f)
-          if not payload.get("success"):
-            raise SystemExit(f"Cloudflare API returned success=false: {payload.get('errors') or payload}")
-          cfg = ((payload.get("result") or {}).get("deployment_configs") or {})
-          prod = ((cfg.get("production") or {}).get("env_vars") or {})
-          prev = ((cfg.get("preview") or {}).get("env_vars") or {})
-          missing = []
-          if "ESCALA_ACTOR_HMAC_KEY" not in prod:
-            missing.append("production")
-          if "ESCALA_ACTOR_HMAC_KEY" not in prev:
-            missing.append("preview")
-          if missing:
-            raise SystemExit(f"Escala env vars ausentes em: {', '.join(missing)}")
-          print("ESCALA_ACTOR_HMAC_KEY presente em production/preview.")
-          PY
-
-      - name: Release Escala API release lease
-        if: ${{ always() && steps.guard.outputs.skip != 'true' }}
+      - name: Release Escala Worker secret lease
+        if: ${{ always() && steps.guard.outputs.ready == 'true' }}
         uses: ./.github/actions/global-coordination-release
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PRODUCTION_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json

@@ -2,12 +2,12 @@
 
 Este repositório é um monorepo com:
 - `backend/` (orquestração, apps, automações, ferramentas e docs)
-- `frontend/` (CRM + packages)
+- `api/`, `website/` e módulos de domínio independentes
 
 ## Entrypoints (local)
 
 - Dev/watch principal: `./backend/scripts/dev.sh watch`
-- Stack principal (CRM + WhatsApp): `./backend/scripts/dev.sh restart`
+- Stack principal (domínios ativos + WhatsApp): `./backend/scripts/dev.sh restart`
 - Health/sanity: `./backend/scripts/doctor.sh`
 
 ## Estrutura (source of truth)
@@ -24,4 +24,3 @@ Este repositório é um monorepo com:
 - Não comitar segredos: usar `backend/config/workspace.local.env` e arquivos `*.local*` ignorados.
 - Preferir rodar módulos via `backend/scripts/dev.sh` (evita paths internos).
 - Após mudanças: rodar `./backend/scripts/doctor.sh`.
-

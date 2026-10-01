@@ -3,7 +3,7 @@ set -euo pipefail
 
 ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
 TOKEN="${CLOUDFLARE_API_TOKEN:-}"
-PROJECT="${CLOUDFLARE_PAGES_PROJECT:-skincos}"
+PROJECT="${CLOUDFLARE_PAGES_PROJECT:-}"
 WEBSITE_DB="${CLOUDFLARE_WEBSITE_D1_NAME:-espacofacial-booking}"
 WRANGLER_CWD="${WRANGLER_CWD:-website}"
 STRICT="${STRICT:-0}"
@@ -25,8 +25,10 @@ Required for CI/automation:
   CLOUDFLARE_API_TOKEN
   CLOUDFLARE_ACCOUNT_ID
 
+Required for account-scoped checks:
+  CLOUDFLARE_PAGES_PROJECT       Pages project to audit (no implicit default)
+
 Optional:
-  CLOUDFLARE_PAGES_PROJECT       default: skincos
   CLOUDFLARE_WEBSITE_D1_NAME     default: espacofacial-booking
   WRANGLER_CWD                   default: website
 EOF
@@ -104,6 +106,8 @@ if [[ -n "$TOKEN" ]]; then
     ok "Cloudflare OAuth bearer is valid for the configured account"
   fi
   ok "Cloudflare account is readable"
+
+  [[ -n "$PROJECT" ]] || fail "CLOUDFLARE_PAGES_PROJECT is required for the account-scoped Pages read"
 
   pages_payload="$(cf_get "/accounts/${ACCOUNT_ID}/pages/projects/${PROJECT}")" || fail "Cloudflare Pages project read failed: ${PROJECT}"
   assert_success_json "Cloudflare Pages project read failed" "$pages_payload"

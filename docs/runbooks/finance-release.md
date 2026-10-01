@@ -1,68 +1,39 @@
-# Release, canary e recuperação do Financeiro
+# Release e recuperação do Financeiro
 
-## Evidencia autoritativa atual — 2026-07-31T23:55Z
+## Escopo atual
 
-O SHA Finance explicitamente selecionado foi
-`1a8eeec5a188301635603a3ecbd2eb4c8b18368c`. A cadeia canonica comprovada e
-candidata `30673147811`, previews Worker/UI `30673438315`/`30673439481`,
-staging Worker/UI `30673466768`/`30673467862`, canary `30673602091` e
-abort/kill switch `30673708958`. O canary autenticado passou com 22 amostras,
-p95 de 192 ms,
-zero breaches, replay idempotente, conflito explicito, auditoria e undo. O
-abort drill falhou apenas na assercao final intencional de limite excedido e
-restaurou a baseline desativada.
+O Financeiro neste monorepo é somente o Worker e seu D1 próprios. O console,
+sessão e publicação Pages pertencem ao repositório independente do CRM e não
+são construídos, publicados ou autenticados por este projeto.
 
-A fundacao produtiva isolada foi promovida pelo mesmo SHA (Worker
-`30673820551`, UI `30673971801`) e permanece desativada: `module_enabled=false`,
-zero grants reais, health/readiness 200 e flag de deploy restaurada para
-`false`. O rollback conhecido e `6acbd485...`. A main avancou posteriormente
-para `3682518e69840c34904fae5f1432917ffd04217a` no PR #974 security-only; esse
-SHA nao foi misturado ao artefato. Esta evidencia nao e aprovacao
-de piloto; faltam somente ficha nominal, unidade/coorte, janela, suporte,
-treinamento e criterios de abort aprovados.
+Registros históricos de canário que dependiam do shell composto antigo foram
+retirados junto com essa superfície. A validação atual é o smoke de Worker,
+sem sessão, cookies, identidade sintética ou escrita em dados.
 
 ## Ordem obrigatória
 
-1. No primeiro uso de staging, executar `deploy-finance.yml` com `bootstrap_service_secret=true`; nas execuções posteriores, manter esse campo como `false`. O Worker Financeiro deve existir antes de um gateway poder declarar sua service binding.
-2. Depois, publicar somente o gateway pelo `deploy-core-workers.yml`, com `unit=api` e `bootstrap_finance_context=true`; isso instala a service binding e o segredo de contexto sem publicar Inventory. O smoke inicial do Worker usa `FINANCE_STAGING_WORKER_URL`; a verificação pelo gateway ocorre após este passo.
-3. `deploy-finance.yml` em `preview` para o SHA de `main`.
-4. `deploy-finance.yml` e `deploy-finance-ui.yml` em `staging`, ambos com o mesmo `release_sha` e `preview_run_id`. Cada migration Financeiro é importada junto ao seu registro em `d1_migrations`, de forma atômica; uma falha não deixa schema sem journal.
-5. Conferir `health`, `readiness`, versão, dependências, logs estruturados, alertas e os artefatos `promotion-evidence-finance` e `promotion-evidence-finance-ui`.
-6. Executar `finance-staging-canary.yml` somente depois do deploy de staging do mesmo SHA. O workflow é o único caminho que abre `canary`: ele exige a evidência do run de staging, aplica allowlist do ator sintético, coorte de unidade, percentual determinístico e SHA do Worker. O `module-availability.yml` não abre canary.
-7. Para produção, usar o mesmo SHA e os dois `staging_run_id`; a aprovação do Environment é manual.
+1. No primeiro uso de staging, executar `deploy-finance.yml` com `bootstrap_service_secret=true`; nas execuções posteriores, manter esse campo como `false`. O Worker Financeiro deve existir antes de o gateway declarar sua service binding.
+2. Depois, publicar somente o gateway pelo `deploy-core-workers.yml`, com `unit=api` e `bootstrap_finance_context=true`; isso instala a service binding e o segredo de contexto sem publicar Inventory.
+3. Executar `deploy-finance.yml` em `preview` e depois em `staging` para o mesmo SHA imutável. Cada migration é aplicada junto ao seu registro em `d1_migrations`, de forma atômica.
+4. Conferir `health`, `readiness`, versão, dependências, logs estruturados, alertas e o artefato `promotion-evidence-finance`.
+5. Para produção, usar o mesmo SHA com o `staging_run_id` correspondente e a aprovação do Environment. O console independente do CRM não é publicado nem autenticado por este repositório.
 
 ## Kill switch e manutenção
 
 - `maintenance`: responde 503 somente para Financeiro, com `x-skincos-module-state=maintenance`.
-- `disabled`: responde 423 somente para Financeiro; CRM, Inventory, Ponto e navegação continuam disponíveis.
-- `canary`: exige simultaneamente allowlist, unidade, bucket percentual determinístico e SHA promovido; qualquer campo ausente falha fechado com 403/503. A política atual permite somente `finance-staging-smoke` em `novo-hamburgo` no staging; a identidade `viewer` do monitor não participa da jornada.
+- `disabled`: responde 423 somente para Financeiro; os demais domínios e a navegação continuam disponíveis.
+## Verificação
 
-## Canary sintético e limites automáticos
-
-`ops/module-governance/finance-staging-canary-policy.json` é validado pelo CI e
-declara os únicos ator e unidade permitidos, além dos limites para erros, p95 do
-Financeiro, falha de autenticação, jornada, divergência de dados, auditoria e
-dependências. A duração de login é registrada separadamente: não é usada no p95
-do Worker Financeiro, mas uma falha de autenticação continua interrompendo a
-promoção. O
-workflow registra relatório sanitizado e decisão como artefato por 90 dias.
-
-Ao exceder qualquer limite, o workflow grava `disabled` no KV, define
-`module_enabled=false` antes de restaurar a baseline segura (`active` com a
-feature desligada) e encerra com falha explícita. `mode=abort-drill` injeta uma
-violação de métrica sem indisponibilizar dependências, para comprovar esse
-caminho apenas em staging. Nenhuma dessas execuções altera produção, grants de
-usuários reais ou a coorte de produção.
+O `worker-release-smoke.mjs` é a verificação sintética sem sessão nem escrita:
+confirma `health`, `readiness`, versão exata, D1, module-control e disponibilidade
+ativa. Se qualquer limite de saúde falhar, o deploy permanece fechado. O
+module-control continua podendo colocar o Worker em `maintenance` ou `disabled`
+sem tocar no console independente, em grants ou em dados de outros domínios.
 
 ## Rollback e restore
 
 1. Colocar Financeiro em `maintenance`.
-2. Executar `deploy-finance.yml` com `operation=rollback` e o SHA anterior que possua evidência de staging. O pipeline seleciona a versão Worker já enviada para esse SHA; não recompila nem republica gateway, Inventory ou CRM Pages.
-3. Executar `deploy-finance-ui.yml` com o mesmo SHA anterior se o bundle também precisar retornar; ele publica somente o projeto Pages Financeiro.
-4. Se a correção exigir dados, baixar o checkpoint cifrado do workflow, restaurar primeiro em D1 isolado e comparar contagem/checksum lógico de `finance_audit_events`, `finance_movements`, `finance_journal_lines` e `finance_import_batches` por escopo.
-5. Migrations são somente aditivas. Nunca apagar ledger, auditoria ou idempotência para “voltar”.
-6. Reexecutar smoke de health/readiness e o fluxo piloto antes de tirar a manutenção.
-
-## Replicação após evidência Financeiro
-
-Ponto e Atendimento só recebem o padrão após existirem: um SHA Financeiro promovido até staging, um canary concluído, um rollback de Worker/UI e um restore isolado documentado. A replicação reutiliza: pipeline imutável, health/readiness, estado por KV/controle, checkpoint cifrado e verificação de isolamento de rota. Não copiar grants, bancos, secrets ou atores-piloto do Financeiro.
+2. Executar `deploy-finance.yml` com `operation=rollback` e o SHA anterior que possua evidência de staging. O pipeline seleciona a versão Worker já enviada para esse SHA; não recompila nem republica gateway, Inventory ou Ponto Pages.
+3. Se a correção exigir dados, baixar o checkpoint cifrado do workflow, restaurar primeiro em D1 isolado e comparar contagem/checksum lógico de `finance_audit_events`, `finance_movements`, `finance_journal_lines` e `finance_import_batches` por escopo.
+4. Migrations são somente aditivas. Nunca apagar ledger, auditoria ou idempotência para “voltar”.
+5. Reexecutar o smoke de health/readiness antes de tirar a manutenção.

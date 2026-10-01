@@ -6,8 +6,8 @@
 - `workforce/timekeeping/domain.js`: cálculo diário e consolidado puro/determinístico;
 - `workforce/timekeeping/security.js`: PIN, HMAC, criptografia biométrica e envelope A256GCM do perfil;
 - `workforce/timekeeping/migrations`: persistência D1 e integridade;
-- `crm/console/pontoApi.ts` e `pontoTypes.ts`: contrato do cliente;
-- `crm/console/functions/api/ponto/[[path]].ts`: adaptador same-origin seguro;
+- `workforce/ponto-pages`: interface e contrato do cliente independente;
+- `api/src/router.js`: gateway same-origin seguro;
 - `api/src/router.js`: mount público canônico.
 
 Eventos são append-only. Correções referenciam o evento original. Fechamentos guardam checksum, versão de cálculo, regras e snapshots diários. A Escala entra por alias canônico; um nome sem alias gera conflito e nunca fusão automática.
@@ -18,7 +18,7 @@ Fechamentos adquirem uma trava por funcionário, unidade e data antes do cálcul
 
 Sucesso JSON: `{ "ok": true, "data": ..., "requestId": "..." }`. Erro JSON: `{ "ok": false, "error": "CODE", "code": "CODE", "requestId": "..." }`. Exportação é `text/csv`; demais respostas nunca usam fallback HTML.
 
-O proxy CRM aplica CSRF às mutações e assina um envelope HMAC v2 ligado ao método, caminho/query, nonce e hash do corpo. O gateway não replica cookies: propaga apenas o contrato assinado para o Service Binding. Corpos acima de 1 MiB são rejeitados antes do parsing tanto no proxy quanto no Worker.
+O gateway aplica CSRF às mutações e assina um envelope HMAC v2 ligado ao método, caminho/query, nonce e hash do corpo. Ele não replica cookies: propaga apenas o contrato assinado para o Service Binding. Corpos acima de 1 MiB são rejeitados antes do parsing tanto no gateway quanto no Worker.
 
 Principais recursos: `health`, `readiness`, `context`, `me/profile`, `employees/:id/profile`, `employees`, `punches`, `daily`, `mirror`, `monthly`, `inconsistencies`, `bank`, `corrections`, `devices`, `biometrics`, `pin`, `periods`, `audit`, `export` e `schedule/sync`.
 

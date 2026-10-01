@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (( $# > 0 )); then
-  projects=("$@")
-else
-  projects=(skincos skincos-staging)
+if (( $# == 0 )); then
+  printf 'Usage: scripts/cloudflare-pages-topology-audit.sh PROJECT [PROJECT ...]\n' >&2
+  printf 'Pass the exact owner project names explicitly; no legacy defaults are used.\n' >&2
+  exit 2
 fi
+projects=("$@")
 
 ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
 WRANGLER_CONFIG="${WRANGLER_CONFIG_FILE:-${HOME}/.config/.wrangler/config/default.toml}"

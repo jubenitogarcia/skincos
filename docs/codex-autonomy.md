@@ -13,7 +13,7 @@ launcher unless App configuration is explicitly overridden.
 ## What must stay valid
 
 - WSL GitHub CLI auth for this repo: `gh auth status`
-- Local Cloudflare auth: `cd frontend && npx wrangler whoami`
+- Local Cloudflare auth: `npx wrangler whoami`
 - GitHub deploy secrets:
   - `CLOUDFLARE_API_TOKEN`
   - `CLOUDFLARE_ACCOUNT_ID`
@@ -21,9 +21,6 @@ launcher unless App configuration is explicitly overridden.
   - `META_ADS_REPORT_WORKER_API_TOKEN`
   - `INTEGRATIONS_ENCRYPTION_SECRET`
 - GitHub deploy variables:
-  - `CLOUDFLARE_PAGES_PROJECT`
-  - `ENABLE_CRM_PAGES_DEPLOY`
-  - `ENABLE_CRM_API_DEPLOY`
   - `META_ADS_REPORT_WORKER_BASE_URL`
 
 Secret values must never be committed or printed in logs. The preflight only checks presence and operational reachability.
@@ -63,8 +60,8 @@ Preferred flow:
 3. Codex pushes and opens a PR.
 4. GitHub checks and security gates run.
 5. Codex uses the smallest gate selected by the changed paths: static/diff checks for docs, one focused test or build for normal code, and a focal journey plus rollback for elevated changes. Full suites, staging drills, deep scans and unrelated modules are not ritual merge gates.
-6. After-merge deploy workflows reconcile CRM Pages and Workers. The native CRM runtime is promoted through the controlled Linux release procedure.
-7. Codex verifies production health endpoints.
+6. After-merge workflows publish only monorepo-owned Workers/Pages. CRM is deployed from `C:\CodexShared\Projetos\crm` through its own publisher.
+7. Codex verifies the relevant domain health endpoints.
 
 Manual deploys through local Wrangler are allowed when needed, but GitHub Actions are the preferred path because they are auditable and repeatable.
 
@@ -105,14 +102,12 @@ Use least privilege, but do not split tokens unless there is a concrete security
 
 The preflight checks these endpoints:
 
-- `https://crm.skincos.com.br/?module=meta-ads`
-- `https://crm.skincos.com.br/api/health`
-- `https://crm.skincos.com.br/api/insumos/health`
+- `https://crm.skincos.com.br/health`
+- `https://crm.skincos.com.br/readiness`
+- `https://api.skincos.com.br/crm/health`
+- `https://api.skincos.com.br/insumos/health`
 - `https://api.skincos.com.br/health`
 - `https://skincos-meta-ads-performance-report.skincos.workers.dev/health`
-- `https://crm.skincos.com.br/api/meta-ads/status`
-
-`/api/meta-ads/status` may return `401` without a CRM session; this is treated as healthy because it proves the route is alive and enforcing auth.
 
 ## Human-only responsibilities
 

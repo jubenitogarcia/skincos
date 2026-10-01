@@ -42,9 +42,9 @@ ensure_insumos_exists() {
 
 ensure_insumos_deps() {
   local lockfile="$INSUMOS_DIR/pnpm-lock.yaml"
-  local state_file="${CRM_INSUMOS_DEPENDENCY_STATE_FILE:-$INSUMOS_DIR/node_modules/.skincos-pnpm-lock.sha256}"
-  local install_lock="${CRM_INSUMOS_DEPENDENCY_LOCK_FILE:-$INSUMOS_DIR/.skincos-dependencies.lock}"
-  local cache_root="${CRM_INSUMOS_DEPENDENCY_CACHE_ROOT:-}"
+  local state_file="${INSUMOS_DEPENDENCY_STATE_FILE:-$INSUMOS_DIR/node_modules/.skincos-pnpm-lock.sha256}"
+  local install_lock="${INSUMOS_DEPENDENCY_LOCK_FILE:-$INSUMOS_DIR/.skincos-dependencies.lock}"
+  local cache_root="${INSUMOS_DEPENDENCY_CACHE_ROOT:-}"
   local lock_hash
   local manifest_hash
   local dependency_key
@@ -149,7 +149,7 @@ ensure_insumos_deps() {
           exit 1
         fi
       else
-        local source_link="${source_modules}.crm-local.$$"
+        local source_link="${source_modules}.staging.$$"
         ln -s "$expected_modules" "$source_link"
         if ! mv -T -- "$source_link" "$source_modules" 2>/dev/null; then
           rm -f -- "$source_link"

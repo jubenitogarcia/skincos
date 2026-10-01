@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${INSUMOS_SLO_BASE_URL:-https://crm.skincos.com.br}"
+BASE_URL="${INSUMOS_SLO_BASE_URL:-https://api.skincos.com.br}"
 USERNAME="${INSUMOS_SLO_USERNAME:-}"
 PASSWORD="${INSUMOS_SLO_PASSWORD:-}"
 UNIDADE="${INSUMOS_SLO_UNIDADE:-novo-hamburgo}"
@@ -49,12 +49,12 @@ FROM_30D="$(days_ago_utc 30)"
 if [[ -n "${INSUMOS_SLO_ENDPOINTS:-}" ]]; then
   ENDPOINTS="${INSUMOS_SLO_ENDPOINTS}"
 else
-  ENDPOINTS="/api/insumos/health,\
-/api/insumos/auth/me,\
-/api/insumos/insumos?unidade=${UNIDADE}&pagina=1&limite=50,\
-/api/insumos/movimentacoes?unidade=${UNIDADE}&pagina=1&limite=80,\
-/api/insumos/analytics/overview?unidade=${UNIDADE}&de=${FROM_30D}&ate=${TODAY}&days=30&limitIssues=120,\
-/api/insumos/analytics/insights?unidade=${UNIDADE}&groupBy=day&from=${FROM_30D}&to=${TODAY}&days=30"
+  ENDPOINTS="/insumos/health,\
+/insumos/auth/me,\
+/insumos/insumos?unidade=${UNIDADE}&pagina=1&limite=50,\
+/insumos/movimentacoes?unidade=${UNIDADE}&pagina=1&limite=80,\
+/insumos/analytics/overview?unidade=${UNIDADE}&de=${FROM_30D}&ate=${TODAY}&days=30&limitIssues=120,\
+/insumos/analytics/insights?unidade=${UNIDADE}&groupBy=day&from=${FROM_30D}&to=${TODAY}&days=30"
 fi
 
 echo "[insumos-slo] BASE_URL=${BASE_URL}"
@@ -69,10 +69,10 @@ login_status="$(curl -sS -o "$TMP_BODY" -w "%{http_code}" \
   -H "content-type: application/json" \
   -X POST \
   -d "{\"email\":\"${USERNAME}\",\"password\":\"${PASSWORD}\"}" \
-  "${BASE_URL}/api/insumos/auth/login" || true)"
+  "${BASE_URL}/insumos/auth/login" || true)"
 
 if [[ "${login_status}" != "200" ]]; then
-  echo "[insumos-slo] FAIL /api/insumos/auth/login status=${login_status}" >&2
+  echo "[insumos-slo] FAIL /insumos/auth/login status=${login_status}" >&2
   cat "$TMP_BODY" >&2 || true
   exit 1
 fi

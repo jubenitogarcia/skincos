@@ -3,7 +3,7 @@ name: UX/UI Infrastructure (informative)
 on:
   pull_request:
     paths:
-      - 'crm/console/**'
+      - 'workforce/ponto-pages/**'
       - 'website/**'
       - 'scripts/ux-ui/**'
       - '.lighthouserc.json'
@@ -27,15 +27,15 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            crm/console/package-lock.json
+            workforce/ponto-pages/package-lock.json
             website/package-lock.json
       - name: Install local audit dependencies
         run: |
           set -euxo pipefail
           npm ci
-          npm --prefix crm/console ci
+          npm --prefix workforce/ponto-pages ci
           npm --prefix website ci
-          npm --prefix crm/console exec -- playwright install --with-deps chromium
+          npm --prefix workforce/ponto-pages exec -- playwright install --with-deps chromium
       - name: Run component, journey, accessibility and visual baselines
         env:
           PLAYWRIGHT_KEEP_ARTIFACTS: '1'
@@ -43,11 +43,11 @@ jobs:
         run: |
           set -euxo pipefail
           npm run test:components
-          E2E_START_SERVER=1 npm --prefix crm/console run test:e2e -- e2e/pilot e2e/accessibility e2e/visual
+          npm --prefix workforce/ponto-pages run test
       - name: Build Storybook states and accessibility addon
         run: |
           set -euxo pipefail
-          npm --prefix crm/console run storybook:build
+          npm --prefix workforce/ponto-pages run build
       - name: Collect local Lighthouse baseline
         run: npm run audit:lighthouse
       - name: Upload UX/UI artifacts

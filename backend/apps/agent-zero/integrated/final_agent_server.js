@@ -58,7 +58,7 @@ app.post('/api/message', (req, res) => {
         } else if (msg.includes('instagram')) {
             response = '📸 **Instagram Integration**\n\nMódulo Instagram ativo via proxy!\n\n⭐ **Recursos Disponíveis:**\n• Análise OSINT de perfis\n• Automação de interações\n• Download de conteúdo\n• Monitoramento de hashtags\n\nIntegração Instagram funcionando via proxy /agent-zero-api.';
         } else {
-            response = `🤖 **Agent Zero IA - Proxy Ativo**\n\nMensagem recebida: "${message}"\n\n✅ **Status do Sistema:**\n• Proxy: Funcionando (/agent-zero-api)\n• API: Respondendo (porta 6801)\n• Integração: Completa\n\n🎯 **Módulos Disponíveis:**\n• WhatsApp Business\n• Instagram Marketing\n• Sistema CRM\n\nDigite "teste" para verificar funcionamento completo.`;
+            response = `🤖 **Agent Zero IA - Proxy Ativo**\n\nMensagem recebida: "${message}"\n\n✅ **Status do Sistema:**\n• Proxy: Funcionando (/agent-zero-api)\n• API: Respondendo (porta 6801)\n• Integração: Completa\n\n🎯 **Módulos Disponíveis:**\n• WhatsApp Business\n• Instagram Marketing\n• Operações do sistema\n\nDigite "teste" para verificar funcionamento completo.`;
         }
 
         // Store in conversation history

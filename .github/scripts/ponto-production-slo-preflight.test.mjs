@@ -38,7 +38,7 @@ const environment = (directory, stage = "pilot") => ({
   GITHUB_RUN_ID: "456",
   CLOUDFLARE_ACCOUNT_ID: "c".repeat(32),
   CLOUDFLARE_API_TOKEN: "broad-token-confined-to-protected-hosted-job",
-  CLOUDFLARE_PAGES_PROJECT: "skincos",
+  CLOUDFLARE_PAGES_PROJECT: "skincos-ponto",
   PONTO_SLO_PREFLIGHT_DIR: directory,
   PONTO_EXPECTED_CORE_VERSION_ID: uuid,
   PONTO_EXPECTED_TIMEKEEPING_VERSION_ID: uuid,
@@ -52,9 +52,9 @@ const pagesResponse = () => new Response(JSON.stringify({
   success: true,
   result: {
     id: uuid,
-    project_name: "skincos",
+    project_name: "skincos-ponto",
     environment: "production",
-    aliases: ["https://crm.skincos.com.br"],
+    aliases: ["https://skincos-ponto.pages.dev"],
     latest_stage: { name: "deploy", status: "success", ended_on: "2026-07-30T00:00:00.000Z" },
     is_skipped: false,
     deployment_trigger: {
@@ -166,9 +166,9 @@ test("preflight refuses a mismatched stage, project, signing root, or non-termin
           success: true,
           result: {
             id: uuid,
-            project_name: "skincos",
+            project_name: "skincos-ponto",
             environment: "production",
-            aliases: ["https://crm.skincos.com.br"],
+            aliases: ["https://skincos-ponto.pages.dev"],
             latest_stage: { status: "active" },
             deployment_trigger: { metadata: { branch: "main", commit_hash: sha } },
           },

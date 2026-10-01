@@ -1,12 +1,11 @@
-# Runbook — Insumos (CRM)
+# Runbook — Insumos
 
 Este documento descreve como validar, diagnosticar e operar o módulo **Insumos** em produção.
 
 ## 1) Arquitetura (camadas)
-1. **Frontend CRM**: `frontend/InsumosModule.tsx`
-2. **Proxy Pages Functions**: `frontend/functions/api/insumos/[[path]].ts`
-3. **Worker API (Insumos)**: `inventory/src/worker.js`
-4. **Persistência**: Cloudflare **D1** (sem Google Sheets)
+1. **Aplicação consumidora**: usa o contrato `/api/insumos/*` do gateway
+2. **Worker API (Insumos)**: `inventory/src/worker.js`
+3. **Persistência**: Cloudflare **D1** (sem Google Sheets)
 
 ## 2) Invariantes obrigatórios
 - Modo de armazenamento: **D1-only**.
@@ -25,7 +24,7 @@ Este documento descreve como validar, diagnosticar e operar o módulo **Insumos*
 
 ### 3.1 Health do Insumos (produção)
 ```bash
-curl -sS https://crm.skincos.com.br/api/insumos/health
+curl -sS https://api.skincos.com.br/insumos/health
 ```
 Esperado:
 - `ok: true`
@@ -34,7 +33,7 @@ Esperado:
 
 ### 3.1.1 Proxy status (Pages → Worker)
 ```bash
-curl -sS https://crm.skincos.com.br/api/insumos/_proxy-status
+curl -sS https://api.skincos.com.br/insumos/health
 ```
 Esperado:
 - `ok: true`
@@ -42,25 +41,29 @@ Esperado:
 
 ### 3.1.2 Share history (fallback tolerante)
 ```bash
-curl -sS https://crm.skincos.com.br/api/insumos/share/history?limit=12
+curl -sS 'https://api.skincos.com.br/insumos/share/history?limit=12'
 ```
 Esperado:
 - `200` com `data: []` quando não configurado
 - `200` com itens quando o recurso estiver ativo
 
-### 3.2 Sessão autenticada
+### 3.2 Sessão autenticada (Worker proprietário)
 ```bash
-curl -sS -I https://crm.skincos.com.br/api/auth/me
+curl -sS -I https://api.skincos.com.br/insumos/auth/me
 ```
 Esperado:
 - `200` com sessão ativa
 - `401` quando não autenticado (comportamento esperado fora da sessão)
 
+As aplicações consumidoras podem continuar usando o alias same-origin
+`/api/insumos/*`; o caminho direto do Worker é sempre `/insumos/*`. Nenhuma
+superfície de autenticação de Insumos depende do host do CRM independente.
+
 ### 3.2.1 Auditoria read‑only (opcional)
 Se `INSUMOS_AUDIT_TOKEN` estiver configurado no Worker:
 ```bash
 curl -sS -H "x-insumos-audit-token: <token>" \
-  "https://crm.skincos.com.br/api/insumos/analytics/overview?lite=1&unidade=novo-hamburgo"
+  "https://api.skincos.com.br/insumos/analytics/overview?lite=1&unidade=novo-hamburgo"
 ```
 Esperado:
 - `200` sem necessidade de sessão
@@ -70,8 +73,8 @@ Esperado:
 - Exemplo de erro esperado quando política do item exige validade:
   - `POLICY_REQUIRES_EXPIRY` → “Este item exige Data de validade pela política do item.”
 
-### 3.3 Verificação visual no CRM
-1. Abrir o módulo **Insumos**.
+### 3.3 Verificação visual no consumidor
+1. Abrir o módulo **Insumos** na aplicação consumidora.
 2. Confirmar ausência do banner **DADOS SIMULADOS** por padrão.
 3. Confirmar cards/alertas carregando com dados reais.
 
@@ -166,9 +169,9 @@ para exclusão física e mantém a evidência da recomendação.
 - Reload manual continua possível.
 
 ## 5) Testes de regressão obrigatórios
-Do root do repo:
+Do root deste repositório:
 ```bash
-npm -C frontend run test:e2e -- \
+npm run website:test -- \
   insumos-no-request-storm.spec.ts \
   insumos-api-concurrency.spec.ts \
   insumos-zero-demo-default.spec.ts \
@@ -182,13 +185,9 @@ Critérios:
 - Breaker ativo sob falhas repetidas.
 
 ## 6) Alertas de produção (5xx/latência)
-- Workflow: `.github/workflows/insumos-api-slo.yml`
-- Script: `backend/scripts/insumos-api-slo.sh`
-- Frequência: a cada 10 minutos.
-- Alvo: endpoints autenticados `/api/insumos/*` (inclui overview/insights agregados).
-- Critério de falha:
-  - status fora de `2xx`
-  - latência acima do orçamento (`INSUMOS_SLO_MAX_LATENCY_MS`)
+O monitoramento é operado pelo provedor do Worker e pelo monitoramento externo
+do gateway. O alvo permanece `/api/insumos/*`, com falha para status fora de
+`2xx` ou latência acima do orçamento definido pelo ambiente.
 
 ## 7) Regras de deploy e colaboração
 - Sempre via PR curto e focado.
@@ -197,7 +196,7 @@ Critérios:
 - CI guard anti-demo: `backend/scripts/ci-no-demo-guard.sh` (executado em `.github/workflows/ci-smoke.yml`).
 
 ## 8) Desenvolvimento local seguro
-- Local usa proxy CRM → Worker local por padrão.
+- Local usa o gateway → Worker local por padrão.
 - Para auditoria local sem login, habilitar:
   - `ALLOW_DEV_AUTH_BYPASS=true` (somente GET, apenas `localhost/127.0.0.1`).
 - Para evitar dados reais, mantenha `INSUMOS_API_TARGET` apontando para o Worker local.

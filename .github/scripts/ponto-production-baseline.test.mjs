@@ -36,7 +36,7 @@ const unsignedBaseline = (state = "maintenance") => ({
     timekeeping: worker(timekeepingVersionId, timekeepingDeploymentId),
     coreApi: worker(coreVersionId, coreDeploymentId),
     identityWorkforce: worker(identityVersionId, identityDeploymentId),
-    crmPages: {
+    pontoPages: {
       deploymentId: pagesDeploymentId,
       commitHash: "b".repeat(40),
       createdOn: "2026-07-29T23:59:00.000Z",
@@ -46,10 +46,10 @@ const unsignedBaseline = (state = "maintenance") => ({
         endedOn: "2026-07-29T23:59:30.000Z",
       },
       isSkipped: false,
-      project: "skincos",
+      project: "skincos-ponto",
       environment: "production",
       canonical: true,
-      alias: "https://crm.skincos.com.br",
+      alias: "https://skincos-ponto.pages.dev",
       sourceControl: {
         deploymentsEnabled: false,
         productionDeploymentsEnabled: false,
@@ -71,7 +71,7 @@ const unsignedBaseline = (state = "maintenance") => ({
     state,
     ready: state === "active",
     gatewayAffinityBridge: false,
-    crmStatus: 200,
+    pontoPagesStatus: 200,
     identityStatus: 200,
     observation: "external-production",
   },
@@ -185,19 +185,19 @@ test("baseline verification rejects absent status and non-canonical Pages identi
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-baseline-pages-"));
   try {
     const cases = [
-      ["missing-status", baseline => { delete baseline.surfaces.crmPages.status; }, /unskipped completed deploy success/],
-      ["idle-status", baseline => { baseline.surfaces.crmPages.status = "idle"; }, /unskipped completed deploy success/],
-      ["wrong-stage", baseline => { baseline.surfaces.crmPages.latestStage.name = "build"; }, /unskipped completed deploy success/],
-      ["unfinished-stage", baseline => { baseline.surfaces.crmPages.latestStage.endedOn = ""; }, /unskipped completed deploy success/],
-      ["skipped", baseline => { baseline.surfaces.crmPages.isSkipped = true; }, /unskipped completed deploy success/],
-      ["candidate-as-incumbent", baseline => { baseline.surfaces.crmPages.commitHash = releaseSha; }, /cannot already be the release candidate/],
-      ["legacy-auto-deploy", baseline => { baseline.surfaces.crmPages.sourceControl.deploymentsEnabled = true; }, /auto-deploy controls/],
-      ["production-auto-deploy", baseline => { baseline.surfaces.crmPages.sourceControl.productionDeploymentsEnabled = true; }, /auto-deploy controls/],
-      ["preview-auto-deploy", baseline => { baseline.surfaces.crmPages.sourceControl.previewDeploymentSetting = "all"; }, /auto-deploy controls/],
-      ["wrong-project", baseline => { baseline.surfaces.crmPages.project = "skincos-staging"; }, /project is not canonical/],
-      ["wrong-environment", baseline => { baseline.surfaces.crmPages.environment = "preview"; }, /environment is not production/],
-      ["not-canonical", baseline => { baseline.surfaces.crmPages.canonical = false; }, /deployment is not canonical/],
-      ["wrong-alias", baseline => { baseline.surfaces.crmPages.alias = "https:\\/\\/example.invalid"; }, /canonical alias is invalid/],
+      ["missing-status", baseline => { delete baseline.surfaces.pontoPages.status; }, /unskipped completed deploy success/],
+      ["idle-status", baseline => { baseline.surfaces.pontoPages.status = "idle"; }, /unskipped completed deploy success/],
+      ["wrong-stage", baseline => { baseline.surfaces.pontoPages.latestStage.name = "build"; }, /unskipped completed deploy success/],
+      ["unfinished-stage", baseline => { baseline.surfaces.pontoPages.latestStage.endedOn = ""; }, /unskipped completed deploy success/],
+      ["skipped", baseline => { baseline.surfaces.pontoPages.isSkipped = true; }, /unskipped completed deploy success/],
+      ["candidate-as-incumbent", baseline => { baseline.surfaces.pontoPages.commitHash = releaseSha; }, /cannot already be the release candidate/],
+      ["legacy-auto-deploy", baseline => { baseline.surfaces.pontoPages.sourceControl.deploymentsEnabled = true; }, /auto-deploy controls/],
+      ["production-auto-deploy", baseline => { baseline.surfaces.pontoPages.sourceControl.productionDeploymentsEnabled = true; }, /auto-deploy controls/],
+      ["preview-auto-deploy", baseline => { baseline.surfaces.pontoPages.sourceControl.previewDeploymentSetting = "all"; }, /auto-deploy controls/],
+      ["wrong-project", baseline => { baseline.surfaces.pontoPages.project = "skincos-ponto-staging"; }, /project is not canonical/],
+      ["wrong-environment", baseline => { baseline.surfaces.pontoPages.environment = "preview"; }, /environment is not production/],
+      ["not-canonical", baseline => { baseline.surfaces.pontoPages.canonical = false; }, /deployment is not canonical/],
+      ["wrong-alias", baseline => { baseline.surfaces.pontoPages.alias = "https:\\/\\/example.invalid"; }, /canonical alias is invalid/],
     ];
     for (const [label, mutate, pattern] of cases) {
       const unsigned = unsignedBaseline();

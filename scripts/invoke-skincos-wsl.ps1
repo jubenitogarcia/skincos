@@ -391,11 +391,10 @@ function New-SkincosWslInvocation {
         $privatePreviewMount = '/mnt/c/CodexRuntime/operator/admin/skincos/source/'
         $trustedPreview = $repoMountPath -eq $canonicalRepoMount -or
             $approvedSharedWorktree -or
-            $repoMountPath.StartsWith($privatePreviewMount, [StringComparison]::OrdinalIgnoreCase) -or
-            $repoMountPath.StartsWith('/home/admin/.local/state/skincos/crm-local-preview-source/', [StringComparison]::Ordinal)
+            $repoMountPath.StartsWith($privatePreviewMount, [StringComparison]::OrdinalIgnoreCase)
         if ($trustedPreview) {
-            # CRM snapshots are purposefully created in unique private worktrees.
-            # Register only the canonical checkout and the private preview root.
+            # Approved worktrees are purposefully created in unique private
+            # roots. Register only the canonical checkout and preview root.
             $bashLines.Add("if ! git -C / config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then git -C / config --global --add safe.directory $safeRepoLiteral; fi")
         } else {
             $bootstrapMessage = Convert-ToBashLiteral -Value (

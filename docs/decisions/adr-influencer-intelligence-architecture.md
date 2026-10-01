@@ -1,499 +1,119 @@
 # ADR: Influencer Intelligence canonical architecture
 
-- Status: accepted implementation contract; runtime is registered but disabled
+- Status: accepted source contract; runtime remains registered but disabled.
 - Version: `influencer-intelligence-architecture/v1`
-- Scope: `social/influencer-intelligence/`
-- Decision owner: SKINCOS product and platform maintainers
-- The architecture manifest remains side-effect free. A later runtime
-  registration addendum in this ADR records the disabled loopback bindings;
-  registration is not activation and does not assign a user grant or call a
-  provider.
+- Scope: `social/influencer-intelligence/`.
 
-The machine-readable companion is
-[`social/influencer-intelligence/architecture.mjs`](../../social/influencer-intelligence/architecture.mjs).
-It is pure ESM and has no network, secret, database, scheduler, or runtime
-side effect.
+This ADR records the read-only analytics boundary. It contains no database,
+runtime, provider, session, user, or business mutation.
 
 ## 1. Decision and scope
 
-SKINCOS will implement Influencer Intelligence as a read-only analytics domain
-under `social/influencer-intelligence/`. The domain consumes the existing
-Instagram infrastructure through bounded provider adapters and exposes
-versioned internal contracts to a future MCP surface and CRM read-only module.
-
-The canonical flow is:
-
-```text
-Codex skill
-  -> authenticated read-only MCP
-  -> internal Influencer Intelligence service
-  -> official-first provider router
-       -> Meta Graph adapter
-       -> existing social/instagram instagrapi adapter (controlled fallback)
-  -> PostgreSQL registry and append-only evidence snapshots
-  -> deterministic analytics and scoring
-  -> read-only CRM contract and dashboard
-  -> independent Orb scheduling, retry, resume, and recovery only
-```
-
-The architecture is provider-agnostic at the analytics boundary. Meta Graph,
-instagrapi, and any future provider return the same normalized contracts. No
-provider-specific response shape may leak into scoring, CRM, MCP, or the
-independent Orb scheduler.
-
-The architecture PR versions the boundaries, provider interface, data model,
-provenance, score envelope, API contract, MCP tools, feature/release model,
-privacy rules, observability requirements, and M0--M13 implementation plan.
-The runtime-registration gate adds only the disabled bindings described in the
-addendum below.
+Influencer Intelligence is a bounded, read-only analytics capability owned by
+`social/influencer-intelligence`. It receives normalized evidence, produces
+versioned analytics and score envelopes, and never publishes, engages, scrapes,
+or stores credentials. Its consumers use contracts rather than local copies.
 
 ## 2. Current-state evidence
 
-The following facts were inspected in the current checkout before this ADR was
-written:
-
-| Surface | Current evidence | Architectural consequence |
-| --- | --- | --- |
-| Existing Instagram module | `social/instagram/module/instagram_main.py` combines instagrapi, Instaloader, OSINT, downloads, and engagement behavior. `instagram_site_sync.py` owns an authenticated instagrapi sync path and builds a broad profile payload. | Reuse only a narrow, read-only adapter. Do not duplicate the session/scraper implementation or carry the broad payload into this domain. |
-| Simulator and temporary API | `social/instagram/module/instagram_api_server.js` contains `InstagramModuleSimulator` and simulated OSINT/download/engagement endpoints. `social/instagram/module/api/instagram_api.py` is a broad temporary FastAPI surface with background OSINT/download behavior. | Neither surface is a source of real evidence or the new domain API. They require independent hardening and authorization before any unrelated use. |
-| Official Graph integration | `crm/console/functions/_lib/instagramGraph.ts` provides Graph GET and POST helpers and places connection material in the incumbent transport request. Instagram routes use it for metrics, media, comments, publishing, OAuth, and status. | The official source is preferred, but the existing helper is not an analytics-only boundary. A future read-only transport must isolate fields, secrets, timeouts, errors, and audit. |
-| Instagram connection state | `crm/console/functions/_lib/instagramStore.ts` reads and writes encrypted R2 connection state for the CRM integration. | Connection custody remains with the incumbent integration or an approved Token Vault action; the analytics contract receives no credential material. |
-| Token Vault | `platform/security/token-vault/src/index.js` and `social-publish.js` implement internal authenticated credential storage and social publication forwarding. | The existing publish-oriented gateway must not silently become an analytics gateway. A separate read-only analytics action and provider allowlist are required. |
-| MCP gateway pattern | The independent Orb repository's read-only gateway and its sanitizer/role policy implement authentication, bounded tools, rate limiting, abort/timeout, sanitized output, read-only SQL policy, and JSONL audit. | Influencer Intelligence MCP must reuse the pattern and delegate to the domain service; it must not add scraping, shell, arbitrary SQL, or workflow mutation. |
-| Orb source of truth | The independent Orb repository documents that local workflow files are snapshots/exportations and the current browser/live n8n workflow is canonical. Orb runtime is PostgreSQL-backed and independently released. | Orb schedules and recovers domain jobs only. Local JSON is never imported as live workflow truth by this mission. |
-| PostgreSQL conventions | The M1 registry artifact is additive and scoped. `crm/api/server/clinical/clinicalApprovalMigration.js` demonstrates destination checks, advisory locking, timeouts, schema ledgers, append-only triggers, and non-destructive rollback. | Future snapshot tables must follow additive migration, destination/grant gates, append-only evidence, and evidence-preserving rollback. No migration is applied by this ADR. |
-| Module/release policy | `docs/architecture/module-catalog.json` keeps new modules experimental and requires a disabled flag, grants, evidence, fallback, SLO, and rollback. CRM authorization is server-side in `crm/console/authPolicy.ts` and `crmRoleAccess.ts`. | Influencer Intelligence remains under the social capability and experimental/off until a later CRM milestone adds the required catalog and grant evidence. |
-| Runtime topology | `CODEX_CONTEXT.md`, the independent Orb repository and the delivery policies require immutable releases, private runtime state, isolated worktrees, exact SHA evidence, and no production claim from health alone. | The service/MCP bindings are registered on loopback only, disabled by default, and any promotion must use the owning repository's immutable release and rollback controls. |
+The existing Instagram integration owns OAuth, connection state and provider
+transport. The new capability therefore uses injected adapters and accepts only
+sanitized projections. The independent Orb project owns scheduling and retry;
+its live workflow is the source of truth, not a repository snapshot.
 
 ## 3. Boundaries
 
-The following ownership is normative:
-
-| Boundary | Owns | Must not do |
-| --- | --- | --- |
-| `social/instagram` | Existing OAuth, connection state, transport/session lifecycle, publication, engagement, and incumbent Instagram routes | Own Influencer Intelligence scores or become a second analytics database |
-| `social/influencer-intelligence` | Normalized evidence, minimal registry, snapshots, analytics, scores, campaign/brand fit, provenance, and future internal API | Read credentials, persist raw provider payloads, scrape, publish, engage, or execute shell/SQL |
-| Provider router/adapters | Official-first ordering, gap classification, bounded projections, provider adapter version | Expose provider-specific payloads or silently fall back on policy/validation failures |
-| Token Vault | Credential custody, least-privilege action selection, provider allowlist, secret audit | Return credentials or unrestricted connection state to domain contracts |
-| Internal service | Session/authentication, flag and grant checks, input validation, correlation, bounded read-only envelopes | Become a public unauthenticated FastAPI surface or proxy arbitrary provider calls |
-| MCP | Authenticated, sanitized, bounded read-only tool presentation and audit | Scrape, call providers directly, run arbitrary SQL/shell, mutate workflows, publish, or engage |
-| CRM | Read-only contract consumer and dashboard projection | Call Graph/instagrapi directly or infer authorization from navigation visibility |
-| Orb | Scheduling, retries, resume, correlation, and operator recovery | Own analytics/scoring, persist canonical evidence, or import stale local workflow JSON as live truth |
-| PostgreSQL | Minimal registry and append-only historical evidence | Store raw profiles/comments/media/credentials or rewrite historical scores in place |
-
-The existing top-level module catalog continues to describe `social` as the
-product capability in this architecture PR. A dedicated catalog entry, route,
-service, and CRM navigation contract are deferred to M8, when there is an
-actual deployable surface to govern.
+`social/instagram` owns sessions and publication; this domain owns normalized
+evidence, deterministic analytics and provenance; Token Vault owns credentials;
+MCP and consumers are authenticated read-only presenters; PostgreSQL stores
+minimal pseudonymous and append-only artifacts. No boundary forwards raw
+provider payloads or direct contact identifiers.
 
 ## 4. Provider interface
 
-The interface is a logical contract implemented by the bounded
-`provider-contracts.mjs`/`.d.ts` boundary and the injected adapters:
-
-```text
-ProviderAdapter {
-  id: ProviderId
-  officialFirst: boolean
-  capabilities: ReadOnlyCapability[]
-  resolve_creator(request, context): Promise<ProviderResult>
-  get_profile(request, context): Promise<ProviderResult>
-  get_recent_media(request, context): Promise<ProviderResult>
-  get_media_metrics(request, context): Promise<ProviderResult>
-  get_comments_sample(request, context): Promise<ProviderResult>
-  get_profile_metrics(request, context): Promise<ProviderResult>
-}
-```
-
-`ProviderRequest` contains an operation, an opaque `creatorKey` or approved
-canonical handle according to that operation, bounded normalized fields,
-observation/retrieval timestamps, an optional time window, and a correlation
-id. It does not contain a raw provider account reference, credential material,
-session material, arbitrary query, engagement instruction, or publication
-instruction.
-
-`ProviderResult` is either `ok` or `unavailable` and contains the provider id,
-retrieval timestamp, `observed`/`derived`/`inferred` classification, freshness,
-limitations, bounded provider-specific evidence, and operation-specific data.
-Unavailable data is `null`; the result never contains a raw provider object,
-direct contact field, raw comment text, media binary, credential, or session.
-
-The v1 provider allowlist and order are closed:
-
-1. `meta-graph` is the first preference whenever the requested signal is
-   available through the official Graph contract.
-2. `instagrapi` may be used only through the existing
-   `social/instagram` read path and only after an explicit gap from Meta.
-3. A future provider is not part of the MVP. M13 may evaluate one only after a
-   measured coverage/permission gap, privacy review, cost/risk review, and a
-   separate contract/PR.
-
-The fallback reason codes are `provider_unavailable`, `permission_gap`,
-`coverage_gap`, `timeout`, `circuit_open`, and `retry_exhausted`.
-Retries are bounded and limited to safe transient transport/timeout classes;
-failure state is isolated by provider and operation. `policy_block`,
-`invalid_response`, and unclassified transport failures fail closed and do not
-trigger a fallback. A provider response with a missing or invalid metric is an
-explicit unavailable observation, never a fabricated zero.
-
-The M2 provider boundary already implements this injected-transport shape for
-synthetic tests. The architecture PR adds no real transport, HTTP client,
-session use, or provider call.
+Adapters expose `resolve_creator`, `get_profile`, `get_recent_media`,
+`get_media_metrics`, `get_comments_sample`, and `get_profile_metrics` through
+injected transports. Meta Graph is official-first; `instagrapi` is a bounded
+fallback only after an explicit coverage gap. Policy and invalid-response
+failures never fall back, and unavailable values remain `null`.
 
 ## 5. Canonical data model
 
-The PostgreSQL schema is `influencer_intelligence`. M1 provides the reviewed
-registry artifact; M3 adds the reviewed data-model, snapshot metadata, scheduler
-opt-in, and scoring metadata artifacts. All remain unapplied until their
-destination, role, grant, checkpoint, and verification gates exist.
-
-| Resource | Lifecycle | Canonical content |
-| --- | --- | --- |
-| `creator_registry` | Minimal operational binding; current state may transition under policy | Opaque creator key, optional normalized public handle, registry state, timestamps |
-| `creator_provider_registry` | Minimal current provider binding | Provider id, provider-account digest, availability/evidence state, last observation/retrieval, opaque source reference |
-| `provider_snapshots` | Append-only | Creator, provider, adapter/contract versions, observation/retrieval times, retention policy version, snapshot identity |
-| `metric_observations` | Append-only child of a snapshot | Scalar metric, unit, value or null, evidence state, confidence, provenance |
-| `analytics_results` | Append-only derived artifact | Time window, input snapshot identities, deterministic algorithm version, coverage, provenance, computed time |
-| `score_snapshots` | Append-only derived artifact | Influencer Score, Campaign Fit, Brand Fit, or Risk envelope with all audit fields |
-| `structured_signals` | Append-only evidence-bearing projection | Bounded scalar signal, state, confidence, evidence references, optional model version |
-
-Historical records are immutable. A recomputation creates a new analytics or
-score artifact with a new algorithm version; it does not update or erase an
-older result. The registry is allowed to maintain a minimal current binding,
-but it is not a raw provider cache.
-
-The canonical evidence states are:
-
-| State | Meaning | Consumer rule |
-| --- | --- | --- |
-| `observed` | Returned or directly measured by an approved provider | Treat as evidence, not as a quality judgment |
-| `derived` | Deterministically calculated from observed inputs | Reproduce from input identities and algorithm version |
-| `inferred` | Bounded model or analytical interpretation | Carry confidence, evidence references, and model version when model-derived |
-| `unavailable` | Provider, permission, or coverage did not supply the signal | Value is `null`; never impute zero |
+The additive `influencer_intelligence` model contains a minimal creator
+registry, provider bindings, append-only snapshots and metric observations,
+derived analytics, score snapshots, structured signals and audit metadata.
+Historical artifacts are immutable; recomputation creates a new version.
 
 ## 6. Provenance model
 
-Every evidence-bearing observation, analysis, signal, and score carries a
-versioned provenance envelope:
-
-```text
-{
-  contractVersion,
-  provider,
-  providerAdapterVersion?,
-  sourceType,
-  evidenceState,
-  observedAt,
-  retrievedAt,
-  sourceRef,
-  algorithmVersion?,
-  modelVersion?,
-  evidenceRefs?
-}
-```
-
-`sourceRef` is an opaque bounded path without query strings or fragments. It
-must not embed credentials, session material, raw provider ids, or an upstream
-request URL. Provider account identity is represented only by the registry's
-approved digest. `providers` on a score are unique, stable identifiers; the
-full provenance list explains the contributing evidence.
-
-Coverage is computed, not caller-declared:
-`availableMetrics / expectedMetrics`, with both counts and the bounded ratio
-returned. A missing provider permission or unavailable metric reduces
-coverage and is visible to consumers. It is never converted into a healthy
-zero or hidden inside a confidence value.
+Every observation and derived artifact carries contract/provider/source type,
+evidence state, observed/retrieved timestamps, opaque source reference,
+algorithm/model version and bounded evidence references. Coverage is computed
+from available and expected metrics; it is never caller-declared or zero-filled.
 
 ## 7. Score, confidence, and coverage contract
 
-The v1 score envelope requires:
-
-```text
-scoreKind
-score                 // 0..100 or null
-confidence            // 0..1 evidence confidence
-coverage              // available, expected, ratio
-evidenceState
-providers
-provenance
-timestamp
-algorithmVersion
-signals               // structured and auditable
-```
-
-The score engine is deterministic-first. Its first implementations must use
-time-bounded, post-level robust statistics, report the observation window, and
-limit the influence of a single viral post. Median/trimmed or otherwise
-explicitly documented robust estimators are preferred over a raw average when
-the distribution is heavy-tailed. Every algorithm change creates a new
-`algorithmVersion` and is calibrated against synthetic fixtures before a
-shadow evaluation.
-
-Absolute follower count is an observed scale signal, not a quality score. The
-engine must combine coverage-aware, engagement, consistency, audience, content,
-and campaign criteria only when each signal has a declared state and
-provenance. It must not compare a high-coverage creator as equivalent to a
-low-coverage creator merely because both have a numeric score.
-
-Indirect evidence may produce an inferred signal such as
-`suspicious_growth_pattern`, with confidence, evidence references, and a model
-version. The system must never state that an account has fake followers as a
-fact without direct evidence and an approved policy. LLM signals are bounded
-structured fields; prompts, completions, and free-form rationales are not
-persisted by this contract.
+Score envelopes include score kind/value, confidence, coverage, evidence state,
+providers, provenance, timestamp, algorithm version and structured signals.
+Robust deterministic statistics limit viral outliers. Inferred signals carry
+confidence, evidence references and model version and are never stated as
+facts without evidence.
 
 ## 8. Internal API contract
 
-The future service is an internal authenticated read-only contract. The
-architecture PR does not mount these routes:
-
-| Method | Path | Semantics |
-| --- | --- | --- |
-| `GET` | `/internal/influencer-intelligence/v1/creators/{creatorKey}/analysis` | One creator's deterministic analysis envelope for MCP/read consumers |
-| `GET` | `/internal/influencer-intelligence/v1/creators/{creatorKey}/dashboard` | CRM-only assembled read projection; the public CRM `/analysis` path maps here |
-| `GET` | `/internal/influencer-intelligence/v1/creators/{creatorKey}/coverage` | Availability and provenance coverage |
-| `POST` | `/internal/influencer-intelligence/v1/compare` | Bounded comparison query; POST is transport for a read, not mutation |
-| `POST` | `/internal/influencer-intelligence/v1/campaign-fit` | Bounded Campaign Fit computation; no campaign is created or dispatched |
-
-Every response uses:
-
-```text
-{
-  contractVersion,
-  requestId,
-  generatedAt,
-  data,
-  coverage,
-  provenance,
-  errors
-}
-```
-
-The server requires an authenticated session, the disabled-by-default domain
-flag, the explicit module grant, and any approved data scope before reading or
-computing. It accepts only opaque creator keys or an approved canonical-handle
-resolver, a bounded metric set, and a bounded time window. The initial limits
-are 20 creators and 365 days per request. It rejects provider account ids,
-credentials, raw comments/media, and arbitrary query fragments.
-
-Errors are stable and sanitized: `AUTH_REQUIRED`, `GRANT_REQUIRED`,
-`INVALID_INPUT`, `NOT_FOUND`, `UNAVAILABLE`, `RATE_LIMITED`, `UPSTREAM_GAP`,
-and `INTERNAL`. There is no create, update, delete, publish, engage, or
-provider-debug endpoint in this contract.
+The future internal service exposes bounded authenticated read routes for
+creator analysis, dashboard projection, coverage, comparison and persisted
+campaign fit. Inputs are opaque keys and bounded windows; arbitrary SQL,
+credentials, provider account ids and mutation operations are rejected.
 
 ## 9. MCP read-only contract
 
-M6 adds a source-only domain adapter for the existing
-the independent Orb repository's read-only gateway security pattern. The current tool registry
-is intentionally limited to artifacts that already exist and delegates to an
-authenticated internal read service:
-
-| Tool | Input | Output |
-| --- | --- | --- |
-| `search_creators` | bounded query, provider/state filter, page | Creator registry projection |
-| `get_creator_profile` | creator key | Latest profile envelope |
-| `get_creator_snapshots` | creator key, optional bounded window/page | Historical snapshot envelope |
-| `get_creator_media` | creator key, optional bounded window/page | Media metrics envelope |
-| `get_creator_analytics` | creator key, optional bounded window | Persisted deterministic analytics envelope |
-| `get_creator_score` | creator key | Persisted deterministic score envelope |
-| `compare_creators` | up to 20 creator keys, optional bounded window | Comparison envelope |
-
-`get_campaign_fit` is registered by M11 as a bounded read of a persisted,
-versioned Campaign Fit artifact. It accepts only an opaque campaign key/version
-and bounded creator keys; it never accepts a raw brief, computes implicitly, or
-starts collection. Campaign Fit has its own score, confidence, coverage,
-components, weights version, limitations, and provenance and is not a
-replacement for the general Influencer Score.
-
-Each tool requires authentication and the domain grant. Tool input uses a
-closed JSON schema with `additionalProperties: false`, bounded sizes, bounded
-windows, and no provider ids or free-form raw comments. The gateway applies
-sanitization, a domain rate limit, a 12-second timeout/abort path, an audit
-event, and a read-only database role. The response is sanitized again before
-leaving the gateway.
-
-MCP delegates to the internal service. The M6 adapter remains a pure domain
-adapter; the runtime-registration gate adds a separate loopback transport with
-bearer authentication, the fixed grant, bounded request/response limits and
-the same read-only audit posture. The adapter and transport cannot call Meta
-Graph or instagrapi directly, retrieve Token Vault material, run arbitrary SQL
-or shell, scrape, publish, engage, or mutate Orb/n8n workflows. Errors are
-reduced to stable codes and never include raw upstream payloads.
+MCP presents bounded search, profile, snapshot, media, analytics, score,
+comparison and persisted Campaign Fit reads. It requires authentication and a
+grant, sanitizes output, enforces limits/timeouts/rate limits, writes only
+redacted audit metadata, and delegates to the internal service. It cannot call
+providers, shell, SQL, or workflows directly.
 
 ## 10. Feature flag and release model
 
-The server-side module flag is:
-
-```text
-INFLUENCER_INTELLIGENCE_ENABLED=false
-grant=module.influencer-intelligence.access
-rollout=off -> shadow -> active
-```
-
-The registered service, MCP transport and CRM proxy all check the flag
-server-side; the default remains false and the units remain disabled. The M3
-workflow source only checks the flag and remains inactive. A future staging
-shadow run must add module catalog evidence, a least-privilege database role,
-Token Vault deployment, server-side grant, explicit data scope, owner,
-fallback, SLO, smoke, and rollback identity before it can be activated.
-Navigation visibility, a frontend flag, a generic role, a direct URL, or a
-successful health check is not authorization.
-
-Shadow means synthetic fixtures or an explicitly approved staging cohort. It
-does not mean real-user collection, publication, engagement, or business
-automation. Active requires a reviewed immutable release SHA, exact dependency
-closure, authenticated journey evidence, coverage/quality thresholds, and a
-documented rollback. A merge to `main` never activates this domain.
+The server-side flag is `INFLUENCER_INTELLIGENCE_ENABLED=false` with
+`off -> shadow -> active`. Runtime registration and a green test do not activate
+users. Promotion requires an immutable release, exact dependency closure,
+scope/grant evidence, authenticated smoke, SLO and rollback identity.
 
 ## 11. Privacy and data minimization
 
-The minimum retained projection is an opaque creator key, optional normalized
-public handle, scalar metrics, bounded aggregate comments signals, provider
-account digest, and versioned provenance/audit metadata. The domain never
-persists raw provider account identity, direct contact fields, credentials,
-cookies, sessions, raw profile payloads, media binaries, or raw comments by
-default. Raw comments require a separate privacy decision and are not part of
-the M9 contract.
-
-Every historical artifact carries a reviewed finite `retentionPolicyVersion`.
-No indefinite raw cache is allowed. Privacy deletion or tombstoning is a
-separate controlled policy that preserves an auditable decision and does not
-silently rewrite historical evidence. Backups, recovery artifacts, and logs
-must obey the same minimization and redaction rules.
-
-The domain reports evidence states, not personal or commercial certainty. In
-particular, indirect growth or engagement patterns are not a factual
-declaration of fake followers. LLM-derived signals must include provenance,
-confidence, and model version and must not retain unrestricted prompts or
-completions.
+Only opaque creator keys, optional normalized public handles, scalar metrics,
+bounded aggregates and provenance are retained. Credentials, cookies, raw
+provider payloads, media binaries, raw comments and direct contact fields are
+excluded by contract. Retention and deletion decisions are versioned and
+auditable.
 
 ## 12. Observability and audit
 
-Every service/MCP request and provider attempt records redacted structured
-metadata: request id, correlation id, actor scope, grant, operation, provider,
-attempt status, reason code, latency, timeout, fallback use, coverage,
-algorithm/model version, result identity, and timestamp. No credential, raw
-provider payload, session, contact field, raw comment, or unrestricted model
-text enters logs or audit.
-
-The minimum metrics are request count/latency, provider attempts and gap
-counts, fallback count, unavailable count, coverage ratio, score generation,
-rate limits, and timeouts. Alerts cover unexpected fallback growth, coverage
-regression, unavailable/timeout spikes, and authorization or sanitization
-failures. An audit storage failure must not expose request data; an operation
-without the required audit evidence is not considered proven.
+Requests and provider attempts emit redacted request/correlation identity,
+operation, provider, status, latency, coverage and algorithm metadata. Alerts
+cover timeouts, unavailable spikes, fallback growth, coverage regression and
+authorization/sanitization failures. Audit failure fails closed.
 
 ## 13. PostgreSQL and migration policy
 
-M1's migration
-[`20260810_influencer_intelligence_registry_v1.up.sql`](../../social/influencer-intelligence/migrations/20260810_influencer_intelligence_registry_v1.up.sql)
-is an additive artifact applied only in the governed staging schema at the
-current checkpoint; production remains unapplied. M3's separate additive
-artifacts for the data model, snapshot metadata, scheduler opt-in and later
-score/comment/Campaign Fit metadata are applied only through the staging runner
-and are reviewed independently. M5's scoring metadata remains tied to the
-deterministic score algorithm and weights version.
-
-Future migrations must:
-
-- verify destination identity, role custody, checkpoint, lock/statement
-  timeouts, and prerequisites before apply;
-- be additive and idempotent, with no destructive rollback or history rewrite;
-- deny public access and use explicit collector/read roles;
-- protect historical snapshots, observations, analytics, scores, signals, and
-  audit events with append-only constraints/triggers where the database role
-  permits;
-- record migration identity and verification in the domain schema ledger;
-- preserve evidence on rollback by disabling/repointing code or recording a
-  non-destructive rollback marker rather than deleting rows.
-
-Architecture PR #1310 created no table, granted no role, ran no SQL against a
-database, and changed no runtime schema. Later M3/M5 PRs add only
-source-controlled migration artifacts; they do not apply them.
+Migrations are additive, destination- and role-checked, locked, timeout-bound,
+idempotent and append-only where applicable. They run only through the owning
+domain's controlled executor with a private checkpoint and readback. Rollback
+repoints or records a marker; it never deletes historical evidence.
 
 ## 14. Implementation plan
 
-| Milestone | Deliverable | Gate |
-| --- | --- | --- |
-| Architecture | This ADR and `architecture.mjs` | Merged in PR #1310; contract/documentation tests; no runtime effect |
-| M0 | Pure normalized evidence/provenance/coverage/signal/score contracts | Merged in PR #1303; no network or persistence |
-| M1 | Minimal pseudonymous registry and additive PostgreSQL artifact | Merged in PR #1304; artifact only, not applied |
-| M2 | Official-first Meta router and controlled instagrapi boundary | Canonical router merged in PR #1324 (supersedes #1305); injected synthetic transports only |
-| M3 | Append-only snapshots, retention policy, and Orb job contract | Snapshots merged in PR #1331; inactive scheduler source merged in #1335; disabled service binding registered; import pending |
-| M4 | Robust analytics and outlier-resistant metrics | Merged in PR #1333; synthetic time-series fixtures and explicit unavailable coverage |
-| M5 | Deterministic score/confidence/provenance engine | Merged in PR #1334; versioned algorithms and golden evidence |
-| M6 | Hardened authenticated read-only MCP domain adapter | Tool schema, auth/grant, sanitization, limits, timeout, audit contract, read-only service delegation, and disabled loopback transport registration |
-| M7 | `skincos-influencer-intelligence` skill | Versioned trigger/output/boundary instructions and contract test use only the approved MCP; runtime/user access remains governed |
-| M8 | Read-only CRM API/dashboard | Implemented in source: bounded internal Pages proxy, typed client, gated shadow dashboard, signed upstream registration, server-side flag/grant and direct-provider negative tests; runtime remains off |
-| M9 | Minimized comments intelligence | Aggregate-only topics/sentiment/safety/spam signals and retention evidence |
-| M10 | Semantic content and Reels signals | Approved bounded media projection and model provenance |
-| M11 | Campaign/brand fit | Structured criteria, deterministic base, labeled inferred signals, additive persistence metadata, persisted read-only MCP/CRM projection |
-| M12 | Synthetic validation and calibration | Versioned synthetic dataset and deterministic report covering outliers, coverage, confidence, zero-denominators, follower-scale normalization, and separate Campaign Fit; no live provider calls |
-| M13 | Optional provider gap analysis | Source-implemented capability gap report/ADR; live coverage decision pending runtime evidence; no external provider integrated |
-| Runtime registration | Internal service, read-only MCP, CRM upstream and Orb binding | Loopback units and private auth source registered; units disabled, grant absent, workflow not imported, provider calls off |
-
-Each milestone remains off by default, uses a dedicated worktree/branch and
-single-purpose PR, records risk/surfaces/flag/migration/validation/rollback,
-and retains exact SHA evidence through terminal CI. No milestone may activate
-real users or engagement automation merely because its tests are green.
+M0--M13 deliver normalized contracts, provider routing, append-only evidence,
+analytics, scoring, read-only MCP/CRM projections, privacy, calibration and
+gap analysis. Each milestone has its own immutable source, disabled default,
+validation, observability and rollback evidence.
 
 ## 15. Acceptance and rollback
 
-This architecture milestone is accepted when:
-
-1. the ADR and machine-readable manifest describe the same version and the
-   same provider order, states, score fields, API routes, MCP tools, privacy
-   rules, rollout, and M0--M13 plan;
-2. focused tests prove the manifest is runtime-free, closed, versioned, and
-   consistent with this ADR;
-3. existing M0/M1/M2 contract tests and repository architecture/security
-   validators remain green;
-4. the diff contains no runtime route, provider transport, migration apply,
-   grant, flag wiring, CRM module registration, MCP registration, Orb workflow,
-   systemd, Cloudflare, network, session, or production mutation;
-5. the PR reaches terminal required checks on its exact head SHA and merges
-   only through the global merge authority.
-
-Rollback for this milestone is closing or reverting the single-purpose PR to
-the base merge `19c7fcced2b27fdfe96e1b23c70f1953fcbca217`. Because the change is
-documentation, a pure manifest, a focused test, and a workflow test-list
-addition, it has no database, runtime, provider, session, user, or business
-data impact. If a later implementation contradicts this ADR, that milestone
-stops at the architecture gate and requires a new versioned ADR/manifest
-decision before implementation continues.
-
-## Runtime registration addendum
-
-The runtime-registration milestone is a controlled operational binding, not a
-promotion. It adds the following source surfaces:
-
-- `social/influencer-intelligence/runtime/server.mjs` exposes fixed internal
-  service routes on loopback and lazily composes the existing repository and
-  official Token Vault Meta transport only after all gates pass;
-- `social/influencer-intelligence/runtime/mcp-server.mjs` exposes a separate
-  loopback MCP transport, validates its private bearer and grant, and delegates
-  to the internal service instead of opening PostgreSQL or a provider path;
-- the CRM proxy signs version-2 upstream requests with actor scope, method,
-  path, query and the fixed module grant;
-- the inactive Orb source carries only a private service-token expression and
-  the fixed grant, retains bounded retries/concurrency/timeout, and remains
-  `active: false`;
-- `ops/runtime/units/influencer-intelligence.service` and
-  `influencer-intelligence-mcp.service` are strict unit templates installed by
-  `scripts/runtime/install-influencer-intelligence-runtime.sh`, which verifies
-  but never enables or starts them.
-
-The default private configuration is `INFLUENCER_INTELLIGENCE_ENABLED=false`
-with empty service/MCP/HMAC/Token Vault secrets. The service rejects active
-snapshot mode at this binding, does not accept arbitrary SQL/shell/provider
-paths, and records redacted audit events fail-closed. The runtime does not
-assign the CRM grant, deploy Token Vault, provision a runtime database role,
-import the Orb workflow, or call a live provider as part of registration.
-
-Validation is limited to synthetic contract tests, runtime syntax checks,
-workflow/static checks and dry-run systemd verification. Before a staging
-shadow run, operators must separately prove the staging Token Vault endpoint,
-scoped credential, dedicated least-privilege database role, authenticated
-service-to-service tokens, grant assignment and rollback identity. Rollback is
-to disable both exact units and restore the prior immutable release; historical
-rows are not deleted and no migration rollback is required.
+Acceptance requires this ADR and the machine-readable manifest to agree on
+providers, states, limits, privacy and rollout, with focused contract tests and
+no live transport or mutation. Rollback is reverting the single-purpose source
+change; it has no database, runtime, provider, session, user, or business data
+impact.

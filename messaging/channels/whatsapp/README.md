@@ -13,18 +13,10 @@ It is built into a native Linux release and started by
 - public ingress: `https://wa.skincos.com.br`
 - service and release owner: `@jubenitogarcia` (Messaging)
 
-CRM uses the private `/etc/skincos/crm-whatsapp.env` overlay and always talks
-to the local engine. The compatibility adapter in
-`crm/api/services/whatsappOrchestrator.js` delegates to the same engine and
-does not spawn a second service.
-
-The future `skincos-whatsapp-adapter` cut is constrained by two executable
-pre-cut controls: the monorepo baseline and an isolated candidate/archive gate.
-The portable closure can move only the CRM HTTP adapter and its tests; it has a
-private pre-cut package template and cannot move Evolution source, CRM
-conversation metadata, a second runtime, or a publisher. The current native
-custody scripts remain a baseline to rewrite against a pinned upstream artifact,
-not code that may be copied unchanged.
+Domain consumers reach the engine through the versioned Messaging contract and
+never import CRM source. Conversation metadata, authentication and business
+records remain owned by their respective domains; this runtime only transports
+WhatsApp messages.
 
 Native promotion and rollback use only a Linux-native
 `release-source-<SHA>` artifact with its `messaging-whatsapp` closure. A

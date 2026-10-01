@@ -14,7 +14,6 @@ const unitService = fs.readFileSync(path.join(root, 'ops/runtime/units/influence
 const unitMcp = fs.readFileSync(path.join(root, 'ops/runtime/units/influencer-intelligence-mcp.service'), 'utf8');
 const installer = fs.readFileSync(path.join(root, 'scripts/runtime/install-influencer-intelligence-runtime.sh'), 'utf8');
 const architecture = fs.readFileSync(path.join(root, 'social/influencer-intelligence/architecture.mjs'), 'utf8');
-const crmProxy = fs.readFileSync(path.join(root, 'crm/console/functions/api/influencer-intelligence/[[path]].ts'), 'utf8');
 const tokenVaultWrangler = fs.readFileSync(path.join(root, 'platform/security/token-vault/wrangler.toml'), 'utf8');
 
 const clock = () => 1_754_000_000_000;
@@ -71,9 +70,7 @@ test('registers both loopback units without enabling them or storing secrets', (
   assert.doesNotMatch(unitMcp, /INFLUENCER_INTELLIGENCE_MCP_BEARER_TOKEN=[^\n]+/);
 });
 
-test('registers signed CRM grant and external Orb contract without copying workflow source', () => {
-  assert.match(crmProxy, /x-crm-signature-version', '2'/);
-  assert.match(crmProxy, /x-crm-grant/);
+test('registers the signed internal grant and external Orb contract without copying workflow source', () => {
   assert.match(architecture, /owner: 'independent Orb repository read-only gateway contract'/);
   assert.match(architecture, /owner: 'independent Orb repository'/);
   assert.equal(fs.existsSync(path.join(root, 'orb')), false);

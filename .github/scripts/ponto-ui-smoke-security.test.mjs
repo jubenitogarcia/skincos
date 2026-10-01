@@ -7,7 +7,7 @@ const workflow = fs.readFileSync(
   "utf8",
 );
 const script = fs.readFileSync(
-  "crm/console/scripts/ponto-ui-smoke.cjs",
+  "workforce/ponto-pages/scripts/ponto-ui-smoke.cjs",
   "utf8",
 );
 
@@ -43,7 +43,7 @@ test("UI smoke revokes the exact authenticated session and never persists respon
   assert.match(script, /\[data-module-nav="true"\]/);
   assert.match(
     script,
-    /CRM navigation does not expose exactly Atendimento and Ponto/,
+    /Ponto navigation does not expose exactly Atendimento and Ponto/,
   );
   assert.match(
     script,

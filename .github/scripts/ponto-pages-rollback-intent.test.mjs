@@ -86,9 +86,9 @@ const input = (request) => ({
   coordinatorRunId: "99",
   sourceSha,
   stage: "production",
-  project: "skincos",
+  project: "skincos-ponto",
   branch: "main",
-  alias: "crm.skincos.com.br",
+  alias: "skincos-ponto.pages.dev",
   candidateDeploymentId: "11111111-1111-4111-8111-111111111111",
   incumbentDeploymentId: "22222222-2222-4222-8222-222222222222",
 });

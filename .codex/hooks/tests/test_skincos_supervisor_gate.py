@@ -235,7 +235,7 @@ class GateFixture(unittest.TestCase):
                 self.contract(
                     next_item={"resource": "deploy:site:staging", "operation": "deploy"},
                     resource_declaration={
-                        "writes": ["deploy:site:staging", "deploy:crm:production"],
+                        "writes": ["deploy:site:staging", "deploy:finance:production"],
                         "leases": ["deploy:site:staging"],
                     },
                 ),
@@ -243,7 +243,7 @@ class GateFixture(unittest.TestCase):
             )
         )
         self.assertTrue(missing_one_of_two["continue"])
-        self.assertIn("deploy:crm:production", missing_one_of_two["stopReason"])
+        self.assertIn("deploy:finance:production", missing_one_of_two["stopReason"])
 
     def test_merge_main_resource_names_are_case_insensitive_but_still_require_the_gate(self) -> None:
         result = self.run_gate(

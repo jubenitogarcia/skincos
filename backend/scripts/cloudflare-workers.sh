@@ -145,7 +145,7 @@ deploy_by_changes() {
       inventory/*)
         do_insumos="true"
         ;;
-      finance/*|shared/finance-contracts/*|shared/crm-auth/*)
+      finance/*|shared/finance-contracts/*|shared/identity-auth/*)
         do_api="true"
         ;;
       backend/pnpm-lock.yaml|backend/pnpm-workspace.yaml)

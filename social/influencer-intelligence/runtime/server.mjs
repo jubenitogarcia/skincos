@@ -51,7 +51,10 @@ function createPool(environment = process.env) {
   const connectionString = String(environment.INFLUENCER_INTELLIGENCE_DATABASE_URL || environment.DATABASE_URL || '').trim();
   if (!connectionString) return null;
   try {
-    const packageRequire = createRequire(new URL('../../../crm/api/package.json', import.meta.url));
+    // The optional PostgreSQL client is resolved from the owning runtime
+    // installation.  This service must never reach into another domain's
+    // package or source tree for dependencies.
+    const packageRequire = createRequire(import.meta.url);
     const { Pool } = packageRequire('pg');
     return new Pool({ connectionString, max: 4, statement_timeout: RUNTIME_LIMITS.serviceTimeoutMs, idle_in_transaction_session_timeout: RUNTIME_LIMITS.serviceTimeoutMs });
   } catch {

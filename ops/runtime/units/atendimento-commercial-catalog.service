@@ -1,0 +1,34 @@
+[Unit]
+Description=Skincos Atendimento commercial catalog read-only contract
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__/integration/atendimento/commercial-catalog
+EnvironmentFile=-__CONFIG_ROOT__/atendimento-commercial-catalog.env
+Environment=ATENDIMENTO_COMMERCIAL_CATALOG_HOST=127.0.0.1
+Environment=ATENDIMENTO_COMMERCIAL_CATALOG_PORT=8112
+Environment=NODE_ENV=production
+# The current owner database is the local PostgreSQL instance. Set this to
+# require (and provide a CA) when the owner moves the contract to a TLS DB.
+Environment=ATENDIMENTO_COMMERCIAL_CATALOG_DATABASE_SSL=disable
+UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_V8_COVERAGE NODE_REDIRECT_WARNINGS LD_PRELOAD LD_LIBRARY_PATH BASH_ENV ENV CDPATH HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+ExecStart=/usr/bin/node __REPO_ROOT__/integration/atendimento/commercial-catalog/server.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__STATE_ROOT__/atendimento-commercial-catalog __LOG_ROOT__/atendimento-commercial-catalog
+UMask=0027
+LimitNOFILE=4096
+SyslogIdentifier=atendimento-commercial-catalog
+
+[Install]
+WantedBy=multi-user.target

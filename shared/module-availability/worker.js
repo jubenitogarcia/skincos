@@ -143,7 +143,7 @@ async function requireOpenTimekeepingEmergencyLatch(store, runtimeTarget) {
 /**
  * Runtime control is deliberately external to an artifact. A control change
  * can put one module in maintenance or disable it without redeploying its
- * Worker or the CRM shell. Modules that have not migrated to an explicit
+ * Worker or an external product UI. Modules that have not migrated to an explicit
  * control preserve the historical active default. Sensitive modules opt into
  * a fail-closed missing/malformed state through the options below.
  */

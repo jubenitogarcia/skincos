@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FINAL_UNITS=(messaging-whatsapp crm booking cloudflare-runtime)
+FINAL_UNITS=(messaging-whatsapp booking cloudflare-runtime)
 
 usage() {
   cat <<'EOF'
@@ -14,7 +14,6 @@ Runtime:
   e2e <health|ci-smoke|smoke>
 
 Module helpers:
-  crm [restart_crm arguments]
   insumos [arguments]
   cloudflare-workers [arguments]
   scraper [arguments]
@@ -52,9 +51,6 @@ case "$command" in
       test) exec npm --prefix "$ROOT_DIR/messaging/channels/whatsapp/engine" test ;;
       *) usage >&2; exit 2 ;;
     esac
-    ;;
-  crm)
-    exec "$ROOT_DIR/crm/console/restart_crm.sh" "$@"
     ;;
   insumos)
     exec "$ROOT_DIR/backend/scripts/insumos.sh" "$@"

@@ -53,20 +53,20 @@ const SURFACES = Object.freeze({
       [`ponto-mutation-core-api-${stage}-${sha}`, "mutations/core"],
     ],
   },
-  crmPages: {
-    workflowPath: ".github/workflows/deploy-crm-pages.yml",
+  pontoPages: {
+    workflowPath: ".github/workflows/ponto-pages-governed-publisher.yml",
     titlePrefix: (stage, sha, runId) =>
-      `CRM Pages ${stage} ${sha} orchestrator=${runId}`,
+      `Ponto Pages ${stage} ${sha} orchestrator=${runId}`,
     runFile: "runs/pages.json",
     artifacts: (stage, sha) => [
-      [`ponto-surface-crm-pages-${stage}-${sha}`, "surfaces/pages"],
-      [`ponto-mutation-crm-pages-${stage}-${sha}`, "mutations/pages"],
+      [`ponto-surface-ponto-pages-${stage}-${sha}`, "surfaces/pages"],
+      [`ponto-mutation-ponto-pages-${stage}-${sha}`, "mutations/pages"],
     ],
   },
   pagesEnvironmentSecrets: {
-    workflowPath: ".github/workflows/cloudflare-pages-sync-ponto.yml",
+    workflowPath: ".github/workflows/ponto-pages-secret-bridge.yml",
     titlePrefix: (stage, sha, runId) =>
-      `Attest CRM Pages ${stage === "staging" ? "staging" : "production"} ${sha} orchestrator=${runId}`,
+      `Attest Ponto Pages ${stage === "staging" ? "staging" : "production"} ${sha} orchestrator=${runId}`,
     runFile: "runs/provision-pages.json",
     artifacts: (stage, sha) => [
       [`ponto-pages-secret-attestation-${stage === "staging" ? "staging" : "production"}-${sha}`, "provisioning/pages"],

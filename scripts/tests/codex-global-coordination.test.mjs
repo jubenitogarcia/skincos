@@ -522,25 +522,25 @@ test("Schedule public-read adapter uses an explicit immutable release closure", 
   }
 });
 
-test("Ponto closure excludes independent CRM API changes while retaining the shared Pages artifact", () => {
+test("Ponto closure excludes independent Atendimento integration changes while retaining the Pages artifact", () => {
   const closure = dependencyClosureFromTree({
     module: "ponto",
     sourceCommit: sha("a"),
     sourceTree: sha("b"),
     entries: [
-      { path: "crm/api/server/atendimento/commercialOperationsMigration.js", blob: digest("a").slice(0, 40) },
-      { path: "crm/console/PontoModule.tsx", blob: digest("b").slice(0, 40) },
+      { path: "integration/atendimento/commercial-catalog/src/catalog.mjs", blob: digest("a").slice(0, 40) },
+      { path: "workforce/ponto-pages/PontoModule.tsx", blob: digest("b").slice(0, 40) },
       { path: "package.json", blob: digest("c").slice(0, 40) },
     ],
   });
-  assert.equal(closure.inputs.some((entry) => entry.path.startsWith("crm/api/")), false);
-  assert.equal(closure.inputs.some((entry) => entry.path === "crm/console/PontoModule.tsx"), true);
+  assert.equal(closure.inputs.some((entry) => entry.path.startsWith("integration/atendimento/")), false);
+  assert.equal(closure.inputs.some((entry) => entry.path === "workforce/ponto-pages/PontoModule.tsx"), true);
   assert.equal(closure.inputs.some((entry) => entry.path === "package.json"), true);
 });
 
 test("closure digest ignores source-tree changes outside the selected inputs", () => {
   const entries = [
-    { path: "crm/console/PontoModule.tsx", blob: digest("a").slice(0, 40) },
+    { path: "workforce/ponto-pages/PontoModule.tsx", blob: digest("a").slice(0, 40) },
     { path: "package.json", blob: digest("b").slice(0, 40) },
   ];
   const first = dependencyClosureFromTree({ module: "ponto", sourceCommit: sha("a"), sourceTree: sha("b"), entries });

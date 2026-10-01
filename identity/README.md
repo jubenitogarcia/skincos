@@ -4,7 +4,7 @@ Identity owns users, authentication, signed session validation, roles, scopes,
 invitations and password recovery. Consumers receive only the stable actor in
 `shared/identity-contract`; they do not read user tables or password hashes.
 
-## Compatible cutover
+## Identity ownership and external CRM contract
 
 The existing `crm_users`, `crm_invites`, `crm_password_resets` and
 `crm_user_prefs` D1 tables remain in place. The repository reads their legacy
@@ -14,9 +14,10 @@ during extraction.
 
 The active `/auth/*` path remains mounted by Inventory through the registered
 `shared/identity-runtime` compatibility adapter. The API continues to call its
-stable `shared/crm-auth` facade, which now delegates to the same Identity actor
-resolver. The independent Worker cutover requires a disabled-by-default
-binding/flag, staging session and recovery smoke, and a rollback to this mount.
+stable `shared/identity-auth` facade, which delegates to the same Identity actor
+resolver. The independent CRM consumes only the versioned Identity delivery
+contract; it does not import this source tree or share its cookies, tables or
+secrets.
 
 This preparation includes an additive, unapplied Identity subject migration for
 the shared `crm_users` table. It does not execute the migration, alter a live
@@ -30,19 +31,19 @@ already supplied by Identity; moving the remaining handlers behind the
 independent Identity binding is a separate cutover and must not change cookies,
 users, or existing sessions.
 
-## CRM delivery preparation
+## CRM delivery contract (Identity-owned)
 
-`identity/delivery/crm-envelope-v1.js` is a pure, disabled-by-default helper
-for the future private Identity-to-CRM delivery path. It prepares only the
+`identity/delivery/crm-envelope-v1.js` is a pure helper for the private
+Identity-to-CRM delivery contract. It prepares only the
 minimized, unsigned `identity-crm-delivery/v1` header and claims after an
 explicit caller opt-in. It does not resolve a session, read runtime
 configuration, use a secret, serialize or sign a JWS, register a route, add a
 Worker binding, or publish an artifact.
 
-`identity/delivery/crm-issuer-v1.js` now provides the source-level issuer
-boundary for the future private WorkerEntrypoint. It remains disabled by
-default and has no route, binding, D1 write or secret configuration. When an
-authorized runtime eventually enables it, the exact pinned
+`identity/delivery/crm-issuer-v1.js` provides the source-level issuer boundary
+for an Identity-owned private WorkerEntrypoint. It has no route, binding, D1
+write or secret configuration in this repository. An authorized external
+runtime may enable it with the exact pinned
 `@jubenitogarcia/skincos-identity-contracts/identity-crm-delivery` package is
 the default canonical owner of signing-input validation. An explicit contract
 adapter is supported only for isolated tests and must expose the same fixed
@@ -68,19 +69,15 @@ successful signature, but it does not replace the CRM-owned atomic replay
 ledger required before business handling.
 
 The Identity package pins the exact private contracts package version and
-integrity in `identity/package-lock.json`; its focused workflow installs that
-lockfile from GitHub Packages before running the issuer tests. A registry Read
-grant for the `jubenitogarcia/skincos` repository is required for that CI job.
-The helper is still not a deployed runtime: the future private entrypoint must
-provide a durable Identity-owned key registry/custody adapter, publish the
-matching public key to CRM, and expose a staging-only service binding before
-the enabled path can be exercised outside synthetic tests.
+integrity in `identity/package-lock.json`; local validation installs that
+lockfile from GitHub Packages before running the issuer tests. The helper is
+not a CRM runtime: any deployment, key custody, public-key publication or
+service binding is an external Identity operation.
 
 `identity/delivery/crm-issuer-production-worker.js` and
-`identity/wrangler.production.toml` now provide the production-capable
-candidate surface. The manifest is disabled by default, has no route or data
-binding, and is not included in a deployment workflow. When a protected
-operator eventually enables it, the Worker accepts only the production
+`identity/wrangler.production.toml` provide an optional production-capable
+source surface. The manifest has no route or data binding in this repository
+and is not a CRM publisher. If an Identity owner enables it externally, the Worker accepts only the production
 `crm-production-` key-id prefix, reads its externally held Ed25519 signing key
 and caller HMAC from runtime secrets, and publishes the versioned active,
 overlap and revoked-key status required for controlled CRM pinning. The
@@ -90,10 +87,8 @@ the CRM consumer's atomic replay ledger remains mandatory. See
 publication and consumer contract; the legacy flat public-key list remains
 available only for compatibility and is not enough to convey revocation.
 
-This candidate does not make production ready by itself. A durable custody
-reference, persistent CRM caller, public-key pin, replay readback, staged
-same-artifact smoke and rollback rehearsal are still required before any
-production secret provisioning or deploy.
+Production custody, deployment and rollback are external operational concerns;
+no CRM deployment or production secret is configured by this repository.
 
 The helper refuses the current username-based actor. A future additive Identity
 migration must first provide a stable opaque `identitySubject` and preserve it

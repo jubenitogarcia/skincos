@@ -48,19 +48,17 @@ git push
 - Evitar dois chats alterando o mesmo arquivo ao mesmo tempo.
 - Se precisar do mesmo arquivo, encadear PR (B parte da branch de A) ou serializar.
 
-## Topologia canônica híbrida
+## Topologia canônica
 
-O arquivo `ops/codex/worktree-topology.json` define um slot canônico por
-superfície CRM do catálogo local e pela exceção explícita `users`. Workflows do
-Orb não recebem slots neste repositório: são editados, qualificados e
-publicados no repositório independente do Orb. O slot canônico é destinado a
-preview, qualificação e leitura estável; alterações continuam em worktrees
-temporários por tarefa/PR.
+O arquivo `ops/codex/worktree-topology.json` pode declarar slots canônicos para
+superfícies deste repositório. Produtos independentes e workflows externos não
+recebem slots aqui. O slot canônico é destinado a preview, qualificação e
+leitura estável; alterações continuam em worktrees temporários por tarefa/PR.
 
 Os slots ficam em:
 
 ```text
-C:\CodexShared\Worktrees\skincos\admin\canonical\crm\<module>
+C:\CodexShared\Worktrees\skincos\admin\canonical\<surfaceType>\<surfaceId>
 ```
 
 Inventário e plano não alteram Git:
@@ -75,10 +73,10 @@ fallback automático para outro worktree:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
-  -Action ensure-canonical -SurfaceType crm-module -SurfaceId users `
+  -Action ensure-canonical -SurfaceType module -SurfaceId <surface-id> `
   -TargetCommit <sha> -Apply
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
-  -Action claim -SurfaceType crm-module -SurfaceId users -Apply
+  -Action claim -SurfaceType module -SurfaceId <surface-id> -Apply
 ```
 
 O estado de owners e leases fica no runtime privado em

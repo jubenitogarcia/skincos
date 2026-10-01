@@ -660,7 +660,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${STAGING_PAGES_PROJECT_RAW:-}" && -n "${STAGING_MODULE_CONTROL_KV_ID_RAW:-}" ]] || { echo 'Missing staging Ponto resource configuration'; exit 1; }
-          [[ "$STAGING_PAGES_PROJECT_RAW" == skincos-staging ]] || { echo 'Unexpected staging Pages project'; exit 1; }
+          [[ "$STAGING_PAGES_PROJECT_RAW" == skincos-ponto-staging ]] || { echo 'Unexpected staging Pages project'; exit 1; }
           CLOUDFLARE_PAGES_PROJECT="$STAGING_PAGES_PROJECT_RAW"
           OPPOSITE_PAGES_PROJECT="$PRODUCTION_PAGES_PROJECT_RAW"
           MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"

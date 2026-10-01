@@ -103,9 +103,9 @@ export function globalResourceFor(workflow, inputs) {
   if (workflow === "deploy-core-workers.yml" && inputs.release_scope === "ponto" && ["api", "inventory", "all"].includes(inputs.unit)) {
     return normalizeResourceKey("global:ponto-workers-writer");
   }
-  if (workflow === "deploy-crm-pages.yml" && inputs.release_scope === "ponto") return normalizeResourceKey("global:crm-cloudflare-writer");
+  if (workflow === "ponto-pages-governed-publisher.yml" && inputs.release_scope === "ponto") return normalizeResourceKey("global:ponto-pages-writer");
   if (workflow === "cloudflare-workers-sync-ponto-secrets.yml") return normalizeResourceKey("global:ponto-workers-writer");
-  if (workflow === "cloudflare-pages-sync-ponto.yml") return normalizeResourceKey("global:crm-cloudflare-writer");
+  if (workflow === "ponto-pages-secret-bridge.yml") return normalizeResourceKey("global:ponto-pages-writer");
   if (["timekeeping-staging-journey.yml", "ponto-staging-rollback-drill.yml", "ponto-production-baseline.yml", "ponto-production-slo.yml"].includes(workflow)) {
     return normalizeResourceKey(`release:ponto`);
   }
@@ -277,12 +277,12 @@ export function governedLeaseKeyFor(workflow, inputs) {
     throw new Error("governed Ponto Core dispatch requires unit api or inventory");
   }
   if (
-    workflow === "deploy-crm-pages.yml"
+    workflow === "ponto-pages-governed-publisher.yml"
     && inputs.release_scope === "ponto"
     && inputs.target !== "preview"
   ) return "pages";
   if (workflow === "cloudflare-workers-sync-ponto-secrets.yml") return "workers-secrets";
-  if (workflow === "cloudflare-pages-sync-ponto.yml") return "pages-secrets";
+  if (workflow === "ponto-pages-secret-bridge.yml") return "pages-secrets";
   if (workflow === "timekeeping-staging-journey.yml") return "staging-journey";
   if (workflow === "ponto-staging-rollback-drill.yml") return "staging-rollback";
   if (workflow === "ponto-production-baseline.yml") return "production-baseline";

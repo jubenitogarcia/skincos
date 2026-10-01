@@ -1,29 +1,28 @@
-# Ownership E Operação
+# Ownership e operação
 
-## Estado atual
+## Fronteiras
 
-- Enforcement real no GitHub: um único owner em `.github/CODEOWNERS`.
-- Operação real: múltiplos domínios com risco de bus factor 1.
-
-## Modelo recomendado
-
-- `website/`: owner de produto público + backup operacional.
-- `frontend/`: owner do CRM + backup operacional.
-- `crm/api/`: owner de backend transacional + backup operacional.
-- `workforce/schedule/`: owner da agenda/escala + backup operacional.
-- `backend/config` e `backend/libs`: owner de plataforma/automação + backup operacional.
-- `.github/` e `docs/`: owner de plataforma/entrega.
+- O produto CRM é externo e independente: `jubenitogarcia/crm` é dono do
+  console, Core API, Worker/Pages, D1, identidade de entrega e rollback.
+- O monorepo `jubenitogarcia/skincos` é dono apenas do gateway HTTP e dos
+  domínios `api`, `finance`, `inventory`, `workforce`, `messaging`, `booking`,
+  `website`, `ads`, `social` e `integration`.
+- Dependências entre os dois repositórios são contratos versionados e rotas
+  explicitamente allowlisted. Imports locais e compartilhamento de banco,
+  cookies ou segredos são proibidos.
 
 ## Regras mínimas
 
-1. Nenhum domínio crítico deve depender de uma única pessoa sem backup nominal.
-2. Alertas de produção precisam apontar para owner primário e backup.
-3. Mudanças em deploy, auth, secrets ou observability exigem revisão explícita do owner do domínio.
-4. Exceções temporárias devem ter vencimento e motivo em arquivo versionado.
+1. Cada domínio mantém código, dados, migrations, publisher e rollback próprios.
+2. O gateway falha fechado quando a identidade ou o recibo do CRM independente
+   não estiverem disponíveis.
+3. Alterações de produção registram artefato, versão e caminho de recuperação;
+   nenhum segredo ou dado de cliente entra no Git.
+4. Um consumidor legado deve ser migrado para o dono correto antes de remover
+   uma compatibilidade.
 
-## Passos pendentes fora do código
+## Revisão
 
-1. Criar times GitHub por domínio.
-2. Atualizar `.github/CODEOWNERS` com esses times.
-3. Ativar branch protection com `Require review from Code Owners`.
-4. Definir backup operacional por serviço e rotação simples de incidentes.
+O catálogo de módulos e o mapa de domínios são as fontes versionadas de
+ownership. Times e branch protection do GitHub podem ser adicionados depois,
+mas não são necessários para a separação física já concluída.

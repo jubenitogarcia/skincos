@@ -6,7 +6,7 @@ test('Identity/Inventory health exposes immutable release and Worker version met
   const releaseSha = 'a'.repeat(40);
   const response = await worker.fetch(new Request('https://api-staging.skincos.com.br/health'), {
     DB: {},
-    APP_ORIGIN: 'https://crm-staging.skincos.com.br',
+    APP_ORIGIN: 'https://no-staging-console.invalid',
     APP_VERSION: releaseSha,
     ENVIRONMENT: 'staging',
     CF_VERSION_METADATA: {
@@ -33,7 +33,7 @@ test('Identity/Inventory exposes a fail-closed read-only Workforce contract prob
     headers: { 'x-skincos-release-probe': 'ponto-v1' },
   }), {
     DB: {},
-    APP_ORIGIN: 'https://crm-staging.skincos.com.br',
+    APP_ORIGIN: 'https://no-staging-console.invalid',
     APP_VERSION: releaseSha,
     ENVIRONMENT: 'staging',
     CF_VERSION_METADATA: { id: identityVersionId },
@@ -74,7 +74,7 @@ test('Identity/Inventory hides the contract probe and avoids Workforce calls wit
   let workforceCalls = 0;
   const response = await worker.fetch(new Request('https://api-staging.skincos.com.br/health/workforce-contract'), {
     DB: {},
-    APP_ORIGIN: 'https://crm-staging.skincos.com.br',
+    APP_ORIGIN: 'https://no-staging-console.invalid',
     APP_VERSION: 'a'.repeat(40),
     ENVIRONMENT: 'staging',
     CF_VERSION_METADATA: { id: '33333333-3333-4333-8333-333333333333' },

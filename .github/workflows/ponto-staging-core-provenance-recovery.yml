@@ -430,7 +430,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
-          CLOUDFLARE_PAGES_PROJECT: skincos-staging
+          CLOUDFLARE_PAGES_PROJECT: skincos-ponto-staging
           MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
           PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
           PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}

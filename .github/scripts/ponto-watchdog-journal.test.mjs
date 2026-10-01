@@ -32,7 +32,7 @@ const run = (id, pathName, title) => ({
   id,
   workflow_id: pathName === "deploy-timekeeping.yml"
     ? 501
-    : pathName === "deploy-crm-pages.yml"
+    : pathName === "ponto-pages-governed-publisher.yml"
       ? 503
       : 502,
   path: `.github/workflows/${pathName}@${releaseRef}`,
@@ -52,8 +52,8 @@ const run = (id, pathName, title) => ({
 const workflowIds = {
   "deploy-timekeeping.yml": 501,
   "deploy-core-workers.yml": 502,
-  "deploy-crm-pages.yml": 503,
-  "cloudflare-pages-sync-ponto.yml": 504,
+  "ponto-pages-governed-publisher.yml": 503,
+  "ponto-pages-secret-bridge.yml": 504,
   "ponto-staging-rollback-drill.yml": 505,
 };
 const coordinator = {
@@ -117,12 +117,12 @@ test("watchdog reconstructs exact surface run files and a bounded artifact manif
     run(10, "deploy-timekeeping.yml", `Timekeeping staging ${sha} orchestrator=99 nonce=${"1".repeat(32)}`),
     run(11, "deploy-core-workers.yml", `Core inventory staging team=true ${sha} orchestrator=99 nonce=${"2".repeat(32)}`),
     run(12, "deploy-core-workers.yml", `Core api staging team=false ${sha} orchestrator=99 nonce=${"3".repeat(32)}`),
-    run(13, "deploy-crm-pages.yml", `CRM Pages staging ${sha} orchestrator=99 nonce=${"4".repeat(32)}`),
+    run(13, "ponto-pages-governed-publisher.yml", `Ponto Pages staging ${sha} orchestrator=99 nonce=${"4".repeat(32)}`),
   ];
   anchor(root, "timekeeping.json", "deploy-timekeeping.yml", 501, 10);
   anchor(root, "identity.json", "deploy-core-workers.yml", 502, 11);
   anchor(root, "core.json", "deploy-core-workers.yml", 502, 12);
-  anchor(root, "pages.json", "deploy-crm-pages.yml", 503, 13);
+  anchor(root, "pages.json", "ponto-pages-governed-publisher.yml", 503, 13);
   const report = await reconstructWatchdogJournal({
     repository,
     coordinatorRunId: "99",

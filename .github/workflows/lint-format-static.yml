@@ -43,7 +43,6 @@ jobs:
       frontend: ${{ steps.scope.outputs.frontend }}
       website: ${{ steps.scope.outputs.website }}
       backend: ${{ steps.scope.outputs.backend }}
-      crm_api: ${{ steps.scope.outputs.crm_api }}
       python: ${{ steps.scope.outputs.python }}
       node: ${{ steps.scope.outputs.node }}
       workflow: ${{ steps.scope.outputs.workflow }}
@@ -72,18 +71,16 @@ jobs:
           changed() {
             if git diff --quiet "$base...$head" -- "$@"; then printf false; else printf true; fi
           }
-          frontend="$(changed crm/console package.json package-lock.json)"
+          frontend="$(changed workforce/ponto-pages website package.json package-lock.json)"
           website="$(changed website booking package.json package-lock.json)"
           backend="$(changed backend package.json package-lock.json pnpm-lock.yaml)"
-          crm_api="$(changed crm/api package.json package-lock.json)"
           python="$(changed backend)"
           workflow="$(changed .github/workflows/lint-format-static.yml)"
           node=false
-          if [[ "$frontend" == true || "$website" == true || "$backend" == true || "$crm_api" == true || "$workflow" == true ]]; then node=true; fi
+          if [[ "$frontend" == true || "$website" == true || "$backend" == true || "$workflow" == true ]]; then node=true; fi
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
           echo "website=$website" >> "$GITHUB_OUTPUT"
           echo "backend=$backend" >> "$GITHUB_OUTPUT"
-          echo "crm_api=$crm_api" >> "$GITHUB_OUTPUT"
           echo "python=$python" >> "$GITHUB_OUTPUT"
           echo "node=$node" >> "$GITHUB_OUTPUT"
           echo "workflow=$workflow" >> "$GITHUB_OUTPUT"
@@ -110,42 +107,42 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            crm/console/package-lock.json
+            workforce/ponto-pages/package-lock.json
             website/package-lock.json
 
       - name: Frontend install
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
-          cd crm/console
+          cd workforce/ponto-pages
           npm ci
 
       - name: Frontend lint
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
-          cd crm/console
+          cd workforce/ponto-pages
           npm run lint
 
       - name: Frontend typecheck
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
-          cd crm/console
+          cd workforce/ponto-pages
           npm run typecheck
 
       - name: Frontend unit tests
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
-          cd crm/console
+          cd workforce/ponto-pages
           npm run test
 
       - name: Frontend build
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
-          cd crm/console
+          cd workforce/ponto-pages
           npm run build
 
       - name: Website install
@@ -189,12 +186,6 @@ jobs:
           pnpm -C backend -r run format:check --if-present
           pnpm -C backend -r run typecheck --if-present
 
-      - name: CRM API tests
-        if: ${{ needs.changes.outputs.crm_api == 'true' || needs.changes.outputs.workflow == 'true' }}
-        run: |
-          set -euxo pipefail
-          npm --prefix crm/api ci
-          npm --prefix crm/api test
 
   python-lint:
     name: Python Lint & Static Analysis

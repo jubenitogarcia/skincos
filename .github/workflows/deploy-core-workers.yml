@@ -1375,7 +1375,7 @@ jobs:
             candidateTag: `ponto:coreApi:${process.env.RELEASE_SHA}`,
             serviceName: "skincos-ponto-core-staging",
             routeIsolated: true,
-            url: "https://crm-staging.skincos.com.br/api/ponto/health",
+            url: "https://skincos-ponto-staging.pages.dev/api/ponto/health",
           }, null, 2)}\n`);
           NODE
               rm -f "$upload_output" "$deploy_output"
@@ -2243,7 +2243,7 @@ jobs:
             generalCoreUnchanged: true,
             configDigest: process.env.PONTO_CORE_CONFIG_DIGEST,
             bundleDigest: process.env.PONTO_CORE_BUNDLE_DIGEST,
-            url: "https://crm.skincos.com.br/api/ponto/health",
+            url: "https://skincos-ponto.pages.dev/api/ponto/health",
           }, null, 2)}\n`);
           NODE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -15,7 +15,6 @@ paths = [
   '''^inventory/\.dev\.vars\.example$''',
   '''^backend/apps/meta-ads/apps/api/README\.md$''',
   '''^backend/apps/whatsapp/gateway/agent_zero_webhook_server\.py$''',
-  '''^comprehensive-crm-so/''',
   '''^frontend/CameraDiscovery\.tsx$''',
   '''^messaging/channels/whatsapp/engine/\.env\.example$''',
   '''^messaging/channels/whatsapp/evolution-api/(GUIA-RAPIDO|MIGRATION|SUCESSO-INSTALACAO)\.md$''',

@@ -10,7 +10,7 @@ database_id = "594fef1b-5597-476e-86f9-59920f284215"
 migrations_dir = "migrations-d1"
 
 [vars]
-APP_ORIGIN = "https://crm.skincos.com.br"
+APP_ORIGIN = "https://skincos-ponto.pages.dev"
 SCHEDULE_PUBLIC_READ_ENABLED = "false"
 
 [env.staging]
@@ -24,5 +24,5 @@ database_id = "3f59f0a3-2c27-4f15-9f84-a9234f86c2e5"
 migrations_dir = "migrations-d1"
 
 [env.staging.vars]
-APP_ORIGIN = "https://crm-staging.skincos.com.br"
+APP_ORIGIN = "https://skincos-ponto-staging.pages.dev"
 SCHEDULE_PUBLIC_READ_ENABLED = "false"

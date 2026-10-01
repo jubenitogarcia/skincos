@@ -14,8 +14,8 @@ on:
       core_incumbent_version_id: { description: "Exact route-isolated Ponto Core staging incumbent", required: true, type: string }
       identity_candidate_version_id: { description: "Exact Identity staging candidate", required: true, type: string }
       identity_incumbent_version_id: { description: "Exact Identity staging incumbent", required: true, type: string }
-      pages_candidate_deployment_id: { description: "Exact CRM Pages staging candidate deployment", required: true, type: string }
-      pages_incumbent_deployment_id: { description: "Exact CRM Pages staging incumbent deployment", required: true, type: string }
+      pages_candidate_deployment_id: { description: "Exact Ponto Pages staging candidate deployment", required: true, type: string }
+      pages_incumbent_deployment_id: { description: "Exact Ponto Pages staging incumbent deployment", required: true, type: string }
       orchestrator_issuer_run_id: { description: "Exact direct issuer run", required: false, type: string }
       orchestrator_nonce: { description: "Non-secret per-dispatch correlation nonce", required: false, type: string }
 
@@ -123,13 +123,13 @@ jobs:
         with:
           node-version: '22.12.0'
           cache: npm
-          cache-dependency-path: crm/console/package-lock.json
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
       - name: Install authenticated browser harness
         run: npm ci
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
       - name: Install Playwright Chromium
         run: npx --yes playwright install --with-deps chromium
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
       - name: Revalidate the exact active coordinator before rollback drill secrets or mutation
         env:
           GH_TOKEN: ${{ github.token }}

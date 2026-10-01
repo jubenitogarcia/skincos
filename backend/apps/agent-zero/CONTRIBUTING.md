@@ -36,7 +36,6 @@ This guide provides information for developers working on the Agent Zero monorep
    # OR start specific services:
    make dev-agent     # Agent Zero core only
    make dev-webui     # WebUI only
-   make dev-crm       # CRM only
    ```
 
 ## Repository Structure
@@ -46,7 +45,6 @@ agent-zero/
 ├── apps/                           # Applications
 │   ├── agent-zero-core/           # Core Agent Zero application
 │   ├── webui/                     # Web UI components
-│   ├── crm/                       # CRM system
 │   ├── messaging/                 # adapters to the native messaging service
 │   └── [Sales Chart Messenger]    # automação incorporada ao domínio WhatsApp (ex.: whatsapp/automations/sales_chart_messenger/)
 ├── packages/                       # Shared packages
@@ -126,15 +124,6 @@ make dev-webui
 nx run webui:dev
 ```
 
-### CRM System
-
-Customer relationship management functionality.
-
-**Development:**
-```bash
-make dev-crm
-```
-
 ### WhatsApp Gateway
 
 Integration with WhatsApp messaging.
@@ -170,7 +159,6 @@ The new unified restart script replaces multiple scattered scripts:
 
 # Start specific service
 ./tools/scripts/restart.sh --service agent-zero
-./tools/scripts/restart.sh --service crm
 
 # Development mode with hot reload
 ./tools/scripts/restart.sh --service agent-zero --watch

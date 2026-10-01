@@ -18,14 +18,14 @@ const workflowStep = (workflow, name) => {
 }
 const runPontoStagingHarness = ({ pagesSurface, origin }) => spawnSync(
   process.execPath,
-  [path.join(repositoryRoot, 'crm/console/scripts/ponto-staging-journey.cjs')],
+  [path.join(repositoryRoot, 'workforce/ponto-pages/scripts/ponto-staging-journey.cjs')],
   {
     cwd: repositoryRoot,
     encoding: 'utf8',
     env: {
       ...process.env,
       ...(pagesSurface ? { PONTO_STAGING_PAGES_SURFACE: pagesSurface } : {}),
-      PONTO_STAGING_CRM_URL: origin,
+      PONTO_STAGING_URL: origin,
       PONTO_STAGING_EXPECTED_RELEASE_SHA: 'a'.repeat(40),
       PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: '11111111-1111-4111-8111-111111111111',
       PONTO_STAGING_FIXTURES_FILE: path.join(repositoryRoot, '.git/ponto-staging-harness-fixture-missing.json'),
@@ -89,7 +89,7 @@ test('Ponto Pages declares a dedicated release closure that contains its governe
     '.github/scripts/ponto-source-closure.mjs',
     '.github/scripts/ponto-root-custody.mjs',
     '.github/workflows/ponto-orchestrator-gate.yml',
-    'crm/console/scripts/ponto-staging-journey.cjs',
+    'workforce/ponto-pages/scripts/ponto-staging-journey.cjs',
     'inventory/wrangler.toml',
     'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs',
     'workforce/timekeeping/security.js',
@@ -169,13 +169,13 @@ test('Ponto Pages staging smoke is an executable dedicated-only synthetic produc
   assert.match(smoke, /^name: Ponto Pages staging synthetic smoke$/m)
   assert.match(smoke, /^\s+workflow_dispatch:$/m)
   assert.doesNotMatch(smoke, /^\s+(?:push|pull_request|schedule):$/m)
-  assert.match(smoke, /pages_surface:[\s\S]*?default: legacy[\s\S]*?options: \[legacy, dedicated-ponto-pages\]/)
+  assert.match(smoke, /pages_surface:[\s\S]*?default: dedicated-ponto-pages[\s\S]*?options: \[dedicated-ponto-pages\]/)
   assert.match(smoke, /execute:[\s\S]*?default: false[\s\S]*?type: boolean/)
   assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_EXECUTION_NOT_AUTHORIZED/)
   assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_SURFACE_NOT_DEDICATED/)
   assert.match(smoke, /PONTO_PAGES_STAGING_SMOKE_PUBLISH_DISABLED/)
   assert.match(smoke, /PONTO_PAGES_PROJECT" == 'skincos-ponto-staging'/)
-  assert.match(smoke, /PONTO_STAGING_CRM_URL: https:\/\/skincos-ponto-staging\.pages\.dev\//)
+  assert.match(smoke, /PONTO_STAGING_URL: https:\/\/skincos-ponto-staging\.pages\.dev\//)
   assert.match(smoke, /PONTO_STAGING_PAGES_SURFACE: dedicated-ponto-pages/)
   assert.match(smoke, /PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID/)
   assert.match(smoke, /ponto-pages-publish-receipt-staging-\$RELEASE_SHA/)
@@ -203,11 +203,11 @@ test('canonical journey accepts only the exact dedicated Pages origin when selec
   assert.notEqual(dedicated.status, 0)
   assert.match(dedicated.stderr, /ponto-staging-harness-fixture-missing\.json/)
 
-  const legacy = runPontoStagingHarness({
+  const missingSurface = runPontoStagingHarness({
     origin: 'https://skincos-ponto-staging.pages.dev/',
   })
-  assert.notEqual(legacy.status, 0)
-  assert.match(legacy.stderr, /skincos-staging\.pages\.dev HTTPS origin/)
+  assert.notEqual(missingSurface.status, 0)
+  assert.match(missingSurface.stderr, /PONTO_STAGING_PAGES_SURFACE must be dedicated-ponto-pages/)
 
   const nonCanonicalDedicated = runPontoStagingHarness({
     pagesSurface: 'dedicated-ponto-pages',

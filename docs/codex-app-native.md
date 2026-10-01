@@ -7,9 +7,9 @@ Este repositório deve continuar usando o código local como fonte da verdade e 
 | Superfície | Fonte de verdade | Plugin/capacidade preferida | Comando local recomendado |
 | --- | --- | --- | --- |
 | Site público `espacofacial.com` | `website/` | Cloudflare, Browser, Build Web Apps | `npm run codex:site:check` |
-| CRM `crm.skincos.com.br` | `frontend/` + `crm/api/` | Browser, GitHub, Cloudflare | `npm run codex:crm:site-smoke` |
-| Site EF no CRM | `frontend/SiteTrackingModule.tsx` e APIs de tracking | Browser, Build Web Apps | `npm run codex:crm:site-smoke` |
-| Meta Ads no CRM | `frontend/` + `backend/apps/meta-ads/` | Browser, GitHub, Cloudflare | `npm run codex:crm:meta-ads-smoke` |
+| CRM `crm.skincos.com.br` | `C:\CodexShared\Projetos\crm` (`jubenitogarcia/crm`) | Browser, GitHub, Cloudflare | comandos do repositório independente |
+| Site EF | `website/` e APIs de tracking | Browser, Build Web Apps | `npm run codex:site:check` |
+| Meta Ads | `ads/meta/` e Token Vault | Browser, GitHub, Cloudflare | validações do domínio Meta Ads |
 | Deploy e secrets | `.github/workflows/`, `scripts/codex-preflight.sh` | GitHub, Cloudflare | `npm run codex:preflight` |
 
 ## Uso dos plugins
@@ -19,7 +19,7 @@ Este repositório deve continuar usando o código local como fonte da verdade e 
 | Pedido curto do usuário | Ação padrão esperada |
 | --- | --- |
 | "verifique o site" | Rodar `npm run codex:context:online`, inspecionar `website/`, validar endpoint live e usar Browser se houver UI envolvida. |
-| "verifique o CRM" | Rodar contexto, identificar módulo, usar smoke headless ou Browser conforme necessidade visual. |
+| "verifique o CRM" | Abrir o projeto independente `C:\CodexShared\Projetos\crm`, identificar módulo e usar smoke/Browser conforme necessidade visual. |
 | "proceda com commit/push/pr/merge/deploy" | Criar branch `codex/*`, preservar alterações não relacionadas, validar, abrir PR, acompanhar checks, mergear e validar deploy live. |
 | "publique" | Preferir GitHub Actions/deploy auditável; usar Wrangler local só se o fluxo oficial não cobrir o alvo. |
 | "melhore a dashboard" | Usar Build Web Apps + Browser, preservar padrões visuais dos módulos existentes e validar responsivo. |
@@ -47,14 +47,13 @@ Esse comando é intencionalmente seguro: ele não imprime secrets e não altera 
 Use o Browser do Codex App para QA visual local e produção. Para automação sem janela, prefira os scripts headless:
 
 ```bash
-npm run codex:crm:site-smoke
-npm run codex:crm:meta-ads-smoke
+npm run codex:site:check
 ```
 
 Para debug visual explícito:
 
 ```bash
-npm run crm:local:site-tracking -- --smoke --headed-smoke --browser
+npm run website:dev
 ```
 
 ### Cloudflare
@@ -95,7 +94,6 @@ Use estes comandos quando o objetivo for velocidade com boa cobertura:
 
 ```bash
 npm run codex:site:check
-npm run codex:crm:site-smoke
 npm run codex:preflight
 ```
 

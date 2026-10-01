@@ -8,9 +8,9 @@ const incumbentId = "22222222-2222-4222-8222-222222222222";
 const restoredId = "33333333-3333-4333-8333-333333333333";
 const candidateCommit = "a".repeat(40);
 const incumbentCommit = "b".repeat(40);
-const project = "skincos";
+const project = "skincos-ponto";
 const branch = "main";
-const alias = "crm.skincos.com.br";
+const alias = "skincos-ponto.pages.dev";
 
 const deployment = (id, commit, createdOn) => ({
   id,

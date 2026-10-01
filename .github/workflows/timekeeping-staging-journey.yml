@@ -20,7 +20,7 @@ on:
         description: Canonical Identity/Workforce staging run containing promotion evidence
         required: true
         type: string
-      crm_pages_staging_run_id:
+      ponto_pages_staging_run_id:
         description: Canonical selected Pages staging run containing promotion evidence
         required: true
         type: string
@@ -31,10 +31,9 @@ on:
       pages_surface:
         description: Pages surface owning pages_url; dedicated Ponto Pages requires its exact staging origin
         required: false
-        default: legacy
+        default: dedicated-ponto-pages
         type: choice
         options:
-          - legacy
           - dedicated-ponto-pages
       timekeeping_version_id:
         description: Exact staging Timekeeping candidate version
@@ -115,27 +114,21 @@ jobs:
           TIMEKEEPING_RUN: ${{ inputs.timekeeping_staging_run_id }}
           CORE_API_RUN: ${{ inputs.core_api_staging_run_id }}
           IDENTITY_RUN: ${{ inputs.identity_staging_run_id }}
-          CRM_PAGES_RUN: ${{ inputs.crm_pages_staging_run_id }}
+          PONTO_PAGES_RUN: ${{ inputs.ponto_pages_staging_run_id }}
           PAGES_URL: ${{ inputs.pages_url }}
           PAGES_SURFACE: ${{ inputs.pages_surface }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
-          [[ "$TIMEKEEPING_RUN" =~ ^[0-9]+$ && "$CORE_API_RUN" =~ ^[0-9]+$ && "$IDENTITY_RUN" =~ ^[0-9]+$ && "$CRM_PAGES_RUN" =~ ^[0-9]+$ ]] || { echo 'canonical run IDs must be numeric'; exit 1; }
-          if [[ "$PAGES_SURFACE" == 'legacy' ]]; then
-            [[ "$PAGES_URL" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'legacy pages_url must be an immutable skincos-staging.pages.dev URL'; exit 1; }
-          elif [[ "$PAGES_SURFACE" == 'dedicated-ponto-pages' ]]; then
-            [[ "$PAGES_URL" =~ ^https://skincos-ponto-staging\.pages\.dev/?$ ]] || { echo 'dedicated Ponto pages_url must be https://skincos-ponto-staging.pages.dev/'; exit 1; }
-          else
-            echo 'pages_surface must be legacy or dedicated-ponto-pages'
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/promotion-evidence/timekeeping" "$RUNNER_TEMP/promotion-evidence/core-api" "$RUNNER_TEMP/promotion-evidence/identity" "$RUNNER_TEMP/promotion-evidence/crm-pages"
+          [[ "$TIMEKEEPING_RUN" =~ ^[0-9]+$ && "$CORE_API_RUN" =~ ^[0-9]+$ && "$IDENTITY_RUN" =~ ^[0-9]+$ && "$PONTO_PAGES_RUN" =~ ^[0-9]+$ ]] || { echo 'canonical run IDs must be numeric'; exit 1; }
+          [[ "$PAGES_SURFACE" == 'dedicated-ponto-pages' ]] || { echo 'pages_surface must be dedicated-ponto-pages'; exit 1; }
+          [[ "$PAGES_URL" =~ ^https://skincos-ponto-staging\.pages\.dev/?$ ]] || { echo 'dedicated Ponto pages_url must be https://skincos-ponto-staging.pages.dev/'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/promotion-evidence/timekeeping" "$RUNNER_TEMP/promotion-evidence/core-api" "$RUNNER_TEMP/promotion-evidence/identity" "$RUNNER_TEMP/promotion-evidence/ponto-pages"
           gh run download "$TIMEKEEPING_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-timekeeping --dir "$RUNNER_TEMP/promotion-evidence/timekeeping"
           gh run download "$CORE_API_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-api --dir "$RUNNER_TEMP/promotion-evidence/core-api"
           gh run download "$IDENTITY_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-inventory --dir "$RUNNER_TEMP/promotion-evidence/identity"
-          gh run download "$CRM_PAGES_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-crm-pages --dir "$RUNNER_TEMP/promotion-evidence/crm-pages"
-          for evidence in "$RUNNER_TEMP/promotion-evidence/timekeeping/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/core-api/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/identity/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/crm-pages/promotion-evidence.json"; do
+          gh run download "$PONTO_PAGES_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-ponto-pages --dir "$RUNNER_TEMP/promotion-evidence/ponto-pages"
+          for evidence in "$RUNNER_TEMP/promotion-evidence/timekeeping/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/core-api/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/identity/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/ponto-pages/promotion-evidence.json"; do
             node -e "const e=require(process.argv[1]); if(e.sourceSha!==process.env.RELEASE_SHA||e.target!=='staging') process.exit(1)" "$evidence"
           done
 
@@ -144,15 +137,15 @@ jobs:
         with:
           node-version: '22.12.0'
           cache: npm
-          cache-dependency-path: crm/console/package-lock.json
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
 
       - name: Install browser harness
         run: npm ci
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
 
       - name: Install Playwright Chromium
         run: npx --yes playwright install --with-deps chromium
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
 
       - name: Render the exact staging Timekeeping D1 config
         env:
@@ -413,11 +406,8 @@ jobs:
             && origin.pathname === "/"
             && !origin.search
             && !origin.hash;
-          const allowedOrigin = pagesSurface === "legacy"
-            ? origin.hostname.endsWith(".skincos-staging.pages.dev")
-            : pagesSurface === "dedicated-ponto-pages"
-              ? origin.origin === "https://skincos-ponto-staging.pages.dev"
-              : false;
+          const allowedOrigin = pagesSurface === "dedicated-ponto-pages"
+            && origin.origin === "https://skincos-ponto-staging.pages.dev";
           if (!originIsWellFormed || !allowedOrigin) {
             throw new Error("protected contract requires the declared immutable staging Pages origin");
           }
@@ -544,14 +534,14 @@ jobs:
 
       - name: Execute authenticated Ponto journey
         env:
-          PONTO_STAGING_CRM_URL: ${{ inputs.pages_url }}
+          PONTO_STAGING_URL: ${{ inputs.pages_url }}
           PONTO_STAGING_PAGES_SURFACE: ${{ inputs.pages_surface }}
           PONTO_STAGING_EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
           PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
           PONTO_STAGING_FIXTURES_FILE: ${{ runner.temp }}/ponto-staging-fixtures.json
           PONTO_STAGING_REPORT_FILE: ${{ runner.temp }}/ponto-staging-report.json
-          NODE_PATH: crm/console/node_modules
-        run: node crm/console/scripts/ponto-staging-journey.cjs
+          NODE_PATH: workforce/ponto-pages/node_modules
+        run: node workforce/ponto-pages/scripts/ponto-staging-journey.cjs
 
       - name: Check shared staging D1 lease before synthetic teardown
         id: check_staging_d1_teardown

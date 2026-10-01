@@ -47,9 +47,9 @@ const moduleControlNamespaceId = String(process.env.MODULE_CONTROL_KV_ID || "");
 const moduleHealthUrl = String(process.env.PONTO_MODULE_HEALTH_URL || "").trim();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const staging = stage === "staging";
-const expectedPagesProject = staging ? "skincos-staging" : "skincos";
+const expectedPagesProject = staging ? "skincos-ponto-staging" : "skincos-ponto";
 const expectedPagesBranch = staging ? "staging" : "main";
-const expectedPagesAlias = staging ? "crm-staging.skincos.com.br" : "crm.skincos.com.br";
+const expectedPagesAlias = staging ? "skincos-ponto-staging.pages.dev" : "skincos-ponto.pages.dev";
 const expectedModuleHealthUrl = staging
   ? "https://api-staging.skincos.com.br/api/ponto/health"
   : "https://api.skincos.com.br/api/ponto/health";
@@ -282,11 +282,11 @@ const surfaceSpecs = {
     workflow: "deploy-core-workers.yml",
     workerName: staging ? "skincos-ponto-core-staging" : "skincos-ponto-core",
   },
-  crmPages: {
+  pontoPages: {
     path: "surfaces/pages/surface.json",
     journal: "mutations/pages/mutation.json",
     run: "runs/pages.json",
-    workflow: "deploy-crm-pages.yml",
+    workflow: "ponto-pages-governed-publisher.yml",
   },
 };
 const expectedWeights = {
@@ -381,7 +381,7 @@ for (const [name, spec] of Object.entries(surfaceSpecs)) {
   }
   if (!surfaceValid && journal?.mutationStarted !== true) continue;
 
-  if (name === "crmPages") {
+  if (name === "pontoPages") {
     const candidateDeploymentId = String(surfaceValid ? source.deploymentId : source.candidateDeploymentId || "");
     const incumbentDeploymentId = String(surfaceValid ? source.rollbackDeploymentId : source.incumbentDeploymentId || "");
     const restoredDeploymentId = journalValid && journal.rollbackCompleted === true
@@ -442,7 +442,7 @@ const pagesProvisionRunFile = path.join(artifactRoot, "runs/provision-pages.json
 if (fs.existsSync(pagesProvisionRunFile)) {
   const run = readJson(pagesProvisionRunFile);
   const journalFile = path.join(artifactRoot, "provisioning/pages/pages-release-probe-evidence.json");
-  const runValid = isExactImmutableChildRun(run, "cloudflare-pages-sync-ponto.yml");
+  const runValid = isExactImmutableChildRun(run, "ponto-pages-secret-bridge.yml");
   if (!runValid) {
     unresolved.push({ surface: "pagesEnvironmentSecrets", reason: "child-run-provenance-invalid" });
   } else if (!fs.existsSync(journalFile)) {
@@ -555,7 +555,7 @@ if (staging && fs.existsSync(drillRunFile)) {
           unresolved.push({ surface: name, childRunId: String(run.runId), reason: "drill-latest-surface-state-unresolved" });
           continue;
         }
-        if (name === "crmPages") {
+        if (name === "pontoPages") {
           const activeDeploymentId = String(proof.activeDeploymentId || "");
           const expectedSource = side === "candidate"
             ? item.candidateDeploymentId
@@ -831,7 +831,7 @@ let pagesCreatedDeploymentId = "";
 let pagesMutationAttempted = false;
 let pagesMutationObserved = false;
 let pagesIntent = null;
-const pagesIntentInput = plan.crmPages && UUID.test(plan.crmPages.candidateDeploymentId || "") ? {
+const pagesIntentInput = plan.pontoPages && UUID.test(plan.pontoPages.candidateDeploymentId || "") ? {
   request: github,
   secret: pagesRollbackIntentHmacKey,
   repositoryId,
@@ -842,14 +842,14 @@ const pagesIntentInput = plan.crmPages && UUID.test(plan.crmPages.candidateDeplo
   project: expectedPagesProject,
   branch: expectedPagesBranch,
   alias: expectedPagesAlias,
-  candidateDeploymentId: plan.crmPages.candidateDeploymentId,
-  incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+  candidateDeploymentId: plan.pontoPages.candidateDeploymentId,
+  incumbentDeploymentId: plan.pontoPages.incumbentDeploymentId,
 } : null;
 if (pagesIntentInput) {
   pagesIntent = await readPagesRollbackIntent(pagesIntentInput);
   pagesMutationAttempted = Boolean(pagesIntent);
   if (["created", "restored"].includes(pagesIntent?.claims?.state)) {
-    plan.crmPages.restoredDeploymentId = pagesIntent.claims.restoredDeploymentId;
+    plan.pontoPages.restoredDeploymentId = pagesIntent.claims.restoredDeploymentId;
     pagesCreatedDeploymentId = pagesIntent.claims.restoredDeploymentId;
     pagesMutationObserved = true;
   }
@@ -873,8 +873,8 @@ const persistPagesAttempt = async () => {
     sourceSha: releaseSha,
     failedStage: stage,
     orchestratorRunId,
-    candidateDeploymentId: plan.crmPages.candidateDeploymentId,
-    incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+    candidateDeploymentId: plan.pontoPages.candidateDeploymentId,
+    incumbentDeploymentId: plan.pontoPages.incumbentDeploymentId,
     mutationAttempted: true,
     mutationOutcome: "indeterminate-until-reconciled",
     attemptedAt: new Date().toISOString(),
@@ -892,7 +892,7 @@ const persistPagesCreatedId = async (deploymentId, source) => {
   });
   pagesCreatedDeploymentId = deploymentId;
   pagesMutationObserved = true;
-  plan.crmPages.restoredDeploymentId = deploymentId;
+  plan.pontoPages.restoredDeploymentId = deploymentId;
   const journalFile = path.join(
     artifactRoot,
     "automatic-rollback/ponto-pages-rollback-created.json",
@@ -903,8 +903,8 @@ const persistPagesCreatedId = async (deploymentId, source) => {
     sourceSha: releaseSha,
     failedStage: stage,
     orchestratorRunId,
-    candidateDeploymentId: plan.crmPages.candidateDeploymentId,
-    incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+    candidateDeploymentId: plan.pontoPages.candidateDeploymentId,
+    incumbentDeploymentId: plan.pontoPages.incumbentDeploymentId,
     restoredDeploymentId: deploymentId,
     source,
     mutationAttempted: true,
@@ -916,7 +916,7 @@ const persistPagesCreatedId = async (deploymentId, source) => {
 };
 const persistPagesExistingIncumbentId = async (deploymentId, source) => {
   if (!pagesIntent) throw new Error("Pages rollback existing incumbent has no durable one-shot intent");
-  if (String(deploymentId || "").toLowerCase() !== String(plan.crmPages.incumbentDeploymentId || "").toLowerCase()) {
+  if (String(deploymentId || "").toLowerCase() !== String(plan.pontoPages.incumbentDeploymentId || "").toLowerCase()) {
     throw new Error("Pages rollback existing incumbent identity differs from the attested incumbent");
   }
   pagesIntent = await completePagesRollbackIntent({
@@ -928,7 +928,7 @@ const persistPagesExistingIncumbentId = async (deploymentId, source) => {
   });
   pagesCreatedDeploymentId = deploymentId;
   pagesMutationObserved = true;
-  plan.crmPages.restoredDeploymentId = deploymentId;
+  plan.pontoPages.restoredDeploymentId = deploymentId;
   const journalFile = path.join(
     artifactRoot,
     "automatic-rollback/ponto-pages-rollback-restored.json",
@@ -939,8 +939,8 @@ const persistPagesExistingIncumbentId = async (deploymentId, source) => {
     sourceSha: releaseSha,
     failedStage: stage,
     orchestratorRunId,
-    candidateDeploymentId: plan.crmPages.candidateDeploymentId,
-    incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+    candidateDeploymentId: plan.pontoPages.candidateDeploymentId,
+    incumbentDeploymentId: plan.pontoPages.incumbentDeploymentId,
     restoredDeploymentId: deploymentId,
     restoredExistingIncumbent: true,
     source,
@@ -952,31 +952,31 @@ const persistPagesExistingIncumbentId = async (deploymentId, source) => {
   }, null, 2)}\n`, { mode: 0o600 });
 };
 
-if (plan.crmPages) {
+if (plan.pontoPages) {
   if (!rollbackPermitted) {
-    proofs.crmPages = {
+    proofs.pontoPages = {
       passed: false,
       mutationPerformed: false,
-      requestedDeploymentId: plan.crmPages.incumbentDeploymentId,
+      requestedDeploymentId: plan.pontoPages.incumbentDeploymentId,
       reason: "rollback-blocked-by-custody-reconciliation",
     };
   } else try {
-    const requested = plan.crmPages.incumbentDeploymentId;
+    const requested = plan.pontoPages.incumbentDeploymentId;
     const before = await cloudflare(
       `/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments?env=production&per_page=25`,
     );
-    let ownership = classifyPagesRollbackOwnership(before, plan.crmPages);
+    let ownership = classifyPagesRollbackOwnership(before, plan.pontoPages);
     if (
       ownership === "ownership-conflict"
       && ["attempted", "created"].includes(pagesIntent?.claims?.state)
     ) ownership = "durable-intent-reconcile";
     if (ownership === "ownership-conflict") {
       unresolved.push({
-        surface: "crmPages",
-        childRunId: plan.crmPages.childRunId,
+        surface: "pontoPages",
+        childRunId: plan.pontoPages.childRunId,
         reason: "current-pages-ownership-conflict",
       });
-      proofs.crmPages = {
+      proofs.pontoPages = {
         passed: false,
         mutationPerformed: false,
         requestedDeploymentId: requested,
@@ -987,7 +987,7 @@ if (plan.crmPages) {
         && pagesIntent
         && pagesIntent.claims.state !== "restored";
       const activeId = ownership === "already-restored"
-        ? plan.crmPages.restoredDeploymentId
+        ? plan.pontoPages.restoredDeploymentId
         : requested;
       const [incumbentPayload, activePayload] = await Promise.all([
         cloudflare(`/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments/${requested}`),
@@ -1012,7 +1012,7 @@ if (plan.crmPages) {
           allowExistingIncumbent: ownership === "already-incumbent",
         });
       }
-      proofs.crmPages = {
+      proofs.pontoPages = {
         passed: true,
         mutationPerformed: Boolean(existingIncumbentReconciled),
         requestedDeploymentId: requested,
@@ -1031,7 +1031,7 @@ if (plan.crmPages) {
         project: expectedPagesProject,
         branch: expectedPagesBranch,
         alias: expectedPagesAlias,
-        candidateDeploymentId: plan.crmPages.candidateDeploymentId,
+        candidateDeploymentId: plan.pontoPages.candidateDeploymentId,
         candidateCommitSha: releaseSha,
         incumbentDeploymentId: requested,
         mutationAllowed: !pagesIntent,
@@ -1052,7 +1052,7 @@ if (plan.crmPages) {
         restoredDeploymentId: rolledBack.activeDeploymentId,
         allowExistingIncumbent: rolledBack.restoredExistingIncumbent === true,
       });
-      proofs.crmPages = {
+      proofs.pontoPages = {
         passed: true,
         mutationPerformed: rolledBack.mutationPerformed,
         mutationAttempted: true,
@@ -1069,11 +1069,11 @@ if (plan.crmPages) {
     }
   } catch {
     unresolved.push({
-      surface: "crmPages",
-      childRunId: plan.crmPages.childRunId,
+      surface: "pontoPages",
+      childRunId: plan.pontoPages.childRunId,
       reason: "pages-rollback-or-attestation-failed",
     });
-    proofs.crmPages = {
+    proofs.pontoPages = {
       passed: false,
       ...(pagesMutationObserved ? { mutationPerformed: true } : {}),
       mutationAttempted: pagesMutationAttempted,
@@ -1082,7 +1082,7 @@ if (plan.crmPages) {
         : pagesMutationAttempted
           ? "indeterminate"
           : "not-attempted",
-      requestedDeploymentId: plan.crmPages.incumbentDeploymentId,
+      requestedDeploymentId: plan.pontoPages.incumbentDeploymentId,
       ...(pagesCreatedDeploymentId
         ? { activeDeploymentId: pagesCreatedDeploymentId }
         : {}),
@@ -1101,8 +1101,8 @@ const EXTERNAL_COMPOSITE_RETRY_DELAY_MS = 5_000;
 const waitForPropagation = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const attestExternalComposite = async () => {
   const origin = staging
-    ? "https://crm-staging.skincos.com.br/api/ponto/health"
-    : "https://crm.skincos.com.br/api/ponto/health";
+    ? "https://skincos-ponto-staging.pages.dev/api/ponto/health"
+    : "https://skincos-ponto.pages.dev/api/ponto/health";
   let latest = { passed: false, status: 0, reason: "external-composite-probe-not-attempted" };
   for (let attempt = 1; attempt <= EXTERNAL_COMPOSITE_MAX_ATTEMPTS; attempt += 1) {
     try {

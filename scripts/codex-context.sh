@@ -56,9 +56,9 @@ fi
 section "Source Of Truth"
 cat <<'EOF'
 site_public=website/ (espacofacial.com, booking, tracking, WhatsApp, CAPI)
-crm=crm/console/ + crm/api/ (crm.skincos.com.br)
+crm=external repository C:\\CodexShared\\Projetos\\crm (crm.skincos.com.br); monorepo has gateway contracts only
 automations=independent Orb repository (https://github.com/jubenitogarcia/orb; orb.skincos.com.br)
-meta_ads=crm/console/ + ads/meta/ (crm module + dedicated meta-ads module)
+meta_ads=ads/meta/ (dedicated Meta Ads workers and contracts)
 cloudflare=.github/workflows/ + wrangler configs + scripts/cloudflare-token-health.sh
 codex_docs=AGENTS.md, docs/codex-app-native.md, docs/codex-autonomy.md
 EOF
@@ -79,16 +79,14 @@ context=npm run codex:context
 preflight=npm run codex:preflight
 site_check=npm run codex:site:check
 site_release_check=npm run codex:site:release-check
-site_ef_smoke=npm run codex:crm:site-smoke
-meta_ads_smoke=npm run codex:crm:meta-ads-smoke
-atendimento_smoke=npm run codex:crm:atendimento-smoke
-crm_local=npm run crm:local
+meta_ads_smoke=npm run influencer-intelligence:test
+api_tests=npm run api:test
+crm_local=use the independent project at C:\\CodexShared\\Projetos\\crm
 EOF
 
 if $ONLINE; then
   section "Live Endpoint Smoke"
   printf 'espacofacial.com=%s\n' "$(http_code 'https://espacofacial.com')"
   printf 'crm.skincos.com.br=%s\n' "$(http_code 'https://crm.skincos.com.br')"
-  printf 'crm_health=%s\n' "$(http_code 'https://crm.skincos.com.br/api/health')"
   printf 'site_custom_urls_unauth=%s (401 expected)\n' "$(http_code 'https://espacofacial.com/api/tracking/custom-urls')"
 fi

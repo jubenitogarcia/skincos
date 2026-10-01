@@ -72,9 +72,6 @@ jobs:
           node .github/scripts/validate-github-governance.mjs
           node --test .github/scripts/codex-autonomy-gate-workflow.test.mjs
           node --test .github/scripts/ponto-single-operator-governance.test.mjs
-          node --test .github/scripts/atendimento-deployment-contract.test.mjs
-          node --test .github/scripts/verify-atendimento-health.test.mjs
-          node --test .github/scripts/verify-crm-core-codex-staging-readback-receipt.test.mjs
       - name: Supervisor contract
         if: ${{ contains(needs.classify.outputs.surfaces, 'codex-baseline') }}
         run: python3 -m unittest discover -s .codex/hooks/tests -p 'test_skincos_supervisor_gate.py' -v

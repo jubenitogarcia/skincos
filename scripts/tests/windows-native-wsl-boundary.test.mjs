@@ -141,14 +141,3 @@ test('EF App prompts for absent credentials and persists them only in the privat
   assert.match(launcher, /if \(-not \(Ensure-EfAppLoginCredentials\)\) \{\s*return\s*\}/)
   assert.match(launcher, /"EfAppAgendaFullSync" \{\s*if \(-not \(Ensure-EfAppLoginCredentials\)\) \{ return \}/)
 })
-
-test('CRM local binds every timekeeping runtime to one operator-private key root', () => {
-  const launcher = read('scripts/run-shared-codex-shortcut.ps1')
-  const initializer = read('scripts/initialize-local-crm-private-bindings.ps1')
-  assert.match(launcher, /runtime\\crm-local\\ponto-private/)
-  assert.match(launcher, /CRM_TIMEKEEPING_PRIVATE_ROOT=\$crmTimekeepingPrivateRootWsl/)
-  assert.match(initializer, /RandomNumberGenerator.*Create/)
-  assert.match(initializer, /\/inheritance:r/)
-  assert.match(initializer, /não serão rotacionados automaticamente/)
-  assert.doesNotMatch(initializer, /Write-(?:Host|Output).*(?:actorKey|idempotencyKey|sessionSecret)/)
-})

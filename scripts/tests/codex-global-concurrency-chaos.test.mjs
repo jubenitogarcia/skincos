@@ -20,19 +20,19 @@ const owner = (threadId) => ({
 function promotionRequest({ threadId, source, closure, key }) {
   return buildLeaseRequest({
     operation: "promotion",
-    resource: "deploy:crm-pages:staging",
+    resource: "deploy:ponto-pages:staging",
     owner: owner(threadId),
     idempotencyKey: key,
     ttlMs: 60_000,
     intent: {
-      dependencyClosurePatterns: ["crm/console/**", ".github/workflows/deploy-crm-pages.yml"],
-      dependencyClosurePaths: ["crm/console/App.tsx", ".github/workflows/deploy-crm-pages.yml"],
+      dependencyClosurePatterns: ["workforce/ponto-pages/**", ".github/workflows/ponto-pages-governed-publisher.yml"],
+      dependencyClosurePaths: ["workforce/ponto-pages/App.tsx", ".github/workflows/ponto-pages-governed-publisher.yml"],
       releaseIdentity: {
-        module: "crm-pages",
+        module: "ponto-pages",
         sourceCommit: sha(source),
         sourceTree: sha(source === "a" ? "b" : "d"),
         dependencyClosureDigest: digest(closure),
-        artifacts: [{ name: "crm-pages", id: `pages-${source}`, digest: digest("e") }],
+        artifacts: [{ name: "ponto-pages", id: `pages-${source}`, digest: digest("e") }],
       },
     },
   });
@@ -69,7 +69,7 @@ test("two incompatible releases cannot acquire or mutate the same Cloudflare sur
   const mutationLog = [];
   const authorized = authorizeMutation(state, proofFrom(winner.lease), {
     now: 2_000,
-    expectedResource: "deploy:crm-pages:staging",
+    expectedResource: "deploy:ponto-pages:staging",
     observedDependencyClosureDigest: winner.lease.intent.releaseIdentity.dependencyClosureDigest,
     expectedArtifacts: winner.lease.intent.releaseIdentity.artifacts,
   });
@@ -87,8 +87,8 @@ test("incident chaos sequence tolerates unrelated main integration and fences cl
     idempotencyKey: "ponto-release-chaos",
     ttlMs: 60_000,
     intent: {
-      dependencyClosurePatterns: ["api/**", "crm/console/**", ".github/workflows/ponto-*.yml"],
-      dependencyClosurePaths: ["api/src/router.js", "crm/console/PontoModule.tsx"],
+      dependencyClosurePatterns: ["api/**", "workforce/ponto-pages/**", ".github/workflows/ponto-*.yml"],
+      dependencyClosurePaths: ["api/src/router.js", "workforce/ponto-pages/PontoModule.tsx"],
       releaseIdentity: {
         module: "ponto",
         sourceCommit: sha("a"),

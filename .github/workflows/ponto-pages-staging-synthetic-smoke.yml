@@ -19,9 +19,9 @@ on:
       pages_surface:
         description: Select the Pages surface. Only the dedicated surface can execute this producer.
         required: true
-        default: legacy
+        default: dedicated-ponto-pages
         type: choice
-        options: [legacy, dedicated-ponto-pages]
+        options: [dedicated-ponto-pages]
       execute:
         description: Explicitly authorize a real staging-only synthetic fixture, smoke, cleanup, and receipt.
         required: true
@@ -189,7 +189,7 @@ jobs:
         with:
           node-version: 22.23.1
           cache: npm
-          cache-dependency-path: crm/console/package-lock.json
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
       - name: Fail closed on non-dedicated, unpublished, or non-staging configuration
         env:
           WORKFLOW_REF: ${{ github.ref }}
@@ -217,7 +217,7 @@ jobs:
             [[ -n "${!name:-}" && "${!name}" != *$'\n'* && "${!name}" != *$'\r'* ]] || { echo "PONTO_PAGES_STAGING_SMOKE_SECRET_INVALID:$name"; exit 1; }
           done
           {
-            echo 'PONTO_STAGING_CRM_URL=https://skincos-ponto-staging.pages.dev/'
+            echo 'PONTO_STAGING_URL=https://skincos-ponto-staging.pages.dev/'
             echo 'PONTO_STAGING_PAGES_SURFACE=dedicated-ponto-pages'
             echo 'EXPECTED_PROJECT=skincos-ponto-staging'
             echo 'EXPECTED_CORE_SERVICE=skincos-ponto-core-staging'
@@ -360,10 +360,10 @@ jobs:
 
       - name: Install canonical browser smoke harness
         run: npm ci
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
       - name: Install Playwright Chromium
         run: npx --yes playwright install --with-deps chromium
-        working-directory: crm/console
+        working-directory: workforce/ponto-pages
 
       - name: Acquire shared staging D1 lease for synthetic Pages smoke
         id: acquire_staging_d1
@@ -463,13 +463,13 @@ jobs:
       - name: Execute canonical authenticated dedicated Pages Ponto journey
         id: journey
         env:
-          PONTO_STAGING_CRM_URL: https://skincos-ponto-staging.pages.dev/
+          PONTO_STAGING_URL: https://skincos-ponto-staging.pages.dev/
           PONTO_STAGING_PAGES_SURFACE: dedicated-ponto-pages
           PONTO_STAGING_EXPECTED_RELEASE_SHA: ${{ needs.preflight.outputs.source_sha }}
           PONTO_STAGING_FIXTURES_FILE: ${{ runner.temp }}/ponto-pages-staging-fixtures.json
           PONTO_STAGING_REPORT_FILE: ${{ runner.temp }}/ponto-pages-staging-report.json
-          NODE_PATH: crm/console/node_modules
-        run: node crm/console/scripts/ponto-staging-journey.cjs
+          NODE_PATH: workforce/ponto-pages/node_modules
+        run: node workforce/ponto-pages/scripts/ponto-staging-journey.cjs
 
       - name: Check shared staging D1 lease before synthetic teardown
         id: check_staging_d1_teardown

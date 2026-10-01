@@ -54,9 +54,9 @@ function createFakePool({ applied = false } = {}) {
             if (text === 'begin' || text === 'commit' || text === 'rollback' || text.includes('set local')) return { rows: [] }
             if (text.includes('pg_try_advisory_xact_lock')) return { rows: [{ acquired: true }] }
             if (text.includes('pg_has_role')) return { rows: [{ can_set_owner: true, migrator_connect: true, owner_connect: true, owner_create: true, owner_role_shape: true }] }
-            if (text.includes('current_database()')) return { rows: [{ database_name: 'skincos_staging', effective_role: ownerRoleActive ? 'skincos_staging_crm_owner' : 'skincos_staging_migrator_login', session_user: 'skincos_staging_migrator_login', configured_role: ownerRoleActive ? 'skincos_staging_crm_owner' : 'none', application_name: 'influencer-intelligence-migration', transaction_read_only: 'off', lock_timeout: '3s', statement_timeout: '60s', idle_in_transaction_session_timeout: '90s' }] }
+            if (text.includes('current_database()')) return { rows: [{ database_name: 'skincos_staging', effective_role: ownerRoleActive ? 'skincos_staging_social_owner' : 'skincos_staging_migrator_login', session_user: 'skincos_staging_migrator_login', configured_role: ownerRoleActive ? 'skincos_staging_social_owner' : 'none', application_name: 'influencer-intelligence-migration', transaction_read_only: 'off', lock_timeout: '3s', statement_timeout: '60s', idle_in_transaction_session_timeout: '90s' }] }
             if (text.includes('role_name')) return { rows: [{ role_name: values[0], role_present: false, schema_usage: false, schema_create: false, dml_privilege: false }] }
-            if (text.includes('from pg_namespace')) return { rows: applied || ledger.size ? [{ schema_name: 'influencer_intelligence', schema_owner: 'skincos_staging_crm_owner' }] : [] }
+            if (text.includes('from pg_namespace')) return { rows: applied || ledger.size ? [{ schema_name: 'influencer_intelligence', schema_owner: 'skincos_staging_social_owner' }] : [] }
             if (text.includes('from pg_class c')) return { rows: applied || ledger.size ? __testables.EXPECTED_RELATIONS.map((relname) => ({ relname, relkind: 'r' })) : [] }
             if (text.includes('from information_schema.columns')) return { rows: __testables.REQUIRED_COLUMNS.map(([table_name, column_name]) => ({ table_name, column_name })) }
             if (text.includes('from pg_trigger')) return { rows: __testables.APPEND_ONLY_RELATIONS.map((relname) => ({ relname, tgname: `${relname}_append_only` })) }
@@ -130,7 +130,7 @@ test('apply is atomic, idempotent by schema ledger, writes a private checkpoint 
         assert.equal(report.checkpoint.sha256.length, 64)
         const checkpoint = JSON.parse(await fs.readFile(checkpointPath, 'utf8'))
         assert.equal(checkpoint.database, 'skincos_staging')
-        assert.equal(checkpoint.effectiveRole, 'skincos_staging_crm_owner')
+        assert.equal(checkpoint.effectiveRole, 'skincos_staging_social_owner')
         assert.equal('databaseUrl' in checkpoint, false)
         assert.equal('password' in checkpoint, false)
         assert.ok(fake.queries.some(({ sql }) => sql === 'commit'))
@@ -157,6 +157,6 @@ test('native staging wrapper is release-bound and keeps database custody out of 
     assert.match(wrapper, /CHECKPOINT_ROOT='\/var\/backups\/skincos\/influencer-intelligence\/staging'/)
 })
 
-test('runner reuses the canonical CRM staging migrator custody without duplicating a secret', () => {
-    assert.equal(__testables.FIXED_ENV_FILE, '/etc/skincos/crm-atendimento-staging-migrator.env')
+test('runner uses its own staging migrator custody without duplicating a secret', () => {
+    assert.equal(__testables.FIXED_ENV_FILE, '/etc/skincos/influencer-intelligence-staging-migrator.env')
 })

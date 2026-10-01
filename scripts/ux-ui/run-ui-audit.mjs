@@ -26,10 +26,10 @@ async function main() {
   const startedAt = new Date().toISOString()
   const checks = []
   try {
-    checks.push(await run('components', 'npm', ['--prefix', 'crm/console', 'run', 'test:components']))
-    checks.push(await run('pilot', 'npm', ['--prefix', 'crm/console', 'run', 'test:e2e', '--', 'e2e/pilot']))
-    checks.push(await run('accessibility', 'npm', ['--prefix', 'crm/console', 'run', 'test:e2e', '--', 'e2e/accessibility']))
-    checks.push(await run('visual', 'npm', ['--prefix', 'crm/console', 'run', 'test:e2e', '--', 'e2e/visual']))
+    checks.push(await run('website lint', 'npm', ['--prefix', 'website', 'run', 'lint']))
+    checks.push(await run('website tests', 'npm', ['--prefix', 'website', 'run', 'test']))
+    checks.push(await run('website typecheck', 'npm', ['--prefix', 'website', 'run', 'typecheck']))
+    checks.push(await run('website build', 'npm', ['--prefix', 'website', 'run', 'build']))
     checks.push(await run('lighthouse', 'node', ['./scripts/ux-ui/run-lighthouse.mjs'], { ...sharedEnvironment, LIGHTHOUSE_URL: '' }))
   } finally {
     await writeFile(path.join(artifactDir, 'summary.json'), `${JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), checks }, null, 2)}\n`)

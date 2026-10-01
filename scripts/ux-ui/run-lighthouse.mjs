@@ -21,7 +21,7 @@ function resolveChromePath() {
   if (process.env.LIGHTHOUSE_CHROME_PATH) return process.env.LIGHTHOUSE_CHROME_PATH
 
   try {
-    const { chromium } = require(path.join(repositoryRoot, 'crm/console/node_modules/playwright-core'))
+    const { chromium } = require(path.join(repositoryRoot, 'website/node_modules/playwright-core'))
     return chromium.executablePath()
   } catch {
     return undefined
@@ -82,7 +82,7 @@ async function generateLighthouseReports(url, reportPrefix) {
 async function main() {
   await mkdir(artifactDir, { recursive: true })
   const server = shouldStartServer
-    ? spawn('npm', ['--prefix', 'crm/console', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173'], {
+    ? spawn('npm', ['--prefix', 'website', 'run', 'dev', '--', '--hostname', '127.0.0.1', '--port', '5173'], {
       cwd: repositoryRoot,
       detached: process.platform !== 'win32',
       stdio: 'pipe',
@@ -90,9 +90,9 @@ async function main() {
     : undefined
   try {
     await waitForLocalUrl(baseURL)
-    const reportPrefix = path.join(artifactDir, 'crm-auth')
+    const reportPrefix = path.join(artifactDir, 'website')
     await generateLighthouseReports(baseURL, reportPrefix)
-    await writeFile(path.join(artifactDir, 'metadata.json'), `${JSON.stringify({ baseURL, generatedAt: new Date().toISOString(), source: 'local CRM synthetic auth route' }, null, 2)}\n`)
+    await writeFile(path.join(artifactDir, 'metadata.json'), `${JSON.stringify({ baseURL, generatedAt: new Date().toISOString(), source: 'local website synthetic route' }, null, 2)}\n`)
   } finally {
     stopServer(server)
   }

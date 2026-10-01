@@ -21,14 +21,14 @@ function report(files, risk = "medium", affectedSurfaces = []) {
   };
 }
 
-test("isolated CRM changes keep minimum boundaries and skip unrelated domain suites", () => {
-  const plan = buildArchitectureGovernancePlan(report(["crm/console/Customers.tsx"], "medium", ["timekeeping"]));
+test("isolated Website changes keep minimum boundaries and skip unrelated domain suites", () => {
+  const plan = buildArchitectureGovernancePlan(report(["website/src/routes.ts"], "medium", ["timekeeping"]));
 
   assert.deepEqual(plan.jobs, ["minimum"]);
   assert.equal(plan.globalClosure, false);
   assert.equal(plan.full, false);
   for (const domain of ["ponto", "influencer", "cloudflare", "staging", "finance"]) {
-    assert.equal(plan.jobs.includes(domain), false, `${domain} must remain skipped for isolated CRM`);
+    assert.equal(plan.jobs.includes(domain), false, `${domain} must remain skipped for an isolated change`);
   }
 });
 
@@ -59,7 +59,7 @@ test("unknown paths fail closed into global closure and every domain gate", () =
 
 test("high and critical classifier outcomes force the complete matrix", () => {
   for (const risk of ["high", "critical"]) {
-    const plan = buildArchitectureGovernancePlan(report(["crm/console/Customers.tsx"], risk));
+    const plan = buildArchitectureGovernancePlan(report(["website/src/routes.ts"], risk));
     assert.equal(plan.full, true);
     assert.deepEqual(plan.jobs, ["minimum", "global", "ponto", "influencer", "cloudflare", "staging", "finance"]);
   }

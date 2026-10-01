@@ -5,9 +5,9 @@
 | npm / Node / WSL | installed | supported execution path |
 | Playwright Test | configured | Chromium, four viewports, traces/screenshots/video on failure |
 | axe | configured | automatic results JSON; manual review remains separate |
-| eslint-plugin-jsx-a11y | incompatible | crashes against the CRM's secure `minimatch` override; do not weaken that override |
+| eslint-plugin-jsx-a11y | incompatible | crashes against the root toolchain's secure `minimatch` override; do not weaken that override |
 | Testing Library | configured | React/user-event smoke in jsdom |
-| Lighthouse | installed in Website | local CRM route reports HTML/JSON |
+| Lighthouse | installed in Website | local Website route reports HTML/JSON |
 | Lighthouse CI | installed | baseline-only config; no budgets or blocking assertions |
 | Storybook / a11y / MCP addon | validated | build and local JSON-RPC endpoint passed; no Storybook test runner is enabled |
 | Chrome DevTools / Playwright / GitHub MCP registrations | not currently exposed | local operator configuration is outside the repository; no grant or PAT is recorded |

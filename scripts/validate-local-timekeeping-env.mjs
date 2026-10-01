@@ -25,7 +25,7 @@ const INVENTORY_BINDINGS = [
 const UNSAFE_VALUE = /^(?:__.*__|changeme|password|secret|test|test-.*|.*not-secret.*)$/i
 
 function fail(message) {
-  process.stderr.write(`[crm-local] ${message}\n`)
+  process.stderr.write(`[ponto-local] ${message}\n`)
   process.exit(1)
 }
 
@@ -38,10 +38,10 @@ function permissionModel(resolved, label) {
       // Supported launches are initiated by the native Windows shortcut. If
       // WSL cannot spawn powershell.exe, accept only its file-specific native
       // ACL attestation; direct WSL launches remain fail-closed.
-      const nativeValidated = label === 'CRM_INVENTORY_IDENTITY_ENV_FILE'
-        && process.env.CRM_WINDOWS_PRIVATE_ACL_VALIDATED === 'inventory-v1'
-        && process.env.CRM_WINDOWS_PRIVATE_ACL_VALIDATED_PATH
-        && fs.realpathSync(process.env.CRM_WINDOWS_PRIVATE_ACL_VALIDATED_PATH) === resolved
+      const nativeValidated = label === 'INVENTORY_IDENTITY_ENV_FILE'
+        && process.env.PONTO_WINDOWS_PRIVATE_ACL_VALIDATED === 'inventory-v1'
+        && process.env.PONTO_WINDOWS_PRIVATE_ACL_VALIDATED_PATH
+        && fs.realpathSync(process.env.PONTO_WINDOWS_PRIVATE_ACL_VALIDATED_PATH) === resolved
       if (nativeValidated) return 'windows-native-launcher-acl'
       fail(error?.message || `${label} não pôde ter sua DACL verificada.`)
     }
@@ -108,8 +108,8 @@ if (inputs[0] === '--inventory-only') {
   const [, inventoryInput, sourceInput] = inputs
   if (!sourceInput) fail('Uso: validate-local-timekeeping-env.mjs --inventory-only <inventory.env> <source-root>.')
   const sourceRoot = fs.realpathSync(sourceInput)
-  const inventoryPrivate = privateFile(inventoryInput, sourceRoot, 'CRM_INVENTORY_IDENTITY_ENV_FILE')
-  parseEnv(inventoryPrivate.path, INVENTORY_BINDINGS, 'CRM_INVENTORY_IDENTITY_ENV_FILE')
+  const inventoryPrivate = privateFile(inventoryInput, sourceRoot, 'INVENTORY_IDENTITY_ENV_FILE')
+  parseEnv(inventoryPrivate.path, INVENTORY_BINDINGS, 'INVENTORY_IDENTITY_ENV_FILE')
   process.stdout.write(JSON.stringify({
     ok: true,
     workerBindings: [],
@@ -126,10 +126,10 @@ if (!sourceInput) {
 }
 
 const sourceRoot = fs.realpathSync(sourceInput)
-const workerPrivate = privateFile(workerInput, sourceRoot, 'CRM_TIMEKEEPING_ENV_FILE')
+const workerPrivate = privateFile(workerInput, sourceRoot, 'PONTO_TIMEKEEPING_ENV_FILE')
 const pagesPrivate = privateFile(pagesInput, sourceRoot, 'PONTO_PAGES_ENV_FILE')
 const inventoryPrivate = inventoryInput
-  ? privateFile(inventoryInput, sourceRoot, 'CRM_INVENTORY_IDENTITY_ENV_FILE')
+  ? privateFile(inventoryInput, sourceRoot, 'INVENTORY_IDENTITY_ENV_FILE')
   : null
 const workerFile = workerPrivate.path
 const pagesFile = pagesPrivate.path
@@ -138,10 +138,10 @@ if (inventoryPrivate && [workerFile, pagesFile].includes(inventoryPrivate.path))
   fail('Inventory deve usar um arquivo privado separado de Worker e Pages.')
 }
 
-const worker = parseEnv(workerFile, WORKER_BINDINGS, 'CRM_TIMEKEEPING_ENV_FILE')
+const worker = parseEnv(workerFile, WORKER_BINDINGS, 'PONTO_TIMEKEEPING_ENV_FILE')
 const pages = parseEnv(pagesFile, PAGES_BINDINGS, 'PONTO_PAGES_ENV_FILE')
 const inventory = inventoryPrivate
-  ? parseEnv(inventoryPrivate.path, INVENTORY_BINDINGS, 'CRM_INVENTORY_IDENTITY_ENV_FILE')
+  ? parseEnv(inventoryPrivate.path, INVENTORY_BINDINGS, 'INVENTORY_IDENTITY_ENV_FILE')
   : null
 const workerUnique = new Set(WORKER_BINDINGS.map((key) => worker.get(key)))
 if (workerUnique.size !== WORKER_BINDINGS.length) {

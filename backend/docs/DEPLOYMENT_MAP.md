@@ -4,11 +4,11 @@ Este documento é um “mapa operacional” do que está rodando em produção h
 
 ## Superfícies de produção (Cloudflare)
 
-### Frontend (CRM)
-- Produto: **Cloudflare Pages**
-- Projeto: `skincos` (root_dir=`frontend`, build=`npm run build`, output=`dist`)
+### CRM independente
+- Produto: **Cloudflare Pages + Worker** no repositório `jubenitogarcia/crm`
+- Projeto: `skincos-crm-core`
 - Domínio: `crm.skincos.com.br`
-- Observação: idealmente configure **build filters** do Pages como `path_includes=["frontend/**"]` para evitar rebuild/redeploy em commits que só mudam o backend.
+- Este monorepo não contém o bundle nem o publisher do CRM.
 
 ### Backend (Workers)
 
@@ -31,8 +31,8 @@ Este documento é um “mapa operacional” do que está rodando em produção h
 - A unidade é deliberadamente conjunta: publica `skincos-api` e `skincos-insumos` para preservar o contrato compartilhado atual. Consultar `platform/deploy/operational-units.json` antes de criar outra via.
 
 ### Pages
-- Único publisher: `.github/workflows/deploy-crm-pages.yml` (manual, com `staging` e `production` separados).
-- A integração GitHub↔Pages não deve ser habilitada para este projeto, pois criaria um segundo publisher.
+- O publisher canônico do CRM está no repositório independente.
+- Os publishers deste repositório são limitados às unidades listadas em `platform/deploy/operational-units.json`.
 
 ## Onde normalmente você “deixa passar” (checklist rápido)
 

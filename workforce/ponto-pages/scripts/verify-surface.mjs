@@ -41,7 +41,7 @@ if (routeContract.version !== 1 || JSON.stringify(routeContract.include) !== JSO
   throw new Error('PONTO_FUNCTION_ROUTE_CONTRACT_INVALID')
 }
 for (const source of sources) {
-  if (source.includes('@/') || source.includes('crm/console')) throw new Error('PONTO_MONOREPO_IMPORT_FORBIDDEN')
+  if (source.includes('@/') || source.includes('workforce/ponto-pages')) throw new Error('PONTO_MONOREPO_IMPORT_FORBIDDEN')
 }
 if (!sources[5].includes("requireCsrfForMutations")) throw new Error('PONTO_CSRF_GUARD_MISSING')
 if (!sources[4].includes("PONTO_INSUMOS_HEALTH_UNCONFIGURED")) throw new Error('PONTO_HEALTH_FAIL_CLOSED_MISSING')

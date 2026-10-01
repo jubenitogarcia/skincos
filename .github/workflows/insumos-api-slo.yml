@@ -33,7 +33,7 @@ jobs:
       - name: Run Insumos API SLO monitor
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
-          INSUMOS_SLO_BASE_URL: ${{ vars.INSUMOS_SLO_BASE_URL != '' && vars.INSUMOS_SLO_BASE_URL || 'https://crm.skincos.com.br' }}
+          INSUMOS_SLO_BASE_URL: ${{ vars.INSUMOS_SLO_BASE_URL != '' && vars.INSUMOS_SLO_BASE_URL || 'https://api.skincos.com.br' }}
           INSUMOS_SLO_UNIDADE: ${{ vars.INSUMOS_SLO_UNIDADE != '' && vars.INSUMOS_SLO_UNIDADE || 'novo-hamburgo' }}
           INSUMOS_SLO_MAX_LATENCY_MS: ${{ vars.INSUMOS_SLO_MAX_LATENCY_MS != '' && vars.INSUMOS_SLO_MAX_LATENCY_MS || '1500' }}
           INSUMOS_SLO_TIMEOUT_SEC: ${{ vars.INSUMOS_SLO_TIMEOUT_SEC != '' && vars.INSUMOS_SLO_TIMEOUT_SEC || '15' }}

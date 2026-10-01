@@ -6,7 +6,6 @@ param(
     [string]$TopologyPath,
     [string]$RuntimeRegistryRoot = 'C:\CodexRuntime\operator\admin\skincos\worktree-registry',
     [string]$Repository = 'jubenitogarcia/skincos',
-    [ValidateSet('crm-module', 'orb-workflow-family')]
     [string]$SurfaceType,
     [string]$SurfaceId,
     [string]$TargetCommit,
@@ -18,69 +17,30 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-
-if ([string]::IsNullOrWhiteSpace($TopologyPath)) {
-    $TopologyPath = Join-Path $ProjectRoot 'ops\codex\worktree-topology.json'
-}
+if ([string]::IsNullOrWhiteSpace($TopologyPath)) { $TopologyPath = Join-Path $ProjectRoot 'ops\codex\worktree-topology.json' }
 
 function Normalize-PathString {
     param([string]$Path)
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        return ''
-    }
-
-    try {
-        $fullPath = [System.IO.Path]::GetFullPath($Path)
-    }
-    catch {
-        $fullPath = $Path
-    }
-
-    return $fullPath.Replace('/', '\').TrimEnd([char[]]'\/').ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    try { $full = [System.IO.Path]::GetFullPath($Path) } catch { $full = $Path }
+    return $full.Replace('/', '\').TrimEnd([char[]]'\/').ToLowerInvariant()
 }
 
 function Test-PathWithinRoot {
-    param(
-        [string]$Path,
-        [string]$Root
-    )
-
-    $normalizedPath = Normalize-PathString -Path $Path
-    $normalizedRoot = Normalize-PathString -Path $Root
-    return $normalizedPath -eq $normalizedRoot -or $normalizedPath.StartsWith("$normalizedRoot\")
-}
-
-function Convert-ToWslPath {
-    param([string]$Path)
-
-    if ($Path -match '^([A-Za-z]):\\(.*)$') {
-        return "/mnt/$($Matches[1].ToLowerInvariant())/$($Matches[2].Replace('\', '/'))"
-    }
-    return $Path.Replace('\', '/')
+    param([string]$Path, [string]$Root)
+    $p = Normalize-PathString $Path; $r = Normalize-PathString $Root
+    return $p -eq $r -or $p.StartsWith("$r\")
 }
 
 function Read-JsonFile {
     param([string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $null
-    }
-
-    try {
-        return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-    }
-    catch {
-        throw "JSON inválido em '$Path': $($_.Exception.Message)"
-    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    try { return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json }
+    catch { throw "JSON inválido em '$Path': $($_.Exception.Message)" }
 }
 
 function Write-JsonAtomic {
-    param(
-        [string]$Path,
-        [object]$Value
-    )
-
+    param([string]$Path, [object]$Value)
     $parent = Split-Path -Parent $Path
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
     $temporary = "$Path.$PID.tmp"
@@ -89,587 +49,180 @@ function Write-JsonAtomic {
 }
 
 function Invoke-Git {
-    param(
-        [string]$RepoPath,
-        [string[]]$Arguments
-    )
-
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $output = @()
-    $exitCode = 1
-    try {
-        $output = @(& git -C $RepoPath @Arguments 2>&1 | ForEach-Object { [string]$_ })
-        $exitCode = $LASTEXITCODE
-    }
-    catch {
-        $output = @([string]$_.Exception.Message)
-        $exitCode = 1
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-
-    return [pscustomobject]@{
-        output = @($output)
-        exitCode = $exitCode
-    }
+    param([string]$RepoPath, [string[]]$Arguments)
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'; $output = @(); $exitCode = 1
+    try { $output = @(& git -C $RepoPath @Arguments 2>&1 | ForEach-Object { [string]$_ }); $exitCode = $LASTEXITCODE }
+    catch { $output = @([string]$_.Exception.Message); $exitCode = 1 }
+    finally { $ErrorActionPreference = $old }
+    [pscustomobject]@{ output = @($output); exitCode = $exitCode }
 }
 
 function Get-WorktreeRecords {
-    param(
-        [string]$RepoPath,
-        [switch]$IncludeStatus,
-        [string]$OnlyPath
-    )
-
-    $result = Invoke-Git -RepoPath $RepoPath -Arguments @('worktree', 'list', '--porcelain')
-    if ($result.exitCode -ne 0) {
-        throw "git worktree list falhou: $($result.output -join ' ')"
-    }
-
-    $records = @()
-    $current = $null
+    param([string]$RepoPath, [switch]$IncludeStatus, [string]$OnlyPath)
+    $result = Invoke-Git $RepoPath @('worktree', 'list', '--porcelain')
+    if ($result.exitCode -ne 0) { throw "git worktree list falhou: $($result.output -join ' ')" }
+    $records = @(); $current = $null
     foreach ($line in @($result.output + '')) {
         if ($line -like 'worktree *') {
-            if ($null -ne $current) {
-                $records += [pscustomobject]$current
-            }
-            $current = [ordered]@{
-                path = $line.Substring(9)
-                head = $null
-                branch = $null
-                detached = $false
-                locked = $false
-                lockReason = $null
-                prunable = $false
-                prunableReason = $null
-            }
+            if ($null -ne $current) { $records += [pscustomobject]$current }
+            $current = [ordered]@{ path = $line.Substring(9); head = $null; branch = $null; detached = $false; locked = $false; lockReason = $null; prunable = $false; prunableReason = $null }
             continue
         }
-
-        if ($null -eq $current) {
-            continue
-        }
-
-        if ($line -like 'HEAD *') {
-            $current.head = $line.Substring(5)
-        }
-        elseif ($line -match '^branch refs/heads/(.*)$') {
-            $current.branch = $Matches[1]
-        }
-        elseif ($line -eq 'detached') {
-            $current.detached = $true
-        }
-        elseif ($line -eq 'locked') {
-            $current.locked = $true
-        }
-        elseif ($line -like 'locked *') {
-            $current.locked = $true
-            $current.lockReason = $line.Substring(7)
-        }
-        elseif ($line -eq 'prunable') {
-            $current.prunable = $true
-        }
-        elseif ($line -like 'prunable *') {
-            $current.prunable = $true
-            $current.prunableReason = $line.Substring(9)
-        }
+        if ($null -eq $current) { continue }
+        if ($line -like 'HEAD *') { $current.head = $line.Substring(5) }
+        elseif ($line -match '^branch refs/heads/(.*)$') { $current.branch = $Matches[1] }
+        elseif ($line -eq 'detached') { $current.detached = $true }
+        elseif ($line -eq 'locked') { $current.locked = $true }
+        elseif ($line -like 'locked *') { $current.locked = $true; $current.lockReason = $line.Substring(7) }
+        elseif ($line -eq 'prunable') { $current.prunable = $true }
+        elseif ($line -like 'prunable *') { $current.prunable = $true; $current.prunableReason = $line.Substring(9) }
     }
-
-    if ($null -ne $current) {
-        $records += [pscustomobject]$current
-    }
-
+    if ($null -ne $current) { $records += [pscustomobject]$current }
     if (-not [string]::IsNullOrWhiteSpace($OnlyPath)) {
-        $normalizedOnlyPath = Normalize-PathString -Path $OnlyPath
-        $records = @($records | Where-Object { (Normalize-PathString -Path $_.path) -eq $normalizedOnlyPath })
+        $wanted = Normalize-PathString $OnlyPath
+        $records = @($records | Where-Object { (Normalize-PathString $_.path) -eq $wanted })
     }
-
     foreach ($record in $records) {
-        $exists = Test-Path -LiteralPath $record.path -PathType Container
-        $status = @()
-        if ($exists -and $IncludeStatus) {
-            $status = @(Invoke-Git -RepoPath $record.path -Arguments @('status', '--porcelain=v1')).output
-        }
-        $dirtyCount = $null
-        if ($IncludeStatus) {
-            $dirtyCount = @($status | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
-        }
+        $exists = Test-Path -LiteralPath $record.path -PathType Container; $status = @()
+        if ($exists -and $IncludeStatus) { $status = @(Invoke-Git $record.path @('status', '--porcelain=v1')).output }
         Add-Member -InputObject $record -NotePropertyName exists -NotePropertyValue $exists
-        Add-Member -InputObject $record -NotePropertyName dirtyCount -NotePropertyValue $dirtyCount
+        Add-Member -InputObject $record -NotePropertyName dirtyCount -NotePropertyValue $(if ($IncludeStatus) { @($status | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count } else { $null })
         Add-Member -InputObject $record -NotePropertyName dirtySample -NotePropertyValue @($status | Select-Object -First 10)
     }
-
-    return @($records)
+    @($records)
 }
 
 function Get-Topology {
-    $topology = Read-JsonFile -Path $TopologyPath
-    if ($null -eq $topology) {
-        throw "Topologia não encontrada em '$TopologyPath'."
-    }
-    if ([int]$topology.schemaVersion -ne 1 -or [string]$topology.topologyId -ne 'skincos-canonical-worktrees') {
-        throw "Topologia incompatível em '$TopologyPath'."
-    }
-
-    $allIds = @()
-    $allIds += @($topology.crm.surfaces | ForEach-Object { [string]$_.id })
-    $allIds += @($topology.orb.families | ForEach-Object { [string]$_.id })
-    if (@($allIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9-]*$' }).Count -gt 0) {
-        throw 'A topologia contém identificador de superfície inválido.'
-    }
-    if (@($allIds | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) {
-        throw 'A topologia contém identificadores de superfície duplicados.'
-    }
-    return $topology
+    $topology = Read-JsonFile $TopologyPath
+    if ($null -eq $topology) { throw "Topologia não encontrada em '$TopologyPath'." }
+    if ([int]$topology.schemaVersion -ne 1 -or [string]$topology.topologyId -ne 'skincos-canonical-worktrees') { throw "Topologia incompatível em '$TopologyPath'." }
+    $surfaces = @($topology.surfaces); $ids = @($surfaces | ForEach-Object { [string]$_.id })
+    if (@($ids | Where-Object { $_ -and $_ -notmatch '^[a-z0-9][a-z0-9-]*$' }).Count -gt 0) { throw 'A topologia contém identificador de superfície inválido.' }
+    if (@($ids | Group-Object | Where-Object { $_.Name -and $_.Count -gt 1 }).Count -gt 0) { throw 'A topologia contém identificadores de superfície duplicados.' }
+    $topology
 }
 
 function Get-SurfaceDefinitions {
     param([object]$Topology)
-
-    $definitions = @()
-    foreach ($surface in @($Topology.crm.surfaces)) {
-        $id = [string]$surface.id
-        $definitions += [pscustomobject]@{
-            surfaceType = 'crm-module'
-            surfaceId = $id
-            label = [string]$surface.label
-            route = [string]$surface.route
-            source = [string]$surface.source
-            pilot = @($Topology.crm.pilot) -contains $id
-            expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) ("crm\$id"))
-            workflowIds = @()
-        }
+    $root = Join-Path $WorktreeRoot ([string]$Topology.worktree.canonicalRelativeRoot); $definitions = @()
+    foreach ($surface in @($Topology.surfaces)) {
+        $id = [string]$surface.id; if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        $type = if ([string]::IsNullOrWhiteSpace([string]$surface.type)) { 'module' } else { [string]$surface.type }
+        $relative = if ([string]::IsNullOrWhiteSpace([string]$surface.relativePath)) { "$type\$id" } else { [string]$surface.relativePath }
+        $definitions += [pscustomobject]@{ surfaceType = $type; surfaceId = $id; label = [string]$surface.label; source = [string]$surface.source; pilot = [bool]$surface.pilot; expectedPath = Join-Path $root $relative; workflowIds = @($surface.workflowIds) }
     }
-    foreach ($family in @($Topology.orb.families)) {
-        $id = [string]$family.id
-        $definitions += [pscustomobject]@{
-            surfaceType = 'orb-workflow-family'
-            surfaceId = $id
-            label = [string]$family.label
-            route = $null
-            source = 'workflow-family'
-            pilot = @($Topology.orb.pilot) -contains $id
-            expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) ("orb\$id"))
-            workflowIds = @($family.mainWorkflowIds) + @($family.subworkflowIds) + @($family.relatedWorkflowIds)
-        }
-    }
-    return @($definitions)
+    @($definitions)
 }
 
 function Get-RegistryState {
-    $path = Join-Path $RuntimeRegistryRoot 'canonical-registry.json'
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        return [pscustomobject]@{
-            status = 'missing'
-            path = $path
-            surfaces = @()
-        }
-    }
-
-    $value = Read-JsonFile -Path $path
-    if ($null -eq $value -or [int]$value.schemaVersion -ne 1) {
-        return [pscustomobject]@{
-            status = 'invalid'
-            path = $path
-            surfaces = @()
-        }
-    }
-    return [pscustomobject]@{
-        status = 'ok'
-        path = $path
-        surfaces = @($value.surfaces)
-    }
+    $path = Join-Path $RuntimeRegistryRoot 'canonical-registry.json'; $value = Read-JsonFile $path
+    if ($null -eq $value) { return [pscustomobject]@{ status = 'missing'; path = $path; surfaces = @() } }
+    if ([int]$value.schemaVersion -ne 1) { return [pscustomobject]@{ status = 'invalid'; path = $path; surfaces = @() } }
+    [pscustomobject]@{ status = 'ok'; path = $path; surfaces = @($value.surfaces) }
 }
 
 function Get-Lease {
-    param(
-        [string]$SurfaceType,
-        [string]$SurfaceId
-    )
-
-    $key = "$SurfaceType--$SurfaceId"
-    $leasePath = Join-Path $RuntimeRegistryRoot (Join-Path 'leases' $key)
-    $ownerPath = Join-Path $leasePath 'owner.json'
-    if (-not (Test-Path -LiteralPath $ownerPath -PathType Leaf)) {
-        return [pscustomobject]@{ status = 'free'; path = $leasePath; owner = $null }
-    }
-    return [pscustomobject]@{ status = 'claimed'; path = $leasePath; owner = Read-JsonFile -Path $ownerPath }
-}
-
-function Get-SurfaceDefinition {
-    param(
-        [object[]]$Definitions,
-        [string]$RequestedType,
-        [string]$RequestedId
-    )
-
-    if ([string]::IsNullOrWhiteSpace($RequestedType) -or [string]::IsNullOrWhiteSpace($RequestedId)) {
-        throw '-SurfaceType e -SurfaceId são obrigatórios para esta ação.'
-    }
-    $matches = @($Definitions | Where-Object { $_.surfaceType -eq $RequestedType -and $_.surfaceId -eq $RequestedId })
-    if ($matches.Count -ne 1) {
-        throw "Superfície não encontrada ou ambígua: $RequestedType/$RequestedId."
-    }
-    return $matches[0]
+    param([string]$Type, [string]$Id)
+    $path = Join-Path $RuntimeRegistryRoot (Join-Path 'leases' "$Type--$Id"); $ownerPath = Join-Path $path 'owner.json'
+    if (-not (Test-Path -LiteralPath $ownerPath -PathType Leaf)) { return [pscustomobject]@{ status = 'free'; path = $path; owner = $null } }
+    [pscustomobject]@{ status = 'claimed'; path = $path; owner = Read-JsonFile $ownerPath }
 }
 
 function Get-ManifestReferences {
-    $root = Join-Path $RuntimeRegistryRoot '..\runtime\crm-local'
-    $manifestRoot = [System.IO.Path]::GetFullPath($root)
-    if (-not (Test-Path -LiteralPath $manifestRoot -PathType Container)) {
-        return @()
-    }
-
+    $root = [System.IO.Path]::GetFullPath((Join-Path $RuntimeRegistryRoot '..\runtime'))
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
     $references = @()
-    foreach ($file in @(Get-ChildItem -LiteralPath $manifestRoot -Filter 'current.json' -File -Recurse -Force -ErrorAction SilentlyContinue)) {
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter 'current.json' -File -Recurse -Force -ErrorAction SilentlyContinue)) {
         try { $manifest = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json } catch { continue }
-        foreach ($propertyName in @('worktree', 'sourceOrigin')) {
-            if ($null -eq $manifest.PSObject.Properties[$propertyName]) { continue }
-            $value = [string]$manifest.$propertyName
-            if ([string]::IsNullOrWhiteSpace($value)) { continue }
-            $references += [pscustomobject]@{ manifestPath = $file.FullName; property = $propertyName; value = $value }
+        foreach ($name in @('worktree', 'sourceOrigin')) {
+            if ($null -eq $manifest.PSObject.Properties[$name]) { continue }
+            $value = [string]$manifest.$name; if ($value) { $references += [pscustomobject]@{ manifestPath = $file.FullName; property = $name; value = $value } }
         }
     }
-    return @($references)
+    @($references)
 }
 
-function Get-CanonicalInventory {
-    param(
-        [object]$Topology,
-        [object[]]$Definitions,
-        [object[]]$Worktrees,
-        [object]$Registry
-    )
-
-    $manifestReferences = @(Get-ManifestReferences)
-    $surfaceRows = @()
+function Get-Inventory {
+    param([object]$Topology, [object[]]$Definitions, [object[]]$Worktrees, [object]$Registry)
+    $refs = @(Get-ManifestReferences); $rows = @()
     foreach ($definition in $Definitions) {
-        $expected = Normalize-PathString -Path $definition.expectedPath
-        $matches = @($Worktrees | Where-Object { (Normalize-PathString -Path $_.path) -eq $expected })
-        $registryRows = @($Registry.surfaces | Where-Object { $_.surfaceType -eq $definition.surfaceType -and $_.surfaceId -eq $definition.surfaceId })
-        $lease = Get-Lease -SurfaceType $definition.surfaceType -SurfaceId $definition.surfaceId
-        $manifestRows = @($manifestReferences | Where-Object { Test-PathWithinRoot -Path $_.value -Root $definition.expectedPath })
-        $registryMismatch = $false
-        if ($matches.Count -eq 1 -and $registryRows.Count -eq 1) {
-            $registryMismatch = (Normalize-PathString -Path ([string]$registryRows[0].path)) -ne $expected -or
-                ([string]$registryRows[0].targetCommit).ToLowerInvariant() -ne ([string]$matches[0].head).ToLowerInvariant()
-        }
-
+        $expected = Normalize-PathString $definition.expectedPath; $matches = @($Worktrees | Where-Object { (Normalize-PathString $_.path) -eq $expected })
+        $registryRows = @($Registry.surfaces | Where-Object { $_.surfaceType -eq $definition.surfaceType -and $_.surfaceId -eq $definition.surfaceId }); $lease = Get-Lease $definition.surfaceType $definition.surfaceId
+        $manifestRows = @($refs | Where-Object { Test-PathWithinRoot $_.value $definition.expectedPath }); $mismatch = $false
+        if ($matches.Count -eq 1 -and $registryRows.Count -eq 1) { $mismatch = (Normalize-PathString ([string]$registryRows[0].path)) -ne $expected -or ([string]$registryRows[0].targetCommit).ToLowerInvariant() -ne ([string]$matches[0].head).ToLowerInvariant() }
         $status = 'missing'
-        if ($Registry.status -eq 'invalid') {
-            $status = 'invalid_registry'
-        }
-        elseif ($matches.Count -gt 1 -or $registryRows.Count -gt 1) {
-            $status = 'duplicate'
-        }
-        elseif ($matches.Count -eq 0 -and $registryRows.Count -gt 0) {
-            $status = 'registry_without_worktree'
-        }
-        elseif ($matches.Count -eq 1 -and $matches[0].dirtyCount -gt 0) {
-            $status = 'blocked_dirty'
-        }
-        elseif ($matches.Count -eq 1 -and $manifestRows.Count -gt 0) {
-            $status = 'protected_manifest_reference'
-        }
-        elseif ($matches.Count -eq 1 -and $lease.status -eq 'claimed') {
-            $status = 'claimed'
-        }
-        elseif ($matches.Count -eq 1 -and $registryMismatch) {
-            $status = 'registry_mismatch'
-        }
-        elseif ($matches.Count -eq 1 -and $registryRows.Count -eq 1) {
-            $status = 'ready'
-        }
-        elseif ($matches.Count -eq 1) {
-            $status = 'unregistered_worktree'
-        }
-
-        $row = [ordered]@{
-            surfaceType = $definition.surfaceType
-            surfaceId = $definition.surfaceId
-            label = $definition.label
-            pilot = [bool]$definition.pilot
-            expectedPath = $definition.expectedPath
-            status = $status
-            worktreeCount = $matches.Count
-            worktrees = @($matches | ForEach-Object {
-                [pscustomobject]@{
-                    path = $_.path
-                    head = $_.head
-                    branch = $_.branch
-                    detached = [bool]$_.detached
-                    dirtyCount = $_.dirtyCount
-                    prunable = [bool]$_.prunable
-                }
-            })
-            registryCount = $registryRows.Count
-            registry = @($registryRows)
-            registryMismatch = $registryMismatch
-            lease = $lease
-            manifestReferences = @($manifestRows)
-            workflowIds = @($definition.workflowIds)
-        }
-        $surfaceRows += [pscustomobject]$row
+        if ($Registry.status -eq 'invalid') { $status = 'invalid_registry' }
+        elseif ($matches.Count -gt 1 -or $registryRows.Count -gt 1) { $status = 'duplicate' }
+        elseif ($matches.Count -eq 0 -and $registryRows.Count -gt 0) { $status = 'registry_without_worktree' }
+        elseif ($matches.Count -eq 1 -and $matches[0].dirtyCount -gt 0) { $status = 'blocked_dirty' }
+        elseif ($matches.Count -eq 1 -and $manifestRows.Count -gt 0) { $status = 'protected_manifest_reference' }
+        elseif ($matches.Count -eq 1 -and $lease.status -eq 'claimed') { $status = 'claimed' }
+        elseif ($matches.Count -eq 1 -and $mismatch) { $status = 'registry_mismatch' }
+        elseif ($matches.Count -eq 1 -and $registryRows.Count -eq 1) { $status = 'ready' }
+        elseif ($matches.Count -eq 1) { $status = 'unregistered_worktree' }
+        $rows += [pscustomobject]@{ surfaceType = $definition.surfaceType; surfaceId = $definition.surfaceId; label = $definition.label; pilot = $definition.pilot; expectedPath = $definition.expectedPath; status = $status; worktreeCount = $matches.Count; worktrees = @($matches | ForEach-Object { [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; detached = $_.detached; dirtyCount = $_.dirtyCount; prunable = $_.prunable } }); registryCount = $registryRows.Count; registry = @($registryRows); registryMismatch = $mismatch; lease = $lease; manifestReferences = @($manifestRows); workflowIds = @($definition.workflowIds) }
     }
-
-    $canonicalRoot = Join-Path $WorktreeRoot ([string]$Topology.worktree.canonicalRelativeRoot)
-    $expectedPaths = @($surfaceRows | ForEach-Object { Normalize-PathString -Path $_.expectedPath })
-    $extra = @()
-    foreach ($worktree in $Worktrees) {
-        $worktreePath = Normalize-PathString -Path $worktree.path
-        if ((Test-PathWithinRoot -Path $worktree.path -Root $canonicalRoot) -and ($expectedPaths -notcontains $worktreePath)) {
-            $extra += [pscustomobject]@{ path = $worktree.path; head = $worktree.head; branch = $worktree.branch; dirtyCount = $worktree.dirtyCount }
-        }
-    }
-
-    return [pscustomobject]@{
-        status = if (@($surfaceRows | Where-Object { $_.status -in @('invalid_registry', 'duplicate', 'registry_mismatch') }).Count -gt 0) { 'drift' } else { 'ok' }
-        topologyPath = $TopologyPath
-        canonicalRoot = $canonicalRoot
-        surfaceCount = $surfaceRows.Count
-        presentCount = @($surfaceRows | Where-Object { $_.worktreeCount -eq 1 }).Count
-        missingCount = @($surfaceRows | Where-Object { $_.status -eq 'missing' }).Count
-        duplicateCount = @($surfaceRows | Where-Object { $_.status -eq 'duplicate' }).Count
-        claimedCount = @($surfaceRows | Where-Object { $_.status -eq 'claimed' }).Count
-        pilot = @($surfaceRows | Where-Object { $_.pilot })
-        surfaces = @($surfaceRows)
-        unmappedCanonicalWorktrees = $extra
-        registry = $Registry
-    }
+    $canonicalRoot = Join-Path $WorktreeRoot ([string]$Topology.worktree.canonicalRelativeRoot); $expected = @($rows | ForEach-Object { Normalize-PathString $_.expectedPath }); $extra = @($Worktrees | Where-Object { (Test-PathWithinRoot $_.path $canonicalRoot) -and $expected -notcontains (Normalize-PathString $_.path) } | ForEach-Object { [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; dirtyCount = $_.dirtyCount } })
+    [pscustomobject]@{ status = if (@($rows | Where-Object { $_.status -in @('invalid_registry', 'duplicate', 'registry_mismatch') }).Count) { 'drift' } else { 'ok' }; topologyPath = $TopologyPath; canonicalRoot = $canonicalRoot; surfaceCount = $rows.Count; presentCount = @($rows | Where-Object { $_.worktreeCount -eq 1 }).Count; missingCount = @($rows | Where-Object { $_.status -eq 'missing' }).Count; duplicateCount = @($rows | Where-Object { $_.status -eq 'duplicate' }).Count; claimedCount = @($rows | Where-Object { $_.status -eq 'claimed' }).Count; pilot = @($rows | Where-Object { $_.pilot }); surfaces = @($rows); unmappedCanonicalWorktrees = $extra; registry = $Registry }
 }
 
-function Write-RegistryEntry {
-    param([object]$Entry)
+function Get-Definition { param([object[]]$Definitions); if ([string]::IsNullOrWhiteSpace($SurfaceType) -or [string]::IsNullOrWhiteSpace($SurfaceId)) { throw '-SurfaceType e -SurfaceId são obrigatórios para esta ação.' }; $found = @($Definitions | Where-Object { $_.surfaceType -eq $SurfaceType -and $_.surfaceId -eq $SurfaceId }); if ($found.Count -ne 1) { throw "Superfície não encontrada ou ambígua: $SurfaceType/$SurfaceId." }; $found[0] }
 
-    $registryPath = Join-Path $RuntimeRegistryRoot 'canonical-registry.json'
-    $registry = Get-RegistryState
-    $surfaces = @($registry.surfaces | Where-Object { $_.surfaceType -ne $Entry.surfaceType -or $_.surfaceId -ne $Entry.surfaceId })
-    $surfaces += $Entry
-    Write-JsonAtomic -Path $registryPath -Value ([pscustomobject]@{ schemaVersion = 1; updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); surfaces = @($surfaces) })
-}
-
-function Update-RegistryLease {
-    param(
-        [string]$RequestedType,
-        [string]$RequestedId,
-        [object]$Lease
-    )
-
-    $registry = Get-RegistryState
-    $rows = @($registry.surfaces | ForEach-Object {
-        if ($_.surfaceType -eq $RequestedType -and $_.surfaceId -eq $RequestedId) {
-            $copy = [ordered]@{}
-            foreach ($property in $_.PSObject.Properties) { $copy[$property.Name] = $property.Value }
-            if ($null -eq $Lease) {
-                $copy.Remove('lease')
-            }
-            else {
-                $copy.lease = $Lease
-            }
-            [pscustomobject]$copy
-        }
-        else { $_ }
-    })
-    Write-JsonAtomic -Path (Join-Path $RuntimeRegistryRoot 'canonical-registry.json') -Value ([pscustomobject]@{ schemaVersion = 1; updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); surfaces = @($rows) })
+function Update-Registry {
+    param([object]$Entry, [switch]$RemoveLease)
+    $state = Get-RegistryState; if ($RemoveLease) { $rows = @($state.surfaces | ForEach-Object { if ($_.surfaceType -eq $Entry.surfaceType -and $_.surfaceId -eq $Entry.surfaceId) { $copy = [ordered]@{}; foreach ($p in $_.PSObject.Properties) { $copy[$p.Name] = $p.Value }; $copy.Remove('lease'); [pscustomobject]$copy } else { $_ } }) } else { $rows = @($state.surfaces | Where-Object { $_.surfaceType -ne $Entry.surfaceType -or $_.surfaceId -ne $Entry.surfaceId }); $rows += $Entry }
+    Write-JsonAtomic (Join-Path $RuntimeRegistryRoot 'canonical-registry.json') ([pscustomobject]@{ schemaVersion = 1; updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); surfaces = @($rows) })
 }
 
 function Ensure-Canonical {
-    param(
-        [object]$Definition,
-        [object[]]$Worktrees
-    )
-
-    if (-not $Apply) { throw 'ensure-canonical exige -Apply.' }
-    if ($TargetCommit -notmatch '^[0-9a-fA-F]{40}$') { throw 'ensure-canonical exige -TargetCommit com SHA completo de 40 caracteres.' }
-
-    $matches = @($Worktrees | Where-Object { (Normalize-PathString -Path $_.path) -eq (Normalize-PathString -Path $Definition.expectedPath) })
-    if ($matches.Count -gt 1) { throw "Slot canônico duplicado: $($Definition.surfaceType)/$($Definition.surfaceId)." }
-    if ($matches.Count -eq 1) {
-        $status = @(Invoke-Git -RepoPath $matches[0].path -Arguments @('status', '--porcelain=v1')).output
-        if (@($status | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw 'O slot canônico existente está sujo.' }
-        if ([string]$matches[0].head -ne $TargetCommit) { throw "Slot canônico já existe em $($matches[0].head), esperado $TargetCommit." }
-        $action = 'reused'
-    }
-    else {
-        if (Test-Path -LiteralPath $Definition.expectedPath) { throw "O caminho canônico existe mas não está registrado: $($Definition.expectedPath)." }
-        $commitCheck = Invoke-Git -RepoPath $ProjectRoot -Arguments @('cat-file', '-e', "$TargetCommit^{commit}")
-        if ($commitCheck.exitCode -ne 0) { throw "SHA alvo não existe no repositório: $TargetCommit." }
-        New-Item -ItemType Directory -Path (Split-Path -Parent $Definition.expectedPath) -Force | Out-Null
-        $add = Invoke-Git -RepoPath $ProjectRoot -Arguments @('worktree', 'add', '--detach', $Definition.expectedPath, $TargetCommit)
-        if ($add.exitCode -ne 0) { throw "Não foi possível criar o slot canônico: $($add.output -join ' ')" }
-        $action = 'created'
-    }
-
-    $entry = [pscustomobject]@{
-        surfaceType = $Definition.surfaceType
-        surfaceId = $Definition.surfaceId
-        label = $Definition.label
-        role = 'canonical'
-        path = $Definition.expectedPath
-        targetCommit = $TargetCommit.ToLowerInvariant()
-        source = $Definition.source
-        updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    }
-    Write-RegistryEntry -Entry $entry
-    return [pscustomobject]@{ action = $action; surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; path = $Definition.expectedPath; targetCommit = $TargetCommit.ToLowerInvariant() }
+    param([object]$Definition, [object[]]$Worktrees)
+    if (-not $Apply) { throw 'ensure-canonical exige -Apply.' }; if ($TargetCommit -notmatch '^[0-9a-fA-F]{40}$') { throw 'ensure-canonical exige -TargetCommit com SHA completo de 40 caracteres.' }
+    $matches = @($Worktrees | Where-Object { (Normalize-PathString $_.path) -eq (Normalize-PathString $Definition.expectedPath) }); if ($matches.Count -gt 1) { throw "Slot canônico duplicado: $($Definition.surfaceType)/$($Definition.surfaceId)." }
+    if ($matches.Count -eq 1) { $dirty = @(Invoke-Git $matches[0].path @('status', '--porcelain=v1')).output | Where-Object { $_ }; if ($dirty.Count) { throw 'O slot canônico existente está sujo.' }; if ([string]$matches[0].head -ne $TargetCommit) { throw "Slot canônico já existe em $($matches[0].head), esperado $TargetCommit." }; $verb = 'reused' }
+    else { if (Test-Path -LiteralPath $Definition.expectedPath) { throw "O caminho canônico existe mas não está registrado: $($Definition.expectedPath)." }; if ((Invoke-Git $ProjectRoot @('cat-file', '-e', "$TargetCommit^{commit}")).exitCode -ne 0) { throw "SHA alvo não existe no repositório: $TargetCommit." }; New-Item -ItemType Directory -Path (Split-Path -Parent $Definition.expectedPath) -Force | Out-Null; $add = Invoke-Git $ProjectRoot @('worktree', 'add', '--detach', $Definition.expectedPath, $TargetCommit); if ($add.exitCode -ne 0) { throw "Não foi possível criar o slot canônico: $($add.output -join ' ')" }; $verb = 'created' }
+    $entry = [pscustomobject]@{ surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; label = $Definition.label; role = 'canonical'; path = $Definition.expectedPath; targetCommit = $TargetCommit.ToLowerInvariant(); source = $Definition.source; updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o') }; Update-Registry $entry
+    [pscustomobject]@{ action = $verb; surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; path = $Definition.expectedPath; targetCommit = $TargetCommit.ToLowerInvariant() }
 }
 
 function Claim-Canonical {
     param([object]$Surface)
-
-    if (-not $Apply) { throw 'claim exige -Apply.' }
-    if ($Surface.status -notin @('ready', 'claimed')) { throw "Slot não está pronto para claim: $($Surface.status)." }
-    if ($Surface.worktreeCount -ne 1) { throw 'Claim exige exatamente um worktree canônico.' }
-    if (@($Surface.worktrees | Where-Object { $_.dirtyCount -gt 0 }).Count -gt 0) { throw 'Claim recusado para worktree sujo.' }
-    if ($Surface.lease.status -eq 'claimed') { throw "Slot já possui lease de $($Surface.lease.owner.owner)." }
-
-    $leasePath = $Surface.lease.path
-    New-Item -ItemType Directory -Path (Split-Path -Parent $leasePath) -Force | Out-Null
-    New-Item -ItemType Directory -Path $leasePath -Force:$false | Out-Null
-    $token = [guid]::NewGuid().ToString('N')
-    $ownerRecord = [pscustomobject]@{
-        schemaVersion = 1
-        token = $token
-        owner = $Owner
-        pid = $PID
-        claimedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-        surfaceType = $Surface.surfaceType
-        surfaceId = $Surface.surfaceId
-        path = $Surface.expectedPath
-    }
-    Write-JsonAtomic -Path (Join-Path $leasePath 'owner.json') -Value $ownerRecord
-    Update-RegistryLease -RequestedType $Surface.surfaceType -RequestedId $Surface.surfaceId -Lease ([pscustomobject]@{ owner = $Owner; token = $token; claimedAtUtc = $ownerRecord.claimedAtUtc })
-    return [pscustomobject]@{ action = 'claimed'; surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId; owner = $Owner; token = $token; path = $Surface.expectedPath }
+    if (-not $Apply) { throw 'claim exige -Apply.' }; if ($Surface.status -notin @('ready', 'claimed') -or $Surface.worktreeCount -ne 1 -or @($Surface.worktrees | Where-Object { $_.dirtyCount -gt 0 }).Count) { throw "Slot não está pronto para claim: $($Surface.status)." }; if ($Surface.lease.status -eq 'claimed') { throw "Slot já possui lease de $($Surface.lease.owner.owner)." }
+    $path = $Surface.lease.path; New-Item -ItemType Directory -Path $path -Force | Out-Null; $token = [guid]::NewGuid().ToString('N'); $ownerRecord = [pscustomobject]@{ schemaVersion = 1; token = $token; owner = $Owner; pid = $PID; claimedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId; path = $Surface.expectedPath }; Write-JsonAtomic (Join-Path $path 'owner.json') $ownerRecord
+    $entry = @((Get-RegistryState).surfaces | Where-Object { $_.surfaceType -eq $Surface.surfaceType -and $_.surfaceId -eq $Surface.surfaceId })[0]; if ($null -eq $entry) { throw 'Registro canônico ausente para claim.' }; $copy = [ordered]@{}; foreach ($p in $entry.PSObject.Properties) { $copy[$p.Name] = $p.Value }; $copy.lease = [pscustomobject]@{ owner = $Owner; token = $token; claimedAtUtc = $ownerRecord.claimedAtUtc }; Update-Registry ([pscustomobject]$copy)
+    [pscustomobject]@{ action = 'claimed'; surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId; owner = $Owner; token = $token; path = $Surface.expectedPath }
 }
 
 function Release-Canonical {
     param([object]$Surface)
-
-    if (-not $Apply) { throw 'release exige -Apply.' }
-    if ($Surface.lease.status -ne 'claimed') { return [pscustomobject]@{ action = 'already-free'; surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId } }
-    $record = $Surface.lease.owner
-    if ($record.owner -ne $Owner -and ([string]::IsNullOrWhiteSpace($LeaseToken) -or $record.token -ne $LeaseToken)) {
-        throw 'Release recusado: owner/token não corresponde ao lease.'
-    }
-    Remove-Item -LiteralPath $Surface.lease.path -Recurse -Force
-    Update-RegistryLease -RequestedType $Surface.surfaceType -RequestedId $Surface.surfaceId -Lease $null
-    return [pscustomobject]@{ action = 'released'; surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId; path = $Surface.expectedPath }
-}
-
-function Test-OpenPullRequest {
-    param([string]$Branch)
-
-    if ($SkipGitHub) { return [pscustomobject]@{ status = 'skipped'; open = $null } }
-    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ status = 'gh_missing'; open = $null } }
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $raw = @(& gh pr list --repo $Repository --head $Branch --state open --json number,title 2>&1 | ForEach-Object { [string]$_ })
-    $exitCode = $LASTEXITCODE
-    $ErrorActionPreference = $oldPreference
-    if ($exitCode -ne 0) { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
-    try {
-        $jsonText = $raw -join "`n"
-        $document = $jsonText | ConvertFrom-Json
-        $rows = if ($null -eq $document) { @() } else { @($document) }
-    }
-    catch { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
-    return [pscustomobject]@{ status = 'ok'; open = $rows.Count -gt 0; pullRequests = @($rows) }
-}
-
-function Test-SourceInUse {
-    param([string]$Path)
-
-    $wrapper = Join-Path $ProjectRoot 'scripts\invoke-skincos-wsl.ps1'
-    if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) { return [pscustomobject]@{ status = 'wrapper_missing'; inUse = $null } }
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & $wrapper -ProjectRoot $ProjectRoot -Executable 'bash' -Argument @('scripts/crm-local-process-control.sh', 'source-in-use', (Convert-ToWslPath -Path $Path)) -SkipBootstrapCheck -SkipNodeCheck -SkipNpmCheck *> $null
-    $exitCode = $LASTEXITCODE
-    $ErrorActionPreference = $oldPreference
-    if ($exitCode -eq 0) { return [pscustomobject]@{ status = 'checked'; inUse = $true } }
-    if ($exitCode -eq 1) { return [pscustomobject]@{ status = 'checked'; inUse = $false } }
-    return [pscustomobject]@{ status = 'error'; inUse = $null; exitCode = $exitCode }
+    if (-not $Apply) { throw 'release exige -Apply.' }; if ($Surface.lease.status -ne 'claimed') { return [pscustomobject]@{ action = 'already-free'; surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId } }; $record = $Surface.lease.owner; if ($record.owner -ne $Owner -and ([string]::IsNullOrWhiteSpace($LeaseToken) -or $record.token -ne $LeaseToken)) { throw 'Release recusado: owner/token não corresponde ao lease.' }; Remove-Item -LiteralPath $Surface.lease.path -Recurse -Force; Update-Registry ([pscustomobject]@{ surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId }) -RemoveLease; [pscustomobject]@{ action = 'released'; surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId; path = $Surface.expectedPath }
 }
 
 function Retire-Worktree {
-    if (-not $Apply) { throw 'retire exige -Apply.' }
-    if ([string]::IsNullOrWhiteSpace($WorktreePath)) { throw 'retire exige -WorktreePath explícito.' }
-    $normalized = Normalize-PathString -Path $WorktreePath
-    if ((Normalize-PathString -Path $ProjectRoot) -eq $normalized) { throw 'O clone compartilhado nunca pode ser aposentado.' }
-    $topology = Get-Topology
-    $canonicalRoot = Join-Path $WorktreeRoot ([string]$topology.worktree.canonicalRelativeRoot)
-    if (Test-PathWithinRoot -Path $WorktreePath -Root $canonicalRoot) { throw 'Slots canônicos não podem ser aposentados por esta ação.' }
-
-    $records = @(Get-WorktreeRecords -RepoPath $ProjectRoot -IncludeStatus -OnlyPath $WorktreePath)
-    if ($records.Count -ne 1) { throw "Worktree não encontrado ou ambíguo: $WorktreePath." }
-    $record = $records[0]
-    if (-not $record.exists) { throw 'Worktree não existe no filesystem.' }
-    if ($record.dirtyCount -gt 0) { throw 'Worktree sujo: preservação obrigatória.' }
-    if ($record.detached) { throw 'Worktree detached: confirmação manual obrigatória.' }
-    if ($record.prunable) { throw 'Worktree já prunable: resolver estado Git antes da remoção.' }
-    if ([string]::IsNullOrWhiteSpace($record.branch)) { throw 'Worktree sem branch não pode ser aposentado automaticamente.' }
-
-    $remote = Invoke-Git -RepoPath $ProjectRoot -Arguments @('show-ref', '--verify', '--quiet', "refs/remotes/origin/$($record.branch)")
-    if ($remote.exitCode -eq 0) { throw 'Branch possui tracking remoto; revisão manual obrigatória.' }
-    $ancestor = Invoke-Git -RepoPath $ProjectRoot -Arguments @('merge-base', '--is-ancestor', $record.head, 'origin/main')
-    if ($ancestor.exitCode -ne 0) { throw 'Worktree não é ancestral de origin/main.' }
-
-    $pr = Test-OpenPullRequest -Branch $record.branch
-    if ($pr.status -ne 'ok' -or $pr.open) { throw "PR não foi comprovadamente encerrado: $($pr | ConvertTo-Json -Compress -Depth 6)" }
-
-    $manifestReferences = @(Get-ManifestReferences | Where-Object { Test-PathWithinRoot -Path $_.value -Root $record.path })
-    if ($manifestReferences.Count -gt 0) { throw 'Manifesto de runtime referencia o worktree.' }
-    $leaseKey = @((Get-RegistryState).surfaces | Where-Object { (Normalize-PathString -Path $_.path) -eq $normalized })
-    if ($leaseKey.Count -gt 0 -and $leaseKey[0].lease) { throw 'Lease de runtime referencia o worktree.' }
-    $sourceUse = Test-SourceInUse -Path $record.path
-    if ($sourceUse.status -ne 'checked' -or $sourceUse.inUse) { throw "source-in-use não confirmou ausência de processo: $($sourceUse | ConvertTo-Json -Compress)" }
-
-    $removed = Invoke-Git -RepoPath $ProjectRoot -Arguments @('worktree', 'remove', '--', $record.path)
-    if ($removed.exitCode -ne 0) { throw "git worktree remove falhou: $($removed.output -join ' ')" }
-    $prune = Invoke-Git -RepoPath $ProjectRoot -Arguments @('worktree', 'prune')
-    if ($prune.exitCode -ne 0) { throw "git worktree prune falhou: $($prune.output -join ' ')" }
-    return [pscustomobject]@{ action = 'retired'; path = $record.path; branch = $record.branch; head = $record.head; sourceInUse = $sourceUse }
+    if (-not $Apply) { throw 'retire exige -Apply.' }; if ([string]::IsNullOrWhiteSpace($WorktreePath)) { throw 'retire exige -WorktreePath explícito.' }; $normalized = Normalize-PathString $WorktreePath; if ((Normalize-PathString $ProjectRoot) -eq $normalized) { throw 'O clone compartilhado nunca pode ser aposentado.' }
+    $topology = Get-Topology; $canonicalRoot = Join-Path $WorktreeRoot ([string]$topology.worktree.canonicalRelativeRoot); if (Test-PathWithinRoot $WorktreePath $canonicalRoot) { throw 'Slots canônicos não podem ser aposentados por esta ação.' }; $record = @(Get-WorktreeRecords $ProjectRoot -IncludeStatus -OnlyPath $WorktreePath); if ($record.Count -ne 1) { throw "Worktree não encontrado ou ambíguo: $WorktreePath." }; $record = $record[0]
+    if (-not $record.exists -or $record.dirtyCount -gt 0 -or $record.detached -or $record.prunable -or [string]::IsNullOrWhiteSpace($record.branch)) { throw 'Worktree não atende aos requisitos de aposentadoria segura.' }; if ((Invoke-Git $ProjectRoot @('show-ref', '--verify', '--quiet', "refs/remotes/origin/$($record.branch)")).exitCode -eq 0) { throw 'Branch possui tracking remoto; revisão manual obrigatória.' }; if ((Invoke-Git $ProjectRoot @('merge-base', '--is-ancestor', $record.head, 'origin/main')).exitCode -ne 0) { throw 'Worktree não é ancestral de origin/main.' }; if (@(Get-ManifestReferences | Where-Object { Test-PathWithinRoot $_.value $record.path }).Count) { throw 'Manifesto de runtime referencia o worktree.' }
+    throw 'Aposentadoria automática requer verificação externa de processos; remova pelo fluxo operacional apropriado.'
 }
 
-$topology = Get-Topology
-$definitions = @(Get-SurfaceDefinitions -Topology $topology)
-$requiresInventory = $Action -in @('inventory', 'plan', 'claim', 'release')
-$worktrees = @(Get-WorktreeRecords -RepoPath $ProjectRoot -IncludeStatus:$requiresInventory)
-$registry = Get-RegistryState
-$inventory = if ($requiresInventory) { Get-CanonicalInventory -Topology $topology -Definitions $definitions -Worktrees $worktrees -Registry $registry } else { $null }
-
+$topology = Get-Topology; $definitions = @(Get-SurfaceDefinitions $topology); $needInventory = $Action -in @('inventory', 'plan', 'claim', 'release'); $worktrees = @(Get-WorktreeRecords $ProjectRoot -IncludeStatus:$needInventory); $registry = Get-RegistryState; $inventory = if ($needInventory) { Get-Inventory $topology $definitions $worktrees $registry } else { $null }
 switch ($Action) {
-    'inventory' {
-        $inventory | ConvertTo-Json -Depth 16
-    }
+    'inventory' { $inventory | ConvertTo-Json -Depth 16 }
     'plan' {
         $actions = @($inventory.surfaces | ForEach-Object {
-            switch ($_.status) {
-                'missing' { [pscustomobject]@{ action = 'ensure-canonical'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $true; reason = 'canonical_slot_missing'; mutation = 'requires -Apply and explicit -TargetCommit' } }
-                'ready' { [pscustomobject]@{ action = 'none'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $false; reason = 'canonical_slot_ready'; mutation = 'none' } }
-                'claimed' { [pscustomobject]@{ action = 'none'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $false; reason = 'canonical_slot_claimed'; mutation = 'none' } }
-                default { [pscustomobject]@{ action = 'review'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $true; reason = $_.status; mutation = 'blocked_fail_closed' } }
+            if ($_.status -eq 'missing') {
+                [pscustomobject]@{ action = 'ensure-canonical'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $true; reason = 'canonical_slot_missing'; mutation = 'requires -Apply and explicit -TargetCommit' }
+            }
+            elseif ($_.status -in @('ready', 'claimed')) {
+                [pscustomobject]@{ action = 'none'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $false; reason = "canonical_slot_$($_.status)"; mutation = 'none' }
+            }
+            else {
+                [pscustomobject]@{ action = 'review'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $true; reason = $_.status; mutation = 'blocked_fail_closed' }
             }
         })
         [pscustomobject]@{ inventory = $inventory; actions = $actions } | ConvertTo-Json -Depth 16
     }
-    'ensure-canonical' {
-        $definition = Get-SurfaceDefinition -Definitions $definitions -RequestedType $SurfaceType -RequestedId $SurfaceId
-        Ensure-Canonical -Definition $definition -Worktrees $worktrees | ConvertTo-Json -Depth 12
-    }
-    'claim' {
-        $surface = Get-SurfaceDefinition -Definitions $definitions -RequestedType $SurfaceType -RequestedId $SurfaceId
-        $row = @($inventory.surfaces | Where-Object { $_.surfaceType -eq $surface.surfaceType -and $_.surfaceId -eq $surface.surfaceId })[0]
-        Claim-Canonical -Surface $row | ConvertTo-Json -Depth 12
-    }
-    'release' {
-        $surface = Get-SurfaceDefinition -Definitions $definitions -RequestedType $SurfaceType -RequestedId $SurfaceId
-        $row = @($inventory.surfaces | Where-Object { $_.surfaceType -eq $surface.surfaceType -and $_.surfaceId -eq $surface.surfaceId })[0]
-        Release-Canonical -Surface $row | ConvertTo-Json -Depth 12
-    }
-    'retire' {
-        Retire-Worktree | ConvertTo-Json -Depth 12
-    }
+    'ensure-canonical' { Ensure-Canonical (Get-Definition $definitions) $worktrees | ConvertTo-Json -Depth 12 }
+    'claim' { $d = Get-Definition $definitions; Claim-Canonical (@($inventory.surfaces | Where-Object { $_.surfaceType -eq $d.surfaceType -and $_.surfaceId -eq $d.surfaceId })[0]) | ConvertTo-Json -Depth 12 }
+    'release' { $d = Get-Definition $definitions; Release-Canonical (@($inventory.surfaces | Where-Object { $_.surfaceType -eq $d.surfaceType -and $_.surfaceId -eq $d.surfaceId })[0]) | ConvertTo-Json -Depth 12 }
+    'retire' { Retire-Worktree | ConvertTo-Json -Depth 12 }
 }

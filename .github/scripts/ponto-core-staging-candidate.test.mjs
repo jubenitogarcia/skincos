@@ -441,7 +441,7 @@ test("accepts only the exact immutable Ponto tag and records it separately from 
 
 test("rejects forged child provenance, public exposure, and non-exact canonical drill evidence", () => {
   const forgedRun = input();
-  forgedRun.upstream.core.run.workflowPath = ".github/workflows/deploy-crm-pages.yml";
+  forgedRun.upstream.core.run.workflowPath = ".github/workflows/ponto-pages-governed-publisher.yml";
   assert.throws(() => validateCandidateInput(forgedRun), /PONTO_CORE_STAGING_CANDIDATE_INVALID:CORE_RUN_PROVENANCE/);
 
   const foreignHead = input();
