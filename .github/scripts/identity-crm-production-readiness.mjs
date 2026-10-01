@@ -29,6 +29,11 @@ const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const ZONE_ID_PATTERN = /^[0-9a-f]{32}$/i;
 const READ_METHOD = 'GET';
+const MAX_READ_PAGES = 100;
+// Cloudflare's zone-list endpoint accepts at most 50 entries per page.
+// Use that supported limit for every paginated inventory so the same strict
+// pagination helper can prove that every returned page was inspected.
+const READ_PAGE_SIZE = 50;
 const PRODUCTION_ATTESTATION_ENV = Object.freeze({
   custody: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_ATTESTED',
   caller: 'IDENTITY_CRM_DELIVERY_PRODUCTION_CALLER_ATTESTED',
@@ -87,6 +92,12 @@ function resultArray(value, key) {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.[key])) return value[key];
   return [];
+}
+
+function requiredResultArray(value, key) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.[key])) return value[key];
+  return null;
 }
 
 function sanitizeBindings(settings) {
@@ -151,18 +162,26 @@ export function sanitizeSecretInventory(value) {
   };
 }
 
-export function sanitizeRoutes(value, workerName) {
+export function sanitizeRoutes(value, workerName, zoneCount = 0) {
   const entries = resultArray(value, 'routes');
   const matches = entries
-    .filter((route) => route?.script === workerName)
+    .filter((route) => route?.script === workerName || route?.service === workerName)
     .map((route) => ({
       pattern: typeof route.pattern === 'string' ? route.pattern.slice(0, 512) : null,
       script: workerName,
     }))
     .filter((route) => route.pattern);
   return {
+    zonesInspected: Number.isInteger(zoneCount) && zoneCount > 0 ? zoneCount : 0,
     count: matches.length,
     patterns: matches.map((route) => route.pattern).sort(),
+  };
+}
+
+export function sanitizeCustomDomains(value, workerName) {
+  const entries = resultArray(value, 'domains');
+  return {
+    count: entries.filter((domain) => domain?.service === workerName || domain?.script === workerName).length,
   };
 }
 
@@ -179,8 +198,8 @@ function hasAvailableEndpoint(endpoint) {
   return endpoint?.state === 'available';
 }
 
-function endpointWithResult(result) {
-  return endpointState('available', { result });
+function endpointWithResult(result, resultInfo = null) {
+  return endpointState('available', { result, resultInfo });
 }
 
 function credentialsState(env) {
@@ -205,8 +224,8 @@ function credentialsState(env) {
   return { usable: true, accountIdPresent: true, apiTokenPresent: true };
 }
 
-function cloudflareReader({ accountId, apiToken, fetchImpl = fetch }) {
-  const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}`;
+function cloudflareReader({ apiToken, fetchImpl = fetch }) {
+  const baseUrl = 'https://api.cloudflare.com/client/v4';
   return async (relativePath) => {
     const response = await fetchImpl(`${baseUrl}${relativePath}`, {
       method: READ_METHOD,
@@ -226,17 +245,131 @@ function cloudflareReader({ accountId, apiToken, fetchImpl = fetch }) {
       });
     }
     if (!response.ok || payload?.success !== true) return summarizeApiError(response, payload);
-    return endpointWithResult(payload.result);
+    return endpointWithResult(payload.result, payload.result_info || null);
   };
 }
 
-async function readProductionWorker({ reader, workerName }) {
+function appendQuery(relativePath, values) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+  }
+  const encoded = query.toString();
+  return encoded ? `${relativePath}${relativePath.includes('?') ? '&' : '?'}${encoded}` : relativePath;
+}
+
+async function readPaginated(reader, relativePath, key, { allowTotalCountOnly = false } = {}) {
+  const items = [];
+  let expectedTotal = null;
+  let expectedPages = null;
+  let expectedPerPage = null;
+  for (let page = 1; page <= MAX_READ_PAGES; page += 1) {
+    const endpoint = await reader(appendQuery(relativePath, { page, per_page: READ_PAGE_SIZE }));
+    if (!hasAvailableEndpoint(endpoint)) return endpoint;
+    const entries = requiredResultArray(endpoint.result, key);
+    if (!entries) return unavailableEndpoint('malformed-list-response');
+    items.push(...entries);
+    if (endpoint.resultInfo !== null) {
+      const totalPages = endpoint.resultInfo?.total_pages;
+      const totalCount = endpoint.resultInfo?.total_count;
+      const currentPage = endpoint.resultInfo?.page;
+      const hasTotalPages = Number.isInteger(totalPages);
+      const hasTotalCount = Number.isInteger(totalCount);
+      if (endpoint.resultInfo?.total_pages !== undefined && !hasTotalPages) {
+        return unavailableEndpoint('malformed-pagination-metadata');
+      }
+      if (hasTotalPages) {
+        if (!hasTotalCount || totalPages < 0 || totalCount < 0
+          || (currentPage !== undefined && (!Number.isInteger(currentPage) || currentPage !== page))) {
+          return unavailableEndpoint('malformed-pagination-metadata');
+        }
+        if (totalPages === 0) {
+          return totalCount === 0 && items.length === 0
+            ? endpointWithResult(items, { pages: page, total_count: totalCount })
+            : unavailableEndpoint('inconsistent-pagination');
+        }
+        if (totalPages < page
+          || (expectedPages !== null && totalPages !== expectedPages)
+          || (expectedTotal !== null && totalCount !== expectedTotal)) {
+          return unavailableEndpoint('inconsistent-pagination');
+        }
+        expectedPages = totalPages;
+        expectedTotal = totalCount;
+        if (page === expectedPages) {
+          return items.length === expectedTotal
+            ? endpointWithResult(items, { pages: page, total_count: expectedTotal })
+            : unavailableEndpoint('incomplete-pagination');
+        }
+        if (items.length > expectedTotal) return unavailableEndpoint('inconsistent-pagination');
+        continue;
+      }
+      const count = endpoint.resultInfo?.count;
+      const perPage = endpoint.resultInfo?.per_page;
+      if (!allowTotalCountOnly || !hasTotalCount
+        || !Number.isInteger(count) || !Number.isInteger(perPage)
+        || totalCount < 0 || count < 0 || perPage < 1
+        || count !== entries.length || count > perPage
+        || endpoint.resultInfo?.page !== page
+        || (expectedTotal !== null && totalCount !== expectedTotal)
+        || (expectedPerPage !== null && perPage !== expectedPerPage)) {
+        return unavailableEndpoint('malformed-pagination-metadata');
+      }
+      expectedTotal = totalCount;
+      expectedPerPage = perPage;
+      if (items.length === expectedTotal) {
+        return endpointWithResult(items, { pages: page, total_count: expectedTotal });
+      }
+      if (items.length > expectedTotal) return unavailableEndpoint('inconsistent-pagination');
+      if (count === 0) return unavailableEndpoint('incomplete-pagination');
+      continue;
+    }
+    if (entries.length < READ_PAGE_SIZE) {
+      return endpointWithResult(items, { pages: page, total_count: null });
+    }
+  }
+  return unavailableEndpoint('pagination-limit-exceeded');
+}
+
+async function readList(reader, relativePath, key) {
+  const endpoint = await reader(relativePath);
+  if (!hasAvailableEndpoint(endpoint)) return endpoint;
+  const entries = requiredResultArray(endpoint.result, key);
+  return entries ? endpointWithResult(entries) : unavailableEndpoint('malformed-list-response');
+}
+
+async function readAccountWideExposure({ reader, accountId }) {
+  const zones = await readPaginated(reader, appendQuery('/zones', { 'account.id': accountId }), 'zones');
+  if (!hasAvailableEndpoint(zones)) return { routes: zones, domains: notAttemptedEndpoint('zone-inventory-unavailable') };
+  const zoneIds = zones.result.map((zone) => string(zone?.id));
+  if (zoneIds.length === 0 || new Set(zoneIds).size !== zoneIds.length
+    || !zones.result.every((zone) => ZONE_ID_PATTERN.test(string(zone?.id)) && zone?.account?.id === accountId)) {
+    return { routes: unavailableEndpoint('malformed-account-zone-inventory'), domains: notAttemptedEndpoint('zone-inventory-invalid') };
+  }
+  const domainsPromise = readPaginated(
+    reader,
+    `/accounts/${encodeURIComponent(accountId)}/workers/domains`,
+    'domains',
+    { allowTotalCountOnly: true },
+  );
+  const routeStates = await Promise.all(zoneIds.map((zoneId) =>
+    readList(reader, `/zones/${encodeURIComponent(zoneId)}/workers/routes`, 'routes')));
+  const domains = await domainsPromise;
+  const unavailableRoute = routeStates.find((endpoint) => !hasAvailableEndpoint(endpoint));
+  if (unavailableRoute) return { routes: unavailableEndpoint('zone-route-inventory-unavailable'), domains };
+  return {
+    routes: endpointWithResult(routeStates.flatMap((endpoint) => endpoint.result), { zoneCount: zoneIds.length }),
+    domains,
+  };
+}
+
+async function readProductionWorker({ reader, accountId, workerName }) {
   const encodedWorkerName = encodeURIComponent(workerName);
+  const workerPath = `/accounts/${accountId}/workers/scripts/${encodedWorkerName}`;
   const [settings, deployments, secrets, subdomain] = await Promise.all([
-    reader(`/workers/scripts/${encodedWorkerName}/settings`),
-    reader(`/workers/scripts/${encodedWorkerName}/deployments`),
-    reader(`/workers/scripts/${encodedWorkerName}/secrets`),
-    reader(`/workers/scripts/${encodedWorkerName}/subdomain`),
+    reader(`${workerPath}/settings`),
+    reader(`${workerPath}/deployments`),
+    reader(`${workerPath}/secrets`),
+    reader(`${workerPath}/subdomain`),
   ]);
   return workerReadback({ settings, deployments, secrets, subdomain });
 }
@@ -247,6 +380,7 @@ export function evaluateIdentityCrmProductionReadiness({
   cloudflareCredentials,
   worker,
   routes,
+  domains,
   custodyRefPresent = false,
   custodyAttested = false,
   callerAttested = false,
@@ -265,8 +399,11 @@ export function evaluateIdentityCrmProductionReadiness({
     : { count: 0, names: [], valuesReadOrEmitted: false };
   const subdomain = worker?.subdomain?.state === 'available' ? worker.subdomain.result : null;
   const routeReadback = routes?.state === 'available'
-    ? sanitizeRoutes(routes.result, productionWorker)
-    : { count: 0, patterns: [] };
+    ? sanitizeRoutes(routes.result, productionWorker, routes.resultInfo?.zoneCount)
+    : { zonesInspected: 0, count: 0, patterns: [] };
+  const domainReadback = domains?.state === 'available'
+    ? sanitizeCustomDomains(domains.result, productionWorker)
+    : { count: 0 };
 
   if (productionWorker !== PRODUCTION_WORKER_NAME) {
     blockers.push('production worker name is not the canonical Identity owner');
@@ -295,11 +432,18 @@ export function evaluateIdentityCrmProductionReadiness({
     blockers.push('production Worker public subdomain state could not be read');
   } else if (subdomain?.enabled !== false) {
     blockers.push('production Worker public workers.dev access is not proven disabled');
+  } else if (subdomain?.previews_enabled !== false) {
+    blockers.push('production Worker preview URLs are not proven disabled');
   }
-  if (!hasAvailableEndpoint(routes)) {
-    blockers.push('production Worker route inventory could not be read');
+  if (!hasAvailableEndpoint(routes) || routeReadback.zonesInspected < 1) {
+    blockers.push('account-wide production Worker route inventory could not be read');
   } else if (routeReadback.count > 0) {
     blockers.push('production Worker has a route; private Identity delivery must not have a public route');
+  }
+  if (!hasAvailableEndpoint(domains)) {
+    blockers.push('production Worker custom-domain inventory could not be read');
+  } else if (domainReadback.count > 0) {
+    blockers.push('production Worker has a custom domain; private Identity delivery must not have a public domain');
   }
   if (!custodyRefPresent || !custodyAttested) {
     blockers.push('durable Identity-owned key custody is not externally attested');
@@ -339,10 +483,12 @@ export function evaluateIdentityCrmProductionReadiness({
       secrets: worker?.secrets?.state || 'not-read',
       subdomain: worker?.subdomain?.state || 'not-read',
       routeInventory: routes?.state || 'not-read',
+      customDomains: domains?.state || 'not-read',
       workerSettings: sanitizedSettings,
       deploymentBaseline: deploymentReadback,
       secretInventory: secretReadback,
       routeReadback: routeReadback,
+      customDomainReadback: domainReadback,
     },
     attestations: {
       custodyReferencePresent: Boolean(custodyRefPresent),
@@ -367,20 +513,18 @@ export async function runIdentityCrmProductionReadiness({ env = process.env, fet
     subdomain: notAttemptedEndpoint(),
   });
   let routes = notAttemptedEndpoint();
+  let domains = notAttemptedEndpoint();
 
   if (credentials.usable) {
     const reader = cloudflareReader({
-      accountId: string(env.CLOUDFLARE_ACCOUNT_ID),
       apiToken: string(env.CLOUDFLARE_API_TOKEN),
       fetchImpl,
     });
-    worker = await readProductionWorker({ reader, workerName });
-    const zoneId = string(env.CLOUDFLARE_ZONE_ID);
-    if (zoneId && ZONE_ID_PATTERN.test(zoneId)) {
-      routes = await reader(`/zones/${zoneId}/workers/routes?per_page=1000`);
-    } else {
-      routes = endpointState('not-configured', { reason: 'CLOUDFLARE_ZONE_ID is required for route readback' });
-    }
+    worker = await readProductionWorker({ reader, accountId: string(env.CLOUDFLARE_ACCOUNT_ID), workerName });
+    ({ routes, domains } = await readAccountWideExposure({
+      reader,
+      accountId: string(env.CLOUDFLARE_ACCOUNT_ID),
+    }));
   }
 
   const report = evaluateIdentityCrmProductionReadiness({
@@ -389,6 +533,7 @@ export async function runIdentityCrmProductionReadiness({ env = process.env, fet
     cloudflareCredentials: credentials,
     worker,
     routes,
+    domains,
     custodyRefPresent: present(env.IDENTITY_CRM_DELIVERY_PRODUCTION_CUSTODY_REF),
     custodyAttested: booleanEnv(env[PRODUCTION_ATTESTATION_ENV.custody]),
     callerAttested: booleanEnv(env[PRODUCTION_ATTESTATION_ENV.caller]),
