@@ -26,8 +26,12 @@ dívidas com arquivo, specifier, motivo, contrato de substituição e prazo. O C
 emite uma anotação para cada uma e passa a falhar após o prazo; quando a
 migração termina, a entrada precisa ser removida no mesmo PR.
 
-Baseline atual: cinco dívidas históricas estão registradas no manifesto, cada
-uma com arquivo, specifier, contrato alvo e prazo verificável pelo CI. Elas
-cobrem os mounts transitórios API → Inventory/Finance, um teste CRM → Inventory
-e o smoke Finance → dependência local do CRM. A sessão Identity usa o adapter
-registrado `identity-runtime-adapter-v1`, sem exceção permanente para Inventory.
+Baseline atual: não há importações diretas históricas registradas. A
+compatibilidade stateful API -> Inventory fica em `statefulServiceBindings`,
+com consumer/produtor, service binding/entrypoint, DTO, capability de health,
+ordem de deploy/rollback, revisão até 2026-11-30 e condição de aposentadoria
+validados. Ela preserva os
+Durable Objects legados da API enquanto a regra de negócio da fila passa para
+Inventory; não é uma autorização para novos imports diretos. A sessão Identity
+usa o adapter registrado `identity-runtime-adapter-v1`, sem exceção permanente
+para Inventory.

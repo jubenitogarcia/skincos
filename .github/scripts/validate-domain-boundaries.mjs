@@ -83,8 +83,8 @@ try {
   process.exit(1);
 }
 
-if (policy.schemaVersion !== 1 || !Array.isArray(policy.contracts) || !Array.isArray(policy.recommendedContracts) || !Array.isArray(policy.legacyDirectImports)) {
-  fail("shared/domain-boundaries.json must declare schemaVersion 1, contracts, recommendedContracts and legacyDirectImports");
+if (policy.schemaVersion !== 1 || !Array.isArray(policy.contracts) || !Array.isArray(policy.recommendedContracts) || !Array.isArray(policy.legacyDirectImports) || !Array.isArray(policy.statefulServiceBindings)) {
+  fail("shared/domain-boundaries.json must declare schemaVersion 1, contracts, recommendedContracts, legacyDirectImports and statefulServiceBindings");
 }
 
 const contractsById = new Map();
@@ -130,6 +130,60 @@ for (const legacy of policy.legacyDirectImports ?? []) {
   const key = `${legacy.from}:${legacy.specifier}`;
   if (legacyImports.has(key)) fail(`duplicate legacy direct import ${key}`);
   legacyImports.set(key, legacy);
+}
+
+const statefulServiceBindings = new Map();
+for (const binding of policy.statefulServiceBindings ?? []) {
+  const orderedPair = (value, first, second) => Array.isArray(value)
+    && value.length === 2
+    && value[0] === first
+    && value[1] === second;
+  const validVerification = Array.isArray(binding?.verification)
+    && binding.verification.length > 0
+    && binding.verification.every((check) =>
+      nonEmptyString(check?.path)
+      && !path.isAbsolute(check.path)
+      && !check.path.split(/[\\/]/).includes("..")
+      && Array.isArray(check?.mustContain)
+      && check.mustContain.length > 0
+      && check.mustContain.every(nonEmptyString),
+    );
+  const validService = binding?.service
+    && nonEmptyString(binding.service.production)
+    && nonEmptyString(binding.service.staging);
+  if (!binding || !nonEmptyString(binding.id) || !governedRoots.has(binding.consumer) || !governedRoots.has(binding.producer)
+    || binding.consumer === binding.producer || !nonEmptyString(binding.serviceBinding) || !validService
+    || !nonEmptyString(binding.entrypoint) || !nonEmptyString(binding.rpcMethod) || !nonEmptyString(binding.dtoContract)
+    || !nonEmptyString(binding.healthCapability) || !/^\d{4}-\d{2}-\d{2}$/.test(binding.reviewBy ?? "")
+    || !nonEmptyString(binding.reviewTrigger) || !nonEmptyString(binding.retirementCondition)
+    || !orderedPair(binding.deployOrder, binding.producer, binding.consumer)
+    || !orderedPair(binding.rollbackOrder, binding.consumer, binding.producer)
+    || !validVerification) {
+    fail("each stateful service binding must declare consumer/producer, service, binding, entrypoint, RPC DTO/capability, inverse deploy/rollback order, review date/retirement conditions and source verification");
+    continue;
+  }
+  if (statefulServiceBindings.has(binding.id)) {
+    fail(`duplicate stateful service binding id ${binding.id}`);
+    continue;
+  }
+  statefulServiceBindings.set(binding.id, binding);
+  const today = new Date().toISOString().slice(0, 10);
+  if (today > binding.reviewBy) {
+    fail(`stateful service binding ${binding.id} review expired on ${binding.reviewBy}; renew or retire the bridge with a proven state migration plan`);
+  }
+  for (const check of binding.verification) {
+    const verificationPath = path.join(root, check.path);
+    if (!fs.existsSync(verificationPath)) {
+      fail(`stateful service binding ${binding.id} points to missing verification path ${check.path}`);
+      continue;
+    }
+    const source = fs.readFileSync(verificationPath, "utf8");
+    for (const fragment of check.mustContain) {
+      if (!source.includes(fragment)) {
+        fail(`stateful service binding ${binding.id} verification path ${check.path} is missing required fragment ${JSON.stringify(fragment)}`);
+      }
+    }
+  }
 }
 
 const usedLegacyImports = new Set();

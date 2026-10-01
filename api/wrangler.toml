@@ -45,6 +45,11 @@ binding = "INVENTORY"
 service = "skincos-insumos"
 
 [[services]]
+binding = "INVENTORY_LEGACY_JOBS"
+service = "skincos-insumos"
+entrypoint = "InventoryLegacyJobsEntrypoint"
+
+[[services]]
 binding = "TIMEKEEPING"
 service = "skincos-timekeeping"
 
@@ -89,6 +94,11 @@ database_id = "4bdd7995-ad69-465a-917c-0aab22db5c4e"
 [[env.staging.services]]
 binding = "INVENTORY"
 service = "skincos-insumos-staging"
+
+[[env.staging.services]]
+binding = "INVENTORY_LEGACY_JOBS"
+service = "skincos-insumos-staging"
+entrypoint = "InventoryLegacyJobsEntrypoint"
 
 [[env.staging.services]]
 binding = "TIMEKEEPING"

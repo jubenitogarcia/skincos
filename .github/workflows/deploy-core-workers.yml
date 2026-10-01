@@ -50,6 +50,10 @@ on:
         options: [pilot, canary, production]
       timekeeping_candidate_version_id: { description: "Required for Ponto pilot Core upload", required: false, type: string }
       timekeeping_version_id: { description: "Required for every general Core API deploy to prevent stale service affinity", required: false, type: string }
+      inventory_legacy_jobs_release_sha:
+        description: "Required for a general API-only deploy after the InventoryLegacyJobsEntrypoint cutover; attest the active Inventory source SHA and legacy-api-jobs-rpc/v1 capability. Use unit=all for the first paired deployment."
+        required: false
+        type: string
       orchestrator_run_id: { description: "Ponto coordinator correlation ID", required: false, type: string }
       orchestrator_stage: { description: "Exact stage of the issuing Ponto coordinator", required: false, type: string }
       orchestrator_issuer_run_id: { description: "Exact direct issuer run", required: false, type: string }
@@ -774,6 +778,7 @@ jobs:
           RELEASE_SCOPE: ${{ inputs.release_scope }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
           TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+          INVENTORY_LEGACY_JOBS_RELEASE_SHA: ${{ inputs.inventory_legacy_jobs_release_sha }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "staging" ]]; then
@@ -841,6 +846,78 @@ jobs:
               --var "UNIFIED_TEAM_ENABLED:$unified_team_var"
           fi
           if [[ "$UNIT" == "api" || "$UNIT" == "all" ]]; then
+            # The API's retained JobQueue Durable Object now calls the
+            # Inventory named RPC entrypoint. The first cutover must deploy
+            # both workers in this order; later API-only releases must attest
+            # the active Inventory version that already exports that entrypoint.
+            if [[ "$RELEASE_SCOPE" == "general" ]]; then
+              if [[ "$UNIT" == "all" ]]; then
+                expected_inventory_sha="$RELEASE_SHA"
+              else
+                expected_inventory_sha="$INVENTORY_LEGACY_JOBS_RELEASE_SHA"
+              fi
+              [[ "$expected_inventory_sha" =~ ^[0-9a-fA-F]{40}$ ]] || {
+                echo 'API-only release requires inventory_legacy_jobs_release_sha; use unit=all for the first paired Inventory -> API cutover.'
+                exit 1
+              }
+              if [[ "$TARGET" == "staging" ]]; then
+                inventory_health_url='https://api-staging.skincos.com.br/insumos/health'
+              else
+                inventory_health_url='https://api.skincos.com.br/insumos/health'
+              fi
+              node --input-type=module - "$expected_inventory_sha" "$inventory_health_url" <<'NODE'
+              const [expectedSha, inventoryHealthUrl] = process.argv.slice(2);
+              const propagationDeadline = Date.now() + 75_000;
+              let consecutiveValidSamples = 0;
+              let lastValidSampleKey = '';
+              let lastObservation = 'no response';
+              let attempt = 0;
+              let passed = false;
+
+              while (Date.now() <= propagationDeadline) {
+                attempt += 1;
+                const probe = new URL(inventoryHealthUrl);
+                probe.searchParams.set('legacy_jobs_release_probe', `${Date.now()}-${attempt}`);
+                try {
+                  const response = await fetch(probe, {
+                    redirect: 'manual',
+                    signal: AbortSignal.timeout(15_000),
+                    headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+                  });
+                  const health = await response.json().catch(() => null);
+                  const workerVersionId = String(health?.workerVersion?.id || '').toLowerCase();
+                  const validSample = response.status === 200
+                    && health?.ready === true
+                    && String(health?.version || '').toLowerCase() === expectedSha.toLowerCase()
+                    && health?.legacyApiJobsRpc === 'legacy-api-jobs-rpc/v1';
+                  const sampleKey = `${health?.version || ''}:${health?.legacyApiJobsRpc || ''}:${workerVersionId}`;
+                  if (validSample && sampleKey === lastValidSampleKey) consecutiveValidSamples += 1;
+                  else if (validSample) {
+                    lastValidSampleKey = sampleKey;
+                    consecutiveValidSamples = 1;
+                  } else {
+                    lastValidSampleKey = '';
+                    consecutiveValidSamples = 0;
+                  }
+                  lastObservation = `HTTP ${response.status}, version=${String(health?.version || '')}, capability=${String(health?.legacyApiJobsRpc || '')}, workerVersionId=${workerVersionId}`;
+                  if (consecutiveValidSamples >= 2) {
+                    passed = true;
+                    break;
+                  }
+                } catch (error) {
+                  lastValidSampleKey = '';
+                  consecutiveValidSamples = 0;
+                  lastObservation = error instanceof Error ? error.message : String(error);
+                }
+                const remainingMs = propagationDeadline - Date.now();
+                if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(5_000, remainingMs)));
+              }
+
+              if (!passed) {
+                throw new Error(`Inventory health did not attest the required InventoryLegacyJobsEntrypoint release in two consecutive samples within the propagation window; attempts=${attempt}; last=${lastObservation}`);
+              }
+              NODE
+            fi
             [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Core API deploy requires an explicit Timekeeping version UUID'; exit 1; }
             if [[ "$BOOTSTRAP_FINANCE_CONTEXT" == "true" ]]; then
               [[ "$TARGET" == "staging" ]] || { echo 'Finance context bootstrap is staging-only.'; exit 1; }

@@ -1,0 +1,26 @@
+{
+  "name": "@jubenitogarcia/skincos-delivery-contract",
+  "version": "1.0.0",
+  "description": "Portable SKINCOS multi-repository release identity contract.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

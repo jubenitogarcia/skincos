@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev --config wrangler.toml",
     "deploy": "wrangler deploy --config wrangler.toml --keep-vars",
-    "test": "node --test test/gateway.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "lint": "echo \"(todo)\""
   },
   "devDependencies": {

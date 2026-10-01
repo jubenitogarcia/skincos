@@ -6,13 +6,34 @@ on:
       unit: { required: true, type: string }
       target: { required: true, type: string }
       release_sha: { required: false, type: string, default: "" }
+      source_repository: { required: false, type: string, default: "" }
+      source_commit: { required: false, type: string, default: "" }
+      source_tree: { required: false, type: string, default: "" }
+      source_ref: { required: false, type: string, default: "" }
+      release_input_digest: { required: false, type: string, default: "" }
+      delivery_contract_version: { required: false, type: string, default: "" }
+      contract_manifest_digest: { required: false, type: string, default: "" }
+      contract_versions_json: { required: false, type: string, default: "" }
+      artifact_identities_json: { required: false, type: string, default: "" }
       preview_run_id: { required: false, type: string, default: "" }
       staging_run_id: { required: false, type: string, default: "" }
+      predecessor_repository: { required: false, type: string, default: "" }
+      predecessor_run_id: { required: false, type: string, default: "" }
+      predecessor_artifact: { required: false, type: string, default: "" }
       staging_supported: { required: false, type: boolean, default: true }
       emit_preview_evidence: { required: false, type: boolean, default: true }
+    secrets:
+      cross_repo_token:
+        required: false
     outputs:
       source_sha:
         value: ${{ jobs.gate.outputs.source_sha }}
+      source_repository:
+        value: ${{ jobs.gate.outputs.source_repository }}
+      source_tree:
+        value: ${{ jobs.gate.outputs.source_tree }}
+      source_ref:
+        value: ${{ jobs.gate.outputs.source_ref }}
       release_input_digest:
         value: ${{ jobs.gate.outputs.release_input_digest }}
       dependency_closure_digest:
@@ -29,6 +50,9 @@ jobs:
       contents: read
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
+      source_repository: ${{ steps.identity.outputs.source_repository }}
+      source_tree: ${{ steps.identity.outputs.source_tree }}
+      source_ref: ${{ steps.identity.outputs.source_ref }}
       release_input_digest: ${{ steps.identity.outputs.release_input_digest }}
       dependency_closure_digest: ${{ steps.identity.outputs.release_input_digest }}
       release_identity_digest: ${{ steps.identity.outputs.release_identity_digest }}
@@ -43,26 +67,88 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.release_sha }}
           PROMOTION_TARGET: ${{ inputs.target }}
+          PROMOTION_UNIT: ${{ inputs.unit }}
+          INPUT_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          INPUT_SOURCE_TREE: ${{ inputs.source_tree }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+          INPUT_RELEASE_INPUT_DIGEST: ${{ inputs.release_input_digest }}
+          INPUT_DELIVERY_CONTRACT_VERSION: ${{ inputs.delivery_contract_version }}
+          INPUT_CONTRACT_MANIFEST_DIGEST: ${{ inputs.contract_manifest_digest }}
+          INPUT_CONTRACT_VERSIONS_JSON: ${{ inputs.contract_versions_json }}
+          INPUT_ARTIFACT_IDENTITIES_JSON: ${{ inputs.artifact_identities_json }}
+          INPUT_PREDECESSOR_REPOSITORY: ${{ inputs.predecessor_repository }}
+          CROSS_REPO_TOKEN: ${{ secrets.cross_repo_token }}
         run: |
           set -euo pipefail
-          if [[ "$PROMOTION_TARGET" != "preview" && -z "${REQUESTED_SHA:-}" ]]; then
+          if [[ "$PROMOTION_TARGET" != "preview" && -z "${REQUESTED_SHA:-}" && -z "${INPUT_SOURCE_COMMIT:-}" ]]; then
             echo "::error::staging and production require the exact release_sha from predecessor evidence."
             exit 1
           fi
-          source_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
-          git fetch --no-tags origin main
-          git fetch --no-tags origin "$source_sha"
-          git cat-file -e "$source_sha^{commit}"
-          git merge-base --is-ancestor "$source_sha" origin/main || {
-            echo "::error::$source_sha is not reachable from origin/main."
+          source_repository="${INPUT_SOURCE_REPOSITORY:-$GITHUB_REPOSITORY}"
+          source_sha="${INPUT_SOURCE_COMMIT:-${REQUESTED_SHA:-$GITHUB_SHA}}"
+          if [[ -n "${INPUT_SOURCE_COMMIT:-}" && -n "${REQUESTED_SHA:-}" && "$INPUT_SOURCE_COMMIT" != "$REQUESTED_SHA" ]]; then
+            echo "::error::source_commit and release_sha must identify the same commit."
             exit 1
-          }
-          release_input_digest="$(PROMOTION_UNIT='${{ inputs.unit }}' PROMOTION_SOURCE_SHA="$source_sha" node .github/scripts/promotion-evidence.mjs digest)"
-          source_tree="$(git rev-parse "${source_sha}^{tree}")"
-          release_identity_digest="$(PROMOTION_UNIT='${{ inputs.unit }}' PROMOTION_SOURCE_SHA="$source_sha" PROMOTION_SOURCE_TREE="$source_tree" PROMOTION_RELEASE_INPUT_DIGEST="$release_input_digest" node .github/scripts/promotion-evidence.mjs identity | node -e 'let data=""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(data).releaseIdentityDigest));')"
+          fi
+          source_ref="${INPUT_SOURCE_REF:-refs/heads/main}"
+          cross_source=false
+          if [[ "$source_repository" == "$GITHUB_REPOSITORY" ]]; then
+            git fetch --no-tags origin main
+            git fetch --no-tags origin "$source_sha"
+            git cat-file -e "$source_sha^{commit}"
+            git merge-base --is-ancestor "$source_sha" origin/main || {
+              echo "::error::$source_sha is not reachable from origin/main."
+              exit 1
+            }
+            source_tree="$(git rev-parse "${source_sha}^{tree}")"
+            if [[ -n "${INPUT_SOURCE_TREE:-}" && "$INPUT_SOURCE_TREE" != "$source_tree" ]]; then
+              echo "::error::source_tree differs from the checked immutable source commit."
+              exit 1
+            fi
+            release_input_digest="${INPUT_RELEASE_INPUT_DIGEST:-}"
+            if [[ -z "$release_input_digest" ]]; then
+              release_input_digest="$(PROMOTION_UNIT="$PROMOTION_UNIT" PROMOTION_SOURCE_SHA="$source_sha" node .github/scripts/promotion-evidence.mjs digest)"
+            fi
+          else
+            cross_source=true
+            for required_input in INPUT_SOURCE_REPOSITORY INPUT_SOURCE_COMMIT INPUT_SOURCE_TREE INPUT_SOURCE_REF INPUT_RELEASE_INPUT_DIGEST; do
+              [[ -n "${!required_input:-}" ]] || { echo "::error::cross-repository promotion requires explicit ${required_input#INPUT_}."; exit 1; }
+            done
+            [[ -n "${CROSS_REPO_TOKEN:-}" ]] || { echo "::error::cross-repository source verification requires the cross_repo_token secret."; exit 1; }
+            [[ "$source_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::source_repository must be an owner/repository identifier."; exit 1; }
+            [[ "$source_sha" =~ ^[0-9a-fA-F]{40}$ && "$INPUT_SOURCE_TREE" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "::error::cross-repository source_commit and source_tree must be full SHAs."; exit 1; }
+            export GH_TOKEN="$CROSS_REPO_TOKEN"
+            remote_default_branch="$(gh api "repos/${source_repository}" --jq '.default_branch')"
+            remote_branch_protected="$(gh api "repos/${source_repository}/branches/${remote_default_branch}" --jq '.protected')"
+            node .github/scripts/validate-promotion-source-ref.mjs "$source_ref" "$remote_default_branch" "$remote_branch_protected"
+            remote_tree="$(gh api "repos/${source_repository}/git/commits/${source_sha}" --jq '.tree.sha')"
+            [[ "$remote_tree" == "$INPUT_SOURCE_TREE" ]] || { echo "::error::source_tree differs from the producer commit tree."; exit 1; }
+            ancestry="$(gh api "repos/${source_repository}/compare/${source_sha}...${remote_default_branch}" --jq '.status')"
+            [[ "$ancestry" == "ahead" || "$ancestry" == "identical" ]] || { echo "::error::$source_sha is not reachable from ${source_repository}/${remote_default_branch}."; exit 1; }
+            source_tree="$INPUT_SOURCE_TREE"
+            release_input_digest="$INPUT_RELEASE_INPUT_DIGEST"
+          fi
+          predecessor_repository="${INPUT_PREDECESSOR_REPOSITORY:-$GITHUB_REPOSITORY}"
+          schema_version=3
+          if [[ "$cross_source" == true || ( "$PROMOTION_TARGET" != "preview" && "$predecessor_repository" != "$GITHUB_REPOSITORY" ) || -n "${INPUT_DELIVERY_CONTRACT_VERSION:-}${INPUT_CONTRACT_MANIFEST_DIGEST:-}${INPUT_CONTRACT_VERSIONS_JSON:-}${INPUT_ARTIFACT_IDENTITIES_JSON:-}" ]]; then
+            schema_version=4
+          fi
+          if [[ "$schema_version" == 4 ]]; then
+            for required_input in INPUT_DELIVERY_CONTRACT_VERSION INPUT_CONTRACT_MANIFEST_DIGEST INPUT_CONTRACT_VERSIONS_JSON INPUT_ARTIFACT_IDENTITIES_JSON; do
+              [[ -n "${!required_input:-}" ]] || { echo "::error::schema v4 promotion requires explicit ${required_input#INPUT_}."; exit 1; }
+            done
+            release_identity_digest="$(PROMOTION_EVIDENCE_SCHEMA_VERSION=4 PROMOTION_UNIT="$PROMOTION_UNIT" PROMOTION_SOURCE_REPOSITORY="$source_repository" PROMOTION_SOURCE_COMMIT="$source_sha" PROMOTION_SOURCE_TREE="$source_tree" PROMOTION_SOURCE_REF="$source_ref" PROMOTION_DELIVERY_CONTRACT_VERSION="$INPUT_DELIVERY_CONTRACT_VERSION" PROMOTION_CONTRACT_MANIFEST_DIGEST="$INPUT_CONTRACT_MANIFEST_DIGEST" PROMOTION_RELEASE_INPUT_DIGEST="$release_input_digest" PROMOTION_CONTRACT_VERSIONS_JSON="$INPUT_CONTRACT_VERSIONS_JSON" PROMOTION_ARTIFACT_IDENTITIES_JSON="$INPUT_ARTIFACT_IDENTITIES_JSON" node .github/scripts/promotion-evidence.mjs identity | node -e 'let data=""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(data).releaseIdentityDigest));')"
+          else
+            release_identity_digest="$(PROMOTION_UNIT="$PROMOTION_UNIT" PROMOTION_SOURCE_SHA="$source_sha" PROMOTION_SOURCE_TREE="$source_tree" PROMOTION_RELEASE_INPUT_DIGEST="$release_input_digest" node .github/scripts/promotion-evidence.mjs identity | node -e 'let data=""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(data).releaseIdentityDigest));')"
+          fi
+          echo "source_repository=$source_repository" >> "$GITHUB_OUTPUT"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "source_tree=$source_tree" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
           echo "release_input_digest=$release_input_digest" >> "$GITHUB_OUTPUT"
           echo "release_identity_digest=$release_identity_digest" >> "$GITHUB_OUTPUT"
+          echo "evidence_schema_version=$schema_version" >> "$GITHUB_OUTPUT"
       - name: Block unsupported staging target
         if: ${{ inputs.target == 'staging' && !inputs.staging_supported }}
         run: |
@@ -71,33 +157,62 @@ jobs:
       - name: Verify predecessor evidence
         if: ${{ inputs.target != 'preview' }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          PREDECESSOR_RUN_ID: ${{ inputs.target == 'staging' && inputs.preview_run_id || inputs.staging_run_id }}
-          EXPECTED_TARGET: ${{ inputs.target == 'staging' && 'preview' || 'staging' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CROSS_REPO_TOKEN: ${{ secrets.cross_repo_token }}
+          PREDECESSOR_REPOSITORY: ${{ inputs.predecessor_repository || github.repository }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id || (inputs.target == 'staging' && inputs.preview_run_id || inputs.staging_run_id) }}
+          PREDECESSOR_ARTIFACT: ${{ inputs.predecessor_artifact || format('promotion-evidence-{0}', inputs.unit) }}
           PROMOTION_UNIT: ${{ inputs.unit }}
           PROMOTION_EXPECTED_TARGET: ${{ inputs.target == 'staging' && 'preview' || 'staging' }}
+          PROMOTION_EXPECTED_SOURCE_REPOSITORY: ${{ steps.identity.outputs.source_repository }}
           PROMOTION_EXPECTED_SHA: ${{ steps.identity.outputs.source_sha }}
+          PROMOTION_EXPECTED_SOURCE_TREE: ${{ steps.identity.outputs.source_tree }}
+          PROMOTION_EXPECTED_SOURCE_REF: ${{ steps.identity.outputs.source_ref }}
           PROMOTION_EXPECTED_RELEASE_INPUT_DIGEST: ${{ steps.identity.outputs.release_input_digest }}
           PROMOTION_EXPECTED_RELEASE_IDENTITY_DIGEST: ${{ steps.identity.outputs.release_identity_digest }}
+          PROMOTION_EXPECTED_DELIVERY_CONTRACT_VERSION: ${{ inputs.delivery_contract_version }}
+          PROMOTION_EXPECTED_CONTRACT_MANIFEST_DIGEST: ${{ inputs.contract_manifest_digest }}
+          PROMOTION_EXPECTED_CONTRACT_VERSIONS_JSON: ${{ inputs.contract_versions_json }}
+          PROMOTION_EXPECTED_ARTIFACT_IDENTITIES_JSON: ${{ inputs.artifact_identities_json }}
         run: |
           set -euo pipefail
           [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::A numeric predecessor run id is required."; exit 1; }
+          [[ -n "${PREDECESSOR_ARTIFACT:-}" ]] || { echo "::error::A predecessor evidence artifact name is required."; exit 1; }
+          if [[ "$PREDECESSOR_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
+            export GH_TOKEN="$GITHUB_TOKEN"
+          else
+            [[ -n "${CROSS_REPO_TOKEN:-}" ]] || { echo "::error::cross-repository predecessor evidence requires the cross_repo_token secret."; exit 1; }
+            export GH_TOKEN="$CROSS_REPO_TOKEN"
+          fi
           mkdir -p "$RUNNER_TEMP/promotion-evidence"
-          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "promotion-evidence-${PROMOTION_UNIT}" --dir "$RUNNER_TEMP/promotion-evidence"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$PREDECESSOR_REPOSITORY" --name "$PREDECESSOR_ARTIFACT" --dir "$RUNNER_TEMP/promotion-evidence"
+          export PROMOTION_EXPECTED_EVIDENCE_REPOSITORY="$PREDECESSOR_REPOSITORY"
+          export PROMOTION_EXPECTED_EVIDENCE_RUN_ID="$PREDECESSOR_RUN_ID"
+          export PROMOTION_EXPECTED_EVIDENCE_ARTIFACT="$PREDECESSOR_ARTIFACT"
           node .github/scripts/promotion-evidence.mjs verify "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - name: Write preview evidence
         if: ${{ inputs.target == 'preview' && inputs.emit_preview_evidence }}
         env:
+          PROMOTION_EVIDENCE_SCHEMA_VERSION: ${{ steps.identity.outputs.evidence_schema_version }}
           PROMOTION_UNIT: ${{ inputs.unit }}
           PROMOTION_TARGET: preview
+          PROMOTION_SOURCE_REPOSITORY: ${{ steps.identity.outputs.source_repository }}
+          PROMOTION_SOURCE_COMMIT: ${{ steps.identity.outputs.source_sha }}
           PROMOTION_SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
-          PROMOTION_SOURCE_TREE: ${{ github.sha }}
+          PROMOTION_SOURCE_TREE: ${{ steps.identity.outputs.source_tree }}
+          PROMOTION_SOURCE_REF: ${{ steps.identity.outputs.source_ref }}
           PROMOTION_RELEASE_INPUT_DIGEST: ${{ steps.identity.outputs.release_input_digest }}
           PROMOTION_DEPENDENCY_CLOSURE_DIGEST: ${{ steps.identity.outputs.release_input_digest }}
+          PROMOTION_DELIVERY_CONTRACT_VERSION: ${{ inputs.delivery_contract_version }}
+          PROMOTION_CONTRACT_MANIFEST_DIGEST: ${{ inputs.contract_manifest_digest }}
+          PROMOTION_CONTRACT_VERSIONS_JSON: ${{ inputs.contract_versions_json }}
+          PROMOTION_ARTIFACT_IDENTITIES_JSON: ${{ inputs.artifact_identities_json }}
+          PROMOTION_EVIDENCE_REPOSITORY: ${{ github.repository }}
+          PROMOTION_EVIDENCE_RUN_ID: ${{ github.run_id }}
+          PROMOTION_EVIDENCE_ARTIFACT: promotion-evidence-${{ inputs.unit }}
         run: |
           set -euo pipefail
-          tree="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")"
-          PROMOTION_SOURCE_TREE="$tree" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+          node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - name: Upload preview evidence
         if: ${{ inputs.target == 'preview' && inputs.emit_preview_evidence }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
