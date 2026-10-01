@@ -187,6 +187,10 @@ function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+export function extractStaticAssetPaths(html) {
+  return [...new Set(html.match(/\/_next\/static\/[^"'<>\\\s]+/g) ?? [])].sort();
+}
+
 async function attestRouteOnce(baseUrl, route, releaseSha) {
   const response = await fetch(`${baseUrl}${route}`, {
     redirect: "manual",
@@ -207,7 +211,7 @@ async function attestRouteOnce(baseUrl, route, releaseSha) {
       noStore: /no-store/i.test(cacheControl),
     });
   }
-  const assets = [...new Set(html.match(/\/_next\/static\/[^"'<>\s]+/g) ?? [])].sort();
+  const assets = extractStaticAssetPaths(html);
   if (assets.length < 2) fail("beauty_movement_release_smoke_assets_missing", { count: assets.length });
   const hashes = [];
   for (const asset of assets) {
