@@ -18,8 +18,11 @@
   helpers canônicos apontados nele em vez de criar pontes manuais por tarefa.
 - Use branches in the format `codex/admin/<task-slug>`.
 - For every non-trivial or potentially concurrent mission, a dedicated
-  worktree under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>` is
-  mandatory. The shared checkout is a read-only context/source-of-truth
+  `admin/<task-slug>` worktree is mandatory. Windows uses
+  `C:\CodexShared\Worktrees\skincos`; macOS uses
+  `~/Automation/.worktrees/skincos`, or an explicitly configured local root.
+  See [shared local environments](docs/shared-local-environments.md).
+  The shared checkout is a read-only context/source-of-truth
   surface for agents, not a normal editing surface. The task identity is the
   tuple `mission_id`, `task_slug`, `codex/admin/<task-slug>` branch and the
   dedicated worktree path; persist that tuple in the supervisor snapshot.
@@ -44,6 +47,9 @@
 
 ## Windows-native Codex boundary
 
+- This boundary applies on Windows. macOS local work uses native Git, Python
+  and Node with private per-machine state; it does not operate Windows/WSL
+  services or copy dependency trees between hosts.
 - Run the Codex agent natively on Windows and use PowerShell as the integrated
   terminal. Keep Codex sessions, plugins, browser automation, MCPs and
   authentication in the Windows client.

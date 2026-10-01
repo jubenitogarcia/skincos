@@ -20,6 +20,10 @@ Plataforma interna para automações e operações da clínica.
 
 ## Desenvolvimento e validação
 
+O código é compartilhado pelo GitHub; cada computador mantém dependências e
+estado privados. Consulte [ambientes locais Mac/Windows](docs/shared-local-environments.md)
+para comparar refs, trabalhar em branches e configurar diretórios locais.
+
 ```text
 npm run architecture:validate
 npm run module-catalog:validate

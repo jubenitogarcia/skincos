@@ -1,5 +1,9 @@
 # Workspace canônico no Codex App
 
+Para desenvolvimento compartilhado entre Mac e Windows, consulte
+[ambientes locais por computador](shared-local-environments.md). Os caminhos,
+ACLs e o gateway abaixo descrevem o ambiente Windows/WSL existente.
+
 O clone compartilhado do monorepo fica em:
 
 `C:\CodexShared\Projetos\skincos`
