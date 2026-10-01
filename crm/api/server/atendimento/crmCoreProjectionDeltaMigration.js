@@ -38,13 +38,16 @@ const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'crm_core_projection_exporter',
 })
 
+export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_RELATIONS = Object.freeze([
+    'crm_atendimento.global_client_identity_members',
+    'crm_atendimento.attendance_client_links',
+    'crm_atendimento.attendances',
+    'crm_atendimento.units',
+])
+
 export const CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS = Object.freeze([
     'crm_atendimento.global_client_identities',
-    'crm_atendimento.global_client_identity_members',
-    'crm_atendimento.units',
-    'crm_atendimento.attendances',
-    'crm_atendimento.attendance_client_links',
-    'crm_caixa.sales',
+    ...ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_RELATIONS,
 ])
 
 const UNIT_SLUG_SQL_PATTERN = "^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
@@ -75,10 +78,12 @@ function digestOpaqueBackfillEvents(events) {
 }
 
 /**
- * Canonical membership rule owned by Atendimento.  It deliberately selects
- * only identity UUID, canonical unit slug and an observed timestamp.  The
- * source is used by the reconciler inside a repeatable-read transaction and
- * never emits customer attributes.
+ * Canonical membership rule owned by Atendimento. It deliberately selects
+ * only identity UUID, canonical unit slug and an observed timestamp from the
+ * Atendimento relation allowlist. Finance-owned Caixa sales require their own
+ * source contract and are never read by this projection path. The source is
+ * used by the reconciler inside a repeatable-read transaction and never emits
+ * customer attributes.
  */
 export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL = `WITH unit_membership_evidence AS (
     SELECT member.identity_id AS identity_id,
@@ -99,21 +104,6 @@ export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL = `WITH unit_membershi
      WHERE member.source_type = 'attendance_client'
        AND member.source_id ~ '${UUID_TEXT_PATTERN}'
        AND attendance.deleted_at IS NULL
-
-    UNION ALL
-
-    SELECT member.identity_id AS identity_id,
-        unit.slug AS unit_slug,
-        sale.created_at AS observed_at
-      FROM crm_atendimento.global_client_identity_members member
-      JOIN crm_caixa.sales sale ON sale.customer_id = CASE
-          WHEN member.source_id ~ '${UUID_TEXT_PATTERN}' THEN member.source_id::uuid
-          ELSE NULL
-      END
-      JOIN crm_atendimento.units unit ON unit.id = sale.unit_id
-     WHERE member.source_type = 'caixa_customer'
-       AND member.source_id ~ '${UUID_TEXT_PATTERN}'
-
 ), canonical_memberships AS (
     SELECT identity_id AS identity_id, unit_slug AS unit_slug, max(observed_at) AS observed_at
       FROM unit_membership_evidence
@@ -398,8 +388,9 @@ export function crmCoreProjectionDeltaMigrationPlan() {
     return {
         id: CRM_CORE_PROJECTION_DELTA_MIGRATION_ID,
         relations: [CRM_CORE_PROJECTION_MEMBERSHIP_RELATION, CRM_CORE_PROJECTION_OUTBOX_RELATION, CRM_CORE_PROJECTION_BASELINE_HANDOFF_RELATION],
-        sourceContract: 'atendimento/crm-core/projection-delta/v1',
-        membershipPolicy: 'one retained active/tombstoned row per canonical identity/unit; no global, all or unknown fallback',
+        sourceContract: 'atendimento/crm-core/projection-delta/v2',
+        sourceRelationAllowlist: [...ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_RELATIONS],
+        membershipPolicy: 'one retained active/tombstoned row per canonical identity/unit from Atendimento-owned active attendance evidence; no global, all or unknown fallback',
         eventPolicy: 'append-only upsert/revoke events with monotonic revision and strictly increasing (possibly sparse after rollback) event_order',
         runtimeAccess: 'dedicated exporter receives SELECT on opaque membership and outbox columns only; no customer attributes, DML or DDL',
         reconciliation: 'repeatable-read transaction guarded by pg_advisory_xact_lock; changed/new memberships upsert, removed memberships revoke',

@@ -44,8 +44,12 @@ até 240 segundos; uma prova somente comparada em memória não é suficiente.
    primeiro lote e retornar `idempotent` no replay posterior.
 3. Fonte canônica atestada: `skincos_clientes_production`, principal
    `crm_core_projection_exporter`, transação `REPEATABLE READ READ ONLY`,
-   grafo de identidade/membership e checkpoint de source-sync completos.
-   O helper não pode materializar esse grafo nem criar grants automaticamente.
+   grafo de identidade/membership e checkpoint de source-sync completos. A
+   allowlist fixa é `crm_atendimento.global_client_identity_members`,
+   `crm_atendimento.attendance_client_links`, `crm_atendimento.attendances` e
+   `crm_atendimento.units`; o helper não pode consultar ou obter grant para
+   `crm_caixa.sales` ou qualquer outra relação Finance. O helper não pode
+   materializar esse grafo nem criar grants automaticamente.
 4. Ambiente GitHub protegido
    `crm-atendimento-projection-backfill-staging`, com a chave privada de
    autorização e o respectivo key ID; o public key correspondente só fica na

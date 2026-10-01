@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 
 import {
     CRM_CORE_PROJECTION_DELTA_MIGRATION_ID,
+    CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS,
     ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL,
+    ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_RELATIONS,
     applyCrmCoreProjectionDeltaMigration,
     crmCoreProjectionDeltaMigrationPlan,
     prepareAtendimentoProjectionDeltaBaseline,
@@ -173,6 +175,18 @@ function storedHandoff({ baseline = BASELINE_READY, batches = [BASELINE_REAL_BAT
 test('defines additive membership and append-only outbox ownership', () => {
     const plan = crmCoreProjectionDeltaMigrationPlan()
     assert.equal(plan.id, CRM_CORE_PROJECTION_DELTA_MIGRATION_ID)
+    assert.equal(plan.sourceContract, 'atendimento/crm-core/projection-delta/v2')
+    assert.deepEqual(plan.sourceRelationAllowlist, [
+        'crm_atendimento.global_client_identity_members',
+        'crm_atendimento.attendance_client_links',
+        'crm_atendimento.attendances',
+        'crm_atendimento.units',
+    ])
+    assert.deepEqual(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_RELATIONS, plan.sourceRelationAllowlist)
+    assert.deepEqual(CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS, [
+        'crm_atendimento.global_client_identities',
+        ...plan.sourceRelationAllowlist,
+    ])
     assert.deepEqual(plan.relations, [
         'crm_atendimento.crm_core_projection_memberships',
         'crm_atendimento.crm_core_projection_outbox',
@@ -185,14 +199,15 @@ test('defines additive membership and append-only outbox ownership', () => {
     assert.match(plan.rollback, /non-destructive/)
 })
 
-test('uses immutable lifecycle evidence without importer or identity-materializer refresh revisions', () => {
-    for (const mutableTimestamp of ['member.updated_at', 'attendance_link.updated_at', 'attendance.updated_at', 'sale.updated_at']) {
+test('uses only Atendimento-owned immutable lifecycle evidence without importer or identity-materializer refresh revisions', () => {
+    for (const mutableTimestamp of ['member.updated_at', 'attendance_link.updated_at', 'attendance.updated_at']) {
         assert.doesNotMatch(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, new RegExp(mutableTimestamp.replace('.', '\\.')))
     }
-    for (const evidenceTimestamp of ['attendance_link.created_at', 'attendance.created_at', 'sale.created_at']) {
+    for (const evidenceTimestamp of ['attendance_link.created_at', 'attendance.created_at']) {
         assert.match(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, new RegExp(evidenceTimestamp.replace('.', '\\.')))
     }
     assert.doesNotMatch(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, /(?:app_client_registrations|supplemental_lead_profiles|app_registration|lead_profile)/i)
+    assert.doesNotMatch(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, /\b(?:crm_caixa|caixa_customer|sale)\b/i)
 })
 
 test('applies the migration in a guarded transaction and grants read-only exporter columns', async () => {

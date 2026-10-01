@@ -33,10 +33,10 @@ canônica, recibos de lote, reconciliação ou rollback.
 
 | Domínio | Limite atual |
 | --- | --- |
-| Atendimento | Único candidato: projeções opacas de associação identidade/unidade em staging. Não transporta atributos de cliente. |
+| Atendimento | Único candidato: projeções opacas de associação identidade/unidade em staging, lidas somente de `crm_atendimento.global_client_identity_members`, `attendance_client_links`, `attendances` e `units`. Não transporta atributos de cliente. |
 | Identity | Somente entrega autenticada opaca; usuários, sessões, funções e grants continuam no owner. |
 | Inventory | Mantém D1, estoque e o proxy legado `/api/crm/*`; não é fallback do Core. |
-| Finance | Mantém ledger, grants e importações no Worker/armazenamento Finance. |
+| Finance | Mantém ledger, grants, importações e `crm_caixa.sales` no Worker/armazenamento Finance; nenhuma relação Finance alimenta o candidato de Atendimento. |
 | Messaging | Mantém conversas, consentimento e checkpoints de entrega. |
 | Timekeeping | Mantém Ponto/Workforce em seu próprio release e dados. |
 | Booking | Mantém disponibilidade, solicitações e auditoria de reserva. |
@@ -45,7 +45,9 @@ O plano executável por máquina está em
 [`crm-domain-backfill-admission.json`](crm-domain-backfill-admission.json). Ele
 mantém produção e mutação de rota como `false`; ele permite exclusivamente a
 preparação custodiada de staging para Atendimento e força todos os demais
-domínios a permanecerem explicitamente excluídos.
+domínios a permanecerem explicitamente excluídos. A allowlist de relações da
+fonte também é parte do contrato: uma relação Finance não pode ser introduzida
+por mudança da consulta de Atendimento.
 
 ## Como o primeiro domínio poderá avançar
 

@@ -24,6 +24,13 @@ const requiredAtendimentoEvidence = Object.freeze([
   "accepted-idempotent-receipts-and-d1-readback",
   "same-artifact-rollback-without-data-deletion",
 ])
+const requiredAtendimentoSourceRelations = Object.freeze([
+  "crm_atendimento.global_client_identity_members",
+  "crm_atendimento.attendance_client_links",
+  "crm_atendimento.attendances",
+  "crm_atendimento.units",
+])
+const excludedAtendimentoSourceDomains = Object.freeze(["finance"])
 
 function fail(code) {
   throw new Error(`CRM_DOMAIN_BACKFILL_ADMISSION_INVALID:${code}`)
@@ -51,6 +58,12 @@ function orderedStrings(value, code) {
   return value
 }
 
+function exactOrderedStrings(value, expected, code) {
+  const actual = orderedStrings(value, code)
+  if (actual.length !== expected.length || actual.some((entry, index) => entry !== expected[index])) fail(code)
+  return actual
+}
+
 function assertTarget(value) {
   const target = object(value, "TARGET_INVALID")
   exactKeys(target, ["repository", "environment", "productionMutationAllowed", "receiverScope", "publicRouteMutationAllowed"], "TARGET_INVALID")
@@ -66,20 +79,28 @@ function assertTarget(value) {
 
 function assertProjectionCandidate(value) {
   const domain = object(value, "ATENDIMENTO_DOMAIN_INVALID")
-  exactKeys(domain, ["id", "owner", "mode", "state", "sourceContract", "recordClass", "targetEnvironment", "stagingSourceReadAllowed", "productionBackfillAllowed", "requiredEvidence"], "ATENDIMENTO_DOMAIN_INVALID")
+  exactKeys(domain, ["id", "owner", "mode", "state", "sourceContract", "sourceSemantics", "sourceRelationAllowlist", "excludedSourceDomains", "recordClass", "targetEnvironment", "stagingSourceReadAllowed", "productionBackfillAllowed", "requiredEvidence"], "ATENDIMENTO_DOMAIN_INVALID")
   if (
     domain.id !== "atendimento-client-memberships"
     || domain.owner !== "Atendimento"
     || domain.mode !== "projection-candidate"
     || domain.state !== "staging-preparation-authorized"
     || domain.sourceContract !== "atendimento/crm-core/unit-scoped-projection-source/v1"
+    || domain.sourceSemantics !== "atendimento/crm-core/confirmed-unit-membership-source/v3"
     || domain.recordClass !== "opaque-client-membership-projection"
     || domain.targetEnvironment !== "staging"
     || domain.stagingSourceReadAllowed !== true
     || domain.productionBackfillAllowed !== false
   ) fail("ATENDIMENTO_DOMAIN_NOT_FAIL_CLOSED")
+  exactOrderedStrings(domain.sourceRelationAllowlist, requiredAtendimentoSourceRelations, "ATENDIMENTO_SOURCE_RELATION_ALLOWLIST_INVALID")
+  exactOrderedStrings(domain.excludedSourceDomains, excludedAtendimentoSourceDomains, "ATENDIMENTO_SOURCE_DOMAIN_EXCLUSIONS_INVALID")
   assert.deepEqual(orderedStrings(domain.requiredEvidence, "ATENDIMENTO_EVIDENCE_INVALID"), requiredAtendimentoEvidence, "Atendimento evidence must retain its exact staging admission sequence")
-  return Object.freeze({ ...domain, requiredEvidence: Object.freeze([...domain.requiredEvidence]) })
+  return Object.freeze({
+    ...domain,
+    sourceRelationAllowlist: Object.freeze([...domain.sourceRelationAllowlist]),
+    excludedSourceDomains: Object.freeze([...domain.excludedSourceDomains]),
+    requiredEvidence: Object.freeze([...domain.requiredEvidence]),
+  })
 }
 
 function assertExcludedDomain(value, expectedId) {
@@ -99,7 +120,7 @@ function assertExcludedDomain(value, expectedId) {
 export function assertCrmDomainBackfillAdmission(value) {
   const plan = object(value, "PLAN_INVALID")
   exactKeys(plan, ["contract", "state", "target", "domains", "prohibitions"], "PLAN_INVALID")
-  if (plan.contract !== "skincos/crm-domain-backfill-admission/v2" || plan.state !== "staging-preparation-authorized") fail("PLAN_NOT_STAGING_PREPARATION_AUTHORIZED")
+  if (plan.contract !== "skincos/crm-domain-backfill-admission/v3" || plan.state !== "staging-preparation-authorized") fail("PLAN_NOT_STAGING_PREPARATION_AUTHORIZED")
   const target = assertTarget(plan.target)
   if (!Array.isArray(plan.domains) || plan.domains.length !== excludedDomains.length + 1) fail("DOMAIN_SET_INVALID")
   const [candidate, ...excluded] = plan.domains
@@ -110,7 +131,7 @@ export function assertCrmDomainBackfillAdmission(value) {
   const requiredProhibitions = [
     "No CRM Core delivery, route mutation or legacy runtime retirement is performed by this plan.",
     "Only the fixed Atendimento custody helper may take an owner-attested read-only production-source snapshot to prepare opaque staging packets; no source payload is uploaded to GitHub and no packet is delivered by this plan.",
-    "No customer attribute, raw identifier, identity, session, finance, messaging, inventory or timekeeping record is copied into CRM Core.",
+    "No customer attribute, raw identifier, identity, session, finance, messaging, inventory or timekeeping record is copied into CRM Core; the Atendimento source may query only its declared relation allowlist.",
     "No excluded domain may be reclassified without a dedicated source-owner contract and reviewed staging evidence.",
   ]
   assert.deepEqual(prohibitions, requiredProhibitions, "Domain admission prohibitions must remain exact")
@@ -121,6 +142,8 @@ export function assertCrmDomainBackfillAdmission(value) {
     publicRouteMutationAllowed: target.publicRouteMutationAllowed,
     stagingSourceReadAuthorized: Object.freeze([atendimento.id]),
     stagingProjectionCandidateIds: Object.freeze([atendimento.id]),
+    atendimentoSourceRelationAllowlist: atendimento.sourceRelationAllowlist,
+    atendimentoExcludedSourceDomains: atendimento.excludedSourceDomains,
     eligibleNow: Object.freeze([]),
     excludedDomainIds: Object.freeze(actualExcludedIds),
   })
