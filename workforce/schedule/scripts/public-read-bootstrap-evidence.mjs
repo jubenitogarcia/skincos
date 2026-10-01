@@ -41,30 +41,32 @@ export function lifecycleConfigDigest(configText) {
     .digest('hex')
 }
 
-export function createSchedulePublicReadAdapterBootstrapEvidence({ sourceSha, workflowRunId, workflowRunAttempt = '1', lifecycleConfigDigest: digest }) {
+export function createSchedulePublicReadAdapterBootstrapEvidence({ sourceSha, workflowRunId, workflowRunAttempt = '1', lifecycleConfigDigest: digest, target = 'staging' }) {
+  if (!['staging', 'production'].includes(target)) throw new Error('unsupported bootstrap target')
   const normalizedAttempt = requiredText(workflowRunAttempt, 'workflowRunAttempt')
   if (normalizedAttempt !== '1') throw new Error('workflowRunAttempt must be 1')
   return {
     schemaVersion: 1,
     contract: SCHEDULE_PUBLIC_READ_ADAPTER_BOOTSTRAP_CONTRACT,
     unit: 'schedule-public-read-adapter',
-    target: 'staging',
+    target,
     workflowPath: SCHEDULE_PUBLIC_READ_ADAPTER_WORKFLOW,
     workflowRunId: requiredRunId(workflowRunId, 'workflowRunId'),
     workflowRunAttempt: 1,
     sourceSha: requiredSha(sourceSha, 'sourceSha'),
-    worker: SCHEDULE_PUBLIC_READ_ADAPTER_STAGING_WORKER,
+    worker: target === 'production' ? 'skincos-schedule-public-read' : SCHEDULE_PUBLIC_READ_ADAPTER_STAGING_WORKER,
     operation: 'bootstrap-disabled',
     schedulePublicReadEnabled: false,
     lifecycleConfigDigest: requiredDigest(digest, 'lifecycleConfigDigest'),
   }
 }
 
-export function verifySchedulePublicReadAdapterBootstrapEvidence(document, { sourceSha, workflowRunId, lifecycleConfigDigest: digest } = {}) {
+export function verifySchedulePublicReadAdapterBootstrapEvidence(document, { sourceSha, workflowRunId, lifecycleConfigDigest: digest, target = 'staging' } = {}) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) {
     throw new Error('adapter bootstrap evidence must be an object')
   }
   const expected = createSchedulePublicReadAdapterBootstrapEvidence({
+    target,
     sourceSha: sourceSha || document.sourceSha,
     workflowRunId: workflowRunId || document.workflowRunId,
     workflowRunAttempt: String(document.workflowRunAttempt || ''),
@@ -86,6 +88,7 @@ async function readLifecycleConfigDigest(configPath) {
 
 async function writeEvidence(filePath, configPath) {
   const evidence = createSchedulePublicReadAdapterBootstrapEvidence({
+    target: process.env.SCHEDULE_PUBLIC_READ_TARGET || 'staging',
     sourceSha: process.env.PROMOTION_SOURCE_SHA,
     workflowRunId: process.env.GITHUB_RUN_ID,
     workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
@@ -98,6 +101,7 @@ async function writeEvidence(filePath, configPath) {
 async function verifyEvidence(filePath, configPath) {
   const document = JSON.parse(await readFile(filePath, 'utf8'))
   verifySchedulePublicReadAdapterBootstrapEvidence(document, {
+    target: process.env.SCHEDULE_PUBLIC_READ_EXPECTED_TARGET || 'staging',
     sourceSha: process.env.SCHEDULE_PUBLIC_READ_EXPECTED_SOURCE_SHA,
     workflowRunId: process.env.SCHEDULE_PUBLIC_READ_EXPECTED_WORKFLOW_RUN_ID,
     lifecycleConfigDigest: process.env.SCHEDULE_PUBLIC_READ_EXPECTED_LIFECYCLE_CONFIG_DIGEST || await readLifecycleConfigDigest(configPath),

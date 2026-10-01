@@ -8,12 +8,15 @@ import {
 } from '../public-read-contract.js'
 
 const allowedOrigin = 'https://escala-api-staging.skincos.com.br'
+const target = process.env.SCHEDULE_PUBLIC_READ_CORE_TARGET || 'staging'
+if (!['staging', 'production'].includes(target)) throw new Error('invalid core smoke target')
+const pinnedOrigin = target === 'production' ? 'https://escala-api.skincos.com.br' : allowedOrigin
 const mode = String(process.env.SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE || 'ready').trim()
-const configuredOrigin = String(process.env.SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL || allowedOrigin).replace(/\/+$/, '')
+const configuredOrigin = String(process.env.SCHEDULE_PUBLIC_READ_CORE_SMOKE_BASE_URL || pinnedOrigin).replace(/\/+$/, '')
 const readinessPath = '/api/escala/internal/schedule-public-read/v1/readiness'
 
 if (!['ready', 'disabled'].includes(mode)) throw new Error('SCHEDULE_PUBLIC_READ_CORE_SMOKE_MODE must be ready or disabled')
-if (configuredOrigin !== allowedOrigin) throw new Error('Schedule public-read core smoke is pinned to the isolated Escala staging origin')
+if (configuredOrigin !== pinnedOrigin) throw new Error('Schedule public-read core smoke must use its exact environment origin')
 
 async function request(init = {}) {
   return fetch(`${configuredOrigin}${readinessPath}`, {
