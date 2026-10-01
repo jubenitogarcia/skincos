@@ -22,6 +22,7 @@ import {
     extractStaticAssetPaths,
     parseWranglerJson,
 } from "../scripts/beauty-movement-production-release-smoke.mjs";
+import { redactBeautyMovementSmokeError } from "../scripts/beauty-movement-context-isolation-smoke.mjs";
 import {
     buildBeautyMovementReleaseOwner,
     buildBeautyMovementSyntheticCampaignId,
@@ -202,6 +203,21 @@ test("production route attestation ignores serialized trailing escapes in static
     ]);
 });
 
+test("browser smoke diagnostics preserve safe failure codes while redacting opaque values", () => {
+    const opaque = "t".repeat(43);
+    const message = `beauty_movement_isolation_smoke_act_timeout:{\"expectedAct\":\"Movimento\",\"opaque\":\"${opaque}\"}`;
+
+    assert.equal(
+        redactBeautyMovementSmokeError(message),
+        'beauty_movement_isolation_smoke_act_timeout:{"expectedAct":"Movimento","opaque":"[opaque]"}',
+    );
+    assert.equal(
+        redactBeautyMovementSmokeError("beauty_movement_isolation_smoke_context_missing"),
+        "beauty_movement_isolation_smoke_context_missing",
+    );
+    assert.equal(redactBeautyMovementSmokeError(`navigation failed at /#c=${opaque}`), "navigation failed at /#c=[redacted]");
+});
+
 test("governed staging and production smokes execute the same four-invite isolation matrix", async () => {
     const [staging, production, deploy, recovery, smoke, primarySmoke, releaseSmoke, deployWorker, reconcile] = await Promise.all([
         readFile(sourceUrl("../.github/workflows/beauty-movement-staging-smoke.yml"), "utf8"),
@@ -235,6 +251,7 @@ test("governed staging and production smokes execute the same four-invite isolat
     assert.match(smoke, /crossCookieCredentialRejected: true/);
     assert.match(smoke, /name: `ef_bm_ctx_\$\{secondContextB\}`/);
     assert.match(smoke, /rawTokensPersistedInEvidence: false/);
+    assert.match(smoke, /beauty_movement_isolation_smoke_act_timeout/);
     assert.doesNotMatch(smoke, /console\.log\(.*token/i);
     assert.match(primarySmoke, /whatsappCtaPresent: true/);
     assert.match(primarySmoke, /contextRestoredAfterReload: true/);
