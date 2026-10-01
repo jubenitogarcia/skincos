@@ -872,9 +872,8 @@ test('does not let a legacy contacted action without a timestamp bypass the roll
     assert.equal(actionUpdated, false)
 })
 
-test('rejects a stale commercial policy version before it can overwrite the canary', async () => {
+test('rejects a manual commercial canary array before it can overwrite policy', async () => {
     let updateIssued = false
-    let lockedPolicyQuery = ''
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
         permission_events: 'crm_atendimento.commercial_contact_permission_events',
@@ -896,10 +895,6 @@ test('rejects a stale commercial policy version before it can overwrite the cana
     const pool = createFakePool([
         (sql) => {
             if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
-            if (sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,')) {
-                lockedPolicyQuery = sql
-                return { rows: [{ commercial_contact_writes_enabled: true, commercial_contact_canary_identity_ids: ['11111111-1111-4111-8111-111111111111'], policy_version: 'b'.repeat(32) }], rowCount: 1 }
-            }
             if (sql.startsWith('update crm_atendimento.commercial_policy_config')) updateIssued = true
             return null
         },
@@ -914,13 +909,12 @@ test('rejects a stale commercial policy version before it can overwrite the cana
             commercialContactCanaryIdentityIds: [],
             expectedPolicyVersion: 'a'.repeat(32),
         }, { id: 'manager-1', role: 'GESTOR' }),
-        /COMMERCIAL_POLICY_CONFLICT/,
+        /COMMERCIAL_CANARY_SELECTOR_REQUIRED/,
     )
     assert.equal(updateIssued, false)
-    assert.match(lockedPolicyQuery, /extract\(epoch from updated_at\)::text/)
 })
 
-test('accepts only existing materialized identities in a commercial canary selection', async () => {
+test('does not permit direct UUID selection through commercial policy', async () => {
     const identityId = '11111111-1111-4111-8111-111111111111'
     const availability = {
         permissions: 'permissions', permission_events: 'permission-events', action_events: 'action-events',
@@ -929,17 +923,10 @@ test('accepts only existing materialized identities in a commercial canary selec
         action_events_immutable: true, action_events_no_truncate: true, action_channel: true, action_contacted_at: true,
         rollout_enabled: true, rollout_canary: true,
     }
-    let validIdentity = false
     let updateIssued = false
     const pool = createFakePool([
         (sql, params) => {
             if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
-            if (sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,')) {
-                return { rows: [{ commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [], policy_version: 'b'.repeat(32) }], rowCount: 1 }
-            }
-            if (sql.startsWith('select gi.id::text as identity_id')) {
-                return { rows: validIdentity ? [{ identity_id: params[0][0] }] : [], rowCount: validIdentity ? 1 : 0 }
-            }
             if (sql.startsWith('update crm_atendimento.commercial_policy_config')) {
                 updateIssued = true
                 return { rows: [{ active_contact_cooldown_days: 30, return_risk_thresholds: [90, 180, 365], commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [identityId], updated_by: 'manager-1', updated_at: '2026-08-05T12:00:00.000Z', policy_version: 'c'.repeat(32) }], rowCount: 1 }
@@ -957,13 +944,8 @@ test('accepts only existing materialized identities in a commercial canary selec
         expectedPolicyVersion: 'b'.repeat(32),
     }
 
-    await assert.rejects(() => store.updateCommercialPolicy(payload, actor), { message: 'INVALID_COMMERCIAL_CONTACT_CANARY', statusCode: 400 })
+    await assert.rejects(() => store.updateCommercialPolicy(payload, actor), { message: 'COMMERCIAL_CANARY_SELECTOR_REQUIRED', statusCode: 409 })
     assert.equal(updateIssued, false)
-
-    validIdentity = true
-    const result = await store.updateCommercialPolicy(payload, actor)
-    assert.equal(updateIssued, true)
-    assert.deepEqual(result.policy.commercialContactCanaryIdentityIds, [identityId])
 })
 
 test('requires a current version for every commercial policy write', async () => {

@@ -31,6 +31,10 @@ import {
     rollbackCommercialContactRolloutMigration,
 } from '../server/atendimento/commercialContactRolloutMigration.js'
 import {
+    applyCommercialCanaryMigration,
+    rollbackCommercialCanaryMigration,
+} from '../server/atendimento/commercialCanaryMigration.js'
+import {
     applyClientIdentityMaterializationMigration,
     rollbackClientIdentityMaterializationMigration,
 } from '../server/atendimento/clientIdentityMaterializationMigration.js'
@@ -64,6 +68,7 @@ const migrations = [
     { id: '20260718_atendimento_write_safety_v1', apply: applyAtendimentoWriteSafetyMigration, rollback: rollbackAtendimentoWriteSafetyMigration },
     { id: '20260804_commercial_contact_controls_v1', apply: applyCommercialContactMigration, rollback: rollbackCommercialContactMigration },
     { id: '20260804_commercial_contact_rollout_v1', apply: applyCommercialContactRolloutMigration, rollback: rollbackCommercialContactRolloutMigration },
+    { id: '20260807_commercial_canary_selector_v2', apply: applyCommercialCanaryMigration, rollback: rollbackCommercialCanaryMigration },
     { id: '20260805_client_identity_materialization_schema_v1', apply: applyClientIdentityMaterializationMigration, rollback: rollbackClientIdentityMaterializationMigration },
     { id: '20260805_commercial_action_ledger_v1', apply: applyCommercialActionLedgerMigration, rollback: rollbackCommercialActionLedgerMigration },
     { id: '20260805_commercial_data_quality_queue_v1', apply: applyCommercialDataQualityMigration, rollback: rollbackCommercialDataQualityMigration },
