@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Skincos — Terminal de Ponto</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background:#101827; color:#edf3ff; }
+    body { min-height:100vh; margin:0; display:grid; place-items:center; background:radial-gradient(circle at top,#173665,#101827 56%); }
+    main { width:min(94vw,530px); padding:28px; box-sizing:border-box; }
+    .card { background:rgba(15,28,49,.92); border:1px solid #29476e; border-radius:18px; padding:28px; box-shadow:0 22px 55px #050a13aa; }
+    h1 { margin:0 0 7px; font-size:1.65rem; } p { color:#b6c8e3; line-height:1.45; } label { display:block; margin:16px 0 7px; font-weight:650; }
+    input { width:100%; box-sizing:border-box; padding:14px; border-radius:10px; border:1px solid #38577f; background:#0b1628; color:#fff; font-size:1rem; }
+    button { width:100%; margin-top:20px; padding:14px; border:0; border-radius:10px; background:#2e8df4; color:#fff; font-weight:750; font-size:1rem; cursor:pointer; }
+    button:disabled { opacity:.55; cursor:wait; } .hidden { display:none; } .status { margin-top:18px; border-radius:10px; padding:13px; background:#142640; color:#d6e7ff; } .error { background:#4a2030; color:#ffd9e1; } .success { background:#123d32; color:#d0ffeb; } .meta { font-size:.86rem; color:#93add0; margin-top:14px; } .row { display:flex; justify-content:space-between; gap:14px; margin-top:8px; } .link { width:auto; margin-top:12px; background:transparent; color:#9bcaff; padding:4px; text-decoration:underline; }
+  </style>
+</head>
+<body>
+<main><section class="card" aria-live="polite">
+  <h1 id="title">Terminal de Ponto</h1>
+  <p id="subtitle">A unidade e o horário são definidos pelo terminal autorizado. Use sua matrícula e PIN.</p>
+  <form id="pair-form" class="hidden">
+    <label for="token">Token do dispositivo</label><input id="token" autocomplete="off" spellcheck="false" placeholder="ptd_…" required />
+    <p class="meta">Emparelhe somente no aparelho físico administrado. O token é guardado neste navegador; não o coloque em URL, QR code público ou chat.</p>
+    <button>Emparelhar terminal</button>
+  </form>
+  <form id="punch-form" class="hidden">
+    <div class="row"><span>Unidade</span><strong id="unit">—</strong></div><div class="row"><span>Dispositivo</span><strong id="device">—</strong></div>
+    <label for="employee-code">Matrícula</label><input id="employee-code" autocomplete="username" inputmode="text" maxlength="80" required />
+    <label for="pin">PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="32" required />
+    <button id="punch-button">Registrar ponto</button><button type="button" class="link" id="unlink">Desemparelhar este terminal</button>
+  </form>
+  <div id="status" class="status">Verificando terminal…</div>
+</section></main>
+<script>
+(() => {
+  const storageKey = 'skincos.ponto.terminal.device-token.v1'; const $ = id => document.getElementById(id);
+  const pairForm = $('pair-form'), punchForm = $('punch-form'), status = $('status'), title = $('title'), subtitle = $('subtitle'), button = $('punch-button'); let token = localStorage.getItem(storageKey) || ''; let context = null;
+  const setStatus = (message, kind='') => { status.textContent = message; status.className = `status ${kind}`; };
+  const api = async (path, init={}) => { const response = await fetch(`/api/ponto/device/${path}`, { ...init, headers:{ 'content-type':'application/json', 'authorization':`Device ${token}`, ...(init.headers||{}) } }); const data = await response.json().catch(() => ({})); if (!response.ok || !data.ok) { const error = new Error(data.error || 'Falha ao comunicar com o terminal'); error.code = data.error; throw error; } return data.data; };
+  const showPairing = message => { punchForm.classList.add('hidden'); pairForm.classList.remove('hidden'); title.textContent = 'Emparelhar terminal'; subtitle.textContent = 'Use o token criado uma única vez pelo gestor para esta unidade.'; setStatus(message || 'Este navegador ainda não está vinculado a um terminal.'); };
+  const load = async () => { if (!token) return showPairing(); try { context = await api('context'); pairForm.classList.add('hidden'); punchForm.classList.remove('hidden'); title.textContent = 'Terminal de Ponto'; subtitle.textContent = 'Somente PIN. A unidade e o horário são conferidos pelo servidor.'; $('unit').textContent = context.unitId; $('device').textContent = context.label; setStatus(`Pronto para registrar. Rede: ${context.networkPolicy === 'REQUIRE' ? 'obrigatória' : context.networkPolicy === 'OBSERVE' ? 'verificada como evidência' : 'não configurada'}.`); } catch { localStorage.removeItem(storageKey); token=''; showPairing('Não foi possível validar este terminal. Confira o token ou solicite um novo ao gestor.'); } };
+  pairForm.addEventListener('submit', async event => { event.preventDefault(); token = $('token').value.trim(); if (!token) return; localStorage.setItem(storageKey, token); await load(); });
+  $('unlink').addEventListener('click', () => { localStorage.removeItem(storageKey); token=''; context=null; $('pin').value=''; $('employee-code').value=''; showPairing('Terminal desemparelhado neste navegador. O token não foi revogado; faça isso no CRM se o dispositivo tiver sido perdido.'); });
+  punchForm.addEventListener('submit', async event => { event.preventDefault(); const employeeCode = $('employee-code').value.trim(); const pin = $('pin').value; if (!employeeCode || !pin) return; button.disabled=true; setStatus('Registrando no horário do servidor…'); try { const requestId = crypto.randomUUID(); const result = await api('punches', { method:'POST', headers:{ 'idempotency-key':requestId }, body:JSON.stringify({ employeeCode, pin, requestId }) }); $('pin').value=''; setStatus(`${result.employeeName}: ${result.type === 'IN' ? 'entrada' : result.type === 'OUT' ? 'saída' : result.eventType} registrada às ${new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit',timeZone:'America/Sao_Paulo'}).format(new Date(result.at))}. Operação ${result.operationId}.`, 'success'); } catch (error) { const messages = { PIN_INVALID:'PIN inválido.', PIN_LOCKED:'PIN temporariamente bloqueado. Aguarde e tente novamente.', PIN_NOT_SET:'PIN ainda não configurado para esta matrícula.', NETWORK_FORBIDDEN:'Este terminal não está na rede autorizada.', NETWORK_CONTEXT_REQUIRED:'Não foi possível comprovar a rede deste terminal.', EMPLOYEE_NOT_LINKED:'Matrícula não encontrada para esta unidade.', COOLDOWN:'Aguarde alguns segundos antes de registrar novamente.' }; setStatus(messages[error.code] || 'Não foi possível registrar. Verifique os dados ou peça suporte ao gestor.', 'error'); } finally { button.disabled=false; } });
+  load();
+})();
+</script>
+</body></html>

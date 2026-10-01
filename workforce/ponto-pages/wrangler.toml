@@ -1,0 +1,12 @@
+# Phase 1 source contract only. This file intentionally names no live Pages
+# project, route, account, database, KV namespace, service binding, or secret.
+# The dedicated publisher is fail-closed until a later governed phase provides
+# an exact project identity and custody-backed runtime configuration.
+name = "skincos-ponto-pages-phase1-unconfigured"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-09-09"
+
+[vars]
+SKINCOS_DEPLOYMENT_ENV = "unconfigured"
+PONTO_RELEASE_SHA = ""
+PONTO_ROLLOUT_STAGE = "maintenance"
