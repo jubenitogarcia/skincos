@@ -161,17 +161,17 @@ jobs:
           if (
             workflow?.state !== "active"
             || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
-            || workflow?.name !== "Ponto progressive release"
             || !Number.isInteger(workflow?.id)
             || String(run?.id || "") !== process.env.PREDECESSOR_RUN_ID
             || run.workflow_id !== workflow.id
-            || run.path !== workflow.path
+            || run.path !== `${workflow.path}@refs/heads/main`
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.run_attempt !== 1
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA
+            || run.name !== "Ponto progressive release"
             || run.display_title !== expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || String(run.repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID
@@ -752,11 +752,7 @@ jobs:
           const fs = require("fs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const runs = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).workflow_runs || [];
-          if (
-            workflow.state !== "active"
-            || workflow.path !== ".github/workflows/ponto-production-baseline.yml"
-            || workflow.name !== "Ponto production baseline"
-          ) throw new Error("canonical baseline workflow is unavailable");
+          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-production-baseline.yml") throw new Error("canonical baseline workflow is unavailable");
           const exactTitle = new RegExp(
             `^Ponto baseline ${process.env.RELEASE_SHA} staging=${process.env.PREDECESSOR_RUN_ID} orchestrator=${process.env.GITHUB_RUN_ID} nonce=[0-9a-f]{32}$`,
           );
@@ -769,6 +765,7 @@ jobs:
               && run.head_branch === "main"
               && run.head_sha === process.env.RELEASE_SHA
               && run.run_attempt === 1
+              && run.name === "Ponto production baseline"
               && run.repository?.full_name === process.env.GITHUB_REPOSITORY
               && String(run.repository?.id || "") === process.env.GITHUB_REPOSITORY_ID
               && run.head_repository?.full_name === process.env.GITHUB_REPOSITORY

@@ -56,25 +56,21 @@ const execute = (args, env = {}) => new Promise((resolve) => {
 const canonicalRun = (overrides = {}) => ({
   id: Number(orchestratorRunId),
   workflow_id: 77,
-  path: ".github/workflows/ponto-progressive-release.yml",
+  path: ".github/workflows/ponto-progressive-release.yml@refs/heads/main",
   run_attempt: 1,
   status: "in_progress",
   conclusion: null,
   event: "workflow_dispatch",
   head_branch: "main",
   head_sha: releaseSha,
-  name: `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`,
+  name: "Ponto progressive release",
   repository: { id: Number(repositoryId), full_name: repository },
   head_repository: { id: Number(repositoryId), full_name: repository },
   display_title: `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`,
   ...overrides,
 });
 
-const withApi = async ({
-  run = canonicalRun(),
-  artifact,
-  workflowName = "Ponto progressive release",
-}, callback) => {
+const withApi = async ({ run = canonicalRun(), artifact }, callback) => {
   let deleted = false;
   let requestCount = 0;
   const server = http.createServer((request, response) => {
@@ -85,7 +81,6 @@ const withApi = async ({
         id: 77,
         state: "active",
         path: ".github/workflows/ponto-progressive-release.yml",
-        name: workflowName,
       }));
       return;
     }
@@ -137,17 +132,6 @@ test("assert-active accepts only the exact live first-attempt coordinator", asyn
     );
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /active first-attempt Ponto coordinator/);
-  });
-});
-
-test("assert-active rejects substituted static workflow metadata", async () => {
-  await withApi({ workflowName: "Renamed workflow" }, async ({ apiUrl }) => {
-    const result = await execute(
-      ["assert-active", stage, releaseSha, orchestratorRunId],
-      { GITHUB_API_URL: apiUrl },
-    );
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /canonical orchestrator run is not the exact active first-attempt issuer/);
   });
 });
 

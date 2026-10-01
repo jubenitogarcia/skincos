@@ -1,6 +1,6 @@
 ---
 name: skincos-project-orchestrator
-description: Autonomously resume and execute the next safe SKINCOS milestone. Use for retomar, continuar, revisar, auditar, handoffs, PR/CI/deploy follow-up, planning versus staging, “retome o SKINCOS”, “continue o projeto”, “prossiga do ponto atual”, “execute o próximo passo”, or “use o orquestrador”. Default to resume-execute; use read-only status only when explicitly requested.
+description: Autonomously resume and execute the next safe SKINCOS milestone, including supervised automatic continuation. Use for retomar, continuar, revisar, auditar, handoffs, PR/CI/deploy follow-up, planning versus staging, “retome o SKINCOS”, “continue o projeto”, “prossiga do ponto atual”, “execute o próximo passo”, “supervisor-cycle”, or “use o orquestrador”. Default to resume-execute; use read-only status only when explicitly requested.
 ---
 
 # SKINCOS Project Orchestrator
@@ -13,8 +13,13 @@ Default mode is `resume-execute`: reconstruct state, choose one eligible priorit
 - `status`, `somente audite`, `somente analise`: read-only.
 - `plan`: rebuild/reorder queue only.
 - `execute:<milestone-id>`: execute that item.
+- `supervisor-cycle`: reconstruct the active thread mission, reconcile real
+  state, execute one minimum safe eligible milestone, persist evidence, and
+  emit the machine-readable Stop-hook contract.
 
-Read `references/execution-loop.md`, `references/authorization-boundaries.md`, and `references/evidence-model.md`.
+Read `references/execution-loop.md`, `references/authorization-boundaries.md`,
+and `references/evidence-model.md`. For `supervisor-cycle`, also read
+`references/supervisor-cycle.md` completely before acting.
 
 ## Loop
 
@@ -28,3 +33,9 @@ Read `references/execution-loop.md`, `references/authorization-boundaries.md`, a
 ## Authorization
 
 `resume-execute` authorizes worktrees, branches, code/config/tests/docs, declared dependencies, commits, push/PR/merge, scratch resources, and reversible synthetic staging deploy/rollback/restore/canary/failure tests. It never authorizes production deploy/migration/data mutation/activation/secrets, purchases, repo transfer, business permissions, or real-user pilot. Preserve unrelated dirty work and keep PRs single-purpose.
+
+Automatic continuation never broadens these boundaries. End every
+`supervisor-cycle` with exactly one delimited JSON contract defined in
+`references/supervisor-cycle.md`; use `continue` only after real progress and
+only with a concrete safe next item. A missing or ambiguous authorization is a
+terminal safety state, not permission to proceed.

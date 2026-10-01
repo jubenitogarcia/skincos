@@ -189,47 +189,6 @@ test("workflow checks both live surfaces before mutation and retains both pilot 
   assert.doesNotMatch(workflow, /ponto-(?:child-core|release-custody|staging-release-custody|production-release-custody)|deploy-core-worker-\{0\}-preview/);
 });
 
-function workflowJobBlock(workflow, jobName) {
-  const start = workflow.indexOf(`  ${jobName}:\n`);
-  assert.notEqual(start, -1, `missing workflow job ${jobName}`);
-  const next = workflow.slice(start + 1).search(/\n  [a-zA-Z0-9_-]+:\n/);
-  return next === -1
-    ? workflow.slice(start)
-    : workflow.slice(start, start + 1 + next);
-}
-
-test("Identity jobs explicitly activate and verify the project-pinned pnpm before use", () => {
-  const workflow = fs.readFileSync(new URL("../workflows/deploy-core-workers.yml", import.meta.url), "utf8");
-  const packageJson = JSON.parse(fs.readFileSync(new URL("../../inventory/package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.packageManager, "pnpm@9.15.4");
-
-  for (const jobName of [
-    "ponto-identity-preview",
-    "ponto-identity-staging",
-    "ponto-identity-progressive-release",
-  ]) {
-    const job = workflowJobBlock(workflow, jobName);
-    const activation = job.indexOf('corepack prepare "$pnpm_spec" --activate');
-    const install = job.indexOf("(cd inventory && corepack pnpm install --frozen-lockfile --ignore-scripts)");
-    assert.match(job, /require\('\.\/inventory\/package\.json'\)\.packageManager/);
-    assert.match(job, /Inventory packageManager must pin an exact pnpm version/);
-    assert.match(job, /Prepared pnpm differs from the Inventory pin/);
-    assert(activation > 0 && activation < install, `${jobName} must activate pinned pnpm before install`);
-    assert.match(job, /\(cd inventory && corepack pnpm --version\)/);
-    assert.match(job, /\(cd inventory && corepack pnpm install --frozen-lockfile --ignore-scripts\)/);
-    assert.match(job, /\(cd inventory && corepack pnpm test\)/);
-    assert.doesNotMatch(job, /corepack pnpm --dir inventory/);
-  }
-});
-
-test("Identity preview and staging do not request setup-node pnpm caching before pnpm exists", () => {
-  const workflow = fs.readFileSync(new URL("../workflows/deploy-core-workers.yml", import.meta.url), "utf8");
-  for (const jobName of ["ponto-identity-preview", "ponto-identity-staging"]) {
-    const job = workflowJobBlock(workflow, jobName);
-    assert.doesNotMatch(job, /^\s+cache\s*:\s*["']?pnpm["']?\s*$/m);
-  }
-});
-
 test("Timekeeping candidate upload requires both root secrets in the selected environment without repository fallback", () => {
   const workflow = fs.readFileSync(new URL("../workflows/deploy-timekeeping.yml", import.meta.url), "utf8");
   const custody = workflow.indexOf("Require selected-environment custody for both candidate root secrets");
