@@ -2,8 +2,12 @@ import {
   ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
   createAtendimentoUnitScopedProjectionSource,
 } from './atendimentoProjectionExporter.mjs'
+import {
+  ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS,
+  ATENDIMENTO_CRM_CORE_IDENTITY_SOURCE_SEMANTICS_VERSION,
+} from '../../../../shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js'
 
-export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION = 'atendimento/crm-core/confirmed-unit-membership-source/v3'
+export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION = ATENDIMENTO_CRM_CORE_IDENTITY_SOURCE_SEMANTICS_VERSION
 
 // This source is limited to relations whose lifecycle is owned and observable
 // in Atendimento. Finance-owned Caixa sales are intentionally not included:
@@ -16,7 +20,8 @@ export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION = 'aten
 // row and can never fall back to a global/wildcard scope.
 export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS = Object.freeze({
   version: ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION,
-  membership: 'active attendance evidence resolved through canonical units',
+  membership: 'explicitly confirmed attendance evidence resolved through canonical units',
+  sourceRelationAllowlist: ATENDIMENTO_CRM_CORE_ISOLATED_IDENTITY_PROJECTION_SOURCE_RELATIONS,
   excludedDomains: Object.freeze(['finance']),
   deferredSources: 'Finance Caixa sale evidence, app registration and supplemental lead remain excluded until their owner provides a dedicated source contract plus complete-snapshot retirement evidence or explicit tombstones',
   duplicateEvidence: 'one identity/unit row, with the latest observed source timestamp',
@@ -24,12 +29,6 @@ export const ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS = Obj
   missingEvidence: 'no projection row; there is no global or wildcard fallback',
   revision: 'snapshot-only: updated_at is cursor material, while CRM Core event revision remains 1 for the initial backfill and exact replay',
 })
-
-// This validates the UUID separators as well as the hexadecimal groups before
-// the source text is cast. A permissive "36 hex-or-dash characters" predicate
-// could still let an invalid legacy source_id abort an otherwise read-only
-// snapshot at PostgreSQL cast time.
-const UUID_TEXT_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
 // Keep every source branch data-minimal. The final projection only selects the
 // opaque identity UUID, a timestamp, and the canonical unit slug; names,
@@ -43,17 +42,14 @@ const MEMBERSHIP_CTE = `WITH unit_membership_evidence AS (
       attendance_link.created_at,
       attendance.created_at
     ) AS observed_at
-  FROM crm_atendimento.global_client_identity_members member
-  JOIN crm_atendimento.attendance_client_links attendance_link
-    ON attendance_link.client_id = CASE
-      WHEN member.source_id ~ '${UUID_TEXT_PATTERN}' THEN member.source_id::uuid
-      ELSE NULL
-    END
+  FROM crm_atendimento.crm_core_identity_members member
+  JOIN crm_atendimento.crm_core_attendance_client_links attendance_link
+    ON attendance_link.canonical_client_id = member.source_id
   JOIN crm_atendimento.attendances attendance
     ON attendance.id = attendance_link.attendance_id
   JOIN crm_atendimento.units unit ON unit.id = attendance.unit_id
   WHERE member.source_type = 'attendance_client'
-    AND member.source_id ~ '${UUID_TEXT_PATTERN}'
+    AND attendance_link.status = 'confirmed'
     AND attendance.deleted_at IS NULL
 ), unit_memberships AS (
   SELECT identity_id, unit_slug, max(observed_at) AS observed_at

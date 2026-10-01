@@ -79,14 +79,15 @@ test('exports only Atendimento-owned lifecycle-proven membership without a globa
   const queries = [countSql, rowsSql, firstPageSql, nextPageSql]
 
   for (const query of queries) {
-    assert.match(query, /crm_atendimento\.global_client_identity_members/i)
-    assert.match(query, /crm_atendimento\.attendance_client_links/i)
+    assert.match(query, /crm_atendimento\.crm_core_identity_members/i)
+    assert.match(query, /crm_atendimento\.crm_core_attendance_client_links/i)
     assert.match(query, /crm_atendimento\.attendances/i)
     assert.match(query, /crm_atendimento\.units/i)
     assert.doesNotMatch(query, /\b(?:canonical_name|phone_key|email_keys|cpf_keys|client_name|raw_service)\b/i)
     assert.doesNotMatch(query, /\b(?:crm_caixa|caixa_customer|sale)\b/i)
   }
   assert.match(rowsSql, /source_type = 'attendance_client'/)
+  assert.match(rowsSql, /attendance_link\.status = 'confirmed'/)
   for (const deferredSourceType of ['app_registration', 'lead_profile']) {
     assert.doesNotMatch(rowsSql, new RegExp(`source_type = '${deferredSourceType}'`))
   }
@@ -99,8 +100,14 @@ test('exports only Atendimento-owned lifecycle-proven membership without a globa
   assert.match(rowsSql, /SELECT id, updated_at, unit_slug/)
   assert.match(nextPageSql, /WHERE \(observed_at, identity_id, unit_slug\) > \(\$1::timestamptz, \$2::uuid, \$3::text\)/)
   assert.doesNotMatch(nextPageSql, /\bOFFSET\b/i)
-  assert.equal(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION, 'atendimento/crm-core/confirmed-unit-membership-source/v3')
-  assert.equal(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.membership, 'active attendance evidence resolved through canonical units')
+  assert.equal(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_VERSION, 'atendimento/crm-core/confirmed-unit-membership-source/v5')
+  assert.equal(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.membership, 'explicitly confirmed attendance evidence resolved through canonical units')
+  assert.deepEqual(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.sourceRelationAllowlist, [
+    'crm_atendimento.crm_core_identity_members',
+    'crm_atendimento.crm_core_attendance_client_links',
+    'crm_atendimento.attendances',
+    'crm_atendimento.units',
+  ])
   assert.deepEqual(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.excludedDomains, ['finance'])
   assert.equal(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.missingEvidence, 'no projection row; there is no global or wildcard fallback')
   assert.match(ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE_SEMANTICS.deferredSources, /Finance Caixa sale evidence/i)

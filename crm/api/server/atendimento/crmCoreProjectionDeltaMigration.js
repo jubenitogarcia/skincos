@@ -25,6 +25,9 @@ import {
     ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS,
     createAtendimentoProjectionBackfillBatch,
 } from '../../../../shared/crm-auth/atendimentoProjectionBackfillBatch.js'
+import {
+    ATENDIMENTO_CRM_CORE_IDENTITY_PROJECTION_SOURCE_RELATIONS,
+} from '../../../../shared/crm-auth/atendimentoCrmCoreIdentityMaterializationPolicy.js'
 
 export const CRM_CORE_PROJECTION_DELTA_MIGRATION_ID = '20260908_crm_core_projection_delta_v1'
 export const CRM_CORE_PROJECTION_MEMBERSHIP_RELATION = 'crm_atendimento.crm_core_projection_memberships'
@@ -38,12 +41,7 @@ const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'crm_core_projection_exporter',
 })
 
-export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_RELATIONS = Object.freeze([
-    'crm_atendimento.global_client_identity_members',
-    'crm_atendimento.attendance_client_links',
-    'crm_atendimento.attendances',
-    'crm_atendimento.units',
-])
+export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_RELATIONS = ATENDIMENTO_CRM_CORE_IDENTITY_PROJECTION_SOURCE_RELATIONS
 
 export const CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS = Object.freeze([
     'crm_atendimento.global_client_identities',
@@ -51,7 +49,6 @@ export const CRM_CORE_PROJECTION_DELTA_PREREQUISITE_RELATIONS = Object.freeze([
 ])
 
 const UNIT_SLUG_SQL_PATTERN = "^(?!all$|unknown$)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
-const UUID_TEXT_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 const READ_ONLY_SQL_FORBIDDEN = /\b(?:alter|call|copy|create|delete|drop|grant|insert|merge|offset|revoke|truncate|update|vacuum)\b/i
 const OPAQUE_EVENT_ID_PATTERN = /^event:[A-Za-z0-9_-]{8,160}$/
 const OPAQUE_PROJECTION_REFERENCE_PATTERN = /^projection:[A-Za-z0-9_-]{8,160}$/
@@ -94,15 +91,12 @@ export const ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL = `WITH unit_membershi
         ) AS observed_at
       FROM crm_atendimento.global_client_identity_members member
       JOIN crm_atendimento.attendance_client_links attendance_link
-        ON attendance_link.client_id = CASE
-            WHEN member.source_id ~ '${UUID_TEXT_PATTERN}' THEN member.source_id::uuid
-            ELSE NULL
-        END
+        ON attendance_link.client_id = member.source_id
       JOIN crm_atendimento.attendances attendance
         ON attendance.id = attendance_link.attendance_id
       JOIN crm_atendimento.units unit ON unit.id = attendance.unit_id
      WHERE member.source_type = 'attendance_client'
-       AND member.source_id ~ '${UUID_TEXT_PATTERN}'
+       AND attendance_link.status = 'confirmed'
        AND attendance.deleted_at IS NULL
 ), canonical_memberships AS (
     SELECT identity_id AS identity_id, unit_slug AS unit_slug, max(observed_at) AS observed_at

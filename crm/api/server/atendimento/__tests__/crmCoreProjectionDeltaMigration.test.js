@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 
 import {
     CRM_CORE_PROJECTION_DELTA_MIGRATION_ID,
@@ -206,8 +208,16 @@ test('uses only Atendimento-owned immutable lifecycle evidence without importer 
     for (const evidenceTimestamp of ['attendance_link.created_at', 'attendance.created_at']) {
         assert.match(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, new RegExp(evidenceTimestamp.replace('.', '\\.')))
     }
+    assert.match(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, /attendance_link\.status = 'confirmed'/i)
     assert.doesNotMatch(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, /(?:app_client_registrations|supplemental_lead_profiles|app_registration|lead_profile)/i)
     assert.doesNotMatch(ATENDIMENTO_PROJECTION_MEMBERSHIP_SOURCE_SQL, /\b(?:crm_caixa|caixa_customer|sale)\b/i)
+})
+
+test('keeps the historical v1 SQL companion pinned to its legacy identity graph', async () => {
+    const sqlPath = fileURLToPath(new URL('../migrations/20260908_crm_core_projection_delta_v1.up.sql', import.meta.url))
+    const sql = await readFile(sqlPath, 'utf8')
+    assert.equal((sql.match(/references crm_atendimento\.global_client_identities\(id\)/ig) || []).length, 2)
+    assert.doesNotMatch(sql, /references crm_atendimento\.crm_core_identities\(id\)/i)
 })
 
 test('applies the migration in a guarded transaction and grants read-only exporter columns', async () => {
