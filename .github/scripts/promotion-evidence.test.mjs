@@ -26,6 +26,25 @@ test("maps Atendimento to its isolated runtime release surfaces", () => {
   assert.match(digest, /^[0-9a-f]{64}$/);
 });
 
+test("maps the Beauty Movement copy update to the website release surface", () => {
+  const env = { ...process.env };
+  delete env.PROMOTION_RELEASE_INPUT_DIGEST;
+  const digest = execFileSync(process.execPath, [
+    ".github/scripts/promotion-evidence.mjs",
+    "digest",
+  ], {
+    cwd: root,
+    env: {
+      ...env,
+      PROMOTION_UNIT: "beauty-movement-campaign-copy-update",
+      PROMOTION_SOURCE_SHA: "HEAD",
+    },
+    encoding: "utf8",
+  }).trim();
+
+  assert.match(digest, /^[0-9a-f]{64}$/);
+});
+
 test("writes and verifies a tamper-evident immutable release identity", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-promotion-evidence-"));
   const evidencePath = path.join(directory, "promotion-evidence.json");

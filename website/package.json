@@ -17,6 +17,7 @@
     "smoke:strict": "SMOKE_REQUIRE_AGENDA=1 node scripts/smoke.mjs",
     "custom-urls:migrate:esfa": "tsx scripts/migrate-esfa-redirects.ts",
     "beauty-movement:import": "tsx scripts/beauty-movement-import.ts",
+    "beauty-movement:update-copy": "tsx scripts/beauty-movement-update-copy.ts",
     "beauty-movement:export-delivery": "tsx scripts/beauty-movement-delivery-export.ts",
     "beauty-movement:prepare-short-links": "tsx scripts/beauty-movement-short-links.ts",
     "beauty-movement:report": "tsx scripts/beauty-movement-report.ts",

@@ -241,6 +241,10 @@ function cleanText(value: string | undefined, maxLength: number): string {
     return text;
 }
 
+export function normalizeBeautyMovementCampaignDescription(value: string | undefined): string {
+    return cleanText(value, 500);
+}
+
 function isValidCpfDigits(value: string): boolean {
     if (!/^\d{11}$/.test(value) || /^(\d)\1{10}$/.test(value)) return false;
     const checkDigit = (length: number) => {
@@ -693,6 +697,44 @@ export function validateBeautyMovementImport(params: {
 
 function escapeSql(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Produces the narrowly-scoped SQL used by the protected active-campaign copy
+ * update workflow. Active campaigns intentionally reject the normal import
+ * upsert; this helper changes only the description after the workflow has
+ * independently attested the exact campaign id, status and expiry.
+ */
+export function buildBeautyMovementCampaignDescriptionUpdateSql(params: {
+    campaignId: string;
+    description: string;
+    campaignEndsAtMs: number;
+    expectedDescription: string;
+    expectedUpdatedAtMs: number;
+    updatedAtMs?: number;
+}): string {
+    const campaignId = validateCampaignId(params.campaignId);
+    const description = cleanText(params.description, 500);
+    if (!description) throw new Error("beauty_movement_campaign_description_invalid");
+    const expectedDescription = cleanText(params.expectedDescription, 500);
+    if (!expectedDescription) throw new Error("beauty_movement_campaign_expected_description_invalid");
+    if (!Number.isSafeInteger(params.campaignEndsAtMs) || params.campaignEndsAtMs <= 0) {
+        throw new Error("beauty_movement_invalid_campaign_ends_at");
+    }
+    if (!Number.isSafeInteger(params.expectedUpdatedAtMs) || params.expectedUpdatedAtMs <= 0) {
+        throw new Error("beauty_movement_campaign_expected_updated_at_invalid");
+    }
+    const updatedAtMs = params.updatedAtMs ?? Date.now();
+    if (!Number.isSafeInteger(updatedAtMs) || updatedAtMs <= 0) {
+        throw new Error("beauty_movement_invalid_campaign_updated_at");
+    }
+    return [
+        `UPDATE bm_campaigns SET description = ${escapeSql(description)}, updated_at_ms = ${updatedAtMs}`,
+        `WHERE id = ${escapeSql(campaignId)} AND status = 'active' AND ends_at_ms = ${params.campaignEndsAtMs}`,
+        `AND ends_at_ms > (CAST(strftime('%s','now') AS INTEGER) * 1000)`,
+        `AND description = ${escapeSql(expectedDescription)} AND updated_at_ms = ${params.expectedUpdatedAtMs};`,
+        "",
+    ].join(" ");
 }
 
 function sha256Hex(value: string): Promise<string> {
