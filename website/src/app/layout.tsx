@@ -143,8 +143,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body>
         <Script id="beauty-movement-invite-fragment" strategy="beforeInteractive">
           {`(function () {
-  var shouldScrub = false;
-  try {
+  var inviteKey = "ef:beauty-movement:invite";
+  var attemptKey = "ef:beauty-movement:handoff-attempt";
+  var handoffEvent = "beauty-movement-invite-handoff";
+
+  function captureInviteFragment() {
+    var shouldScrub = false;
+    var token = "";
+    var validToken = false;
+    try {
     var pathname = window.location.pathname.replace(/\\/+$/, "") || "/";
     var normalizedPathname = pathname.toLowerCase();
     if (normalizedPathname !== "/beleza-em-movimento" && normalizedPathname !== "/belezaemmovimento") return;
@@ -153,25 +160,43 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     var params = new URLSearchParams(fragment);
     if (!params.has("c")) return;
     shouldScrub = true;
-    var token = params.get("c") || "";
+    token = params.get("c") || "";
+    validToken = /^[A-Za-z0-9_-]{40,180}$/.test(token);
     // The invite itself must never reach analytics, attribution, referrers or
     // the server through a URL. Keep it only long enough for the client to
     // exchange it for an HttpOnly session, then remove it synchronously.
-    if (/^[A-Za-z0-9_-]{40,180}$/.test(token)) {
-      try {
-        window.sessionStorage.setItem("ef:beauty-movement:invite", token);
-      } catch (_) {
-        // Still scrub the URL; storage is only a hand-off optimization.
-      }
-    }
-  } catch (_) {
-    // A malformed fragment is treated exactly like an invalid invitation.
-  }
-  if (shouldScrub) {
     try {
-      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+      window.sessionStorage.setItem(attemptKey, "1");
+      window.sessionStorage.removeItem(inviteKey);
+      if (validToken) window.sessionStorage.setItem(inviteKey, token);
+    } catch (_) {
+      // The in-memory handoff below keeps this navigation fail-closed even
+      // when sessionStorage is unavailable.
+    }
+    try {
+      window.__efBeautyMovementInviteHandoff = { attempted: true, token: validToken ? token : null };
     } catch (_) {}
+    } catch (_) {
+    // A malformed fragment is treated exactly like an invalid invitation.
+    shouldScrub = true;
+    try { window.__efBeautyMovementInviteHandoff = { attempted: true, token: null }; } catch (_) {}
+    }
+    if (shouldScrub) {
+      try {
+        var currentState = window.history.state;
+        var nextState = currentState && typeof currentState === "object" ? Object.assign({}, currentState) : {};
+        // A hash navigation may copy the previous entry's state. Removing the
+        // old selector before the new exchange prevents invite B from ever
+        // falling back to invite A.
+        delete nextState.__efBeautyMovementContextRef;
+        window.history.replaceState(nextState, "", window.location.pathname + window.location.search);
+      } catch (_) {}
+      try { window.dispatchEvent(new Event(handoffEvent)); } catch (_) {}
+    }
   }
+
+  captureInviteFragment();
+  window.addEventListener("hashchange", captureInviteFragment, true);
 })();`}
         </Script>
         {site.key === "espacofacial" ? (

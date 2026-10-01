@@ -27,6 +27,54 @@ gates abaixo estejam concluídos.
   convites legados. O resultado persistido inclui `outcome_key`, versão do
   protocolo e snapshot estruturado da oferta.
 
+## Isolamento de sessão por convite
+
+A identidade da experiência não é selecionada por um cookie global. O fragmento
+`#c=...` é capturado e removido antes de analytics; o servidor o troca por:
+
+- um `contextRef` opaco e não secreto, derivado por HMAC em domínio separado;
+- um cookie HttpOnly exclusivo chamado `ef_bm_ctx_<contextRef>`, com
+  `Path=/api/beleza-em-movimento`, `SameSite=Lax`, `Secure` em produção e
+  validade máxima de 24 horas.
+
+Cada entrada do histórico da aba guarda somente seu `contextRef`. Um marcador
+limitado em `sessionStorage` auxilia a limpeza, mas o histórico é a seleção
+autoritativa por navegação. Todas as chamadas de estado, escolha e confirmação
+enviam `X-Beauty-Movement-Context`; o servidor aceita a requisição apenas
+quando existe o cookie HttpOnly com o mesmo sufixo e quando o HMAC recalculado
+do token secreto coincide em tempo constante. O token da sessão nunca é
+entregue ao JavaScript.
+
+O cookie legado `ef_beauty_movement_session` é ignorado por todas as leituras
+e mutações, e é expirado durante uma troca de convite ou resposta inválida.
+Uma visita sem fragmento e sem contexto ligado àquela entrada do histórico
+falha fechada e retorna ao site institucional. Um token novo, inválido,
+expirado ou revogado nunca herda o convite que outra aba abriu.
+
+Não há migration de D1 nesta mudança. Convites, escolhas, confirmações e
+outcomes existentes continuam vinculados ao mesmo `invite_id`; reabrir o link
+personalizado cria apenas uma nova sessão privada e retoma o progresso já
+persistido. Apagar campanha, convites ou banco não faz parte de rollback nem de
+compatibilidade.
+
+### Threat model resumido
+
+- **Confusão entre abas:** mitigada por contexto explícito em cada entrada do
+  histórico e cookies separados por contexto.
+- **Contexto forjado ou trocado:** rejeitado porque o servidor recalcula o HMAC
+  do token HttpOnly e exige correspondência exata.
+- **Vazamento do convite:** o fragmento é removido sincronicamente, não entra em
+  URL de API, evidência, analytics ou logs.
+- **Resposta atrasada A após navegação B:** inicializações usam cancelamento e
+  geração monotônica; o componente também é remontado quando o contexto muda.
+- **Back/forward e bfcache:** `popstate` e `pageshow` revalidam o contexto
+  selecionado antes de restaurar a experiência.
+- **Storage indisponível:** o handoff em memória e o histórico mantêm o fluxo;
+  na ausência de ambos, o comportamento é fail-closed.
+- **Cookie legado ou obsoleto:** não seleciona sessão e tem expiração limitada;
+  os cookies por contexto expiram naturalmente em até 24 horas para preservar
+  abas concorrentes.
+
 ## Infraestrutura exigida antes de staging
 
 1. Criar um D1 exclusivo de staging e outro de produção, sem reutilizar
@@ -200,9 +248,13 @@ não há fallback para caminho local, chat ou outro checkout.
 3. O workflow captura a versão Worker incumbente, compila o SHA promovido,
    publica a mesma fonte com `BEAUTY_MOVEMENT_ENABLED=true` e exige
    `x-app-build` igual ao SHA antes de ativar a campanha.
-4. Uma campanha sintética isolada é criada para o smoke de navegador. A jornada
-   faz três revelações, confirmação, reload, readback do `outcome_key`, snapshot,
-   protocolo e timestamp, e verifica zero chamadas WhatsApp/erros de console.
+4. Uma campanha sintética isolada é criada para o smoke de navegador. Quatro
+   convites sintéticos cobrem a jornada completa, A/B concorrentes e token
+   expirado. A matriz valida mesma aba, duas abas, contexto privado,
+   armazenamento indisponível, troca rápida, reload simultâneo, back/forward,
+   os dois aliases, autorização cruzada e fail-closed. O readback em D1 prova
+   escolhas independentes; a jornada principal ainda confirma `outcome_key`,
+   snapshot, protocolo e timestamp, com zero chamadas WhatsApp/erros de console.
 5. A fixture sintética é revogada/desabilitada sempre. Se qualquer etapa não
    puder ser atestada, a campanha real desta execução é desabilitada e o Worker
    volta somente para a versão incumbente capturada; nenhum dado preexistente é
@@ -222,3 +274,49 @@ sendo publicada. Se não houver campanha vigente, o padrão continua sendo
 provar o estado ativo interrompe o deploy antes da publicação. Assim, um deploy
 posterior de código não desliga acidentalmente uma campanha já aprovada nem
 reativa uma campanha encerrada.
+
+Quando essa continuidade está ativa, o deploy genérico também registra em
+`RUNNER_TEMP` a versão Worker anterior, a versão candidata e o build anterior
+atestados. O checkpoint incumbente é persistido em artefato privado antes da
+mutação e a identidade candidata é persistida imediatamente após o Wrangler
+confirmar a nova versão, antes de qualquer smoke. A versão recebe ainda uma tag
+de propriedade limitada ao `run_id` e `run_attempt`; isso diferencia até dois
+deploys distintos do mesmo SHA. Antes de promover os demais Workers, ele executa em produção a
+mesma matriz A/B e uma jornada completa usando uma campanha temporária com
+quatro convites exclusivamente sintéticos. O teste prova os dois aliases,
+`x-app-build`, assets, headers `no-store`, abas concorrentes, reload,
+back/forward, autorização cruzada inclusive com a credencial A deliberadamente
+colocada sob o nome de cookie B, três escolhas, confirmação, outcome e a
+presença do CTA sem abrir o WhatsApp. A fixture é sempre revogada e
+desabilitada, e o número de campanhas reais ativas deve permanecer idêntico ao
+baseline. Em qualquer falha, o workflow só aceita rollback se o Worker corrente
+ainda for exatamente a versão candidata; então retorna à versão e ao
+`x-app-build` incumbentes. A campanha real, seus convites, shortlinks e progresso
+não são recriados nem alterados por esse smoke.
+
+A compensação tem duas camadas idempotentes. Uma etapa `always()` no próprio
+job limpa somente a fixture sintética determinística e reconcilia uma falha ou
+cancelamento. Um workflow `workflow_run` independente, serializado pelo mesmo
+grupo de produção e protegido por novo lease `release:website`, com espera
+limitada a 20 minutos para uma execução abandonada liberar o lease, repete a
+reconciliação se o runner original desaparecer. Ele infere um candidato sem
+checkpoint pós-deploy apenas quando a versão corrente é diferente da incumbente
+e tanto o `x-app-build` quanto a tag de propriedade coincidem exatamente com o
+release interrompido. Uma versão já restaurada ou substituída por outro release
+é preservada. Depois que navegador e D1 passam, o smoke grava na descrição da
+própria campanha sintética uma marca determinística contendo somente SHA e dono
+da execução; a limpeza preserva essa marca enquanto desabilita a campanha e
+revoga os quatro convites sintéticos. Assim, tanto a etapa no job original quanto
+o reconciliador independente reconhecem uma jornada já validada mesmo se o
+upload do artefato ou outra etapa posterior falhar, sem restaurar indevidamente
+o site anterior. Nenhuma dessas rotinas apaga campanha real, convite, progresso,
+shortlink ou D1, e “deletar e publicar do zero” não é um procedimento de
+recuperação suportado.
+
+O lease é obrigatório no recovery, inclusive em `workflow_run`; a variável de
+ativação só pode fazê-lo falhar fechado, nunca transformar a reconciliação em
+uma escrita sem coordenação. Produção também exige manifesto e tag de dono antes
+do deploy e não possui fallback de rollback direto no helper. Se o marcador
+durável não puder ser lido, o estado é indeterminado: a reconciliação falha e
+preserva o Worker corrente até uma nova execução obter evidência, em vez de
+interpretar indisponibilidade do D1 como autorização para rollback.

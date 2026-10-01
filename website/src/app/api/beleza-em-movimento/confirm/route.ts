@@ -4,8 +4,10 @@ import {
   beautyMovementInvalidResponse,
   beautyMovementJson,
   beautyMovementUnavailableResponse,
+  clearBeautyMovementLegacySessionCookie,
+  clearBeautyMovementSessionCookie,
   getBeautyMovementClientIp,
-  getBeautyMovementSessionToken,
+  getBeautyMovementSessionCredential,
   hasBeautyMovementAllowedOrigin,
   nullableEmail,
   readBeautyMovementJson,
@@ -18,9 +20,11 @@ export async function POST(request: NextRequest) {
   const body = await readBeautyMovementJson(request);
   const email = nullableEmail(body?.email);
   if (!body || email === undefined || body.operationalConsent !== true) return beautyMovementInvalidResponse();
+  const credential = getBeautyMovementSessionCredential(request);
 
   const result = await confirmBeautyMovementInvite({
-    sessionToken: getBeautyMovementSessionToken(request),
+    sessionToken: credential?.sessionToken,
+    contextRef: credential?.contextRef,
     email,
     operationalConsent: true,
     origin: request.headers.get("origin"),
@@ -28,7 +32,12 @@ export async function POST(request: NextRequest) {
   });
 
   if (result.ok) return beautyMovementJson({ ok: true, state: result.state, replay: result.replay === true });
-  return result.error === "campaign_unavailable"
+  const response = result.error === "campaign_unavailable"
     ? beautyMovementUnavailableResponse()
     : beautyMovementInvalidResponse();
+  if (result.error === "session_unavailable" && credential) {
+    clearBeautyMovementSessionCookie(response, credential.contextRef);
+    clearBeautyMovementLegacySessionCookie(response);
+  }
+  return response;
 }

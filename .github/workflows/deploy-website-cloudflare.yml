@@ -199,7 +199,31 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
+      - name: Prepare Beauty Movement production rollback checkpoint
+        id: beautyMovementRollbackCheckpoint
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NEXT_PUBLIC_BUILD_SHA: ${{ needs.promotion.outputs.source_sha }}
+          NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
+          DEPLOY_RELEASE_OWNER: bm-${{ github.run_id }}-${{ github.run_attempt }}
+          DEPLOY_SITE_URL: https://espacofacial.com
+          DEPLOY_ROLLBACK_MANIFEST_PATH: ${{ runner.temp }}/website-deploy-checkpoints/incumbent.json
+        run: node scripts/deploy-worker.mjs --prepare-rollback-only
+
+      - name: Persist Beauty Movement production incumbent checkpoint
+        if: ${{ steps.beautyMovementRollbackCheckpoint.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: website-production-incumbent-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/website-deploy-checkpoints/incumbent.json
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Deploy website (OpenNext -> Workers)
+        id: deployWebsite
         if: ${{ steps.guard.outputs.skip != 'true' }}
         working-directory: website
         run: |
@@ -217,7 +241,117 @@ jobs:
           NEXT_PUBLIC_META_PIXEL_ID: ${{ inputs.target == 'production' && (secrets.NEXT_PUBLIC_META_PIXEL_ID != '' && secrets.NEXT_PUBLIC_META_PIXEL_ID || secrets.META_PIXEL_ID) || '' }}
           NEXT_PUBLIC_BUILD_SHA: ${{ needs.promotion.outputs.source_sha }}
           NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
+          DEPLOY_RELEASE_OWNER: ${{ inputs.target == 'production' && format('bm-{0}-{1}', github.run_id, github.run_attempt) || '' }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ inputs.target == 'production' && secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '' }}
+          DEPLOY_ROLLBACK_MANIFEST_PATH: ${{ inputs.target == 'production' && format('{0}/website-deploy-checkpoints/candidate.json', runner.temp) || '' }}
+
+      - name: Persist Beauty Movement production candidate checkpoint
+        if: ${{ always() && inputs.target == 'production' && steps.beautyMovementRollbackCheckpoint.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: website-production-candidate-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/website-deploy-checkpoints/candidate.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Inspect Beauty Movement production release state
+        id: beautyMovementRelease
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          RELEASE_OWNER: bm-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/website-deploy-checkpoints/candidate.json" <<'NODE'
+          import fs from 'node:fs';
+          const state = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (state.phase !== 'candidate' || state.releaseSha !== process.env.RELEASE_SHA || state.releaseOwner !== process.env.RELEASE_OWNER || !/^[0-9a-f-]{36}$/i.test(state.candidateVersionId ?? '')) {
+            throw new Error('beauty_movement_release_manifest_invalid');
+          }
+          if (Number(state.beautyMovementActiveCampaignCount) > 0 && (
+            !/^[0-9a-f-]{36}$/i.test(state.previousVersionId ?? '')
+            || !/^[0-9a-f]{40}$/.test(state.previousBuildSha ?? '')
+          )) {
+            throw new Error('beauty_movement_release_rollback_target_invalid');
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `active=${Number(state.beautyMovementActiveCampaignCount) > 0}\n`);
+          NODE
+
+      - name: Recheck Website release lease before Beauty Movement production fixture
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && steps.beautyMovementRelease.outputs.active == 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Install Beauty Movement production smoke browser
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && steps.beautyMovementRelease.outputs.active == 'true' }}
+        working-directory: website
+        run: npx playwright install --with-deps chromium >/dev/null
+
+      - name: Run Beauty Movement production isolation and journey smoke
+        id: beautyMovementReleaseSmoke
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && steps.beautyMovementRelease.outputs.active == 'true' }}
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+          GITHUB_ACTIONS: 'true'
+        run: |
+          node scripts/beauty-movement-production-release-smoke.mjs \
+            --base-url https://espacofacial.com \
+            --database espacofacial-beauty-movement \
+            --config wrangler.toml \
+            --release-sha "${{ needs.promotion.outputs.source_sha }}" \
+            --private-root "$RUNNER_TEMP/beauty-movement-production-release-smoke/private" \
+            --evidence-file "$RUNNER_TEMP/beauty-movement-production-release-smoke/evidence.json"
+
+      - name: Upload Beauty Movement production release evidence
+        id: beautyMovementReleaseEvidence
+        if: ${{ steps.beautyMovementReleaseSmoke.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beauty-movement-production-release-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/beauty-movement-production-release-smoke/evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Reconcile Beauty Movement production release
+        id: beautyMovementReconcile
+        if: ${{ always() && inputs.target == 'production' && steps.beautyMovementRollbackCheckpoint.outcome == 'success' }}
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node scripts/beauty-movement-production-reconcile.mjs \
+            --base-url https://espacofacial.com \
+            --database espacofacial-beauty-movement \
+            --config wrangler.toml \
+            --release-sha "${{ needs.promotion.outputs.source_sha }}" \
+            --incumbent-manifest "$RUNNER_TEMP/website-deploy-checkpoints/incumbent.json" \
+            --candidate-manifest "$RUNNER_TEMP/website-deploy-checkpoints/candidate.json" \
+            --trigger-run-id "${{ github.run_id }}" \
+            --trigger-run-attempt "${{ github.run_attempt }}" \
+            --conclusion "${{ steps.beautyMovementReleaseSmoke.outcome == 'success' && 'success' || job.status }}" \
+            --evidence-file "$RUNNER_TEMP/beauty-movement-production-reconcile/evidence.json"
+
+      - name: Upload Beauty Movement production reconciliation evidence
+        if: ${{ always() && inputs.target == 'production' && steps.beautyMovementRollbackCheckpoint.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beauty-movement-production-reconcile-${{ needs.promotion.outputs.source_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/beauty-movement-production-reconcile/evidence.json
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Check Website release lease before legal-hub deployment
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}

@@ -4672,9 +4672,10 @@
   }
 
   /* The modal has a deliberate artwork zone, rather than leaving a blank
-   * corridor between the offer copy and the WhatsApp action. */
+   * corridor between the offer copy and the WhatsApp action. The extra mobile
+   * height keeps the in-flow conditions link inside the card at 319px. */
   .specialCardModalDialog .specialCard {
-    min-height: clamp(448px, 145vw, 474px);
+    min-height: clamp(460px, 149vw, 486px);
   }
 
   .specialCardModalDialog .specialCardFrontOffer {
