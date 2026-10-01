@@ -43,6 +43,7 @@ jobs:
       codex: ${{ steps.scope.outputs.codex }}
       observability: ${{ steps.scope.outputs.observability }}
       clientes_runtime_contract: ${{ steps.scope.outputs.clientes_runtime_contract }}
+      clientes_readonly_boundary: ${{ steps.scope.outputs.clientes_readonly_boundary }}
       storage_governance: ${{ steps.scope.outputs.storage_governance }}
       all: ${{ steps.scope.outputs.all }}
       node: ${{ steps.scope.outputs.node }}
@@ -77,16 +78,18 @@ jobs:
           codex="$(changed .codex skills ops/codex scripts/codex-*.mjs scripts/codex-*.sh scripts/*codex*.ps1)"
           observability="$(changed scripts/observability)"
           clientes_runtime_contract="$(changed scripts crm/api ops/runtime/units)"
+          clientes_readonly_boundary="$(changed clientes-readonly ops/governance/global-concurrency-policy.json)"
           storage_governance="$(changed ops/codex/storage-retention-policy.json scripts/skincos-storage-governance.ps1 scripts/dedupe-source-tars.ps1 scripts/tests/test-skincos-storage-governance.ps1)"
           all="$(changed .github/workflows/ci-smoke.yml)"
           node=false
-          if [[ "$website" == true || "$crm_api" == true || "$whatsapp" == true || "$observability" == true || "$clientes_runtime_contract" == true || "$all" == true ]]; then node=true; fi
+          if [[ "$website" == true || "$crm_api" == true || "$whatsapp" == true || "$observability" == true || "$clientes_runtime_contract" == true || "$clientes_readonly_boundary" == true || "$all" == true ]]; then node=true; fi
           echo "website=$website" >> "$GITHUB_OUTPUT"
           echo "crm_api=$crm_api" >> "$GITHUB_OUTPUT"
           echo "whatsapp=$whatsapp" >> "$GITHUB_OUTPUT"
           echo "codex=$codex" >> "$GITHUB_OUTPUT"
           echo "observability=$observability" >> "$GITHUB_OUTPUT"
           echo "clientes_runtime_contract=$clientes_runtime_contract" >> "$GITHUB_OUTPUT"
+          echo "clientes_readonly_boundary=$clientes_readonly_boundary" >> "$GITHUB_OUTPUT"
           echo "storage_governance=$storage_governance" >> "$GITHUB_OUTPUT"
           echo "all=$all" >> "$GITHUB_OUTPUT"
           echo "node=$node" >> "$GITHUB_OUTPUT"
@@ -155,6 +158,10 @@ jobs:
       - name: Verify Clientes staging runtime contract
         if: ${{ needs.changes.outputs.clientes_runtime_contract == 'true' || needs.changes.outputs.all == 'true' }}
         run: node --test scripts/tests/clientes-production-readonly-runtime.test.mjs
+
+      - name: Verify Clientes readonly extraction boundary
+        if: ${{ needs.changes.outputs.clientes_readonly_boundary == 'true' || needs.changes.outputs.all == 'true' }}
+        run: npm --prefix clientes-readonly run check && npm --prefix clientes-readonly run test && node .github/scripts/validate-dependency-closures.mjs
 
       - name: Install website dependencies
         if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.all == 'true' }}
