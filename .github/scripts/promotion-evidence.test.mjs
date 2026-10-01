@@ -68,6 +68,44 @@ test("maps Atendimento to its isolated runtime release surfaces", () => {
   assert.match(digest, /^[0-9a-f]{64}$/);
 });
 
+test("maps Ponto Pages to its dedicated publisher and coordination surfaces", () => {
+  const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  const env = { ...process.env };
+  delete env.PROMOTION_RELEASE_INPUT_DIGEST;
+
+  const digest = execFileSync(process.execPath, [
+    ".github/scripts/promotion-evidence.mjs",
+    "digest",
+  ], {
+    cwd: root,
+    env: {
+      ...env,
+      PROMOTION_UNIT: "ponto-pages",
+      PROMOTION_SOURCE_SHA: sourceSha,
+    },
+    encoding: "utf8",
+  }).trim();
+
+  const manifest = JSON.parse(execFileSync(process.execPath, [
+    "scripts/codex-release-manifest.mjs",
+    "--source", sourceSha,
+    "--surface", "ponto-pages",
+    "--surface", "global-coordination",
+    "--surface", "github-governance",
+  ], { cwd: root, encoding: "utf8" }));
+  const inputs = new Set(manifest.releaseInputs.map((entry) => entry.path));
+  assert.deepEqual(manifest.surfaces, ["github-governance", "global-coordination", "ponto-pages"]);
+  assert.equal(manifest.releaseInputDigest, digest);
+  for (const requiredInput of [
+    "workforce/ponto-pages/wrangler.toml",
+    ".github/workflows/ponto-pages-governed-publisher.yml",
+    ".github/actions/global-coordination-check/action.yml",
+    "ops/governance/global-concurrency-policy.json",
+  ]) {
+    assert.ok(inputs.has(requiredInput), `missing Ponto Pages release input: ${requiredInput}`);
+  }
+});
+
 test("maps the Beauty Movement copy update to the website release surface", () => {
   const env = { ...process.env };
   delete env.PROMOTION_RELEASE_INPUT_DIGEST;

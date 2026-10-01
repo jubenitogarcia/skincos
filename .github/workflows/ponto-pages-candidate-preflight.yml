@@ -1,0 +1,58 @@
+name: Ponto Pages candidate preflight
+run-name: Ponto Pages candidate ${{ inputs.release_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full immutable main SHA to attest as a non-publishing Ponto Pages candidate.
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ponto-pages-candidate-preflight-${{ inputs.release_sha }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the workflow definition on main
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$WORKFLOW_REF" == 'refs/heads/main' ]] || { echo 'PONTO_PAGES_WORKFLOW_REF_NOT_MAIN'; exit 1; }
+
+  promotion:
+    needs: source
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: ponto-pages
+      target: preview
+      promotion_environment: ponto-pages-staging
+      release_sha: ${{ inputs.release_sha }}
+      staging_supported: true
+
+  verify:
+    needs: promotion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: workforce/ponto-pages/package-lock.json
+      - run: npm ci
+        working-directory: workforce/ponto-pages
+      - run: npm run publisher:validate -- --release-sha "${{ needs.promotion.outputs.source_sha }}"
+        working-directory: workforce/ponto-pages
+      - run: npm run check
+        working-directory: workforce/ponto-pages

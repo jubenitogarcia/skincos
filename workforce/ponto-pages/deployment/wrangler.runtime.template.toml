@@ -1,0 +1,25 @@
+# Template only. It is rendered in a protected GitHub environment by a later
+# governed phase and must never become the committed Phase 1 wrangler.toml.
+# Every double-underscore value is an unresolved runner-only placeholder.
+name = "__PONTO_PAGES_PROJECT__"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-09-09"
+
+[[env.production.services]]
+binding = "PONTO_CORE"
+service = "__PONTO_PAGES_CORE_SERVICE__"
+
+[[env.production.services]]
+binding = "PONTO_IDENTITY"
+service = "__PONTO_PAGES_IDENTITY_SERVICE__"
+
+[[env.production.kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "__PONTO_PAGES_MODULE_CONTROL_KV_ID__"
+
+[env.production.vars]
+SKINCOS_DEPLOYMENT_ENV = "__PONTO_PAGES_RUNTIME_ENV__"
+PONTO_RELEASE_SHA = "__PONTO_RELEASE_SHA__"
+PONTO_ROLLOUT_STAGE = "__PONTO_ROLLOUT_STAGE__"
+PONTO_CORE_VERSION_ID = "__PONTO_PAGES_CORE_VERSION_ID__"
+PONTO_IDENTITY_VERSION_ID = "__PONTO_PAGES_IDENTITY_VERSION_ID__"

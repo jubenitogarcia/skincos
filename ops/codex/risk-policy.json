@@ -55,6 +55,21 @@
       "releaseInput": true
     },
     {
+      "id": "ponto-pages",
+      "patterns": [
+        "workforce/ponto-pages/**",
+        "platform/deploy/operational-units.json",
+        ".github/governance/cloudflare-single-writer-policy.json",
+        ".github/workflows/ponto-pages-*.yml",
+        ".github/workflows/promotion-gate.yml",
+        ".github/actions/global-coordination-acquire/**",
+        ".github/actions/global-coordination-check/**",
+        ".github/actions/global-coordination-release/**",
+        ".github/scripts/promotion-*.mjs"
+      ],
+      "releaseInput": true
+    },
+    {
       "id": "website",
       "patterns": ["website/**", "booking/**"],
       "releaseInput": true
