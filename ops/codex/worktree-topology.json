@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "topologyId": "skincos-canonical-worktrees",
+  "operator": "admin",
+  "worktree": {
+    "canonicalRelativeRoot": "admin\\canonical",
+    "pathTemplate": "admin\\canonical\\{surfaceType}\\{surfaceId}",
+    "registryRelativeRoot": "worktree-registry",
+    "canonicalRole": "stable-preview-or-qualification",
+    "ephemeralRole": "task-or-pr"
+  },
+  "crm": {
+    "unit": "local-launch-catalog-plus-explicit-registry-exceptions",
+    "catalogSource": "crm/console/modules/localLaunchCatalog.json",
+    "registrySource": "crm/console/modules/registry.tsx",
+    "pilot": ["users", "atendimento", "clientes"],
+    "surfaces": [
+      { "id": "insumos", "label": "Insumos", "route": "/?module=insumos", "source": "local-launch-catalog" },
+      { "id": "conversa", "label": "Conversa", "route": "/?module=conversa", "source": "local-launch-catalog" },
+      { "id": "atendimento", "label": "Atendimento", "route": "/?module=atendimento", "source": "local-launch-catalog" },
+      { "id": "ponto", "label": "Ponto", "route": "/?module=ponto", "source": "local-launch-catalog" },
+      { "id": "clientes", "label": "Clientes", "route": "/?module=clientes", "source": "local-launch-catalog" },
+      { "id": "caixa", "label": "Caixa", "route": "/?module=caixa", "source": "local-launch-catalog" },
+      { "id": "faturamento", "label": "Faturamento", "route": "/?module=faturamento", "source": "local-launch-catalog" },
+      { "id": "procedimentos", "label": "Procedimentos", "route": "/?module=procedimentos", "source": "local-launch-catalog" },
+      { "id": "unit-monitor", "label": "Unit Monitor", "route": "/?module=unit-monitor", "source": "local-launch-catalog" },
+      { "id": "instagram-studio", "label": "Redes Sociais", "route": "/?module=instagram-studio", "source": "local-launch-catalog" },
+      { "id": "meta-pages-review", "label": "Meta Review", "route": "/?module=meta-pages-review", "source": "local-launch-catalog" },
+      { "id": "meta-ads", "label": "Meta Ads", "route": "/?module=meta-ads", "source": "local-launch-catalog" },
+      { "id": "site-tracking", "label": "Site EF", "route": "/?module=site-tracking", "source": "local-launch-catalog" },
+      { "id": "escala-profissionais", "label": "Escala", "route": "/?module=escala-profissionais", "source": "local-launch-catalog" },
+      {
+        "id": "users",
+        "label": "Usuários",
+        "route": "/?module=users",
+        "source": "registry-exception",
+        "reason": "registry surface has a validated local preview but is absent from localLaunchCatalog"
+      }
+    ]
+  },
+  "orb": {
+    "unit": "workflow-family",
+    "sourceRoot": "orb/engine",
+    "subworkflowPolicy": "map-to-family-without-independent-physical-slot",
+    "pilot": ["livia", "meta-ads-publish"],
+    "families": [
+      {
+        "id": "livia",
+        "label": "Livia",
+        "mainWorkflowIds": ["WGXr4vYkv9UoJ8zc"],
+        "subworkflowIds": [],
+        "subworkflowDiscovery": "active-workflow-entity-and-runtime-manifest",
+        "sourceFiles": ["orb/engine/compose2-current.js", "orb/engine/scripts/livia"],
+        "runtimeSource": "immutable-release-manifest",
+        "status": "active"
+      },
+      {
+        "id": "meta-ads-publish",
+        "label": "Meta Ads Publish",
+        "mainWorkflowIds": ["eFJhFg79lyaycjlm"],
+        "subworkflowIds": [],
+        "relatedWorkflowIds": ["xN8juRoQBMa4JKOd", "yTatSnzUqtKuAjuM"],
+        "subworkflowDiscovery": "active-workflow-entity-and-runtime-manifest",
+        "sourceFiles": ["orb/engine/workflows/meta-ads-publish.current.json"],
+        "runtimeSource": "immutable-release-manifest",
+        "status": "inactive-candidate"
+      },
+      {
+        "id": "clinic-scheduling",
+        "label": "Clinic Scheduling",
+        "mainWorkflowIds": [],
+        "subworkflowIds": [],
+        "subworkflowDiscovery": "workflow-files-and-live-workflow-entity",
+        "sourceFiles": ["orb/engine/workflows/WORKFLOW_01_INBOUND_TRIAGEM.json", "orb/engine/workflows/WORKFLOW_02_AGENDAMENTO.json", "orb/engine/workflows/WORKFLOW_03_LEMBRETES_E_CONFIRMACAO.json", "orb/engine/workflows/WORKFLOW_04_NOSHOW_REATIVACAO.json"],
+        "runtimeSource": "immutable-release-manifest",
+        "status": "catalogued-not-pilot"
+      }
+    ]
+  },
+  "retention": {
+    "manualWorktreeRemoval": "git-worktree-remove-only",
+    "runtimeSourceRemoval": "source-in-use-lease-manifest-quarantine",
+    "orbReleaseGuard": "scripts/runtime/assert-workflow-runtime-retention.sh",
+    "protectedStates": ["dirty", "detached", "open-pr", "manifest-reference", "active-process", "active-lease", "unproven"]
+  }
+}
