@@ -15,6 +15,8 @@ required=(
   'find "$STAGING" -type f'
   'LIVIA_BUILD_JOB_GRAPH_SOURCE="$STAGING/orb/engine/compose2-current.js"'
   '--assert-runtime-compatibility'
+  '--assert-output-contract'
+  '--assert-platform-contracts'
 )
 
 for pattern in "${required[@]}"; do
@@ -31,5 +33,9 @@ fi
 
 LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
   node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-runtime-compatibility >/dev/null
+LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
+  node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-output-contract >/dev/null
+LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
+  node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-platform-contracts >/dev/null
 
 echo 'PASS: native source release accepts only a checksum-verified Linux archive.'

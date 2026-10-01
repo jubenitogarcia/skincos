@@ -5,28 +5,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Convert-WindowsPathToWsl {
-    param([string]$Path)
-
-    if ($Path -match '^(?<drive>[A-Za-z]):\\(?<rest>.*)$') {
-        $drive = $Matches.drive.ToLowerInvariant()
-        $rest = $Matches.rest -replace '\\', '/'
-        if ([string]::IsNullOrWhiteSpace($rest)) {
-            return "/mnt/$drive"
-        }
-
-        return "/mnt/$drive/$rest"
-    }
-
-    return $Path
-}
-
-function Convert-ToBashLiteral {
-    param([string]$Value)
-
-    return "'" + $Value.Replace("'", "'""'""'") + "'"
-}
-
 function Convert-ToProcessArgumentString {
     param([string[]]$Arguments)
 
@@ -78,9 +56,9 @@ function Invoke-CapturedCommand {
     }
 }
 
-$repoMountPath = Convert-WindowsPathToWsl -Path $ProjectRoot
 $windowsGh = Get-Command gh -ErrorAction SilentlyContinue
 $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+$wslInvoker = Join-Path $PSScriptRoot "invoke-skincos-wsl.ps1"
 
 $windowsHostsFile = Join-Path $env:AppData "GitHub CLI\hosts.yml"
 $windowsHostsState = "missing"
@@ -108,19 +86,28 @@ $wslRepoReady = $false
 $wslRepoBranch = $null
 $wslFailureHint = $null
 
-if ($wsl) {
-    $wslAuthProbe = Invoke-CapturedCommand -FilePath $wsl.Source -Arguments @(
-        "bash",
-        "-lc",
-        "gh auth status >/dev/null 2>&1"
+if ($wsl -and (Test-Path -LiteralPath $wslInvoker)) {
+    $gatewayPrefix = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $wslInvoker,
+        "-ProjectRoot", $ProjectRoot,
+        "-SkipBootstrapCheck",
+        "-SkipNodeCheck",
+        "-SkipNpmCheck",
+        "-SkipGitCheck",
+        "-Executable", "gh",
+        "-ArgumentList"
     )
+    $wslAuthProbe = Invoke-CapturedCommand -FilePath "powershell.exe" -Arguments ($gatewayPrefix + @("auth", "status"))
     $wslGhReady = ($wslAuthProbe.ExitCode -eq 0)
 
     if ($wslGhReady) {
-        $repoCommand = "cd " + (Convert-ToBashLiteral -Value $repoMountPath) + " && gh repo view --json nameWithOwner,defaultBranchRef"
-        $wslRepoProbe = Invoke-CapturedCommand -FilePath $wsl.Source -Arguments @("bash", "-lc", $repoCommand)
+        $wslRepoProbe = Invoke-CapturedCommand -FilePath "powershell.exe" -Arguments ($gatewayPrefix + @(
+            "repo", "view", "--json", "nameWithOwner,defaultBranchRef"
+        ))
         if ($wslRepoProbe.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($wslRepoProbe.Output)) {
-            $repoInfo = $wslRepoProbe.Output | ConvertFrom-Json
+            $repoInfo = ($wslRepoProbe.Output -split '\r?\n' | Select-Object -Last 1) | ConvertFrom-Json
             if ($repoInfo.nameWithOwner -eq $RepoSlug) {
                 $wslRepoReady = $true
                 $wslRepoBranch = $repoInfo.defaultBranchRef.name
@@ -192,5 +179,5 @@ else {
     }
     Write-Host "Run the shared action: GitHub Auth Login (WSL)"
     Write-Host "Manual fallback:"
-    Write-Host "wsl.exe bash -lc 'gh auth login --web --git-protocol https --hostname github.com && gh auth status'"
+    Write-Host ".\scripts\invoke-skincos-wsl.ps1 -Executable gh -ArgumentList auth,login,--web,--git-protocol,https,--hostname,github.com"
 }

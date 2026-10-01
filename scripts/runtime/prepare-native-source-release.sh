@@ -92,6 +92,14 @@ sudo -n -u skincos env \
   LIVIA_BUILD_JOB_GRAPH_SOURCE="$STAGING/orb/engine/compose2-current.js" \
   N8N_RUNTIME_HOME="${N8N_RUNTIME_HOME:-/var/lib/skincos-runtime/orb}" \
   node "$STAGING/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-runtime-compatibility >/dev/null
+sudo -n -u skincos env \
+  LIVIA_BUILD_JOB_GRAPH_SOURCE="$STAGING/orb/engine/compose2-current.js" \
+  N8N_RUNTIME_HOME="${N8N_RUNTIME_HOME:-/var/lib/skincos-runtime/orb}" \
+  node "$STAGING/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-output-contract >/dev/null
+sudo -n -u skincos env \
+  LIVIA_BUILD_JOB_GRAPH_SOURCE="$STAGING/orb/engine/compose2-current.js" \
+  N8N_RUNTIME_HOME="${N8N_RUNTIME_HOME:-/var/lib/skincos-runtime/orb}" \
+  node "$STAGING/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-platform-contracts >/dev/null
 
 sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$DESTINATION")"
 sudo -n mv "$STAGING" "$DESTINATION"

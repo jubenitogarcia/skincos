@@ -28,7 +28,10 @@ case "$action" in
     systemctl --no-pager --full status "${units[@]}"
     ;;
   restart)
-    sudo -n systemctl restart "${units[@]}"
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/orb-safe-restart.sh"
+    # The remaining units do not execute Livia jobs. Keep their existing
+    # lifecycle behavior after Orb has completed its guarded restart.
+    sudo -n systemctl restart orb-proxy.service messaging-whatsapp.service crm.service booking.service cloudflare-orb.service cloudflare-runtime.service
     systemctl --quiet is-active "${units[@]}"
     printf 'ACTIVE %s\n' "${units[@]}"
     ;;

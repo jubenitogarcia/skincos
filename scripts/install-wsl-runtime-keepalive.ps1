@@ -7,6 +7,8 @@ param(
     [int]$VmIdleTimeoutMilliseconds = 300000
 )
 
+# WSL_BOUNDARY_EXCEPTION: installs only the lifecycle anchor; application
+# actions must use invoke-skincos-wsl.ps1.
 $ErrorActionPreference = "Stop"
 $taskName = "SkincosWslRuntimeKeepalive"
 $wslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"

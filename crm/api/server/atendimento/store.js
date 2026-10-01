@@ -2655,10 +2655,24 @@ async function queryIdentityReviewQueue(pgPool, query = {}) {
 
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
+    let readyPromise = null
 
     async function ensureReady() {
         requirePool(pgPool)
-        await withPgTransaction(pgPool, migrateAtendimento)
+        // The Pages shell opens several Atendimento resources in parallel.
+        // Running the full DDL migration for every one of those requests can
+        // acquire PostgreSQL schema locks in different orders and deadlock.
+        // Share a single initialization transaction per adapter process, and
+        // clear a rejected promise so a later request can recover after a
+        // transient database failure.
+        if (!readyPromise) {
+            readyPromise = withPgTransaction(pgPool, migrateAtendimento)
+                .catch((error) => {
+                    readyPromise = null
+                    throw error
+                })
+        }
+        await readyPromise
     }
 
     return {

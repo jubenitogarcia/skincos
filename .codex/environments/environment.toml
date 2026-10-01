@@ -8,34 +8,29 @@ script = ""
 [[actions]]
 name = "Workspace"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action WorkspaceMenu"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action WorkspaceMenu"
 
 [[actions]]
 name = "Contexto"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action ContextMenu"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action ContextMenu"
 
 [[actions]]
-name = "Local"
+name = "CRM – Local"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action LocalMenu"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmLocal"
 
 [[actions]]
-name = "CRM – Local (Gestor)"
+name = "CRM – Módulos"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmLocal"
-
-[[actions]]
-name = "CRM – Consultor (Ponto)"
-icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmConsultor"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmModules"
 
 [[actions]]
 name = "EF App"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action EfAppMenu"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action EfAppMenu"
 
 [[actions]]
 name = "Orb"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbMenu"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action OrbMenu"
