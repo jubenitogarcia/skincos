@@ -1,0 +1,281 @@
+name: Publish CRM native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact main SHA represented by a verified release-source artifact
+        required: true
+        type: string
+      confirmation:
+        description: Type publish-dedicated-crm-native-release
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: crm-native-publisher-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Custodied dedicated crm.service publish
+    if: >-
+      github.repository == 'jubenitogarcia/skincos' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.release_sha == github.sha &&
+      inputs.confirmation == 'publish-dedicated-crm-native-release'
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    environment: crm-native-publisher-production
+    timeout-minutes: 45
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      COORDINATION_PROOF: ${{ runner.temp }}/skincos-global-coordination-crm-native.json
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Reject a rerun, non-main source, or incomplete custody configuration
+        shell: bash
+        env:
+          SIGNING_KEY_ID: ${{ vars.CRM_NATIVE_PUBLISHER_SIGNING_KEY_ID }}
+          STAGING_PROOF_SHA256: ${{ vars.CRM_NATIVE_PUBLISHER_STAGING_PROOF_SHA256 }}
+          RUNTIME_ATTESTATION_SHA256: ${{ vars.CRM_NATIVE_PUBLISHER_RUNTIME_ATTESTATION_SHA256 }}
+          SIGNING_PRIVATE_KEY: ${{ secrets.CRM_NATIVE_PUBLISHER_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ATTEMPT" == '1' ]] || { echo 'CRM native publish refuses reruns; dispatch a new custody authorization.' >&2; exit 78; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$RELEASE_SHA" == "$GITHUB_SHA" ]] || { echo 'Release SHA must be the current lowercase main SHA.' >&2; exit 78; }
+          [[ -n "$SIGNING_PRIVATE_KEY" && "$SIGNING_KEY_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$ ]] || { echo 'CRM native signing custody is unavailable.' >&2; exit 78; }
+          [[ "$STAGING_PROOF_SHA256" =~ ^[0-9a-f]{64}$ && "$RUNTIME_ATTESTATION_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo 'Staging/runtime custody receipts are unavailable.' >&2; exit 78; }
+
+      - name: Checkout immutable main source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify immutable checkout identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]]
+          [[ "$(git branch --show-current)" == 'main' || "$GITHUB_REF" == 'refs/heads/main' ]]
+
+      - name: Acquire CRM native release fence
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: release:crm-native
+          module: crm-native
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-crm-native.json
+          inputs_json: '{"service":"crm.service","target":"production"}'
+
+      - name: Find and download the exact release-source artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/crm-native-publisher"
+          mkdir -p "$work/artifact"
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=release-source-${RELEASE_SHA}&per_page=100"
+          curl --fail --silent --show-error \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "$api" >"$work/artifacts.json"
+          node - "$work/artifacts.json" "$RELEASE_SHA" "$work/selection.json" <<'NODE'
+          const fs = require('node:fs');
+          const [input, sha, output] = process.argv.slice(2);
+          const payload = JSON.parse(fs.readFileSync(input, 'utf8'));
+          const matches = (payload.artifacts || []).filter((artifact) => (
+            artifact?.name === `release-source-${sha}`
+            && artifact?.expired === false
+            && artifact?.workflow_run?.head_sha === sha
+            && artifact?.workflow_run?.head_branch === 'main'
+            && /^[1-9][0-9]*$/.test(String(artifact?.id || ''))
+            && /^sha256:[0-9a-f]{64}$/.test(String(artifact?.digest || ''))
+          ));
+          if (matches.length !== 1) throw new Error('exactly one current release-source artifact is required');
+          const artifact = matches[0];
+          fs.writeFileSync(output, JSON.stringify({
+            artifactId: String(artifact.id), artifactDigest: artifact.digest.slice('sha256:'.length),
+            workflowRunId: String(artifact.workflow_run.id),
+          }) + '\n', { mode: 0o600 });
+          NODE
+          artifact_id="$(node -e 'process.stdout.write(require(process.argv[1]).artifactId)' "$work/selection.json")"
+          expected_digest="$(node -e 'process.stdout.write(require(process.argv[1]).artifactDigest)' "$work/selection.json")"
+          curl --fail --silent --show-error --location \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" >"$work/release-source.zip"
+          [[ "$(sha256sum "$work/release-source.zip" | awk '{print $1}')" == "$expected_digest" ]]
+          unzip -q "$work/release-source.zip" -d "$work/artifact"
+          node - "$work/artifact" "$RELEASE_SHA" "$work/selection.json" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [directory, sha, selectionFile] = process.argv.slice(2);
+          const names = fs.readdirSync(directory).sort();
+          if (JSON.stringify(names) !== JSON.stringify(['release.json', 'source.tar.gz'])) throw new Error('release artifact contents differ');
+          const release = JSON.parse(fs.readFileSync(path.join(directory, 'release.json'), 'utf8'));
+          const source = path.join(directory, 'source.tar.gz');
+          const digest = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+          if (release?.schemaVersion !== 1 || release?.sourceSha !== sha || !/^[0-9a-f]{40}$/.test(String(release?.sourceTree || ''))
+            || release?.sourceArchiveSha256 !== digest || !Number.isSafeInteger(release?.sourceArchiveBytes)
+            || release.sourceArchiveBytes !== fs.statSync(source).size) throw new Error('release source provenance differs');
+          const selection = JSON.parse(fs.readFileSync(selectionFile, 'utf8'));
+          selection.sourceTree = release.sourceTree;
+          selection.sourceArchiveSha256 = digest;
+          selection.sourceArchiveBytes = release.sourceArchiveBytes;
+          fs.writeFileSync(selectionFile, JSON.stringify(selection) + '\n', { mode: 0o600 });
+          NODE
+
+      - name: Build immutable locked Node dependency bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/crm-native-publisher"
+          candidate="$work/candidate"
+          mkdir -p "$candidate"
+          node scripts/runtime/crm-native-source-bundle.mjs extract \
+            --source-archive "$work/artifact/source.tar.gz" \
+            --source-sha "$RELEASE_SHA" \
+            --output "$candidate" >/dev/null
+          npm --prefix "$candidate/crm/api" ci --omit=dev --ignore-scripts --no-audit --no-fund
+          node - "$candidate" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = path.resolve(process.argv[2]);
+          if (!root.startsWith(path.resolve(process.env.RUNNER_TEMP) + path.sep)) throw new Error('candidate must remain below RUNNER_TEMP');
+          const api = path.join(root, 'crm', 'api');
+          const manifest = JSON.parse(fs.readFileSync(path.join(api, 'package.json'), 'utf8'));
+          fs.rmSync(path.join(api, 'node_modules', '.bin'), { recursive: true, force: true });
+          for (const dependency of Object.keys(manifest.dependencies || {})) {
+            if (!fs.statSync(path.join(api, 'node_modules', dependency)).isDirectory()) throw new Error(`missing direct dependency: ${dependency}`);
+          }
+          const stack = [path.join(api, 'node_modules')];
+          while (stack.length) {
+            const directory = stack.pop();
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const file = path.join(directory, entry.name);
+              const stat = fs.lstatSync(file);
+              if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory()) || (stat.isFile() && stat.nlink !== 1)) throw new Error('dependency tree contains an unsafe entry');
+              if (stat.isDirectory()) stack.push(file);
+            }
+          }
+          NODE
+          tar --create --gzip --file "$work/dependencies.tar.gz" --directory "$candidate" crm/api/node_modules
+          node - "$work/dependencies.tar.gz" "$work/selection.json" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const [archive, selectionFile] = process.argv.slice(2);
+          const selection = JSON.parse(fs.readFileSync(selectionFile, 'utf8'));
+          selection.dependencyArchiveSha256 = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+          selection.dependencyArchiveBytes = fs.statSync(archive).size;
+          fs.writeFileSync(selectionFile, JSON.stringify(selection) + '\n', { mode: 0o600 });
+          NODE
+
+      - name: Capture root-owned incumbent preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/crm-native-publisher"
+          sudo -n /usr/local/sbin/skincos-publish-crm-native-release preflight >"$work/preflight.json"
+          node - "$work/preflight.json" <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (!/^[0-9a-f]{64}$/.test(String(result?.policySha256 || '')) || !/^[0-9a-f]{64}$/.test(String(result?.incumbentStateSha256 || ''))) {
+            throw new Error('root custody preflight is incomplete');
+          }
+          NODE
+
+      - name: Revalidate CRM native release fence before service transfer
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-crm-native.json
+          resource: release:crm-native
+          module: crm-native
+          source_sha: ${{ inputs.release_sha }}
+          observed_source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Sign and publish the bounded custody frame
+        shell: bash
+        env:
+          SIGNING_PRIVATE_KEY: ${{ secrets.CRM_NATIVE_PUBLISHER_SIGNING_PRIVATE_KEY }}
+          SIGNING_KEY_ID: ${{ vars.CRM_NATIVE_PUBLISHER_SIGNING_KEY_ID }}
+          STAGING_PROOF_SHA256: ${{ vars.CRM_NATIVE_PUBLISHER_STAGING_PROOF_SHA256 }}
+          RUNTIME_ATTESTATION_SHA256: ${{ vars.CRM_NATIVE_PUBLISHER_RUNTIME_ATTESTATION_SHA256 }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/crm-native-publisher"
+          node - "$work/preflight.json" "$work/selection.json" "$COORDINATION_PROOF" "$work/authorization.json" <<'NODE'
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          import { canonicalJson, sha256Hex, signPublisherAuthorization } from './scripts/runtime/crm-native-publisher-claims.mjs';
+          const [preflightFile, selectionFile, proofFile, output] = process.argv.slice(2);
+          const preflight = JSON.parse(fs.readFileSync(preflightFile, 'utf8'));
+          const selection = JSON.parse(fs.readFileSync(selectionFile, 'utf8'));
+          const proof = JSON.parse(fs.readFileSync(proofFile, 'utf8'));
+          if (proof?.resource !== 'release:crm-native' || proof?.module !== undefined || !/^[0-9a-f-]{36}$/i.test(String(proof?.leaseId || ''))
+            || !Number.isSafeInteger(proof?.fencingToken) || proof.fencingToken < 1 || !/^[0-9a-f]{64}$/.test(String(proof?.intentDigest || ''))) {
+            throw new Error('global coordination proof differs');
+          }
+          const uuid = crypto.randomUUID();
+          const now = new Date();
+          const claims = {
+            schemaVersion: 1, domain: 'skincos/crm-native-publisher/v1', operation: 'publish', authorizationId: uuid,
+            policySha256: preflight.policySha256, repositoryId: String(process.env.GITHUB_REPOSITORY_ID), repository: process.env.GITHUB_REPOSITORY,
+            workflowPath: '.github/workflows/publish-crm-native-release.yml', workflowJob: 'publish', githubRef: process.env.GITHUB_REF,
+            sourceSha: process.env.RELEASE_SHA, sourceTree: selection.sourceTree, sourceArchiveSha256: selection.sourceArchiveSha256,
+            sourceArchiveBytes: selection.sourceArchiveBytes, dependencyArchiveSha256: selection.dependencyArchiveSha256,
+            dependencyArchiveBytes: selection.dependencyArchiveBytes, artifactName: `release-source-${process.env.RELEASE_SHA}`,
+            sourceArtifactRunId: selection.workflowRunId, workflowRunId: String(process.env.GITHUB_RUN_ID), runAttempt: String(process.env.GITHUB_RUN_ATTEMPT),
+            target: 'production', service: 'crm.service', incumbentStateSha256: preflight.incumbentStateSha256,
+            stagingProofSha256: process.env.STAGING_PROOF_SHA256, runtimeAttestationSha256: process.env.RUNTIME_ATTESTATION_SHA256,
+            coordinationProofSha256: sha256Hex(canonicalJson(proof)), coordinationResource: proof.resource, coordinationModule: 'crm-native',
+            coordinationLeaseId: proof.leaseId, coordinationFencingToken: proof.fencingToken, coordinationIntentDigest: proof.intentDigest,
+            issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(), singleUse: true,
+          };
+          const document = signPublisherAuthorization({ claims, privateKeyPem: process.env.SIGNING_PRIVATE_KEY, keyId: process.env.SIGNING_KEY_ID, coordinationProof: proof });
+          fs.writeFileSync(output, `${JSON.stringify(document)}\n`, { mode: 0o600 });
+          NODE
+          { cat "$work/authorization.json"; cat "$work/artifact/source.tar.gz"; cat "$work/dependencies.tar.gz"; } |
+            sudo -n /usr/local/sbin/skincos-publish-crm-native-release publish >"$work/publish-receipt.json"
+          node - "$work/publish-receipt.json" "$RELEASE_SHA" <<'NODE'
+          const fs = require('node:fs');
+          const [file, sha] = process.argv.slice(2);
+          const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (receipt?.status !== 'published' || receipt?.releaseSha !== sha || !/^[0-9a-f]{64}$/.test(String(receipt?.policySha256 || ''))) {
+            throw new Error('native publish receipt differs');
+          }
+          NODE
+
+      - name: Upload sanitized native publish receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-native-publish-receipt-${{ inputs.release_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/crm-native-publisher/publish-receipt.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Release CRM native release fence
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-crm-native.json

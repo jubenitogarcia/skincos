@@ -51,12 +51,17 @@ if [[ -n "$NATIVE_RELEASE_ROOT" ]]; then
   # The private environment may contain credentials, endpoints and ports, but
   # never the executable source locations or loader overrides.
   unset NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_V8_COVERAGE NODE_REDIRECT_WARNINGS LD_PRELOAD LD_LIBRARY_PATH BASH_ENV ENV
+  export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   RUNTIME_HOME="$FIXED_RUNTIME_HOME"
   ENV_FILE="$FIXED_ENV_FILE"
   ROOT_DIR="$resolved_native_root"
   export BACKEND_DIR="$ROOT_DIR/backend"
   export FRONTEND_DIR="$ROOT_DIR/crm/console"
   export CONFIG_DIR="$ROOT_DIR/backend/config"
+  # EnvironmentFile contents are private deployment configuration, but a
+  # The dedicated CRM release retires this legacy writer at its process
+  # boundary. Reassert after the private file so it cannot reactivate it.
+  export PONTO_LEGACY_RUNTIME_MODE='disabled'
   export VAR_DIR="$RUNTIME_HOME/var"
 else
   export BACKEND_DIR="${BACKEND_DIR:-$ROOT_DIR/backend}"

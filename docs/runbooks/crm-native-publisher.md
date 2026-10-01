@@ -2,10 +2,11 @@
 
 ## Status
 
-This is a **source-only contract** for a future CRM-only native publisher. It
-does not install a unit, copy a release to a host, restart `crm.service`,
-change a Cloudflare route, migrate data, or enable/disable a legacy writer.
-Production is intentionally not an accepted target.
+This repository contains a **dispatch-only, root-custodied production
+publisher** for a dedicated immutable CRM release. It remains inert until a
+host administrator installs the non-secret helper and a separate root-owned
+policy pins the exact candidate, staging receipt, host-runtime attestation and
+public signing key. No release is published merely by merging this source.
 
 The purpose is to stop treating the shared pointer
 `/opt/skincos/current/source` as the CRM release boundary. The eventual
@@ -17,35 +18,49 @@ dedicated unit must instead resolve exactly:
 ```
 
 The shared source pointer remains owned by its existing publisher and is never
-modified by these scripts.
+modified by this publisher. Cloudflare Pages/Workers, domain data, databases,
+route migrations and legacy-writer retirement remain separately governed.
 
 ## What is implemented now
 
 | Component | Contract |
 | --- | --- |
 | `ops/runtime/units/crm.service` | Remains the incumbent shared-source unit until the dedicated bootstrap succeeds; this avoids changing a live service before its isolated pointer exists. |
-| `ops/runtime/units/crm.service.native.template` | Is the non-installed template for the future dedicated unit. It takes an explicit native release root and deployment target; the generic lifecycle installer does not render it. |
-| `prepare-crm-native-release.sh` | Validates a CRM source snapshot, materializes it under `<release-base>/<sha>/crm-service`, and swaps only the dedicated pointer. |
-| `rollback-crm-native-release.sh` | Restores only the exact release named by `crm-service.previous`; it does not infer a checkout or mutate the shared source pointer. |
-| `crm-native-release-contract.mjs` | Strictly validates source identity metadata, custody fields, the fixed target layouts, no symbolic links in a candidate, and pointer confinement. |
-| `test-crm-native-publisher.sh` | Executes the pointer protocol in an isolated `/tmp/skincos-crm-native-test-*` directory. It proves no service restart is attempted. |
+| `.github/workflows/publish-crm-native-release.yml` | Manually dispatched protected-environment workflow. It accepts only the current `main` SHA and an exact `release-source-<sha>` artifact. |
+| `crm-native-source-bundle.mjs` | Extracts only an allow-listed CRM source closure from the generic monorepo artifact; unrelated entries are never materialized. |
+| `crm-native-publisher-claims.mjs` | Checks a short-lived signed authorization bound to source, staging/runtime receipts, incumbent state and the global coordination fence. |
+| `crm-native-publisher-custody.mjs` | Root-only helper which receives a bounded stdin frame, builds an immutable release, atomically switches the dedicated pointer and `crm.service`, then verifies PID/cwd/environment/health. |
+| `install-crm-native-publisher-custody.sh` | Installs only the non-secret helper, literal sudoers rule and runner mount-namespace update. It does not install policy or restart `crm.service`. |
+| `rollback-last` | Root-only recovery command which restores the captured unit, drop-ins and dedicated pointers, then restarts only `crm.service`. |
+| `crm-native-release-contract.mjs` | Strictly validates identity metadata, custody fields, fixed target layouts, symbolic links, hard links, special files and pointer confinement. |
+| `test-crm-native-publisher.sh` | Executes the source-level pointer protocol in an isolated `/tmp/skincos-crm-native-test-*` directory. |
 
-The sole executable mutation is an explicitly enabled **test** harness. A
-`staging --apply` request fails before opening candidate bytes because no
-external authenticated custody verifier exists yet. This is deliberate: a
-self-consistent JSON receipt is not evidence that GitHub released a candidate.
+The source closure is `crm/api`, `crm/console`, `shared/crm-auth`, the API
+launcher, backend environment helper and capabilities catalog. Production Node
+dependencies are installed from the exact lockfile in the runner, archived
+separately, and checked before release installation. No host-side `npm install`
+or caller-selected path is permitted.
+
+The source-level prepare/rollback scripts still allow an explicitly enabled
+**test** harness only. Staging/production mutation belongs exclusively to the
+root custody helper; a self-consistent JSON file is not evidence that GitHub
+released a candidate.
 
 ## Fixed layouts
 
-Only two layouts are recognized:
+The source contract recognizes test and staging layouts; the root publisher
+also recognizes the fixed production layout:
 
 | Target | Releases | Active pointer | Previous pointer |
 | --- | --- | --- | --- |
 | `test` | `/tmp/skincos-crm-native-test-<id>/releases` | `/tmp/skincos-crm-native-test-<id>/current/crm-service` | `/tmp/skincos-crm-native-test-<id>/current/crm-service.previous` |
 | `staging` | `/opt/skincos/staging/releases` | `/opt/skincos/staging/current/crm-service` | `/opt/skincos/staging/current/crm-service.previous` |
+| `production` | `/opt/skincos/releases` | `/opt/skincos/current/crm-service` | `/opt/skincos/current/crm-service.previous` |
 
-`production`, `/opt/skincos/current/source`, arbitrary release roots, mounts
-under `/mnt`, and a regular file in place of a pointer are rejected.
+The source-level scripts continue to reject production mutation. The root
+publisher alone recognizes that layout. `/opt/skincos/current/source`, arbitrary
+release roots, mounts under `/mnt`, and a regular file in place of a pointer are
+rejected.
 For a test mutation, the named `/tmp/skincos-crm-native-test-*` root must
 already be a real directory and each existing release/current ancestor must be
 a real directory too; a symbolic-link redirect is rejected before candidate
@@ -63,7 +78,7 @@ A materialized CRM release must contain
   "releaseSha": "<40-lowercase-hex>",
   "sourceTree": "<40-lowercase-hex>",
   "sourceArchiveSha256": "<64-lowercase-hex>",
-  "target": "test-or-staging",
+  "target": "test-or-staging-or-production",
   "custody": {
     "issuer": "github-actions",
     "repository": "jubenitogarcia/skincos",
@@ -76,82 +91,94 @@ A materialized CRM release must contain
 }
 ```
 
-The complete schema also fixes the API entrypoint, API lockfile and console
-root. The candidate is recursively rejected if it contains a symbolic link or
-special file. This keeps the native materialization boundary distinct from a
+The complete schema also binds the separate dependency archive, policy,
+staging/runtime receipts, signed authorization, rendered unit and coordination
+fence. It fixes the API entrypoint, API lockfile and console root. The candidate
+is recursively rejected if it contains a symbolic link, hard link, special file
+or final Linux file capability. This keeps the native materialization boundary distinct from a
 checkout, worktree, Windows mount, `.env`, database dump or runtime state.
 When an active release exists, the candidate's `predecessor` must bind both its
 immutable release SHA and source tree. An initial release must declare no
 predecessor. The test harness verifies this chain before any copy or pointer
 mutation, so rollback cannot be attached to an unrelated incumbent.
 
-Before staging can execute, a root-owned, fixed-command custody helper must
+Before a production transfer can execute, a root-owned, fixed-command custody helper must
 verify the real GitHub artifact and bind all of the following together:
 
 1. GitHub repository, workflow run and immutable `main` SHA;
 2. source tree and source archive SHA-256;
 3. the native, non-symlink candidate directory and its exact predecessor;
 4. a global coordination lease scoped to the CRM service release;
-5. the intended staging unit and an independently captured rollback target.
+5. the intended native unit and an independently captured rollback target.
 
 No GitHub Environment variable, shell argument, local marker file, secret or
 self-authored receipt substitutes for that verifier. Secret values and customer
 rows are never included in this contract or its release metadata.
 
-## Pointer protocol
+## Pointer, service transfer and rollback protocol
 
-After custody succeeds, the publisher will use the following confined sequence:
+The root helper performs this confined sequence after it receives a valid signed
+frame:
 
-1. Validate the source identity and candidate under the fixed native release
-   base.
-2. Copy it to a sibling staging directory and revalidate it.
-3. Rename that directory to `<sha>/crm-service`; existing immutable releases
-   are never overwritten.
-4. Create a temporary `crm-service.previous.next-*` link to the active target
-   and atomically rename it to `crm-service.previous`.
-5. Create a temporary `crm-service.next-*` link to the new target and atomically
-   rename it to `crm-service`.
-6. Re-read the dedicated pointer and prove it resolves to the expected immutable
-   CRM release.
+1. Verify the root-private policy, authorization, fresh incumbent digest and
+   the global coordination lease.
+2. Copy the exact source/dependency archives into a private state directory;
+   reject unsafe archive members, links, special files and final Linux file
+   capabilities.
+3. Materialize and revalidate `<sha>/crm-service` under the fixed production
+   release base. Existing immutable releases are never overwritten.
+4. Snapshot the incumbent unit, allowed drop-ins and dedicated pointers in a
+   root-private journal. Redirecting drop-ins fail closed.
+5. Revalidate the incumbent and coordination lease immediately before atomic
+   pointer/unit replacement. The helper writes `crm-service.previous`, then
+   `crm-service`; it never writes the shared source pointer.
+6. Reload systemd, restart only `crm.service`, and verify its PID, cwd
+   `<release>/crm/api`, fixed environment and local `/health` response.
+7. On any failure after the snapshot, restore the unit, drop-ins and dedicated
+   pointers, reload systemd and restart the original service. A later root-only
+   `rollback-last` uses the same captured transaction.
 
-No command restarts a service. A later host rollout must separately snapshot the
-active CRM service, render/verify `crm.service.native.template`, replace the
-incumbent unit and shared lifecycle ownership in the same custody-bound
-transaction, restart only `crm.service`, verify PID/cwd/release identity and
-synthetic health/readiness, and compensate by restoring the dedicated
-predecessor pointer if that smoke fails.
+The dedicated unit reasserts `PONTO_LEGACY_RUNTIME_MODE=disabled` after both
+private environment layers. The legacy service remains the rollback target until
+the native unit has passed its transactional health verification.
 
-Until that transaction succeeds, `scripts/runtime/manage-native-runtime.sh` and
-`install-lifecycle-units.sh --apply` keep managing the incumbent `crm.service`
-from the shared source. They must not be changed to assume a dedicated pointer
-merely because this source contract exists. The native template is deliberately
-outside the generic installer's unit list; the custody-bound CRM publisher must
-render, verify and install it as part of one transaction.
+The first native closure intentionally lacks the Python sales-chart runtime;
+`sales-chart-messenger` therefore returns `503` in native mode instead of
+falling back to mutable host state. Its media mode comes from the root policy.
+The initial policy should use `disabled` unless a separate host-runtime receipt
+proves the required fixed binaries and intended MediaMTX transition. With that
+mode, media proxy/execution routes return `503`; it does not claim to remove
+unrelated routes or host processes.
 
-## Bootstrap still required for staging
+## External bootstrap and production gates
 
-The staging owner must provide a separate reviewed bootstrap before enabling
-`--apply`:
+No secret, customer data, raw token or external receipt is stored in Git. Before
+dispatching the workflow, the operator must provide:
 
-- native filesystem and root-owned `/opt/skincos/staging` hierarchy;
-- least-privilege ownership for release files, private config and runtime state;
-- fixed-command custody helper with no arbitrary shell, path or systemctl input;
-- coordination closure/lease and durable sanitized release journal;
-- a verified incumbent `crm-service` pointer and rollback target;
-- dedicated staging service configuration, synthetic health/readiness probe and
-  post-rollback smoke;
-- confirmation that no shared CRM service, route, database or legacy writer is
-  changed by the staging operation.
+- a reviewed root-owned policy at
+  `/etc/skincos/crm-native-publisher/policy.json`, mode `0600`, pinning the
+  exact source artifact, staging proof, runtime attestation, Ed25519 public key
+  and archive bounds;
+- protected GitHub Environment `crm-native-publisher-production` with the
+  signing private key, signing-key ID, staging proof digest and runtime
+  attestation digest;
+- the existing production global-coordination configuration in GitHub and the
+  root-owned host custody file;
+- the exact `release-source-<sha>` artifact, a `main` checkout of that SHA, and
+  root-owned fixed release/current/state/config paths; and
+- an approved staging proof, per-domain projection/backfill evidence,
+  single-publisher decision and legacy retirement plan.
 
-The bootstrap must leave the incumbent unit and shared lifecycle behavior intact
-if any of those checks fail. Only after the native pointer, dedicated template,
-CRM-only restart and smoke have all succeeded may it transfer `crm.service`
-away from the shared-source publisher.
+The installer must be executed by a host administrator from a reviewed clean
+checkout. It updates the custody-runner mount namespace to permit only the
+fixed CRM transaction paths, then restarts that runner — never `crm.service`.
+Policy bootstrap and `rollback-last` are root-only; the GitHub runner receives
+sudo permission only for literal `preflight` and `publish` commands.
 
-Only after the complete staging proof can a separate production cutover proposal
-be evaluated. It still requires the existing route, data projection/backfill,
-writer retirement, single-publisher and rollback gates; this contract grants
-none of those changes.
+`systemd`, `curl`, GNU `tar`, Node, `systemd-analyze`, `visudo` and
+`/usr/sbin/getcap` must be present on the custody runner host. The publisher
+does not create a Cloudflare deployment, production database, route migration,
+data backfill or a writer-retirement approval.
 
 ## Local validation
 
@@ -161,8 +188,10 @@ Run from an isolated worktree through the WSL gateway:
 .\scripts\invoke-skincos-wsl.ps1 `
   -ProjectRoot (Get-Location).Path `
   -Executable bash `
-  -Argument @('scripts/runtime/test-crm-native-publisher.sh')
+  -Argument @('-lc', 'npm run crm:native-publisher:test')
 ```
 
-The test creates and removes only a `/tmp/skincos-crm-native-test-*` fixture.
-It must not be substituted for staging validation or a production release.
+The validation creates and removes only a `/tmp/skincos-crm-native-test-*`
+fixture. It checks claims, archive selection, link/hard-link handling, rendered
+unit syntax and the isolated pointer protocol. It does not install the helper,
+read a secret, contact a coordinator, alter a host or dispatch production.
