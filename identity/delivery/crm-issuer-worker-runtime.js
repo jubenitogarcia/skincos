@@ -3,9 +3,14 @@ import {
   createCrmIdentityDeliveryKeyRing,
   createCrmIdentityEd25519Signer,
 } from './crm-issuer-v1.js';
+import {
+  acceptedIdentityCrmDeliveryVerificationKeys,
+  createIdentityCrmDeliveryKeyRegistry,
+} from './crm-key-registry-v1.js';
 
 export const IDENTITY_CRM_DELIVERY_ISSUE_PATH = '/internal/identity-crm-delivery/v1/issue';
 export const IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH = '/.well-known/identity-crm-delivery/v1/keys';
+export const IDENTITY_CRM_DELIVERY_KEY_REGISTRY_PATH = '/.well-known/identity-crm-delivery/v1/key-registry';
 export const IDENTITY_CRM_PRODUCTION_ROUTE_RECEIPT_PATH = '/internal/crm-production-route-receipt/v1/resolve';
 
 const MAX_REQUEST_BYTES = 1_048_576;
@@ -142,7 +147,7 @@ function assertJti(value) {
   return value;
 }
 
-function parsePublicKeyRing(raw, activeKid, keyIdPrefix, nowSeconds) {
+function parsePublicKeyRing(raw, activeKid, keyIdPrefix, environment, nowSeconds) {
   const value = typeof raw === 'string' ? parseJson(raw, 'IDENTITY_PUBLIC_JWK_INVALID') : raw;
 
   // Production requires the explicit ring shape from the first key onward so
@@ -171,11 +176,17 @@ function parsePublicKeyRing(raw, activeKid, keyIdPrefix, nowSeconds) {
     return Object.freeze({ kid, jwk, notAfter: entry.notAfter });
   });
 
-  const keys = [
-    { ...activeJwk, kid: activeKid },
-    ...overlap.map(({ kid, jwk }) => ({ ...jwk, kid })),
-  ];
-  return Object.freeze({ activeJwk, keys: Object.freeze(keys) });
+  const keyRegistry = createIdentityCrmDeliveryKeyRegistry({
+    environment,
+    active: { kid: activeKid, jwk: activeJwk },
+    overlap,
+    revoked: [...revokedKids],
+  }, { nowSeconds });
+  return Object.freeze({
+    activeJwk: keyRegistry.active.jwk,
+    keys: acceptedIdentityCrmDeliveryVerificationKeys(keyRegistry, { nowSeconds }),
+    keyRegistry,
+  });
 }
 
 function assertPayloadShape(payload) {
@@ -433,10 +444,20 @@ export function createIdentityCrmIssuerWorker({
       fail(errorCodes.custody);
     }
     const publicKeyRing = publicKeyMode === 'production-ring'
-      ? parsePublicKeyRing(env[names.publicJwk], kid, keyIdPrefix, nowSeconds)
+      ? parsePublicKeyRing(env[names.publicJwk], kid, keyIdPrefix, environment, nowSeconds)
       : (() => {
         const activeJwk = parsePublicJwk(env[names.publicJwk]);
-        return Object.freeze({ activeJwk, keys: Object.freeze([{ ...activeJwk, kid }]) });
+        const keyRegistry = createIdentityCrmDeliveryKeyRegistry({
+          environment,
+          active: { kid, jwk: activeJwk },
+          overlap: [],
+          revoked: [],
+        }, { nowSeconds });
+        return Object.freeze({
+          activeJwk: keyRegistry.active.jwk,
+          keys: acceptedIdentityCrmDeliveryVerificationKeys(keyRegistry, { nowSeconds }),
+          keyRegistry,
+        });
       })();
     if (TEXT_ENCODER.encode(env[names.requestHmac]).byteLength < 32) fail(errorCodes.auth);
     const callerMaterial = loadCallerMaterial(env);
@@ -444,6 +465,7 @@ export function createIdentityCrmIssuerWorker({
       kid,
       activePublicJwk: publicKeyRing.activeJwk,
       publicKeys: publicKeyRing.keys,
+      keyRegistry: publicKeyRing.keyRegistry,
       requestHmac: env[names.requestHmac],
       caller: callerMaterial,
     });
@@ -477,6 +499,10 @@ export function createIdentityCrmIssuerWorker({
       version: 'identity-crm-delivery/v1',
       keys: material.publicKeys,
     }, 200, { 'cache-control': 'no-store' });
+  }
+
+  function keyRegistryResponse(material) {
+    return json(material.keyRegistry, 200, { 'cache-control': 'no-store' });
   }
 
   function loadRouteReceiptMaterial(env) {
@@ -519,11 +545,14 @@ export function createIdentityCrmIssuerWorker({
     const isPublicKeysRequest = issueSurfaceEnabled
       && url.pathname === IDENTITY_CRM_DELIVERY_PUBLIC_KEYS_PATH
       && (request.method === 'GET' || request.method === 'HEAD');
+    const isKeyRegistryRequest = issueSurfaceEnabled
+      && url.pathname === IDENTITY_CRM_DELIVERY_KEY_REGISTRY_PATH
+      && (request.method === 'GET' || request.method === 'HEAD');
     const isIssueRequest = issueSurfaceEnabled
       && url.pathname === IDENTITY_CRM_DELIVERY_ISSUE_PATH && request.method === 'POST';
     const isRouteReceiptRequest = routeReceiptSurfaceEnabled
       && url.pathname === IDENTITY_CRM_PRODUCTION_ROUTE_RECEIPT_PATH && request.method === 'POST';
-    if (!isPublicKeysRequest && !isIssueRequest && !isRouteReceiptRequest) {
+    if (!isPublicKeysRequest && !isKeyRegistryRequest && !isIssueRequest && !isRouteReceiptRequest) {
       return json({ ok: false, error: 'NOT_FOUND' }, 404);
     }
 
@@ -564,7 +593,7 @@ export function createIdentityCrmIssuerWorker({
       return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: errorCodes.custody }, 503);
     }
 
-    if (isPublicKeysRequest) {
+    if (isPublicKeysRequest || isKeyRegistryRequest) {
       // Publication remains coupled to a verified signer, but cache lookup
       // happens before a staging JWK import. A public endpoint never needs to
       // parse private material more than once per active key/isolate.
@@ -574,7 +603,7 @@ export function createIdentityCrmIssuerWorker({
         return request.method === 'HEAD' ? noContent(503) : json({ ok: false, error: errorCodes.custody }, 503);
       }
       if (request.method === 'HEAD') return noContent(200, { 'cache-control': 'no-store' });
-      return publicKeyResponse(material);
+      return isKeyRegistryRequest ? keyRegistryResponse(material) : publicKeyResponse(material);
     }
 
     const rawBody = await readBoundedBody(request);

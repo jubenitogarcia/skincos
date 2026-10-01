@@ -81,10 +81,14 @@ the enabled path can be exercised outside synthetic tests.
 candidate surface. The manifest is disabled by default, has no route or data
 binding, and is not included in a deployment workflow. When a protected
 operator eventually enables it, the Worker accepts only the production
-`crm-production-` key-id prefix, reads the Ed25519 private JWK and caller HMAC
-from runtime secrets, and publishes only the active/overlap public keys. The
+`crm-production-` key-id prefix, reads its externally held Ed25519 signing key
+and caller HMAC from runtime secrets, and publishes the versioned active,
+overlap and revoked-key status required for controlled CRM pinning. The
 public-key ring rejects duplicate, revoked, expired or cross-environment keys;
-the CRM consumer's atomic replay ledger remains mandatory.
+the CRM consumer's atomic replay ledger remains mandatory. See
+`docs/extraction/identity-crm-delivery-key-registry-v1.md` for the exact
+publication and consumer contract; the legacy flat public-key list remains
+available only for compatibility and is not enough to convey revocation.
 
 This candidate does not make production ready by itself. A durable custody
 reference, persistent CRM caller, public-key pin, replay readback, staged

@@ -10,6 +10,7 @@ if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value: web
 
 const issueUrl = 'https://identity-crm-delivery-production.example/internal/identity-crm-delivery/v1/issue';
 const keysUrl = 'https://identity-crm-delivery-production.example/.well-known/identity-crm-delivery/v1/keys';
+const keyRegistryUrl = 'https://identity-crm-delivery-production.example/.well-known/identity-crm-delivery/v1/key-registry';
 const routeReceiptUrl = 'https://identity-crm-delivery-production.example/internal/crm-production-route-receipt/v1/resolve';
 const requestHmac = 'synthetic-production-request-hmac-secret-2026';
 const activeKid = 'crm-production-identity-2026-09';
@@ -276,6 +277,8 @@ test('production refuses a dual-capability role configuration before signing or 
 
   const keysResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), env);
   assert.equal(keysResponse.status, 404);
+  const registryResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keyRegistryUrl), env);
+  assert.equal(registryResponse.status, 404);
 });
 
 test('production manifest is disabled, route-free and data-binding-free', async () => {
@@ -345,6 +348,34 @@ test('production Worker signs Ed25519 delivery and publishes active plus overlap
     () => deliveryContract.parseIdentityCrmDeliveryCompact(result.compact, { nowSeconds: parsed.claims.exp + 1 }),
     /expired/i,
   );
+});
+
+test('production key registry preserves rotation state but never publishes or accepts a revoked key', async () => {
+  const revokedKid = 'crm-production-identity-2026-07';
+  const { env, activePublic, overlapPublic, now } = await productionEnv({ revoked: [revokedKid] });
+  const registryResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keyRegistryUrl), env);
+  assert.equal(registryResponse.status, 200);
+  assert.equal(registryResponse.headers.get('cache-control'), 'no-store');
+  const registry = await registryResponse.json();
+  assert.deepEqual(registry, {
+    version: 'identity-crm-delivery/key-registry/v1',
+    environment: 'production',
+    active: { kid: activeKid, jwk: activePublic },
+    overlap: [{ kid: overlapKid, jwk: overlapPublic, notAfter: now + 300 }],
+    revoked: [revokedKid],
+  });
+  assert.equal(JSON.stringify(registry).includes('"d"'), false);
+
+  const legacyKeysResponse = await handleIdentityCrmIssuerProductionRequest(new Request(keysUrl), env);
+  assert.equal(legacyKeysResponse.status, 200);
+  const legacyKeys = await legacyKeysResponse.json();
+  assert.deepEqual(legacyKeys.keys.map(({ kid }) => kid), [activeKid, overlapKid]);
+  assert.equal(JSON.stringify(legacyKeys).includes(revokedKid), false);
+
+  const head = await handleIdentityCrmIssuerProductionRequest(new Request(keyRegistryUrl, { method: 'HEAD' }), env);
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('cache-control'), 'no-store');
+  assert.equal(await head.text(), '');
 });
 
 test('production key ring fails closed for active revocation, duplicate overlap and expired overlap', async () => {
