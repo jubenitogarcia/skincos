@@ -71,6 +71,11 @@ function parseArgs(argv) {
   };
 }
 
+export function extractBeautyMovementChildFailureCode(stderr) {
+  const matches = String(stderr).match(/\bbeauty_movement_[a-z0-9_]{3,100}\b/g);
+  return matches?.at(-1) ?? null;
+}
+
 function runChild(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? process.cwd(),
@@ -80,7 +85,7 @@ function runChild(command, args, options = {}) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error || result.status !== 0) {
-    fail("beauty_movement_release_smoke_child_failed", {
+    fail(extractBeautyMovementChildFailureCode(result.stderr) ?? "beauty_movement_release_smoke_child_failed", {
       command,
       status: result.status ?? -1,
       stderrLines: String(result.stderr ?? "").split(/\r?\n/).filter(Boolean).length,
