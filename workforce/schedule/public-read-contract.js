@@ -103,7 +103,7 @@ export async function verifySchedulePublicReadRequest(request, secret, {
     version !== SCHEDULE_PUBLIC_READ_SIGNATURE_VERSION
     || service !== allowedService
     || !noncePattern.test(nonce)
-    || !Number.isFinite(timestampMs)
+    || !Number.isSafeInteger(timestampMs)
     || Math.abs(now - timestampMs) > SCHEDULE_PUBLIC_READ_MAX_SKEW_MS
     || !signature
   ) {
@@ -119,7 +119,7 @@ export async function verifySchedulePublicReadRequest(request, secret, {
     service,
   })
   if (!constantTimeEqual(expected, signature)) return { ok: false, error: 'UNAUTHORIZED' }
-  return { ok: true, service }
+  return { ok: true, service, timestamp: timestampMs }
 }
 
 export const __testables = {

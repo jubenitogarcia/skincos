@@ -87,6 +87,86 @@ test("maps the Beauty Movement copy update to the website release surface", () =
   assert.match(digest, /^[0-9a-f]{64}$/);
 });
 
+test("derives Schedule public-read adapter evidence from its immutable isolated release surface", () => {
+  const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  const sourceTree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: root, encoding: "utf8" }).trim();
+  const env = { ...process.env };
+  delete env.PROMOTION_RELEASE_INPUT_DIGEST;
+  delete env.PROMOTION_DEPENDENCY_CLOSURE_DIGEST;
+
+  const digest = execFileSync(process.execPath, [
+    ".github/scripts/promotion-evidence.mjs",
+    "digest",
+  ], {
+    cwd: root,
+    env: {
+      ...env,
+      PROMOTION_UNIT: "schedule-public-read-adapter",
+      PROMOTION_SOURCE_SHA: sourceSha,
+    },
+    encoding: "utf8",
+  }).trim();
+
+  const manifest = JSON.parse(execFileSync(process.execPath, [
+    "scripts/codex-release-manifest.mjs",
+    "--source", sourceSha,
+    "--surface", "schedule-public-read-adapter",
+    "--surface", "global-coordination",
+    "--surface", "github-governance",
+  ], { cwd: root, encoding: "utf8" }));
+  const inputs = new Set(manifest.releaseInputs.map((entry) => entry.path));
+  assert.equal(manifest.sourceCommit, sourceSha);
+  assert.equal(manifest.sourceTree, sourceTree);
+  assert.deepEqual(manifest.surfaces, [
+    "github-governance",
+    "global-coordination",
+    "schedule-public-read-adapter",
+  ]);
+  assert.equal(manifest.releaseInputDigest, digest);
+  for (const requiredInput of [
+    "workforce/schedule/public-read-worker.js",
+    "workforce/schedule/public-read-adapter-runtime.js",
+    "workforce/schedule/public-read-contract.js",
+    "workforce/schedule/public-read.wrangler.toml",
+    ".github/workflows/deploy-schedule-public-read-adapter.yml",
+    ".github/actions/global-coordination-check/action.yml",
+  ]) {
+    assert.ok(inputs.has(requiredInput), `missing Schedule adapter release input: ${requiredInput}`);
+  }
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-schedule-public-read-promotion-"));
+  const evidencePath = path.join(directory, "promotion-evidence.json");
+  const evidenceEnv = {
+    ...env,
+    PROMOTION_UNIT: "schedule-public-read-adapter",
+    PROMOTION_TARGET: "preview",
+    PROMOTION_SOURCE_SHA: sourceSha,
+    PROMOTION_SOURCE_TREE: sourceTree,
+    GITHUB_RUN_ID: "1682",
+    GITHUB_REPOSITORY: "jubenitogarcia/skincos",
+  };
+  execFileSync(process.execPath, [".github/scripts/promotion-evidence.mjs", "write", evidencePath], {
+    cwd: root,
+    env: evidenceEnv,
+    encoding: "utf8",
+  });
+  const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+  assert.equal(evidence.releaseInputDigest, digest);
+  assert.equal(evidence.dependencyClosureDigest, digest);
+  assert.equal(evidence.releaseIdentity.sourceCommit, sourceSha);
+  execFileSync(process.execPath, [".github/scripts/promotion-evidence.mjs", "verify", evidencePath], {
+    cwd: root,
+    env: {
+      ...evidenceEnv,
+      PROMOTION_EXPECTED_TARGET: "preview",
+      PROMOTION_EXPECTED_SHA: sourceSha,
+      PROMOTION_EXPECTED_RELEASE_INPUT_DIGEST: digest,
+      PROMOTION_EXPECTED_RELEASE_IDENTITY_DIGEST: evidence.releaseIdentityDigest,
+    },
+    encoding: "utf8",
+  });
+});
+
 test("writes and verifies a tamper-evident immutable release identity", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-promotion-evidence-"));
   const evidencePath = path.join(directory, "promotion-evidence.json");

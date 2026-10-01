@@ -6,11 +6,19 @@ on:
     paths:
       - "workforce/schedule/**"
       - ".github/workflows/schedule-public-read-contract.yml"
+      - ".github/workflows/deploy-schedule-public-read-adapter.yml"
+      - ".github/workflows/deploy-escala-api.yml"
+      - ".github/governance/cloudflare-single-writer-policy.json"
+      - "platform/deploy/operational-units.json"
   push:
     branches: [main]
     paths:
       - "workforce/schedule/**"
       - ".github/workflows/schedule-public-read-contract.yml"
+      - ".github/workflows/deploy-schedule-public-read-adapter.yml"
+      - ".github/workflows/deploy-escala-api.yml"
+      - ".github/governance/cloudflare-single-writer-policy.json"
+      - "platform/deploy/operational-units.json"
   workflow_dispatch: {}
 
 permissions:
@@ -30,7 +38,7 @@ jobs:
           node-version: "22.12.0"
 
       - name: Run isolated contract tests
-        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-worker.test.js
+        run: node --test workforce/schedule/public-read-contract.test.js workforce/schedule/public-read-core.test.js workforce/schedule/public-read-core-opt-in-evidence.test.js workforce/schedule/public-read-bootstrap-evidence.test.js workforce/schedule/public-read-nonce-guard.test.js workforce/schedule/public-read-worker.test.js workforce/schedule/public-read-staging-workflow.test.js
 
       - name: Run no-remote dry run
         run: node workforce/schedule/scripts/public-read-dry-run.mjs

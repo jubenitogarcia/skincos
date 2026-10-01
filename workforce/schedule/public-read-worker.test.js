@@ -4,10 +4,11 @@ import test from 'node:test'
 
 import {
   SCHEDULE_PUBLIC_READ_CORE_SERVICE,
+  SCHEDULE_PUBLIC_READ_MAX_SKEW_MS,
   createSchedulePublicReadHeaders,
 } from './public-read-contract.js'
 import coreWorker from './worker.js'
-import adapter from './public-read-worker.js'
+import adapter from './public-read-adapter-runtime.js'
 import { createPublicReadTestDb } from './public-read-test-support.js'
 
 const edgeKey = 'schedule-public-read-edge-key'
@@ -25,10 +26,22 @@ function configuredCoreEnv(overrides = {}) {
 
 function configuredAdapterEnv(overrides = {}) {
   const coreEnv = configuredCoreEnv()
+  const consumedNonces = new Set()
   return {
     SCHEDULE_PUBLIC_READ_ENABLED: 'true',
     SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: edgeKey,
     SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: coreKey,
+    SCHEDULE_PUBLIC_READ_NONCE_GUARD: {
+      getByName(nonce) {
+        return {
+          async consume() {
+            if (consumedNonces.has(nonce)) return { ok: false, code: 'REPLAYED' }
+            consumedNonces.add(nonce)
+            return { ok: true }
+          },
+        }
+      },
+    },
     SCHEDULE_CORE: {
       fetch: (request) => coreWorker.fetch(request, coreEnv),
     },
@@ -36,13 +49,19 @@ function configuredAdapterEnv(overrides = {}) {
   }
 }
 
-async function signedAdapterRequest(path, { secret = edgeKey, method = 'GET' } = {}) {
+async function signedAdapterRequest(path, {
+  secret = edgeKey,
+  method = 'GET',
+  nonce,
+  timestamp,
+} = {}) {
   const url = `https://adapter.internal${path}`
   const headers = await createSchedulePublicReadHeaders({
     secret,
     url,
     method,
-    nonce: `schedule-public-read-adapter-${crypto.randomUUID()}`,
+    nonce: nonce || `schedule-public-read-adapter-${crypto.randomUUID()}`,
+    ...(timestamp ? { timestamp } : {}),
   })
   return new Request(url, { method, headers })
 }
@@ -130,12 +149,50 @@ test('adapter rejects legacy Escala HMACs and the edge key cannot authenticate d
   assert.equal(directCoreWithCoreKey.status, 200)
 })
 
-test('adapter source stays disabled and isolated until a later staged resource cut', () => {
+test('adapter rejects a replayed edge envelope before reaching Schedule core', async () => {
+  const env = configuredAdapterEnv()
+  const request = await signedAdapterRequest('/schedule-public-read/v1/readiness')
+
+  assert.equal((await adapter.fetch(request, env)).status, 200)
+  const replay = await adapter.fetch(request, env)
+  assert.equal(replay.status, 409)
+  assert.equal((await replay.json()).error, 'SCHEDULE_PUBLIC_READ_REPLAYED')
+})
+
+test('adapter retains a consumed nonce only until the signed envelope expires', async () => {
+  const signedAt = Date.now() - 60_000
+  let guardExpiry = null
+  const request = await signedAdapterRequest('/schedule-public-read/v1/readiness', {
+    nonce: 'schedule-public-read-adapter-signed-expiry',
+    timestamp: String(signedAt),
+  })
+  const response = await adapter.fetch(request, configuredAdapterEnv({
+    SCHEDULE_PUBLIC_READ_NONCE_GUARD: {
+      getByName() {
+        return {
+          async consume({ expiresAt }) {
+            guardExpiry = expiresAt
+            return { ok: true }
+          },
+        }
+      },
+    },
+  }))
+
+  assert.equal(response.status, 200)
+  assert.equal(guardExpiry, signedAt + SCHEDULE_PUBLIC_READ_MAX_SKEW_MS)
+  assert.ok(guardExpiry < Date.now() + SCHEDULE_PUBLIC_READ_MAX_SKEW_MS)
+})
+
+test('adapter source remains isolated with no public route and a Durable Object replay guard', () => {
   const config = readFileSync(new URL('./public-read.wrangler.toml', import.meta.url), 'utf8')
   const source = readFileSync(new URL('./public-read-worker.js', import.meta.url), 'utf8')
+  const runtimeSource = readFileSync(new URL('./public-read-adapter-runtime.js', import.meta.url), 'utf8')
   assert.match(config, /SCHEDULE_PUBLIC_READ_ENABLED = "false"/)
   assert.equal(/\broutes\s*=/.test(config), false)
-  assert.equal(/\[\[d1_databases\]\]/.test(config), false)
-  assert.equal(source.includes('ESCALA_ACTOR_HMAC_KEY'), false)
-  assert.equal(source.includes('SCHEDULE_PUBLIC_READ_HMAC_KEY'), false)
+  assert.match(config, /SCHEDULE_PUBLIC_READ_NONCE_GUARD/)
+  assert.match(config, /new_sqlite_classes = \["SchedulePublicReadNonceGuard"\]/)
+  assert.match(source, /export\s+\{\s*SchedulePublicReadNonceGuard\s*\}/)
+  assert.equal(runtimeSource.includes('ESCALA_ACTOR_HMAC_KEY'), false)
+  assert.equal(runtimeSource.includes('SCHEDULE_PUBLIC_READ_HMAC_KEY'), false)
 })
