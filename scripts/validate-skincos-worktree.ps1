@@ -6,7 +6,8 @@ param(
     [ValidateSet("edit", "read-only")]
     [string]$Mode = "edit",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
-    [string]$CanonicalRoot = "C:\CodexShared\Projetos\skincos"
+    [string]$CanonicalRoot = "C:\CodexShared\Projetos\skincos",
+    [switch]$ExistingRegisteredWorktree
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,7 +43,8 @@ function Normalize-Slug {
 
 $resolvedProjectRoot = Resolve-ExistingPath -Path $ProjectRoot
 $resolvedCanonicalRoot = Resolve-ExistingPath -Path $CanonicalRoot
-$resolvedWorktreeRoot = Resolve-ExistingPath -Path $WorktreeRoot
+# The approved destination root need not exist for identity-only validation.
+$resolvedWorktreeRoot = [IO.Path]::GetFullPath($WorktreeRoot).TrimEnd([IO.Path]::DirectorySeparatorChar)
 $gitTop = (& git -C $resolvedProjectRoot rev-parse --show-toplevel 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($gitTop)) {
     throw "ProjectRoot is not a Git checkout: $resolvedProjectRoot"
@@ -63,25 +65,41 @@ else {
     if ($gitTop.Equals($resolvedCanonicalRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Non-trivial SKINCOS edits are forbidden in the shared canonical checkout. Create a dedicated worktree."
     }
-    if (-not (Test-PathWithin -Path $gitTop -Root $resolvedWorktreeRoot)) {
-        throw "Non-trivial SKINCOS edits require a worktree below $resolvedWorktreeRoot."
+    if ($ExistingRegisteredWorktree) {
+        $existingRoot = [IO.Path]::GetFullPath('C:\Users\admin\.codex\worktrees')
+        if (-not (Test-PathWithin -Path $gitTop -Root $existingRoot) -and
+            -not (Test-PathWithin -Path $gitTop -Root $resolvedWorktreeRoot)) {
+            throw "Existing worktree is outside the approved roots."
+        }
+        $registered = @(& git -C $resolvedCanonicalRoot worktree list --porcelain)
+        if ($LASTEXITCODE -ne 0) { throw "Cannot verify canonical worktree registration." }
+        $matches = @($registered | Where-Object {
+            $_.StartsWith('worktree ') -and
+            [IO.Path]::GetFullPath($_.Substring(9).Replace('/', '\')) -eq $gitTop
+        })
+        if ($matches.Count -ne 1) { throw "Existing path is not registered in the canonical SKINCOS repository." }
+    } elseif (-not (Test-PathWithin -Path $gitTop -Root $resolvedWorktreeRoot)) {
+        throw "Non-trivial SKINCOS edits require an approved worktree. Reuse an existing registered path with -ExistingRegisteredWorktree."
     }
     if ([string]::IsNullOrWhiteSpace($TaskSlug)) {
         throw "TaskSlug is required for a non-trivial SKINCOS edit."
     }
     $normalizedTask = Normalize-Slug -Value $TaskSlug
-    $relative = $gitTop.Substring($resolvedWorktreeRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar)
-    $segments = @($relative.Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries))
-    if ($segments.Count -ne 2) {
-        throw "Worktree must be exactly <actor>\<task-slug> below $resolvedWorktreeRoot."
+    if ($ExistingRegisteredWorktree) {
+        $expectedIdentity = '^codex/[a-z0-9._-]+/' + [regex]::Escape($normalizedTask) + '$'
+        if ($actualBranch -notmatch $expectedIdentity) {
+            throw "Existing branch '$actualBranch' does not match the requested task identity."
+        }
+    } else {
+        $relative = $gitTop.Substring($resolvedWorktreeRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar)
+        $segments = @($relative.Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries))
+        if ($segments.Count -ne 2 -or $segments[1].ToLowerInvariant() -ne $normalizedTask) {
+            throw "New worktree must preserve <actor>\<task-slug> directory identity."
+        }
+        $expectedBranch = "codex/$($segments[0].ToLowerInvariant())/$normalizedTask"
+        if ($actualBranch -ne $expectedBranch) { throw "Branch does not match the dedicated worktree identity '$expectedBranch'." }
     }
-    if ($segments[1].ToLowerInvariant() -ne $normalizedTask) {
-        throw "TaskSlug '$normalizedTask' does not match worktree directory '$($segments[1])'."
-    }
-    $expectedBranch = "codex/$($segments[0].ToLowerInvariant())/$normalizedTask"
-    if ($actualBranch -ne $expectedBranch) {
-        throw "Branch '$actualBranch' does not match the dedicated worktree identity '$expectedBranch'."
-    }
+
     if (-not [string]::IsNullOrWhiteSpace($Branch) -and $Branch -ne $actualBranch) {
         throw "Requested branch '$Branch' does not match the current branch '$actualBranch'."
     }
@@ -90,6 +108,7 @@ else {
 [pscustomobject]@{
     schemaVersion = 1
     verified = $true
+    verificationScope = 'Git/path/task identity only; exclusive writer lease or handoff must be verified separately.'
     mode = $Mode
     projectRoot = $gitTop
     canonicalRoot = $resolvedCanonicalRoot

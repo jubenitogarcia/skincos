@@ -17,15 +17,28 @@
   está em `docs/operations/autonomous-delivery-standard.md`; use os workflows e
   helpers canônicos apontados nele em vez de criar pontes manuais por tarefa.
 - Use branches in the format `codex/admin/<task-slug>`.
-- For every non-trivial or potentially concurrent mission, a dedicated
-  worktree under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>` is
-  mandatory. The shared checkout is a read-only context/source-of-truth
-  surface for agents, not a normal editing surface. The task identity is the
-  tuple `mission_id`, `task_slug`, `codex/admin/<task-slug>` branch and the
-  dedicated worktree path; persist that tuple in the supervisor snapshot.
-- A worktree may not be edited by another task. Pushes must use the task branch
-  and PR flow; direct pushes or merges to `main` are unsupported and are
-  rejected by the protected ruleset and integration authority.
+- Prefer a compatible existing task worktree after validating its Git identity,
+  preserving unrelated/unique changes and confirming exclusive writer ownership
+  under the applicable lease or handoff. Never infer availability from age.
+  Create a new worktree only for concurrent writers, an incompatible branch/base
+  or a concrete isolation requirement; record the reason. A new thread or task
+  alone does not require another checkout. Continue in the same worktree.
+- The shared canonical checkout remains read-only context for normal project
+  implementation. Keep the existing task/branch/path identity and validation
+  gates. New task worktrees use C:\CodexShared\Worktrees\skincos\admin\<task-slug>;
+  do not move, rename or reset an existing worktree to fit that convention.
+  Persist the mission/task/branch/path tuple only when it materially changes.
+- Only one task/writer may edit a worktree at a time. Reuse by another mission
+  requires a verified handoff; never adopt a worktree with unique unrelated work.
+  Pushes still use the task branch and PR flow; direct pushes or merges to main
+  remain unsupported and rejected by the integration authority.
+- Use Git/diffs and small checkpoints for code. Do not create full copies,
+  archives, bundles or redundant snapshots by routine. Reuse compatible native
+  Linux dependencies; install only when necessary and never copy dependency
+  trees. Bound logs/evidence at generation, retain necessary production rollback,
+  and obtain explicit authorization before more than 1 GiB of new task data or
+  a potentially large operation whose volume is unknown. No automatic cleanup.
+
 - Keep Codex authentication, browser profiles, temporary files and PID state in
   `%LOCALAPPDATA%\Codex\skincos\`. Keep durable operator artifacts (logs,
   reports, checkpoints, evidence and local backups) in the private runtime at
