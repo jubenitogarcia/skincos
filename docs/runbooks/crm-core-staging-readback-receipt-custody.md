@@ -22,30 +22,30 @@ O recibo não é uma autorização de deploy, DNS, produção, migração, backf
 tráfego ou aposentadoria do legado. Ele é evidência limitada de um artifact
 específico de staging; as demais gates de domínio continuam independentes.
 
-## Estado inicial seguro
+## Estado de confiança atual
 
-A política versionada inicia em `public-key-pinning-pending`, sem chave pública
-e sem chave privada. Isso é intencional: não havia uma chave pública real do
-signer de readback disponível para ser pinada quando este consumidor foi
-criado. O verificador rejeita todo recibo enquanto esse estado existir, em vez
-de aceitar uma chave fornecida por input, ambiente ou pelo próprio recibo.
+A política está `active` para o signer público Ed25519
+`crm-core-staging-readback-20260911-r1`. A JWK pinada contém somente
+`kty: OKP`, `crv: Ed25519` e `x`; ela não inclui um `kid`, metadados opcionais
+ou material privado. A chave privada correspondente permanece exclusivamente
+no secret do environment protegido de readback do Core, nunca neste repositório,
+em logs, inputs ou artifacts.
 
-## Como ativar a confiança quando a custódia real existir
+Ativar este pin não emite uma prova nem elimina sua verificação explícita. O
+verificador continua exigindo um recibo sanitizado cuja assinatura, fingerprint, identidade
+do Core, SHA, digest e IDs de runs sejam exatos. Ele não autoriza deploy, DNS,
+produção, dados, migração, backfill ou aposentadoria do legado.
 
-1. No ambiente protegido de readback do Core, mantenha a chave privada Ed25519
-   exclusivamente no armazenamento de segredo daquele ambiente. Ela nunca deve
-   ser copiada para este repositório, para logs ou para inputs de workflow.
-2. Obtenha somente a JWK pública correspondente e o `keyId` já usados pelo
-   signer. A JWK deve conter exatamente `kty: OKP`, `crv: Ed25519` e `x`.
-3. Em um PR separado neste repositório, altere a política para `active`, ponha
-   o `keyId` como primeiro item de `acceptedKeyIds` e de `activeKeyId`, e inclua
-   apenas a JWK pública correspondente em `publicKeys`.
-4. Rode os testes de custódia. O verificador compara o fingerprint calculado da
-   JWK com o que foi assinado no recibo, portanto trocar a chave ou o ID depois
-   da assinatura falha.
-5. Só então execute o readback oficial do Core para o SHA atual e forneça o
-   `receipt.json` sanitizado, codificado em Base64, ao workflow de preparação
-   de baseline de Atendimento.
+## Próximo recibo oficial
+
+1. Execute o export build-only do Core para um SHA atual de `main` e confirme
+   que o run concluiu com sucesso.
+2. Execute o readback do Core vinculado àquele SHA e ao ID do export; o signer
+   usa o `keyId` já pinado e preserva apenas o `receipt.json` sanitizado.
+3. Verifique o receipt no monorepo com todos os SHA, digest e IDs explícitos.
+   O fingerprint calculado da JWK deve coincidir com o que foi assinado.
+4. Somente depois, se as gates independentes também estiverem satisfeitas,
+   forneça o receipt Base64 ao workflow de preparação de baseline de Atendimento.
 
 Para rotação, mantenha temporariamente a chave anterior em `publicKeys` e em
 `acceptedKeyIds` enquanto os recibos dentro da retenção de 90 dias ainda forem
