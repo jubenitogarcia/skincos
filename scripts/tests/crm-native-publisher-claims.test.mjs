@@ -20,6 +20,7 @@ const SOURCE_TREE = "b".repeat(40);
 const SOURCE_ARCHIVE_SHA256 = "c".repeat(64);
 const STAGING_PROOF_SHA256 = "d".repeat(64);
 const DEPENDENCY_ARCHIVE_SHA256 = "e".repeat(64);
+const DEPENDENCY_MANIFEST_SHA256 = "6".repeat(64);
 const INCUMBENT_STATE_SHA256 = "f".repeat(64);
 const NOW = new Date("2026-09-10T12:00:00.000Z");
 
@@ -95,6 +96,8 @@ function claims(binding = policy()) {
     sourceArchiveBytes: binding.source.sourceArchiveBytes,
     dependencyArchiveSha256: DEPENDENCY_ARCHIVE_SHA256,
     dependencyArchiveBytes: 256 * 1024 * 1024,
+    dependencyManifestSha256: DEPENDENCY_MANIFEST_SHA256,
+    dependencyManifestBytes: 2048,
     artifactName: binding.source.artifactName,
     sourceArtifactRunId: binding.source.artifactRunId,
     workflowRunId: "34498400000",
@@ -161,6 +164,13 @@ test("an altered signed document, stale claim, or wrong signer fails closed", ()
   document.claims.dependencyArchiveSha256 = "0".repeat(64);
   assert.throws(
     () => verifyPublisherAuthorization(document, { policy: binding, now: NOW }),
+    CrmNativePublisherContractError,
+  );
+
+  const malformedManifest = claims(binding);
+  malformedManifest.dependencyManifestBytes = 1;
+  assert.throws(
+    () => verifyPublisherAuthorization(signed({ binding, requestedClaims: malformedManifest }), { policy: binding, now: NOW }),
     CrmNativePublisherContractError,
   );
 

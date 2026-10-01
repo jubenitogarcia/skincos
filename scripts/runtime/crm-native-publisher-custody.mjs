@@ -22,6 +22,8 @@ import {
 } from "./crm-native-publisher-claims.mjs";
 import { extractCrmNativeSourceArchive } from "./crm-native-source-bundle.mjs";
 import {
+  CRM_NATIVE_DEPENDENCY_MANIFEST,
+  validateCrmNativeDependencyManifest,
   validateCrmNativePointer,
   validateCrmNativeRelease,
   validateCrmNativeSuccessor,
@@ -400,13 +402,22 @@ function extractDependencyArchive({ archive, outputDirectory, policy }) {
   if (!stat.isFile() || stat.isSymbolicLink()) fail("dependency archive is invalid");
   const listing = command("/usr/bin/tar", ["--list", "--gzip", "--file", archive], { maxBuffer: 64 * 1024 * 1024 }).toString("utf8");
   const members = listing.split("\n").filter(Boolean);
-  if (members.length < 1 || members.length > policy.maximumDependencyEntries) fail("dependency archive entry count is invalid");
+  if (members.length < 2 || members.length > policy.maximumDependencyEntries + 3) fail("dependency archive entry count is invalid");
   const selected = members.map(safeArchiveMember);
+  if (new Set(selected.map((member) => member.normalized)).size !== selected.length) {
+    fail("dependency archive contains duplicate members");
+  }
+  let manifestMembers = 0;
   for (const member of selected) {
+    if (member.normalized === CRM_NATIVE_DEPENDENCY_MANIFEST) {
+      manifestMembers += 1;
+      continue;
+    }
     if (!(member.normalized === "crm" || member.normalized === "crm/api" || member.normalized === "crm/api/node_modules" || member.normalized.startsWith("crm/api/node_modules/"))) {
       fail("dependency archive contains a path outside crm/api/node_modules");
     }
   }
+  if (manifestMembers !== 1) fail("dependency archive must contain exactly one dependency manifest");
   const verbose = command("/usr/bin/tar", ["--list", "--verbose", "--gzip", "--file", archive, "--no-recursion", ...selected.map((item) => item.original)], { maxBuffer: 64 * 1024 * 1024 }).toString("utf8");
   const verboseEntries = verbose.split("\n").filter(Boolean);
   if (verboseEntries.length !== selected.length || verboseEntries.some((line) => !["-", "d"].includes(line[0]))) {
@@ -645,9 +656,11 @@ function productionMetadata({ claims, policy, releaseRoot, predecessor, unitTemp
       sourceArchiveBytes: claims.sourceArchiveBytes,
     },
     runtimeCustody: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       dependencyArchiveSha256: claims.dependencyArchiveSha256,
       dependencyArchiveBytes: claims.dependencyArchiveBytes,
+      dependencyManifestSha256: claims.dependencyManifestSha256,
+      dependencyManifestBytes: claims.dependencyManifestBytes,
       policySha256: claims.policySha256,
       stagingProofSha256: claims.stagingProofSha256,
       runtimeAttestationSha256: claims.runtimeAttestationSha256,
@@ -681,8 +694,21 @@ function installCandidate({ policy, claims, sourceArchive, dependencyArchive, tr
   extractCrmNativeSourceArchive({ archive: sourceArchive, sourceSha: claims.sourceSha, outputDirectory: stage });
   assertCandidateTree(stage, { maximumBytes: policy.maximumSourceExtractedBytes, maximumEntries: policy.maximumSourceEntries });
   if (fs.existsSync(path.join(stage, "crm", "api", "node_modules"))) fail("source archive unexpectedly contains node_modules");
+  try {
+    fs.lstatSync(path.join(stage, CRM_NATIVE_DEPENDENCY_MANIFEST));
+    fail("source archive unexpectedly contains the reserved dependency manifest");
+  } catch (error) {
+    if (error instanceof CrmNativePublisherCustodyError) throw error;
+    if (error?.code !== "ENOENT") throw error;
+  }
   extractDependencyArchive({ archive: dependencyArchive, outputDirectory: stage, policy });
   setCandidateOwnership(stage);
+  validateCrmNativeDependencyManifest({
+    releaseRoot: stage,
+    expectedSha256: claims.dependencyManifestSha256,
+    expectedBytes: claims.dependencyManifestBytes,
+    requireNormalizedModes: true,
+  });
   assertNoFileCapabilities(stage);
   const active = describePointer(policy.target.currentLink, policy.target.releaseBase);
   const predecessor = active.exists
@@ -810,7 +836,14 @@ async function publish() {
     command("/usr/bin/systemctl", ["restart", policy.target.service], { timeout: 60_000 });
     const running = verifyNativeProcess({ releaseRoot: release.releaseRoot, mediaRouteMode: policy.runtimeAttestation.mediaRouteMode });
     journal.status = "committed";
-    journal.release = { releaseSha: claims.sourceSha, releaseRoot: release.releaseRoot, sourceArchiveSha256: claims.sourceArchiveSha256, dependencyArchiveSha256: claims.dependencyArchiveSha256, pid: running.pid };
+    journal.release = {
+      releaseSha: claims.sourceSha,
+      releaseRoot: release.releaseRoot,
+      sourceArchiveSha256: claims.sourceArchiveSha256,
+      dependencyArchiveSha256: claims.dependencyArchiveSha256,
+      dependencyManifestSha256: claims.dependencyManifestSha256,
+      pid: running.pid,
+    };
     journal.committedAt = new Date().toISOString();
     writeJournal(transactionDirectory, journal);
     writePrivateFile(path.join(stateRoot, "last-successful.json"), `${JSON.stringify({ transactionDirectory, authorizationId: claims.authorizationId, committedAt: journal.committedAt })}\n`);

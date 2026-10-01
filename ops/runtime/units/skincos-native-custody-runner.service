@@ -30,6 +30,10 @@ ReadWritePaths=/var/lib/skincos-runtime/github-actions-runner
 ReadWritePaths=/etc/skincos/global-coordination
 ReadWritePaths=/var/lib/skincos/ponto-jit
 ReadWritePaths=/var/lib/skincos-runtime/global-coordination
+# The fixed Ponto absence helper needs only its private policy and one-use
+# ledger/receipt state. Keep both explicit under ProtectSystem=strict.
+ReadWritePaths=/etc/skincos/ponto-legacy-absence-attestation
+ReadWritePaths=/var/lib/skincos/ponto-legacy-absence-attestation
 # A fixed, root-owned helper inherits this mount namespace through sudo. These
 # are the only additional destinations it needs for the dedicated CRM
 # transaction: immutable releases/pointers, its private custody journal and

@@ -52,9 +52,28 @@ grep -Fx 'ReadWritePaths=/opt/skincos/releases' "$CUSTODY_RUNNER_UNIT" >/dev/nul
 grep -Fx 'ReadWritePaths=/opt/skincos/current' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/var/lib/skincos-runtime/crm-native-publisher' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/etc/systemd/system' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -Fx 'ReadWritePaths=/etc/skincos/ponto-legacy-absence-attestation' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -Fx 'ReadWritePaths=/var/lib/skincos/ponto-legacy-absence-attestation' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -F '/usr/local/sbin/skincos-publish-crm-native-release preflight' "$CUSTODY_SUDOERS" >/dev/null
 ! grep -F '/usr/local/sbin/skincos-publish-crm-native-release rollback-last' "$CUSTODY_SUDOERS" >/dev/null
 grep -F 'release:crm-native' "$CUSTODY_WORKFLOW" >/dev/null
+dependency_graph_check_line="$(grep -n -F 'npm --prefix "$candidate/crm/api" ls --omit=dev --all --json >/dev/null' "$CUSTODY_WORKFLOW" | cut -d: -f1)"
+dependency_bin_materialize_line="$(grep -n -F 'npm .bin entry is not a symbolic link' "$CUSTODY_WORKFLOW" | cut -d: -f1)"
+dependency_archive_verify_line="$(grep -n -F 'dependency-archive-verify' "$CUSTODY_WORKFLOW" | cut -d: -f1)"
+dependency_manifest_verify_line="$(grep -n -F 'validateCrmNativeDependencyManifest({ releaseRoot, requireNormalizedModes: false })' "$CUSTODY_WORKFLOW" | cut -d: -f1)"
+[[ "$dependency_graph_check_line" =~ ^[1-9][0-9]*$ && "$dependency_bin_materialize_line" =~ ^[1-9][0-9]*$ \
+  && "$dependency_archive_verify_line" =~ ^[1-9][0-9]*$ && "$dependency_manifest_verify_line" =~ ^[1-9][0-9]*$ ]]
+(( dependency_graph_check_line < dependency_bin_materialize_line ))
+(( dependency_bin_materialize_line < dependency_archive_verify_line ))
+(( dependency_archive_verify_line < dependency_manifest_verify_line ))
+grep -F 'source archive unexpectedly contains the reserved dependency manifest' "$CUSTODY_HELPER" >/dev/null
+grep -F 'dependency archive must contain exactly one dependency manifest' "$CUSTODY_HELPER" >/dev/null
+grep -F 'stage_apply_sources' "$CUSTODY_INSTALLER" >/dev/null
+grep -F 'assert_staged_apply_sources' "$CUSTODY_INSTALLER" >/dev/null
+grep -F 'source mount has a non-root filesystem root or bind redirect' "$CUSTODY_INSTALLER" >/dev/null
+grep -F 'source mount filesystem is not trusted' "$CUSTODY_INSTALLER" >/dev/null
+grep -F 'is hard-linked' "$CUSTODY_INSTALLER" >/dev/null
+grep -F 'O_NOFOLLOW' "$CUSTODY_INSTALLER" >/dev/null
 sed -n '/^units=(/,/^)/p' "$LIFECYCLE_INSTALLER" | grep -Fx '  crm.service' >/dev/null
 ! grep -F 'crm.service.native.template' "$LIFECYCLE_INSTALLER" >/dev/null
 sed -n '/^units=(/,/^)/p' "$NATIVE_MANAGER" | grep -Fx '  crm.service' >/dev/null
@@ -62,11 +81,57 @@ grep -F 'backend/scripts/e2e.sh' "$NATIVE_MANAGER" >/dev/null
 
 tmp_root="$(mktemp -d -t skincos-crm-native-test-XXXXXXXX)"
 linked_root=''
+source_fixture_root=''
+source_invocation_link=''
 cleanup() {
   rm -rf -- "$tmp_root"
   [[ -z "$linked_root" ]] || rm -rf -- "$linked_root"
+  [[ -z "$source_fixture_root" ]] || rm -rf -- "$source_fixture_root"
+  [[ -z "$source_invocation_link" ]] || rm -f -- "$source_invocation_link"
 }
 trap cleanup EXIT INT TERM
+
+# The regular source suite deliberately needs no sudo and touches only `/tmp`.
+# It proves a mutable caller-owned representation and an invoked symlink are
+# rejected before an installer can reach any host path. Root-owned positive
+# bootstrap remains an operator preflight on the reviewed target host.
+source_fixture_files=(
+  'scripts/runtime/install-crm-native-publisher-custody.sh'
+  'scripts/runtime/crm-native-publisher-custody.mjs'
+  'scripts/runtime/crm-native-publisher-claims.mjs'
+  'scripts/runtime/crm-native-source-bundle.mjs'
+  'scripts/runtime/crm-native-release-contract.mjs'
+  'scripts/codex-global-coordination-client.mjs'
+  'ops/governance/global-coordination-core.mjs'
+  'ops/runtime/github-actions-runner/skincos-native-custody.sudoers'
+  'ops/runtime/units/skincos-native-custody-runner.service'
+)
+
+copy_mutable_source_fixture() {
+  local destination="$1"
+  local relative
+  for relative in "${source_fixture_files[@]}"; do
+    mkdir -p -- "$destination/$(dirname -- "$relative")"
+    cp -- "$ROOT_DIR/$relative" "$destination/$relative"
+  done
+  chmod 0755 "$destination/scripts/runtime/install-crm-native-publisher-custody.sh"
+}
+
+source_fixture_root="$tmp_root/mutable-installer-source"
+copy_mutable_source_fixture "$source_fixture_root"
+if mutable_source_output="$(bash "$source_fixture_root/scripts/runtime/install-crm-native-publisher-custody.sh" --verify-apply-source 2>&1)"; then
+  echo 'Native custody installer unexpectedly accepted a mutable source tree.' >&2
+  exit 1
+fi
+grep -E 'source tree is not root:root-owned|source mount filesystem is not trusted|source mount target is not a native trusted path' <<<"$mutable_source_output" >/dev/null
+
+source_invocation_link="$tmp_root/custody-installer-link.sh"
+ln -s -- "$CUSTODY_INSTALLER" "$source_invocation_link"
+if symlink_invocation_output="$(bash "$source_invocation_link" --verify-apply-source 2>&1)"; then
+  echo 'Native custody installer unexpectedly accepted a symbolic-link entrypoint.' >&2
+  exit 1
+fi
+grep -F 'installer entrypoint is not the canonical non-symlink source file' <<<"$symlink_invocation_output" >/dev/null
 
 # Render the future dedicated template only through a disposable pointer. The
 # generic lifecycle installer must continue to render the incumbent CRM unit
