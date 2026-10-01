@@ -8,6 +8,8 @@ from typing import Optional
 
 from selenium.webdriver.chrome.webdriver import WebDriver
 
+from .private_operation import private_operation_active
+
 
 @dataclass(frozen=True)
 class DiagnosticArtifacts:
@@ -33,6 +35,9 @@ def capture_artifacts(
 
     Intended to be called in exception handlers.
     """
+
+    if private_operation_active():
+        return DiagnosticArtifacts(html_path=None, screenshot_path=None)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -16,6 +16,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.remote.webdriver import WebDriver
 
+from .private_operation import private_operation_active
+
 
 _LOG_FILE_PATH: Optional[Path] = None
 _LOG_JSON_PATH: Optional[Path] = None
@@ -81,6 +83,8 @@ def _append_to_json(payload: dict) -> None:
 
 
 def log(message: str) -> None:
+    if private_operation_active():
+        return
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] {message}"
     print(line)
@@ -91,6 +95,9 @@ def log(message: str) -> None:
 def log_file_only(message: str) -> None:
     """Write a message only to the log file (if configured)."""
 
+    if private_operation_active():
+        return
+
     ts = datetime.now().strftime("%H:%M:%S")
     _append_to_file(f"[{ts}] {message}")
     _append_to_json({"ts": datetime.now().isoformat(timespec="seconds"), "level": "debug", "message": message})
@@ -98,6 +105,9 @@ def log_file_only(message: str) -> None:
 
 def log_exception(message: str, exc: BaseException) -> None:
     """Log a short message to console + full traceback to file (if enabled)."""
+
+    if private_operation_active():
+        return
 
     log(f"{message}: {exc}")
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
