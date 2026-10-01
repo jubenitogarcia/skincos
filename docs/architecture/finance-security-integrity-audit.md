@@ -18,7 +18,7 @@ a dados reais.
 | Importação | Corpo HTTP limitado a 8 MiB e CSV canônico a 2.000.000 de caracteres. O commit usa uma única `DB.batch`; teste D1 força colisão no segundo lançamento e prova que o primeiro não persiste. |
 | Anexos | Esta fase aceita somente metadados: chave com prefixo do escopo, caminho sem travessia, tipos permitidos e máximo declarado de 25 MiB. Não existe upload binário nem URL de leitura. |
 | Erros e respostas | Falhas inesperadas retornam mensagem genérica; o lote não devolve mais o CSV bruto nem o payload bruto da origem. Respostas são `no-store`. |
-| Rate limit | O gateway usa o Durable Object `RATE_LIMITER` já declarado para 240 leituras/min, 60 mutações/min e 12 operações de importação/min por identidade hash. Falha do limitador com binding configurado bloqueia a rota com 503. |
+| Rate limit | O gateway não deve reutilizar o Durable Object `RATE_LIMITER` de Inventory. O binding legado da API permanece apenas até sua retirada stateful e não é um controle de Finance. Nesta superfície ainda não há um limitador específico de Finance; qualquer controle futuro deve ser proprietário de Finance e falhar fechado. |
 
 ## Itens não aplicáveis nesta fase
 
@@ -31,7 +31,7 @@ a dados reais.
 
 ## Pré-condições operacionais ainda obrigatórias
 
-1. Manter `RATE_LIMITER` no Worker de produção e aplicar as migrations em ordem.
+1. Definir e validar um controle de taxa proprietário de Finance antes de ativar o módulo em produção; não reutilizar o Durable Object de Inventory.
 2. Fazer backup/export verificável do D1 antes de migrations e guardar o artefato
    fora do repositório; o bucket `BACKUP_BUCKET` é a superfície prevista, mas o
    job de backup/restauração ainda não é implementado nesta branch.

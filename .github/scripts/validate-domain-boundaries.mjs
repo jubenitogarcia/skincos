@@ -8,7 +8,7 @@ const governedRoots = new Set([
   "ops", "orb", "platform", "service", "shared", "social", "website", "workforce",
 ]);
 const sourceExtensions = new Set([".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".py"]);
-const ignoredDirectories = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", "vendor"]);
+const ignoredDirectories = new Set([".git", ".venv", "node_modules", "dist", "build", "coverage", ".next", "vendor"]);
 const errors = [];
 const warnings = [];
 const fail = (message) => errors.push(message);
