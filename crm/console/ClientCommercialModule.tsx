@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarSign, RefreshCw, Save, ShieldCheck, UserRoundCheck, UsersRound } from 'lucide-react'
 import { Button } from '@/button'
 import { IdentityClusterWorkspace } from './IdentityClusterWorkspace'
+import { CommercialAnalyticsPanel } from './CommercialAnalyticsPanel'
 import {
   createCommercialAction,
   commercialCadenceManagerStatuses,
@@ -853,6 +854,7 @@ export function ClientCommercialModule() {
     {workspaceView === 'quality' && commercialSourceOperationsBusy && !commercialSourceOperations ? <div role="status" className="rounded-xl border border-slate-800/80 bg-slate-950/55 p-4 text-sm text-slate-400">Carregando estado das fontes…</div> : null}
     {workspaceView === 'quality' && commercialSourceOperations ? <SourceOperationsPanel operations={commercialSourceOperations} loading={commercialSourceOperationsBusy} onRefresh={loadCommercialSourceOperations} /> : null}
     {workspaceView === 'quality' && commercialDataQuality ? <CommercialDataQualityPanel queue={commercialDataQuality} loading={commercialDataQualityBusy} onRefresh={loadCommercialDataQuality} /> : null}
+    {workspaceView === 'quality' ? <CommercialAnalyticsPanel units={units} /> : null}
     </ClientesWorkspaceSection> : null}
     {showProfileWorkspace ? <ClientesWorkspaceSection sectionKey="wallet">
     <>

@@ -374,3 +374,59 @@ test('routes Commercial Operations through its injected store with a single opaq
     assert.equal(mismatch.state.status, 400)
     assert.equal(calls.length, beforeForbidden)
 })
+
+test('routes Commercial Analytics through its injected, non-contacting store and preserves RBAC/idempotency', async () => {
+    const calls = []
+    const analytics = {
+        async readiness(actor) { calls.push(['readiness', actor.id]); return { ready: true, safety: { messagesEnabled: false, commercialContactWritesEnabled: false } } },
+        async quality(query, actor) { calls.push(['quality', query, actor.id]); return { coverage: [], safety: { messagesEnabled: false } } },
+        async funnel(query, actor) { calls.push(['funnel', query, actor.id]); return { observed: {}, safety: { messagesEnabled: false } } },
+        async segments(query, actor) { calls.push(['segments', query, actor.id]); return { segments: [], safety: { messagesEnabled: false } } },
+        async attributionWindows(query, actor) { calls.push(['windows', query, actor.id]); return { windows: [], safety: { messagesEnabled: false } } },
+        async experiments(query, actor) { calls.push(['experiments', query, actor.id]); return { experiments: [], safety: { messagesEnabled: false } } },
+        async experimentMetrics(id, actor) { calls.push(['metrics', id, actor.id]); return { safety: { messagesEnabled: false } } },
+        async createSegment(payload, actor) { calls.push(['createSegment', payload, actor.id]); return { definitionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', safety: { messagesEnabled: false, commercialContactWritesEnabled: false } } },
+        async createSegmentVersion() { throw new Error('not used') },
+        async snapshotSegment() { throw new Error('not used') },
+        async upsertAttributionWindow() { throw new Error('not used') },
+        async createExperiment() { throw new Error('not used') },
+        async updateExperimentState() { throw new Error('not used') },
+    }
+    const routes = captureAtendimentoRoutes({}, { commercialAnalyticsStore: analytics })
+    const actor = { id: 'gestor-analytics', role: 'GESTOR', allowedModules: ['atendimento'], allowedUnits: ['centro'], allowedUnitsDeclared: true }
+
+    const readiness = captureResponse()
+    await routes.get('GET /commercial/analytics/readiness')({ atendimentoActor: actor }, readiness)
+    assert.equal(readiness.state.status, 200)
+    assert.equal(readiness.state.body.safety.commercialContactWritesEnabled, false)
+
+    const quality = captureResponse()
+    await routes.get('GET /commercial/analytics/quality')({ atendimentoActor: actor, query: { unit: 'centro' } }, quality)
+    assert.equal(quality.state.status, 200)
+    assert.deepEqual(calls[1], ['quality', { unit: 'centro' }, 'gestor-analytics'])
+
+    const create = captureResponse()
+    await routes.get('POST /commercial/analytics/segments')({
+        atendimentoActor: actor,
+        headers: { 'idempotency-key': 'analytics:segment:001' },
+        body: { idempotencyKey: 'analytics:segment:001', reason: 'Coorte analítica sintética' },
+    }, create)
+    assert.equal(create.state.status, 200)
+    assert.equal(calls[2][0], 'createSegment')
+    assert.equal(calls[2][1].idempotencyKey, 'analytics:segment:001')
+
+    const beforeForbidden = calls.length
+    const forbidden = captureResponse()
+    await routes.get('GET /commercial/analytics/funnel')({ atendimentoActor: { ...actor, role: 'GERENTE' }, query: {} }, forbidden)
+    assert.equal(forbidden.state.status, 403)
+    assert.equal(calls.length, beforeForbidden)
+
+    const mismatch = captureResponse()
+    await routes.get('POST /commercial/analytics/segments')({
+        atendimentoActor: actor, headers: { 'idempotency-key': 'analytics:segment:002' },
+        body: { idempotencyKey: 'analytics:segment:003', reason: 'Coorte analítica sintética' },
+    }, mismatch)
+    assert.equal(mismatch.state.status, 400)
+    assert.equal(calls.length, beforeForbidden)
+    assert.equal([...routes.keys()].some((key) => /commercial\/analytics\/(?:send|message|dispatch|consent)/i.test(key)), false)
+})
