@@ -2,9 +2,9 @@ param(
     [ValidateSet('inventory', 'plan', 'ensure-canonical', 'claim', 'release', 'retire')]
     [string]$Action = 'inventory',
     [string]$ProjectRoot = 'C:\CodexShared\Projetos\skincos',
-    [string]$WorktreeRoot = 'C:\CodexShared\Worktrees\skincos',
+    [string]$WorktreeRoot = (Join-Path $env:USERPROFILE '.codex\worktrees'),
     [string]$TopologyPath,
-    [string]$RuntimeRegistryRoot = 'C:\CodexRuntime\operator\admin\skincos\worktree-registry',
+    [string]$RuntimeRegistryRoot,
     [string]$Repository = 'jubenitogarcia/skincos',
     [string]$SurfaceType,
     [string]$SurfaceId,
@@ -17,6 +17,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RuntimeRegistryRoot)) { $RuntimeRegistryRoot = Join-Path (Split-Path -Parent $WorktreeRoot) 'worktree-registry' }
 if ([string]::IsNullOrWhiteSpace($TopologyPath)) { $TopologyPath = Join-Path $ProjectRoot 'ops\codex\worktree-topology.json' }
 
 function Normalize-PathString {
@@ -109,7 +110,7 @@ function Get-SurfaceDefinitions {
         $id = [string]$surface.id; if ([string]::IsNullOrWhiteSpace($id)) { continue }
         $type = if ([string]::IsNullOrWhiteSpace([string]$surface.type)) { 'module' } else { [string]$surface.type }
         $relative = if ([string]::IsNullOrWhiteSpace([string]$surface.relativePath)) { "$type\$id" } else { [string]$surface.relativePath }
-        $definitions += [pscustomobject]@{ surfaceType = $type; surfaceId = $id; label = [string]$surface.label; source = [string]$surface.source; pilot = [bool]$surface.pilot; expectedPath = Join-Path $root $relative; workflowIds = @($surface.workflowIds) }
+        $definitions += [pscustomobject]@{ surfaceType = $type; surfaceId = $id; label = [string]$surface.label; source = [string]$surface.source; pilot = [bool]$surface.pilot; relativePath = $relative; expectedPath = Join-Path $root $relative; targetCommit = ([string]$surface.targetCommit).ToLowerInvariant(); workflowIds = @($surface.workflowIds) }
     }
     @($definitions)
 }
@@ -160,9 +161,9 @@ function Get-Inventory {
         elseif ($matches.Count -eq 1 -and $mismatch) { $status = 'registry_mismatch' }
         elseif ($matches.Count -eq 1 -and $registryRows.Count -eq 1) { $status = 'ready' }
         elseif ($matches.Count -eq 1) { $status = 'unregistered_worktree' }
-        $rows += [pscustomobject]@{ surfaceType = $definition.surfaceType; surfaceId = $definition.surfaceId; label = $definition.label; pilot = $definition.pilot; expectedPath = $definition.expectedPath; status = $status; worktreeCount = $matches.Count; worktrees = @($matches | ForEach-Object { [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; detached = $_.detached; dirtyCount = $_.dirtyCount; prunable = $_.prunable } }); registryCount = $registryRows.Count; registry = @($registryRows); registryMismatch = $mismatch; lease = $lease; manifestReferences = @($manifestRows); workflowIds = @($definition.workflowIds) }
+        $rows += [pscustomobject]@{ surfaceType = $definition.surfaceType; surfaceId = $definition.surfaceId; label = $definition.label; pilot = $definition.pilot; relativePath = $definition.relativePath; expectedPath = $definition.expectedPath; targetCommit = $definition.targetCommit; status = $status; worktreeCount = $matches.Count; worktrees = @($matches | ForEach-Object { [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; detached = $_.detached; dirtyCount = $_.dirtyCount; prunable = $_.prunable } }); registryCount = $registryRows.Count; registry = @($registryRows); registryMismatch = $mismatch; lease = $lease; manifestReferences = @($manifestRows); workflowIds = @($definition.workflowIds) }
     }
-    $canonicalRoot = Join-Path $WorktreeRoot ([string]$Topology.worktree.canonicalRelativeRoot); $expected = @($rows | ForEach-Object { Normalize-PathString $_.expectedPath }); $extra = @($Worktrees | Where-Object { (Test-PathWithinRoot $_.path $canonicalRoot) -and $expected -notcontains (Normalize-PathString $_.path) } | ForEach-Object { [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; dirtyCount = $_.dirtyCount } })
+    $canonicalRoot = [System.IO.Path]::GetFullPath((Join-Path $WorktreeRoot ([string]$Topology.worktree.canonicalRelativeRoot))); $managedPrefix = [string]$Topology.worktree.managedNamePrefix; $expected = @($rows | ForEach-Object { Normalize-PathString $_.expectedPath }); $extra = @($Worktrees | Where-Object { (Normalize-PathString (Split-Path -Parent $_.path)) -eq (Normalize-PathString $WorktreeRoot) -and (Split-Path -Leaf $_.path).StartsWith($managedPrefix, [StringComparison]::OrdinalIgnoreCase) -and $expected -notcontains (Normalize-PathString $_.path) } | ForEach-Object { [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; dirtyCount = $_.dirtyCount } })
     [pscustomobject]@{ status = if (@($rows | Where-Object { $_.status -in @('invalid_registry', 'duplicate', 'registry_mismatch') }).Count) { 'drift' } else { 'ok' }; topologyPath = $TopologyPath; canonicalRoot = $canonicalRoot; surfaceCount = $rows.Count; presentCount = @($rows | Where-Object { $_.worktreeCount -eq 1 }).Count; missingCount = @($rows | Where-Object { $_.status -eq 'missing' }).Count; duplicateCount = @($rows | Where-Object { $_.status -eq 'duplicate' }).Count; claimedCount = @($rows | Where-Object { $_.status -eq 'claimed' }).Count; pilot = @($rows | Where-Object { $_.pilot }); surfaces = @($rows); unmappedCanonicalWorktrees = $extra; registry = $Registry }
 }
 
@@ -176,17 +177,24 @@ function Update-Registry {
 
 function Ensure-Canonical {
     param([object]$Definition, [object[]]$Worktrees)
-    if (-not $Apply) { throw 'ensure-canonical exige -Apply.' }; if ($TargetCommit -notmatch '^[0-9a-fA-F]{40}$') { throw 'ensure-canonical exige -TargetCommit com SHA completo de 40 caracteres.' }
+    if (-not $Apply) { throw 'ensure-canonical exige -Apply.' }; $target = if ([string]::IsNullOrWhiteSpace($TargetCommit)) { [string]$Definition.targetCommit } else { $TargetCommit }; if ($target -notmatch '^[0-9a-fA-F]{40}$') { throw 'ensure-canonical exige um targetCommit configurado ou -TargetCommit com SHA completo de 40 caracteres.' }; if ($Definition.targetCommit -and $target -ne [string]$Definition.targetCommit) { throw "TargetCommit diverge da topologia para $($Definition.surfaceType)/$($Definition.surfaceId)." }
     $matches = @($Worktrees | Where-Object { (Normalize-PathString $_.path) -eq (Normalize-PathString $Definition.expectedPath) }); if ($matches.Count -gt 1) { throw "Slot canônico duplicado: $($Definition.surfaceType)/$($Definition.surfaceId)." }
-    if ($matches.Count -eq 1) { $dirty = @(Invoke-Git $matches[0].path @('status', '--porcelain=v1')).output | Where-Object { $_ }; if ($dirty.Count) { throw 'O slot canônico existente está sujo.' }; if ([string]$matches[0].head -ne $TargetCommit) { throw "Slot canônico já existe em $($matches[0].head), esperado $TargetCommit." }; $verb = 'reused' }
-    else { if (Test-Path -LiteralPath $Definition.expectedPath) { throw "O caminho canônico existe mas não está registrado: $($Definition.expectedPath)." }; if ((Invoke-Git $ProjectRoot @('cat-file', '-e', "$TargetCommit^{commit}")).exitCode -ne 0) { throw "SHA alvo não existe no repositório: $TargetCommit." }; New-Item -ItemType Directory -Path (Split-Path -Parent $Definition.expectedPath) -Force | Out-Null; $add = Invoke-Git $ProjectRoot @('worktree', 'add', '--detach', $Definition.expectedPath, $TargetCommit); if ($add.exitCode -ne 0) { throw "Não foi possível criar o slot canônico: $($add.output -join ' ')" }; $verb = 'created' }
-    $entry = [pscustomobject]@{ surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; label = $Definition.label; role = 'canonical'; path = $Definition.expectedPath; targetCommit = $TargetCommit.ToLowerInvariant(); source = $Definition.source; updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o') }; Update-Registry $entry
-    [pscustomobject]@{ action = $verb; surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; path = $Definition.expectedPath; targetCommit = $TargetCommit.ToLowerInvariant() }
+    if ($matches.Count -eq 1) { $dirty = @(Invoke-Git $matches[0].path @('status', '--porcelain=v1')).output | Where-Object { $_ }; if ($dirty.Count) { throw 'O slot canônico existente está sujo.' }; if ([string]$matches[0].head -ne $target) { throw "Slot canônico já existe em $($matches[0].head), esperado $target." }; $verb = 'reused' }
+    else { if (Test-Path -LiteralPath $Definition.expectedPath) { throw "O caminho canônico existe mas não está registrado: $($Definition.expectedPath)." }; if ((Invoke-Git $ProjectRoot @('cat-file', '-e', "$target^{commit}")).exitCode -ne 0) { throw "SHA alvo não existe no repositório: $target." }; New-Item -ItemType Directory -Path (Split-Path -Parent $Definition.expectedPath) -Force | Out-Null; $add = Invoke-Git $ProjectRoot @('worktree', 'add', '--detach', $Definition.expectedPath, $target); if ($add.exitCode -ne 0) { throw "Não foi possível criar o slot canônico: $($add.output -join ' ')" }; $verb = 'created' }
+    $existing = @((Get-RegistryState).surfaces | Where-Object { $_.surfaceType -eq $Definition.surfaceType -and $_.surfaceId -eq $Definition.surfaceId }); $entry = [ordered]@{}; if ($existing.Count -eq 1) { foreach ($property in $existing[0].PSObject.Properties) { $entry[$property.Name] = $property.Value } }; $entry.surfaceType = $Definition.surfaceType; $entry.surfaceId = $Definition.surfaceId; $entry.label = $Definition.label; $entry.role = 'canonical'; $entry.path = $Definition.expectedPath; $entry.targetCommit = $target.ToLowerInvariant(); $entry.source = $Definition.source; $entry.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); Update-Registry ([pscustomobject]$entry)
+    [pscustomobject]@{ action = $verb; surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; path = $Definition.expectedPath; targetCommit = $target.ToLowerInvariant() }
 }
 
 function Claim-Canonical {
     param([object]$Surface)
-    if (-not $Apply) { throw 'claim exige -Apply.' }; if ($Surface.status -notin @('ready', 'claimed') -or $Surface.worktreeCount -ne 1 -or @($Surface.worktrees | Where-Object { $_.dirtyCount -gt 0 }).Count) { throw "Slot não está pronto para claim: $($Surface.status)." }; if ($Surface.lease.status -eq 'claimed') { throw "Slot já possui lease de $($Surface.lease.owner.owner)." }
+    if (-not $Apply) { throw 'claim exige -Apply.' }
+    $aliases = @($definitions | Where-Object { (Normalize-PathString $_.expectedPath) -eq (Normalize-PathString $Surface.expectedPath) })
+    if ($aliases.Count -gt 1) {
+        $aliasNames = @($aliases | ForEach-Object { "$($_.surfaceType)/$($_.surfaceId)" }) -join ', '
+        throw "Claim recusado: o caminho é compartilhado por $($aliases.Count) superfícies ($aliasNames); use apenas slots com caminho exclusivo."
+    }
+    if ($Surface.status -notin @('ready', 'claimed') -or $Surface.worktreeCount -ne 1 -or @($Surface.worktrees | Where-Object { $_.dirtyCount -gt 0 }).Count) { throw "Slot não está pronto para claim: $($Surface.status)." }
+    if ($Surface.lease.status -eq 'claimed') { throw "Slot já possui lease de $($Surface.lease.owner.owner)." }
     $path = $Surface.lease.path; New-Item -ItemType Directory -Path $path -Force | Out-Null; $token = [guid]::NewGuid().ToString('N'); $ownerRecord = [pscustomobject]@{ schemaVersion = 1; token = $token; owner = $Owner; pid = $PID; claimedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId; path = $Surface.expectedPath }; Write-JsonAtomic (Join-Path $path 'owner.json') $ownerRecord
     $entry = @((Get-RegistryState).surfaces | Where-Object { $_.surfaceType -eq $Surface.surfaceType -and $_.surfaceId -eq $Surface.surfaceId })[0]; if ($null -eq $entry) { throw 'Registro canônico ausente para claim.' }; $copy = [ordered]@{}; foreach ($p in $entry.PSObject.Properties) { $copy[$p.Name] = $p.Value }; $copy.lease = [pscustomobject]@{ owner = $Owner; token = $token; claimedAtUtc = $ownerRecord.claimedAtUtc }; Update-Registry ([pscustomobject]$copy)
     [pscustomobject]@{ action = 'claimed'; surfaceType = $Surface.surfaceType; surfaceId = $Surface.surfaceId; owner = $Owner; token = $token; path = $Surface.expectedPath }
@@ -199,7 +207,7 @@ function Release-Canonical {
 
 function Retire-Worktree {
     if (-not $Apply) { throw 'retire exige -Apply.' }; if ([string]::IsNullOrWhiteSpace($WorktreePath)) { throw 'retire exige -WorktreePath explícito.' }; $normalized = Normalize-PathString $WorktreePath; if ((Normalize-PathString $ProjectRoot) -eq $normalized) { throw 'O clone compartilhado nunca pode ser aposentado.' }
-    $topology = Get-Topology; $canonicalRoot = Join-Path $WorktreeRoot ([string]$topology.worktree.canonicalRelativeRoot); if (Test-PathWithinRoot $WorktreePath $canonicalRoot) { throw 'Slots canônicos não podem ser aposentados por esta ação.' }; $record = @(Get-WorktreeRecords $ProjectRoot -IncludeStatus -OnlyPath $WorktreePath); if ($record.Count -ne 1) { throw "Worktree não encontrado ou ambíguo: $WorktreePath." }; $record = $record[0]
+    $topology = Get-Topology; $canonicalPaths = @(Get-SurfaceDefinitions $topology | ForEach-Object { Normalize-PathString $_.expectedPath }); if ($canonicalPaths -contains $normalized) { throw 'Slots canônicos não podem ser aposentados por esta ação.' }; $record = @(Get-WorktreeRecords $ProjectRoot -IncludeStatus -OnlyPath $WorktreePath); if ($record.Count -ne 1) { throw "Worktree não encontrado ou ambíguo: $WorktreePath." }; $record = $record[0]
     if (-not $record.exists -or $record.dirtyCount -gt 0 -or $record.detached -or $record.prunable -or [string]::IsNullOrWhiteSpace($record.branch)) { throw 'Worktree não atende aos requisitos de aposentadoria segura.' }; if ((Invoke-Git $ProjectRoot @('show-ref', '--verify', '--quiet', "refs/remotes/origin/$($record.branch)")).exitCode -eq 0) { throw 'Branch possui tracking remoto; revisão manual obrigatória.' }; if ((Invoke-Git $ProjectRoot @('merge-base', '--is-ancestor', $record.head, 'origin/main')).exitCode -ne 0) { throw 'Worktree não é ancestral de origin/main.' }; if (@(Get-ManifestReferences | Where-Object { Test-PathWithinRoot $_.value $record.path }).Count) { throw 'Manifesto de runtime referencia o worktree.' }
     throw 'Aposentadoria automática requer verificação externa de processos; remova pelo fluxo operacional apropriado.'
 }
@@ -210,7 +218,7 @@ switch ($Action) {
     'plan' {
         $actions = @($inventory.surfaces | ForEach-Object {
             if ($_.status -eq 'missing') {
-                [pscustomobject]@{ action = 'ensure-canonical'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $true; reason = 'canonical_slot_missing'; mutation = 'requires -Apply and explicit -TargetCommit' }
+                [pscustomobject]@{ action = 'ensure-canonical'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; targetCommit = $_.targetCommit; required = $true; reason = 'canonical_slot_missing'; mutation = 'requires -Apply and a topology or explicit -TargetCommit SHA' }
             }
             elseif ($_.status -in @('ready', 'claimed')) {
                 [pscustomobject]@{ action = 'none'; surfaceType = $_.surfaceType; surfaceId = $_.surfaceId; required = $false; reason = "canonical_slot_$($_.status)"; mutation = 'none' }
