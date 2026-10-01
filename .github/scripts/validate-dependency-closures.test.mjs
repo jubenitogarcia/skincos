@@ -125,3 +125,10 @@ test("promotion source-ref validation remains in every shared release closure", 
   const policy = JSON.parse(readFileSync(new URL("../../ops/governance/global-concurrency-policy.json", import.meta.url), "utf8"));
   assert.ok(policy.sharedInputs.includes(".github/scripts/validate-promotion-source-ref.mjs"));
 });
+
+test("Schedule public-read adapter closure contains every locally observable release dependency", () => {
+  const result = validateDependencyClosures({ modules: ["schedule-public-read-adapter"] });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.reports.map((entry) => entry.module), ["schedule-public-read-adapter"]);
+  assert.match(result.reports[0].dependencyClosureDigest, /^[0-9a-f]{64}$/);
+});

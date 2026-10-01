@@ -479,6 +479,49 @@ test("the policy and current Ponto source produce a deterministic dependency clo
   assert.ok(closure.inputs.some((entry) => entry.path === "package.json"));
 });
 
+test("Schedule public-read adapter uses an explicit immutable release closure", () => {
+  const policy = loadGlobalPolicy();
+  const configured = policy.releaseClosures["schedule-public-read-adapter"];
+  assert.ok(configured, "Schedule public-read adapter must not fall back to the default closure");
+  assert.equal(configured.sharedInputs, true);
+  for (const pattern of [
+    "workforce/schedule/public-read-*.js",
+    "workforce/schedule/public-read.wrangler.toml",
+    "workforce/schedule/scripts/public-read-*.mjs",
+    "workforce/schedule/worker.js",
+    "workforce/schedule/wrangler.toml",
+    ".github/workflows/deploy-schedule-public-read-adapter.yml",
+    ".github/actions/global-coordination-acquire/**",
+    ".github/actions/global-coordination-check/**",
+    ".github/actions/global-coordination-release/**",
+    ".github/scripts/promotion-*.mjs",
+  ]) {
+    assert.ok(configured.patterns.includes(pattern), `missing immutable Schedule adapter release input pattern: ${pattern}`);
+  }
+
+  const closure = dependencyClosureForSource({ module: "schedule-public-read-adapter", sourceCommit: "HEAD" });
+  assert.match(closure.digest, /^[0-9a-f]{64}$/);
+  for (const input of [
+    "workforce/schedule/public-read-worker.js",
+    "workforce/schedule/public-read-adapter-runtime.js",
+    "workforce/schedule/public-read-contract.js",
+    "workforce/schedule/public-read-nonce-guard.js",
+    "workforce/schedule/public-read-nonce-state.js",
+    "workforce/schedule/public-read-test-support.js",
+    "workforce/schedule/worker.js",
+    "workforce/schedule/public-read.wrangler.toml",
+    "workforce/schedule/wrangler.toml",
+    "workforce/schedule/scripts/public-read-bootstrap-evidence.mjs",
+    ".github/workflows/deploy-schedule-public-read-adapter.yml",
+    ".github/actions/global-coordination-acquire/action.yml",
+    ".github/actions/global-coordination-check/action.yml",
+    ".github/actions/global-coordination-release/action.yml",
+    ".github/scripts/promotion-evidence.mjs",
+  ]) {
+    assert.ok(closure.inputs.some((entry) => entry.path === input), `missing immutable Schedule adapter release input: ${input}`);
+  }
+});
+
 test("Ponto closure excludes independent CRM API changes while retaining the shared Pages artifact", () => {
   const closure = dependencyClosureFromTree({
     module: "ponto",
