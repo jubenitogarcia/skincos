@@ -1,0 +1,253 @@
+name: Prepare custodied Atendimento CRM Core staging baseline
+run-name: Atendimento CRM Core baseline ${{ inputs.source_sha }} for ${{ inputs.core_release_sha }}
+
+# This workflow is only an authorization and receipt boundary. The fixed
+# root-owned helper keeps the PostgreSQL capability, opaque packet custody,
+# delivery keys, endpoint, allowlist, and checkpoint outside GitHub and outside
+# this checkout. It prepares packets but does not call the Worker.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact current main SHA that contains the approved source contract.
+        required: true
+        type: string
+      core_release_sha:
+        description: Exact Core main SHA named by the already-read-back staging artifact.
+        required: true
+        type: string
+      core_artifact_digest:
+        description: Exact sha256 digest of that immutable Core staging artifact.
+        required: true
+        type: string
+      core_artifact_run_id:
+        description: Exact GitHub Actions run ID that exported the immutable Core artifact.
+        required: true
+        type: string
+      core_readback_digest:
+        description: Exact sha256 digest attested by the Core staging readback.
+        required: true
+        type: string
+      core_readback_run_id:
+        description: Exact GitHub Actions run ID that read back the deployed Core staging artifact.
+        required: true
+        type: string
+      confirmation:
+        description: Type prepare-exact-atendimento-crm-core-staging-baseline
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atendimento-crm-core-projection-baseline-preparation-staging
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'jubenitogarcia/skincos' &&
+      github.repository_id == '1060913632' &&
+      github.repository_owner == 'jubenitogarcia' &&
+      github.repository_owner_id == '199169872' &&
+      github.ref == 'refs/heads/main' &&
+      github.ref_type == 'branch' &&
+      github.event.repository.default_branch == 'main' &&
+      github.actor == github.repository_owner &&
+      github.actor_id == '199169872' &&
+      github.triggering_actor == github.repository_owner &&
+      github.event.sender.id == 199169872 &&
+      github.run_attempt == 1 &&
+      inputs.source_sha == github.sha &&
+      inputs.confirmation == 'prepare-exact-atendimento-crm-core-staging-baseline'
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    environment: crm-atendimento-projection-backfill-staging
+    timeout-minutes: 12
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      CORE_RELEASE_SHA: ${{ inputs.core_release_sha }}
+      CORE_ARTIFACT_DIGEST: ${{ inputs.core_artifact_digest }}
+      CORE_ARTIFACT_RUN_ID: ${{ inputs.core_artifact_run_id }}
+      CORE_READBACK_DIGEST: ${{ inputs.core_readback_digest }}
+      CORE_READBACK_RUN_ID: ${{ inputs.core_readback_run_id }}
+      COORDINATION_PROOF: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/coordination.json
+      AUTHORIZATION_FILE: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/authorization.json
+      RAW_RECEIPT: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/receipt.raw.json
+      SANITIZED_RECEIPT: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/receipt.json
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.23.1
+
+      - name: Bind the custody request to exact main source and an immutable staging target
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$SOURCE_SHA" == "$GITHUB_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_SOURCE_SHA_INVALID'; exit 1; }
+          [[ "$CORE_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_RELEASE_INVALID'; exit 1; }
+          [[ "$CORE_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_ARTIFACT_INVALID'; exit 1; }
+          [[ "$CORE_ARTIFACT_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_ARTIFACT_RUN_INVALID'; exit 1; }
+          [[ "$CORE_READBACK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_READBACK_INVALID'; exit 1; }
+          [[ "$CORE_READBACK_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CORE_READBACK_RUN_INVALID'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_CHECKOUT_MISMATCH'; exit 1; }
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse origin/main)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_MAIN_ADVANCED'; exit 1; }
+          node scripts/verify-crm-domain-backfill-admission.mjs
+          mkdir -p "$(dirname "$AUTHORIZATION_FILE")"
+          admission_plan_sha="$(sha256sum docs/extraction/crm-domain-backfill-admission.json | awk '{print $1}')"
+          [[ "$admission_plan_sha" =~ ^[0-9a-f]{64}$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_ADMISSION_PLAN_INVALID'; exit 1; }
+          printf 'ADMISSION_PLAN_SHA=%s\n' "$admission_plan_sha" >> "$GITHUB_ENV"
+
+      - name: Acquire Atendimento release fence before preparing durable source custody
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: release:atendimento
+          module: atendimento
+          source_sha: ${{ inputs.source_sha }}
+          proof_file: ${{ env.COORDINATION_PROOF }}
+          inputs_json: >-
+            {"target":"staging","operation":"atendimento-crm-core-staging-baseline-preparation","coreRepository":"jubenitogarcia/skincos-crm-core","coreRepositoryId":"1353934107","coreReleaseSha":"${{ inputs.core_release_sha }}","coreArtifactDigest":"${{ inputs.core_artifact_digest }}","coreArtifactRunId":"${{ inputs.core_artifact_run_id }}","coreReadbackDigest":"${{ inputs.core_readback_digest }}","coreReadbackRunId":"${{ inputs.core_readback_run_id }}"}
+
+      - name: Revalidate the Atendimento release fence before issuing custody authority
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ env.COORDINATION_PROOF }}
+          resource: release:atendimento
+          module: atendimento
+          source_sha: ${{ inputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+
+      - name: Reconfirm the current main tip immediately before custody authority
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force origin main:refs/remotes/origin/main
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$SOURCE_SHA" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_MAIN_ADVANCED_BEFORE_AUTHORIZATION'; exit 1; }
+
+      - name: Sign a bounded one-use staging baseline preparation authorization
+        env:
+          ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_PRIVATE_KEY: ${{ secrets.ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_PRIVATE_KEY }}
+          ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_KEY_ID: ${{ vars.ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_KEY_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_PRIVATE_KEY:-}" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_AUTHORIZATION_KEY_REQUIRED'; exit 1; }
+          [[ "$ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_KEY_ID" =~ ^[a-z][a-z0-9-]{1,63}$ ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_AUTHORIZATION_KEY_ID_INVALID'; exit 1; }
+          umask 077
+          node --input-type=module <<'NODE'
+           import crypto from "node:crypto";
+           import fs from "node:fs";
+           const canonicalJson = (value) => {
+             if (value === null || typeof value !== "object") return JSON.stringify(value);
+             if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+             return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+           };
+           const coordinationProof = JSON.parse(fs.readFileSync(process.env.COORDINATION_PROOF, "utf8"));
+           if (
+             coordinationProof?.resource !== "release:atendimento"
+             || !/^[A-Za-z0-9][A-Za-z0-9._:-]{15,199}$/.test(String(coordinationProof?.leaseId || ""))
+             || !Number.isSafeInteger(coordinationProof?.fencingToken)
+             || coordinationProof.fencingToken < 1
+             || !/^[0-9a-f]{64}$/.test(String(coordinationProof?.intentDigest || ""))
+           ) throw new Error("ATENDIMENTO_CRM_CORE_BACKFILL_COORDINATION_PROOF_INVALID");
+           const fields = [
+            "schemaVersion", "domain", "operation", "authorizationId", "repositoryId", "repository",
+            "workflowPath", "workflowJob", "githubRef", "sourceSha", "coreRepository", "coreRepositoryId", "coreReleaseSha", "coreArtifactDigest",
+            "coreArtifactRunId", "coreReadbackDigest", "coreReadbackRunId", "admissionPlanSha256", "workflowRunId", "runAttempt", "target", "purpose", "issuedAt", "expiresAt", "singleUse",
+            "coordinationProofSha256", "coordinationResource", "coordinationLeaseId", "coordinationFencingToken", "coordinationIntentDigest",
+           ];
+          const now = Date.now();
+          const claims = {
+            schemaVersion: 1,
+            domain: "skincos/atendimento/crm-core-staging-backfill-custody/v1",
+            operation: "prepare-staging-baseline",
+            authorizationId: crypto.randomUUID(),
+            repositoryId: String(process.env.GITHUB_REPOSITORY_ID || ""),
+            repository: process.env.GITHUB_REPOSITORY,
+            workflowPath: ".github/workflows/atendimento-crm-core-projection-backfill.yml",
+            workflowJob: "backfill",
+            githubRef: process.env.GITHUB_REF,
+            sourceSha: process.env.SOURCE_SHA,
+            coreRepository: "jubenitogarcia/skincos-crm-core",
+            coreRepositoryId: "1353934107",
+            coreReleaseSha: process.env.CORE_RELEASE_SHA,
+            coreArtifactDigest: process.env.CORE_ARTIFACT_DIGEST,
+            coreArtifactRunId: process.env.CORE_ARTIFACT_RUN_ID,
+            coreReadbackDigest: process.env.CORE_READBACK_DIGEST,
+            coreReadbackRunId: process.env.CORE_READBACK_RUN_ID,
+            admissionPlanSha256: process.env.ADMISSION_PLAN_SHA,
+            workflowRunId: String(process.env.GITHUB_RUN_ID || ""),
+            runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT || "0"),
+            target: "staging",
+            purpose: "atendimento-crm-core-staging-baseline-preparation",
+            issuedAt: new Date(now).toISOString(),
+            expiresAt: new Date(now + 5 * 60_000).toISOString(),
+            singleUse: true,
+            coordinationProofSha256: crypto.createHash("sha256").update(canonicalJson(coordinationProof)).digest("hex"),
+            coordinationResource: coordinationProof.resource,
+            coordinationLeaseId: coordinationProof.leaseId,
+            coordinationFencingToken: coordinationProof.fencingToken,
+            coordinationIntentDigest: coordinationProof.intentDigest,
+           };
+          const key = crypto.createPrivateKey(process.env.ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_PRIVATE_KEY);
+          if (key.asymmetricKeyType !== "ed25519") throw new Error("ATENDIMENTO_CRM_CORE_BACKFILL_AUTHORIZATION_KEY_TYPE_INVALID");
+          const canonical = JSON.stringify(Object.fromEntries(fields.map((field) => [field, claims[field]])));
+           const authorization = {
+             ...claims,
+             coordinationProof,
+             signature: {
+              algorithm: "Ed25519",
+              keyId: process.env.ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_KEY_ID,
+              valueBase64url: crypto.sign(null, Buffer.from(canonical), key).toString("base64url"),
+            },
+          };
+          fs.writeFileSync(process.env.AUTHORIZATION_FILE, `${JSON.stringify(authorization)}\n`, { mode: 0o600 });
+          NODE
+          unset ATENDIMENTO_CRM_BACKFILL_CUSTODY_AUTHORIZATION_PRIVATE_KEY
+
+      - name: Prepare opaque packets only through the fixed root-owned staging helper
+        id: prepare
+        env:
+          ATENDIMENTO_CRM_BACKFILL_CUSTODY_RECEIPT_SIGNING_KEY_ID: ${{ vars.ATENDIMENTO_CRM_BACKFILL_CUSTODY_RECEIPT_SIGNING_KEY_ID }}
+          ATENDIMENTO_CRM_BACKFILL_CUSTODY_RECEIPT_SIGNING_PUBLIC_KEY: ${{ vars.ATENDIMENTO_CRM_BACKFILL_CUSTODY_RECEIPT_SIGNING_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -s "$AUTHORIZATION_FILE" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_AUTHORIZATION_REQUIRED'; exit 1; }
+          umask 077
+          trap 'rm -f "$AUTHORIZATION_FILE" "$RAW_RECEIPT"' EXIT
+          timeout --foreground --kill-after=15s 240s sudo -n /usr/local/sbin/skincos-prepare-atendimento-crm-core-baseline prepare-staging-baseline < "$AUTHORIZATION_FILE" > "$RAW_RECEIPT"
+          node .github/scripts/atendimento-crm-core-projection-backfill-receipt.mjs validate "$RAW_RECEIPT" > "$SANITIZED_RECEIPT"
+          [[ -s "$SANITIZED_RECEIPT" ]] || { echo 'ATENDIMENTO_CRM_CORE_BACKFILL_RECEIPT_INVALID'; exit 1; }
+          node .github/scripts/atendimento-crm-core-projection-backfill-binding.mjs validate "$AUTHORIZATION_FILE" "$SANITIZED_RECEIPT" >/dev/null
+
+      - name: Upload the sanitized staging baseline preparation receipt only
+        if: steps.prepare.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atendimento-crm-core-projection-baseline-${{ inputs.source_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/atendimento-crm-core-projection-baseline/${{ github.run_id }}/receipt.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Release the Atendimento release fence
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          proof_file: ${{ env.COORDINATION_PROOF }}

@@ -66,15 +66,16 @@ function assertTarget(value) {
 
 function assertProjectionCandidate(value) {
   const domain = object(value, "ATENDIMENTO_DOMAIN_INVALID")
-  exactKeys(domain, ["id", "owner", "mode", "state", "sourceContract", "recordClass", "targetEnvironment", "productionBackfillAllowed", "requiredEvidence"], "ATENDIMENTO_DOMAIN_INVALID")
+  exactKeys(domain, ["id", "owner", "mode", "state", "sourceContract", "recordClass", "targetEnvironment", "stagingSourceReadAllowed", "productionBackfillAllowed", "requiredEvidence"], "ATENDIMENTO_DOMAIN_INVALID")
   if (
     domain.id !== "atendimento-client-memberships"
     || domain.owner !== "Atendimento"
     || domain.mode !== "projection-candidate"
-    || domain.state !== "preflight-only"
+    || domain.state !== "staging-preparation-authorized"
     || domain.sourceContract !== "atendimento/crm-core/unit-scoped-projection-source/v1"
     || domain.recordClass !== "opaque-client-membership-projection"
     || domain.targetEnvironment !== "staging"
+    || domain.stagingSourceReadAllowed !== true
     || domain.productionBackfillAllowed !== false
   ) fail("ATENDIMENTO_DOMAIN_NOT_FAIL_CLOSED")
   assert.deepEqual(orderedStrings(domain.requiredEvidence, "ATENDIMENTO_EVIDENCE_INVALID"), requiredAtendimentoEvidence, "Atendimento evidence must retain its exact staging admission sequence")
@@ -98,7 +99,7 @@ function assertExcludedDomain(value, expectedId) {
 export function assertCrmDomainBackfillAdmission(value) {
   const plan = object(value, "PLAN_INVALID")
   exactKeys(plan, ["contract", "state", "target", "domains", "prohibitions"], "PLAN_INVALID")
-  if (plan.contract !== "skincos/crm-domain-backfill-admission/v1" || plan.state !== "pre-cut") fail("PLAN_NOT_PRE_CUT")
+  if (plan.contract !== "skincos/crm-domain-backfill-admission/v2" || plan.state !== "staging-preparation-authorized") fail("PLAN_NOT_STAGING_PREPARATION_AUTHORIZED")
   const target = assertTarget(plan.target)
   if (!Array.isArray(plan.domains) || plan.domains.length !== excludedDomains.length + 1) fail("DOMAIN_SET_INVALID")
   const [candidate, ...excluded] = plan.domains
@@ -107,8 +108,9 @@ export function assertCrmDomainBackfillAdmission(value) {
   assert.deepEqual(actualExcludedIds, excludedDomains, "Excluded domains must remain explicit and ordered")
   const prohibitions = orderedStrings(plan.prohibitions, "PROHIBITIONS_INVALID")
   const requiredProhibitions = [
-    "No production source read, delivery, route mutation or legacy runtime retirement is performed by this plan.",
-    "No customer, identity, session, finance, messaging, inventory or timekeeping record is copied into CRM Core.",
+    "No CRM Core delivery, route mutation or legacy runtime retirement is performed by this plan.",
+    "Only the fixed Atendimento custody helper may take an owner-attested read-only production-source snapshot to prepare opaque staging packets; no source payload is uploaded to GitHub and no packet is delivered by this plan.",
+    "No customer attribute, raw identifier, identity, session, finance, messaging, inventory or timekeeping record is copied into CRM Core.",
     "No excluded domain may be reclassified without a dedicated source-owner contract and reviewed staging evidence.",
   ]
   assert.deepEqual(prohibitions, requiredProhibitions, "Domain admission prohibitions must remain exact")
@@ -117,6 +119,7 @@ export function assertCrmDomainBackfillAdmission(value) {
     state: plan.state,
     productionMutationAllowed: target.productionMutationAllowed,
     publicRouteMutationAllowed: target.publicRouteMutationAllowed,
+    stagingSourceReadAuthorized: Object.freeze([atendimento.id]),
     stagingProjectionCandidateIds: Object.freeze([atendimento.id]),
     eligibleNow: Object.freeze([]),
     excludedDomainIds: Object.freeze(actualExcludedIds),
