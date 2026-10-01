@@ -1,0 +1,37 @@
+[Unit]
+Description=SKINCOS native trusted-program PR admission
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+WorkingDirectory=/opt/skincos-native-pr-admission/current/source
+ExecStart=/usr/bin/node /opt/skincos-native-pr-admission/current/source/scripts/codex-native-pr-admission.mjs --publish
+StateDirectory=skincos-native-pr-admission
+StateDirectoryMode=0700
+RuntimeDirectory=skincos-native-pr-admission
+RuntimeDirectoryMode=0700
+LoadCredential=github-app-config:/etc/skincos/github-app/config.json
+LoadCredential=github-app-key:/etc/skincos/github-app/private-key.pem
+LoadCredential=global-coordination-env:/etc/skincos/global-coordination/runtime.env
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+InaccessiblePaths=-/mnt/c -/mnt/wslg -/root/.config/gh
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TasksMax=256
+MemoryMax=2G
+TimeoutStartSec=20min
+
