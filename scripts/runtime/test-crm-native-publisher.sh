@@ -50,6 +50,8 @@ grep -F 'restoreDropIns(backup)' "$CUSTODY_HELPER" >/dev/null
 grep -F 'current/source' "$CUSTODY_HELPER" >/dev/null
 grep -Fx 'ReadWritePaths=/opt/skincos/releases' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/opt/skincos/current' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -Fx 'ReadWritePaths=/var/lib/skincos-runtime/crm-core-identity-schema-custody' "$CUSTODY_RUNNER_UNIT" >/dev/null
+grep -Fx 'ReadWritePaths=/var/backups/skincos/clientes/staging' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/var/lib/skincos-runtime/crm-native-publisher' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/etc/systemd/system' "$CUSTODY_RUNNER_UNIT" >/dev/null
 grep -Fx 'ReadWritePaths=/etc/skincos/ponto-legacy-absence-attestation' "$CUSTODY_RUNNER_UNIT" >/dev/null
@@ -59,6 +61,8 @@ grep -Fx 'crm_native_publisher_custody_contract=valid' <<<"$runner_write_path_co
 runner_bootstrap_paths="$(sed -n '/^readonly -a RUNNER_BOOTSTRAP_PRIVATE_WRITE_PATHS=(/,/^)/p' "$CUSTODY_INSTALLER")"
 grep -Fx '  "$PONTO_LEGACY_ABSENCE_RUNTIME_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
 grep -Fx '  "$PONTO_LEGACY_ABSENCE_LEDGER_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
+grep -Fx "  '/var/lib/skincos-runtime/crm-core-identity-schema-custody'" <<<"$runner_bootstrap_paths" >/dev/null
+grep -Fx "  '/var/backups/skincos/clientes/staging'" <<<"$runner_bootstrap_paths" >/dev/null
 grep -Fx '  "$POLICY_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
 grep -Fx '  "$STATE_DIR"' <<<"$runner_bootstrap_paths" >/dev/null
 private_runner_path_helper="$(sed -n '/^ensure_private_runner_write_path()/,/^}/p' "$CUSTODY_INSTALLER")"

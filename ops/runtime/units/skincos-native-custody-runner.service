@@ -41,6 +41,12 @@ ReadWritePaths=/var/lib/skincos/ponto-legacy-absence-attestation
 # permission to them and no general sudo command.
 ReadWritePaths=/opt/skincos/releases
 ReadWritePaths=/opt/skincos/current
+# The schema-only Atendimento identity executor writes its own root-private
+# receipt and uses the existing fixed staging database checkpoint helper. The
+# runner account remains denied by POSIX ownership; these paths exist solely
+# because sudo inherits ProtectSystem=strict's mount namespace.
+ReadWritePaths=/var/lib/skincos-runtime/crm-core-identity-schema-custody
+ReadWritePaths=/var/backups/skincos/clientes/staging
 ReadWritePaths=/etc/skincos/crm-native-publisher
 ReadWritePaths=/var/lib/skincos-runtime/crm-native-publisher
 ReadWritePaths=/etc/systemd/system

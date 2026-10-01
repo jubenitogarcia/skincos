@@ -34,6 +34,8 @@ readonly -a RUNNER_WRITE_PATHS=(
   "$PONTO_LEGACY_ABSENCE_LEDGER_DIR"
   '/opt/skincos/releases'
   '/opt/skincos/current'
+  '/var/lib/skincos-runtime/crm-core-identity-schema-custody'
+  '/var/backups/skincos/clientes/staging'
   "$POLICY_DIR"
   "$STATE_DIR"
   '/etc/systemd/system'
@@ -44,6 +46,8 @@ readonly -a RUNNER_WRITE_PATHS=(
 readonly -a RUNNER_BOOTSTRAP_PRIVATE_WRITE_PATHS=(
   "$PONTO_LEGACY_ABSENCE_RUNTIME_DIR"
   "$PONTO_LEGACY_ABSENCE_LEDGER_DIR"
+  '/var/lib/skincos-runtime/crm-core-identity-schema-custody'
+  '/var/backups/skincos/clientes/staging'
   "$POLICY_DIR"
   "$STATE_DIR"
 )
