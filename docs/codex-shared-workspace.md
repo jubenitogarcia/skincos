@@ -248,7 +248,11 @@ O botão `EF App Caixa` roda em modo interativo guiado no terminal do Codex App:
 
 Usado para status, restart, logs e validação do runtime nativo.
 
-- resolve código pela release imutável `/opt/skincos/current/source`;
+- resolve código comum pela release imutável `/opt/skincos/current/source`; há
+  um contrato separado para a futura troca do CRM para
+  `/opt/skincos/current/crm-service`, mas a unit e o gerenciamento atuais
+  continuam no caminho compartilhado até a custódia e o bootstrap dedicados
+  descritos em [crm-native-publisher.md](runbooks/crm-native-publisher.md);
 - usa estado em `/var/lib/skincos-runtime`, configuração privada em
   `/etc/skincos` e logs em `/var/log/skincos`;
 - executa via units de sistema `messaging-whatsapp`, `crm`, `booking` e
