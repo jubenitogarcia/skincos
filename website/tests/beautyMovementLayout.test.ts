@@ -15,10 +15,15 @@ test("the table handoff follows the deck and keeps the title in the compact view
         experience.indexOf("function moveToNextHand"),
         experience.indexOf("function startAutoAdvance"),
     );
+    const finishDeal = experience.slice(
+        experience.indexOf("function finishDealScroll"),
+        experience.indexOf("function startInitialDealScroll"),
+    );
 
     assert.match(nextHand, /setCurrentHandStage\("collect"\);[\s\S]*startInitialDealScroll\(\);/);
     assert.match(nextHand, /window\.requestAnimationFrame\(finishDealScroll\)/);
-    assert.match(experience, /function finishDealScroll\(\)[\s\S]*scrollToTable\(\)/);
+    assert.match(finishDeal, /function finishDealScroll\(\)[\s\S]*window\.setTimeout\([\s\S]*stopInitialDealScroll\(\)/);
+    assert.doesNotMatch(finishDeal, /scrollToTable\(\)/);
     assert.match(experience, /const titleFits = titleRect\.height <= window\.innerHeight - headerOffset - 16/);
     assert.match(experience, /const isStackedLayout = window\.matchMedia\("\(max-width: 720px\)"\)\.matches/);
     assert.match(experience, /const headerCollapseTarget =/);
@@ -37,7 +42,8 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(experience, /const titleTarget = Math\.max\(0, titleTop - headerOffset - 12\)/);
     assert.match(styles, /\.hero \{[\s\S]*min-height: clamp\(196px, 16vw, 224px\)/);
     assert.match(styles, /\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -79px/);
-    assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -56px/);
+    assert.match(styles, /--bm-mobile-deck-prompt-anchor: var\(--bm-mobile-deck-anchor\);/);
+    assert.match(styles, /--bm-mobile-deck-anchor: -88px;/);
     assert.match(styles, /\.page \{[\s\S]*padding-top: 0;[\s\S]*overflow-x: clip;[\s\S]*overflow-y: visible;/);
     assert.match(globalStyles, /body:has\(\.beautyMovementPage\) \.header[\s\S]*border-bottom-color: transparent/);
     assert.match(styles, /\.hero \{[\s\S]*width: 100vw;[\s\S]*margin-left: calc\(50% - 50vw\)/);
@@ -65,6 +71,47 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack strong \{[\s\S]*font-size: clamp\(1\.35rem, 2\.35vw, 2rem\)[\s\S]*line-height: 0\.92/);
     assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.tableSurface,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.tableSurface \{[\s\S]*padding-bottom: clamp\(10px, 1\.4vw, 16px\)/);
     assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.specialCardStage,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.specialCardStage \{[\s\S]*transform: translateY\(clamp\(-48px, -3\.6vw, -22px\)\)/);
+    assert.match(styles, /--bm-mobile-prompt-height: clamp\(140px, 44vw, 160px\)/);
+    assert.match(styles, /\.tableSurface\[data-deck-state="prompt"\] \.deckStage,[\s\S]*bottom: var\(--bm-mobile-deck-prompt-anchor\)/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \{[\s\S]*grid-template-columns: clamp\(50px, 15\.5vw, 62px\) minmax\(0, 1fr\)[\s\S]*column-gap: clamp\(2px, 0\.8vw, 4px\)[\s\S]*padding-inline: clamp\(10px, 2\.6vw, 14px\)/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \.cardIllustration \{[\s\S]*width: clamp\(50px, 15\.5vw, 62px\)[\s\S]*height: clamp\(50px, 15\.5vw, 62px\)/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \.cardCopy \{[\s\S]*grid-column: 2;[\s\S]*margin-left: 0/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \.cardActLabel \{[\s\S]*margin-left: 0/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \.cardCopy strong \{[\s\S]*display: inline/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="held"\] \.cardGrid \.cardButtonSelected,[\s\S]*animation: none[\s\S]*transform: none/);
+    assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.specialCardStage,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.specialCard \{[\s\S]*min-height: var\(--bm-mobile-special-card-height\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardGridHolding \.finaleCard \{[\s\S]*--finale-y: var\(--bm-mobile-deal-origin\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardGridHolding \{[\s\S]*gap: var\(--bm-mobile-card-gap\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.tableSurface \{[\s\S]*height: auto;[\s\S]*padding-bottom: var\(--bm-mobile-card-gap\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardGridHolding \{[\s\S]*align-content: start;[\s\S]*grid-auto-rows: var\(--bm-mobile-card-height\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardGridHolding \.finaleCardFace \{[\s\S]*box-sizing: border-box;[\s\S]*height: 100%/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardFace \.cardIllustration \{[\s\S]*opacity: 1;[\s\S]*transform: none/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \.cardCopy \{[\s\S]*font-size: clamp\(0\.82rem, 3\.4vw, 0\.96rem\)[\s\S]*line-height: 1\.16/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \.cardCopy strong \{[\s\S]*font-size: clamp\(1\.28rem, 6\.6vw, 1\.56rem\)[\s\S]*line-height: 0\.94/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardFace \{[\s\S]*grid-template-columns: clamp\(50px, 15\.5vw, 62px\) minmax\(0, 1fr\)[\s\S]*column-gap: clamp\(2px, 0\.8vw, 4px\)[\s\S]*padding-inline: clamp\(10px, 2\.6vw, 14px\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardFace \.cardIllustration \{[\s\S]*width: clamp\(50px, 15\.5vw, 62px\)[\s\S]*height: clamp\(50px, 15\.5vw, 62px\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardFace \.cardActLabel \{[\s\S]*margin-left: 0/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardFace \.cardCopy \{[\s\S]*margin-left: 0[\s\S]*font-size: clamp\(0\.82rem, 3\.4vw, 0\.96rem\)[\s\S]*line-height: 1\.16/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardFace \.cardCopy strong \{[\s\S]*font-size: clamp\(1\.28rem, 6\.6vw, 1\.56rem\)[\s\S]*line-height: 0\.94/);
+    assert.doesNotMatch(styles, /mobileDeckStageDeal/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="deal"\] \.deckStage,[\s\S]*bottom: var\(--bm-mobile-deck-anchor\)/);
+    assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.specialCardBackWithAction,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.specialCardBackWithAction \{[\s\S]*justify-content: center[\s\S]*padding: 20px 16px 14px/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCard \{[\s\S]*min-height: clamp\(448px, 145vw, 474px\)/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \{[\s\S]*justify-content: center[\s\S]*gap: clamp\(6px, 1\.6vw, 9px\)[\s\S]*padding: 18px 18px 16px/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardWhatsappAction \{[\s\S]*margin-top: 4px[\s\S]*margin-bottom: 0/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardIllustration \{[\s\S]*width: clamp\(160px, 52vw, 188px\)[\s\S]*height: clamp\(148px, 48vw, 174px\)/);
+    assert.match(styles, /\.specialCardGiftNote \{[\s\S]*font-size: clamp\(0\.66rem, 2\.6vw, 0\.78rem\)/);
+    assert.match(experience, /styles\.specialCardWithPrice/);
+    assert.match(experience, /function renderRevealedCardContent\(card: BeautyMovementCard, actLabel: string\)/);
+    assert.match(experience, /renderRevealedCardContent\(card, tableDefinition\.label\)/);
+    assert.match(experience, /renderRevealedCardContent\(card, line\.actLabel\)/);
+    assert.match(experience, /className=\{`\$\{styles\.finaleCardFace\} \$\{styles\.cardBack\}`\}/);
+    assert.match(experience, /Você também leva o squeeze e a ecobag da Espaço Facial, além de mais mimos da celebração\./);
+    assert.match(experience, /styles\.specialCardGiftNote/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardWithPrice \{[\s\S]*min-height: clamp\(454px, 147vw, 480px\)/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardFrontOffer \.specialCardConditions \{[\s\S]*position: static[\s\S]*width: 100%/);
+    assert.match(styles, /\.specialCardModalDialog \.specialCardWithPrice \.specialCardConditions \{[\s\S]*position: static[\s\S]*width: 100%/);
+    assert.match(experience, /renderSpecialCard\(false, "reopen", true\)/);
     assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.tableSurface > \.deckStage,[\s\S]*position: absolute[\s\S]*z-index: 2/);
     assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.deckStage \{[\s\S]*animation: deckStageFinaleVanish var\(--bm-finale-merge-ms\)/);
     assert.match(styles, /@keyframes deckStageFinaleVanish[\s\S]*100% \{[\s\S]*opacity: 0[\s\S]*visibility: hidden/);

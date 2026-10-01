@@ -829,6 +829,8 @@
   display: grid;
   place-items: center;
   padding: clamp(16px, 4vw, 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(5, 24, 18, 0.86);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -839,14 +841,15 @@
   position: relative;
   display: grid;
   width: min(400px, 100%);
-  max-height: min(94vh, 720px);
+  max-height: none;
+  margin: auto;
   place-items: center;
   padding-top: 22px;
 }
 
 .specialCardModalDialog .specialCard {
   width: min(360px, 100%);
-  max-height: calc(94vh - 22px);
+  max-height: none;
 }
 
 .specialCardModalClose {
@@ -855,8 +858,8 @@
   top: 0;
   right: 0;
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 999px;
@@ -1819,11 +1822,30 @@
   line-height: 0.95;
 }
 
-.cardBack > span:last-child {
+.cardBack .cardCopy {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 0.6vw, 8px);
   color: var(--bm-muted);
   font-family: var(--font-brand-text);
   font-size: 0.95rem;
   line-height: 1.55;
+}
+
+.cardBack .cardCopy > strong,
+.cardBack .cardCopy > span {
+  display: block;
+}
+
+/* Finale cards use the revealed-card face outside the flipping inner frame. */
+.finaleCardFace.cardBack {
+  transform: none;
+}
+
+.tableStage[data-hand-stage="finale"] .finaleCardFace .cardIllustration {
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
 .autoAdvance {
@@ -2895,7 +2917,7 @@
   line-height: 0.94;
 }
 
-.cardBack > span:last-child,
+.cardBack .cardCopy,
 .finaleCardMessage,
 .specialCardCopy {
   color: var(--bm-muted);
@@ -3666,6 +3688,16 @@
   line-height: 1.28;
 }
 
+.specialCardGiftNote {
+  max-width: 300px;
+  color: var(--bm-ink);
+  font-family: var(--font-brand-text), sans-serif;
+  font-size: clamp(0.66rem, 2.6vw, 0.78rem);
+  font-weight: 600;
+  line-height: 1.24;
+  text-wrap: balance;
+}
+
 .specialCardOfferCondition {
   max-width: 300px;
   color: var(--bm-muted);
@@ -3848,7 +3880,7 @@
     line-height: 0.92;
   }
 
-  .tableStage:not([data-hand-stage="finale"]) .cardBack > span:last-child {
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardCopy {
     max-width: 100%;
     font-size: clamp(0.82rem, 1.08vw, 0.92rem);
     line-height: 1.35;
@@ -3868,10 +3900,797 @@
 }
 
 /* Desktop cards keep the same editorial width while giving the table a
- * little more air above the deck. Mobile retains its established 312px
- * geometry and the finale card contract remains unchanged. */
+ * little more air above the deck. Mobile uses its own compact hand geometry;
+ * the finale card remains a separate, larger reading surface. */
 @media (min-width: 721px) {
   .tableStage:not([data-hand-stage="finale"]) .cardButton {
     min-height: clamp(280px, 24.3vw, 292px);
+  }
+}
+
+/* On a portrait phone the hand is a readable strip, not a vertical stack of
+ * tall cards. Keep the prompt above the deck and let all three cards share the
+ * same frame when the automatic hand anchor is calculated. */
+@media (max-width: 720px) {
+  .tableSurface[data-deck-state="prompt"] {
+    min-height: clamp(216px, 58vw, 236px);
+    padding-bottom: 12px;
+  }
+
+  .tableSurface[data-deck-state="prompt"] .deckStage {
+    bottom: -79px;
+  }
+
+  .tableStage[data-hand-stage="ready"] .deckStage {
+    bottom: -88px;
+  }
+
+  .cardGrid {
+    --mobile-card-gap: clamp(8px, 2vw, 12px);
+    --mobile-card-height: clamp(84px, calc((100vw - 60px) / 3), 140px);
+    --mobile-card-step: calc(var(--mobile-card-height) + var(--mobile-card-gap));
+    --mobile-deal-origin: clamp(48px, 14vw, 72px);
+    gap: var(--mobile-card-gap);
+  }
+
+  .cardGrid .cardButton {
+    min-height: 0;
+    height: var(--mobile-card-height);
+    aspect-ratio: 3 / 1;
+  }
+
+  .cardGrid .cardButton:nth-child(1) {
+    --deal-y: var(--mobile-deal-origin);
+  }
+
+  .cardGrid .cardButton:nth-child(2) {
+    --deal-y: calc(var(--mobile-deal-origin) + var(--mobile-card-step));
+  }
+
+  .cardGrid .cardButton:nth-child(3) {
+    --deal-y: calc(var(--mobile-deal-origin) + (var(--mobile-card-step) * 2));
+  }
+
+  .cardGrid .cardFront,
+  .cardGrid .cardBack {
+    padding: clamp(8px, 2.4vw, 12px) clamp(10px, 2.8vw, 14px);
+  }
+
+  .cardGrid .cardPrompt,
+  .cardGrid .cardActLabel {
+    font-size: clamp(0.5rem, 2vw, 0.6rem);
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+
+  .cardGrid .cardPrompt::before {
+    width: 4px;
+    height: 4px;
+    margin-right: 6px;
+  }
+
+  .cardGrid .cardBrandMark {
+    width: clamp(46px, 14vw, 58px);
+    height: clamp(38px, 12vw, 48px);
+  }
+
+  .cardGrid .cardBrandLogo {
+    width: clamp(42px, 13vw, 56px);
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack {
+    display: grid;
+    grid-template-columns: clamp(38px, 12vw, 48px) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: clamp(5px, 1.6vw, 8px);
+    gap: clamp(2px, 1vw, 5px);
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardIllustration {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    width: clamp(42px, 13vw, 56px);
+    height: clamp(42px, 13vw, 56px);
+    margin: 0;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack strong {
+    grid-column: 2;
+    font-size: clamp(1.02rem, 5.4vw, 1.4rem);
+    line-height: 0.88;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardCopy {
+    display: -webkit-box;
+    grid-column: 2;
+    font-size: clamp(0.62rem, 2.3vw, 0.74rem);
+    line-height: 1.12;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}
+
+/* The special card is a short handoff on the phone: enough room for the
+ * invitation and its action, without making the user scroll through a mostly
+ * empty green panel before the revealed result. The modal keeps a little more
+ * height so the offer copy can breathe while the type scale increases. */
+@media (max-width: 720px) {
+  .tableStage[data-finale-stage="confirmation"] .specialCardStage,
+  .tableStage[data-finale-stage="confirmation"] .specialCard {
+    min-height: clamp(326px, 106vw, 360px);
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction {
+    padding: 20px 18px 16px;
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardBrand {
+    width: 68px;
+    height: 60px;
+    margin-bottom: 9px;
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardRevealContent {
+    margin-top: 15px;
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardRevealContent strong {
+    max-width: 240px;
+    font-size: clamp(1.48rem, 7.5vw, 1.82rem);
+    line-height: 0.92;
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardRevealAction {
+    margin-top: 16px;
+    width: min(100%, 260px);
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardSeal {
+    margin-top: auto;
+  }
+
+  .specialCardModalDialog .specialCard {
+    min-height: clamp(430px, 137vw, 460px);
+  }
+
+  .specialCardModalDialog .specialCardFront {
+    gap: 6px;
+    padding: 16px 18px 12px;
+  }
+
+  .specialCardModalDialog .specialCardSelection {
+    gap: 4px;
+  }
+
+  .specialCardModalDialog .specialCardSelectionLabel {
+    font-size: clamp(0.54rem, 2.7vw, 0.66rem);
+  }
+
+  .specialCardModalDialog .specialCardConcepts {
+    font-size: clamp(0.66rem, 3.1vw, 0.8rem);
+  }
+
+  .specialCardModalDialog .specialCardTransition {
+    font-size: clamp(0.9rem, 4.4vw, 1.06rem);
+  }
+
+  .specialCardModalDialog .specialCardKind {
+    font-size: clamp(0.66rem, 3vw, 0.76rem);
+  }
+
+  .specialCardModalDialog .specialCardIllustration {
+    width: clamp(58px, 18vw, 72px);
+    height: clamp(58px, 18vw, 72px);
+    margin: 3px auto 1px;
+  }
+
+  .specialCardModalDialog .specialCardFront > strong {
+    max-width: 100%;
+    font-size: clamp(1.84rem, 9.7vw, 2.45rem);
+    line-height: 0.9;
+  }
+
+  .specialCardModalDialog .specialCardOfferDescriptor {
+    font-size: clamp(0.68rem, 3.3vw, 0.82rem);
+  }
+
+  .specialCardModalDialog .specialCardOfferCopy {
+    font-size: clamp(0.8rem, 3.9vw, 0.98rem);
+    line-height: 1.22;
+  }
+
+  .specialCardModalDialog .specialCardOfferCondition {
+    font-size: clamp(0.66rem, 3.1vw, 0.78rem);
+    line-height: 1.2;
+  }
+
+  .specialCardModalDialog .specialCardCopy {
+    font-size: clamp(0.8rem, 3.9vw, 0.98rem);
+    line-height: 1.28;
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer .specialCardWhatsappAction {
+    min-height: 46px;
+    margin-bottom: 20px;
+  }
+}
+
+/* Mobile hand rhythm: keep the prompt copy and deck in one compact gesture,
+ * then reuse exactly the same 2.5:1 banner geometry for the dealt and finale
+ * cards. Explicit heights let the surface interpolate between categories
+ * instead of jumping from auto to a fixed layout. */
+@media (max-width: 720px) {
+  .tableStage {
+    --bm-mobile-card-gap: clamp(8px, 2vw, 12px);
+    --bm-mobile-card-height: clamp(84px, calc((100vw - 60px) / 2.5), 280px);
+    --bm-mobile-card-step: calc(var(--bm-mobile-card-height) + var(--bm-mobile-card-gap));
+    --bm-mobile-deal-origin: clamp(48px, 14vw, 72px);
+    --bm-mobile-hand-height: calc(
+      (var(--bm-mobile-card-height) * 3) + (var(--bm-mobile-card-gap) * 2) + 34px
+    );
+    --bm-mobile-prompt-height: clamp(170px, 54vw, 198px);
+  }
+
+  .tableSurface[data-deck-state="intro"],
+  .tableSurface[data-deck-state="prompt"],
+  .tableSurface[data-deck-state="expanding"],
+  .tableSurface[data-deck-state="ready"] {
+    transition: height var(--bm-hand-expand-ms) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .tableSurface[data-deck-state="prompt"] {
+    height: var(--bm-mobile-prompt-height);
+    min-height: 0;
+    padding-bottom: 8px;
+  }
+
+  .tableSurface[data-deck-state="prompt"] .deckStage {
+    bottom: -44px;
+    transition: bottom var(--bm-hand-expand-ms) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .tableStage[data-finale-stage="hidden"][data-hand-stage="ready"] .tableSurface[data-deck-state="ready"],
+  .tableStage[data-hand-stage="held"] .tableSurface[data-deck-state="ready"],
+  .tableStage[data-hand-stage="collect"] .tableSurface[data-deck-state="ready"],
+  .tableStage[data-hand-stage="deal"] .tableSurface[data-deck-state="ready"] {
+    height: var(--bm-mobile-hand-height);
+    min-height: 0;
+  }
+
+  .cardGrid {
+    --mobile-card-gap: var(--bm-mobile-card-gap);
+    --mobile-card-height: var(--bm-mobile-card-height);
+    --mobile-card-step: var(--bm-mobile-card-step);
+    --mobile-deal-origin: var(--bm-mobile-deal-origin);
+    gap: var(--mobile-card-gap);
+  }
+
+  .cardGrid .cardButton {
+    height: var(--mobile-card-height);
+    aspect-ratio: 2.5 / 1;
+  }
+
+  .finaleCardGrid {
+    --finale-card-height: var(--bm-mobile-card-height);
+    --finale-special-card-height: var(--bm-mobile-card-height);
+    gap: var(--bm-mobile-card-gap);
+  }
+
+  .finaleCard {
+    height: var(--finale-card-height);
+    min-height: var(--finale-card-height);
+  }
+
+  .finaleCard:nth-child(1) {
+    --finale-y: var(--bm-mobile-deal-origin);
+    --finale-merge-y: var(--bm-mobile-card-step);
+  }
+
+  .finaleCard:nth-child(2) {
+    --finale-y: calc(var(--bm-mobile-deal-origin) + var(--bm-mobile-card-step));
+    --finale-merge-y: 0px;
+  }
+
+  .finaleCard:nth-child(3) {
+    --finale-y: calc(var(--bm-mobile-deal-origin) + (var(--bm-mobile-card-step) * 2));
+    --finale-merge-y: calc(var(--bm-mobile-card-step) * -1);
+  }
+
+  .finaleCardFace {
+    display: grid;
+    grid-template-columns: clamp(42px, 13vw, 56px) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: clamp(5px, 1.6vw, 8px);
+    gap: clamp(2px, 1vw, 5px);
+    min-height: 0;
+    padding: clamp(8px, 2.4vw, 12px) clamp(10px, 2.8vw, 14px);
+  }
+
+  .finaleCardIllustration {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    width: clamp(42px, 13vw, 56px);
+    height: clamp(42px, 13vw, 56px);
+    margin: 0;
+  }
+
+  .finaleCardAct {
+    grid-column: 2;
+    font-size: clamp(0.5rem, 2vw, 0.6rem);
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+
+  .finaleCardFace strong {
+    grid-column: 2;
+    font-size: clamp(1.02rem, 5.4vw, 1.4rem);
+    line-height: 0.88;
+  }
+
+  .finaleCardMessage {
+    display: -webkit-box;
+    grid-column: 2;
+    align-self: start;
+    overflow: hidden;
+    font-size: clamp(0.62rem, 2.3vw, 0.74rem);
+    line-height: 1.12;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .specialCardModalDialog .specialCard {
+    min-height: clamp(440px, 140vw, 470px);
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer {
+    gap: 4px;
+    padding: 14px 18px 12px;
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer .specialCardIllustration {
+    width: clamp(92px, 30vw, 112px);
+    height: clamp(90px, 28vw, 108px);
+    margin: 2px auto 0;
+  }
+
+  .specialCardIllustration :global(.beautyMovementPrizeArt) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 8px 10px rgba(23, 54, 46, 0.12));
+  }
+}
+
+@keyframes mobilePromptSurfaceIn {
+  from {
+    opacity: 0.72;
+    filter: saturate(0.78);
+    transform: translateY(0.5rem);
+  }
+
+  68% {
+    opacity: 1;
+    filter: saturate(1.04);
+    transform: translateY(-1px);
+  }
+
+  to {
+    opacity: 1;
+    filter: saturate(1);
+    transform: translateY(0);
+  }
+}
+
+@keyframes mobilePromptSurfaceOut {
+  from {
+    opacity: 1;
+    filter: saturate(1);
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0.82;
+    filter: saturate(0.82);
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes mobilePromptCopyIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes mobilePromptCopyOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-7px);
+  }
+}
+
+@media (max-width: 720px) {
+  .tableStage[data-hand-stage="prompt"] .tableSurface {
+    animation: mobilePromptSurfaceIn var(--bm-hand-expand-ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .tableStage[data-hand-stage="prompt-out"] .tableSurface {
+    animation: mobilePromptSurfaceOut var(--bm-prompt-exit-ms) cubic-bezier(0.4, 0, 1, 1) both;
+  }
+
+  .tableStage[data-hand-stage="prompt"] .tablePrompt {
+    animation: mobilePromptCopyIn 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .tableStage[data-hand-stage="prompt-out"] .tablePrompt {
+    animation: mobilePromptCopyOut var(--bm-prompt-exit-ms) cubic-bezier(0.4, 0, 1, 1) both;
+  }
+}
+
+/* Final mobile polish: the prompt surface ends before the deck's lower
+ * overhang, while the deck keeps the same absolute landing point used by the
+ * dealt hand. Revealed cards keep the same row geometry as the unopened hand;
+ * only their face changes, so the rhythm between cards never widens. */
+@media (max-width: 720px) {
+  .tableStage {
+    --bm-mobile-prompt-height: clamp(140px, 44vw, 160px);
+  }
+
+  .tableSurface[data-deck-state="prompt"] .deckStage {
+    bottom: -66px;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack {
+    grid-template-columns: clamp(42px, 13vw, 52px) minmax(68px, 0.82fr) minmax(0, 1.18fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: clamp(5px, 1.6vw, 8px);
+    gap: 0;
+    padding: clamp(8px, 2.4vw, 12px) clamp(10px, 2.8vw, 14px);
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardIllustration {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    width: clamp(42px, 13vw, 52px);
+    height: clamp(42px, 13vw, 52px);
+    margin: 0;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardActLabel {
+    grid-column: 2 / -1;
+    grid-row: 1;
+    align-self: end;
+    margin-left: clamp(7px, 2vw, 10px);
+    font-size: clamp(0.5rem, 2vw, 0.6rem);
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack strong {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+    font-size: clamp(1rem, 5.6vw, 1.42rem);
+    line-height: 0.9;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardCopy {
+    display: block;
+    grid-column: 2 / -1;
+    grid-row: 2;
+    align-self: center;
+    margin-left: clamp(4px, 1.5vw, 7px);
+    max-width: none;
+    overflow: hidden;
+    font-size: clamp(0.68rem, 2.8vw, 0.86rem);
+    line-height: 1.08;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardCopy strong {
+    display: inline;
+    font-size: clamp(1rem, 5.6vw, 1.42rem);
+    line-height: 0.9;
+    vertical-align: baseline;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardCopy > span {
+    display: inline;
+    color: inherit;
+    font: inherit;
+  }
+
+  /* The finale reuses the revealed-card children, so it receives the same
+   * banner layout instead of a second, visually similar composition. */
+  .tableStage[data-hand-stage="finale"] .finaleCardFace {
+    display: grid;
+    grid-template-columns: clamp(44px, 13.8vw, 54px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: clamp(6px, 1.8vw, 9px);
+    gap: 0;
+    min-height: 0;
+    padding: clamp(8px, 2.4vw, 12px) clamp(12px, 3vw, 16px);
+    transform: none;
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardIllustration {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    width: clamp(42px, 13vw, 52px);
+    height: clamp(42px, 13vw, 52px);
+    margin: 0;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardActLabel {
+    grid-column: 2 / -1;
+    grid-row: 1;
+    align-self: end;
+    margin-left: clamp(7px, 2vw, 10px);
+    font-size: clamp(0.5rem, 2vw, 0.6rem);
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardCopy {
+    display: block;
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+    margin-left: clamp(7px, 2vw, 10px);
+    max-width: none;
+    overflow: hidden;
+    font-size: clamp(0.9rem, 3.8vw, 1.04rem);
+    line-height: 1.16;
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardCopy strong {
+    display: inline;
+    font-size: clamp(1.4rem, 7.2vw, 1.68rem);
+    line-height: 0.94;
+    vertical-align: baseline;
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardCopy > span {
+    display: inline;
+    color: inherit;
+    font: inherit;
+  }
+
+  .tableStage[data-hand-stage="held"] .cardGrid .cardButtonSelected,
+  .tableStage[data-hand-stage="ready"] .cardGrid .cardButtonSelected {
+    animation: none;
+    transform: none;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardGrid .cardButton:hover:not(:disabled),
+  .tableStage:not([data-hand-stage="finale"]) .cardGrid .cardButton:focus-visible:not(:disabled) {
+    transform: none;
+  }
+
+  .tableStage[data-finale-stage="result"] .specialCardStage,
+  .tableStage[data-finale-stage="result"] .specialCard {
+    min-height: clamp(350px, 112vw, 370px);
+  }
+
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction {
+    justify-content: flex-start;
+    padding: 42px 20px 18px;
+  }
+
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardBrand {
+    width: 68px;
+    height: 60px;
+    margin-bottom: 9px;
+  }
+
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardRevealContent {
+    margin-top: 20px;
+  }
+
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardRevealContent strong {
+    max-width: 240px;
+    font-size: clamp(1.42rem, 7.2vw, 1.78rem);
+    line-height: 0.92;
+  }
+
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardRevealAction {
+    margin-top: 18px;
+    width: min(100%, 260px);
+  }
+
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardSeal {
+    margin-top: auto;
+  }
+}
+
+/* One mobile hand contract: prompt, deal, selected-card return, and special
+ * card all inherit the same measured grid and landing geometry. Keeping these
+ * final constraints together prevents a late cascade from changing a settled
+ * animation target after the user has already seen its first frame. */
+@media (max-width: 720px) {
+  .tableStage {
+    --bm-mobile-deck-anchor: -88px;
+    --bm-mobile-deck-prompt-anchor: var(--bm-mobile-deck-anchor);
+    --bm-mobile-special-card-height: clamp(300px, 100vw, 320px);
+  }
+
+  .tableSurface[data-deck-state="prompt"] .deckStage,
+  .tableStage[data-hand-stage="prompt-out"] .deckStage,
+  .tableStage[data-hand-stage="expand"] .deckStage {
+    bottom: var(--bm-mobile-deck-prompt-anchor);
+    transition: bottom var(--bm-hand-deal-ms) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .tableStage[data-hand-stage="deal"] .deckStage,
+  .tableStage[data-hand-stage="ready"] .deckStage,
+  .tableStage[data-hand-stage="held"] .deckStage,
+  .tableStage[data-hand-stage="collect"] .deckStage {
+    bottom: var(--bm-mobile-deck-anchor);
+    transition: bottom var(--bm-hand-deal-ms) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardGridHolding .finaleCard {
+    --finale-y: var(--bm-mobile-deal-origin);
+  }
+
+  .tableStage[data-hand-stage="finale"] .tableSurface {
+    height: auto;
+    min-height: 0;
+    padding-bottom: var(--bm-mobile-card-gap);
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardGridHolding {
+    gap: var(--bm-mobile-card-gap);
+    align-content: start;
+    grid-auto-rows: var(--bm-mobile-card-height);
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardGridHolding .finaleCardFace {
+    box-sizing: border-box;
+    height: 100%;
+  }
+
+  .finaleCardGrid {
+    --finale-special-card-height: var(--bm-mobile-special-card-height);
+  }
+
+  /* The first arrival and the reopened card are one object. Their content
+   * shares the compact centered recipe so closing the modal never appears to
+   * repair the layout retroactively. */
+  .tableStage[data-finale-stage="confirmation"] .specialCardStage,
+  .tableStage[data-finale-stage="confirmation"] .specialCard,
+  .tableStage[data-finale-stage="result"] .specialCardStage,
+  .tableStage[data-finale-stage="result"] .specialCard {
+    min-height: var(--bm-mobile-special-card-height);
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction,
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction {
+    justify-content: center;
+    padding: 20px 16px 14px;
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardBrand,
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardBrand {
+    width: 60px;
+    height: 52px;
+    margin-bottom: 7px;
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardRevealContent,
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardRevealContent {
+    margin-top: 12px;
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardRevealContent strong,
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardRevealContent strong {
+    max-width: 230px;
+    font-size: clamp(1.28rem, 6.6vw, 1.58rem);
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardRevealAction,
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardRevealAction {
+    margin-top: 12px;
+    width: min(100%, 250px);
+  }
+
+  .tableStage[data-finale-stage="confirmation"] .specialCardBackWithAction .specialCardSeal,
+  .tableStage[data-finale-stage="result"] .specialCardBackWithAction .specialCardSeal {
+    margin-top: 10px;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack,
+  .tableStage[data-hand-stage="finale"] .finaleCardFace {
+    grid-template-columns: clamp(50px, 15.5vw, 62px) minmax(0, 1fr);
+    column-gap: clamp(2px, 0.8vw, 4px);
+    padding-inline: clamp(10px, 2.6vw, 14px);
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardIllustration,
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardIllustration {
+    width: clamp(50px, 15.5vw, 62px);
+    height: clamp(50px, 15.5vw, 62px);
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardActLabel,
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardActLabel {
+    margin-left: 0;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardCopy,
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardCopy {
+    grid-column: 2;
+    margin-left: 0;
+    font-size: clamp(0.82rem, 3.4vw, 0.96rem);
+    line-height: 1.16;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardCopy strong,
+  .tableStage[data-hand-stage="finale"] .finaleCardFace .cardCopy strong {
+    font-size: clamp(1.28rem, 6.6vw, 1.56rem);
+    line-height: 0.94;
+  }
+
+  /* The modal has a deliberate artwork zone, rather than leaving a blank
+   * corridor between the offer copy and the WhatsApp action. */
+  .specialCardModalDialog .specialCard {
+    min-height: clamp(448px, 145vw, 474px);
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer {
+    justify-content: center;
+    gap: clamp(6px, 1.6vw, 9px);
+    padding: 18px 18px 16px;
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer .specialCardWhatsappAction {
+    margin-top: 4px;
+    margin-bottom: 0;
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer .specialCardIllustration {
+    width: clamp(160px, 52vw, 188px);
+    height: clamp(148px, 48vw, 174px);
+    margin: 0 auto;
+  }
+
+  .specialCardModalDialog .specialCardWithPrice {
+    min-height: clamp(454px, 147vw, 480px);
+  }
+
+  /* Conditions are part of the dialog's keyboard path. When expanded, give
+   * the absolute card face enough real height instead of clipping the panel. */
+  .specialCardModalDialog .specialCard:has(.specialCardConditions[open]) {
+    min-height: clamp(548px, 172vw, 584px);
+  }
+
+  .specialCardModalDialog .specialCardWithPrice:has(.specialCardConditions[open]) {
+    min-height: clamp(560px, 176vw, 600px);
+  }
+
+  .specialCardModalDialog .specialCardFrontOffer .specialCardConditions {
+    position: static;
+    width: 100%;
+    margin-top: 0;
+  }
+
+  .specialCardModalDialog .specialCardWithPrice .specialCardConditions {
+    position: static;
+    width: 100%;
+    margin-top: 0;
   }
 }

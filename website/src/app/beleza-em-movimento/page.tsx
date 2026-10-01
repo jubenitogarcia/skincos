@@ -11,6 +11,19 @@ export const metadata: Metadata = {
   alternates: {
     canonical: `${siteUrl}/BelezaEmMovimento`,
   },
+  openGraph: {
+    title: "Cartas da Beleza em Movimento | Espaço Facial",
+    description: "Uma experiência editorial exclusiva da Espaço Facial Novo Hamburgo para celebrar 3 anos de beleza em movimento.",
+    url: `${siteUrl}/BelezaEmMovimento`,
+    siteName: "Espaço Facial",
+    locale: "pt_BR",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Cartas da Beleza em Movimento | Espaço Facial",
+    description: "Uma experiência editorial exclusiva da Espaço Facial Novo Hamburgo para celebrar 3 anos de beleza em movimento.",
+  },
   robots: {
     index: false,
     follow: false,

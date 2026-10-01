@@ -24,6 +24,7 @@ import {
 } from "@/lib/beautyMovementCards";
 import BeautyMovementWhatsappLink from "@/components/BeautyMovementWhatsappLink";
 import BeautyMovementCardIllustration from "@/components/BeautyMovementCardIllustration";
+import BeautyMovementPrizeArt from "@/components/BeautyMovementPrizeArt";
 import BrandMark from "@/components/BrandMark";
 import { buildBeautyMovementWhatsappMessage } from "@/lib/beautyMovementWhatsapp";
 import type {
@@ -227,7 +228,7 @@ function motionDuration(durationMs: number, reducedMotion: boolean, preserveTimi
 }
 
 function promptReadingDelay(text: string, reducedMotion: boolean): number {
-    return reducedMotion ? BEAUTY_MOVEMENT_MOTION.promptReadingHoldMs : promptReadingDuration(text);
+    return reducedMotion ? 0 : promptReadingDuration(text);
 }
 
 function useReducedMotionPreference(): boolean {
@@ -349,6 +350,9 @@ export default function BeautyMovementExperience({
     const scrollAnimationFrameRef = useRef<number | null>(null);
     const initialDealScrollFrameRef = useRef<number | null>(null);
     const initialDealScrollActiveRef = useRef(false);
+    const initialDealScrollTokenRef = useRef(0);
+    const dealScrollSettleFrameRef = useRef<number | null>(null);
+    const dealScrollSettleTimerRef = useRef<number | null>(null);
     const tableRef = useRef<HTMLElement | null>(null);
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
     const finaleCountdownRef = useRef<HTMLDivElement | null>(null);
@@ -356,7 +360,9 @@ export default function BeautyMovementExperience({
     const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const confirmationActionRef = useRef<HTMLElement | null>(null);
     const specialCardModalCloseRef = useRef<HTMLButtonElement | null>(null);
+    const specialCardModalDialogRef = useRef<HTMLElement | null>(null);
     const specialCardReopenActionRef = useRef<HTMLButtonElement | null>(null);
+    const specialCardModalTriggerRef = useRef<HTMLElement | null>(null);
     const selectionsRef = useRef(selections);
     const displayedActIndexRef = useRef(displayedActIndex);
     const introStageRef = useRef(introStage);
@@ -378,11 +384,14 @@ export default function BeautyMovementExperience({
     const closeSpecialCardModal = useCallback(() => {
         setIsSpecialCardModalOpen(false);
         window.requestAnimationFrame(() => {
-            specialCardReopenActionRef.current?.focus({ preventScroll: true });
+            const focusTarget = specialCardModalTriggerRef.current ?? specialCardReopenActionRef.current;
+            focusTarget?.focus({ preventScroll: true });
+            specialCardModalTriggerRef.current = null;
         });
     }, []);
 
     const openSpecialCardModal = useCallback(() => {
+        specialCardModalTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         setIsSpecialCardModalOpen(true);
     }, []);
 
@@ -492,17 +501,47 @@ export default function BeautyMovementExperience({
         const previousBodyOverflow = document.body.style.overflow;
         document.body.style.overflow = "hidden";
 
-        const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === "Escape") closeSpecialCardModal();
+        const keepFocusInDialog = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                closeSpecialCardModal();
+                return;
+            }
+            if (event.key !== "Tab") return;
+
+            const dialog = specialCardModalDialogRef.current;
+            if (!dialog) return;
+            const focusable = Array.from(
+                dialog.querySelectorAll<HTMLElement>(
+                    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
+                ),
+            ).filter((element) => !element.hasAttribute("aria-hidden") && element.getClientRects().length > 0);
+
+            if (focusable.length === 0) {
+                event.preventDefault();
+                specialCardModalCloseRef.current?.focus({ preventScroll: true });
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement as HTMLElement | null;
+            if (event.shiftKey && (active === first || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus({ preventScroll: true });
+            } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+                event.preventDefault();
+                first.focus({ preventScroll: true });
+            }
         };
-        window.addEventListener("keydown", closeOnEscape);
+        window.addEventListener("keydown", keepFocusInDialog);
         const focusFrame = window.requestAnimationFrame(() => {
             specialCardModalCloseRef.current?.focus({ preventScroll: true });
         });
 
         return () => {
             window.cancelAnimationFrame(focusFrame);
-            window.removeEventListener("keydown", closeOnEscape);
+            window.removeEventListener("keydown", keepFocusInDialog);
             document.body.style.overflow = previousBodyOverflow;
         };
     }, [closeSpecialCardModal, finaleStage, isSpecialCardModalOpen]);
@@ -538,10 +577,17 @@ export default function BeautyMovementExperience({
             if (scrollAnimationFrameRef.current !== null) {
                 window.cancelAnimationFrame(scrollAnimationFrameRef.current);
             }
+            if (dealScrollSettleFrameRef.current !== null) {
+                window.cancelAnimationFrame(dealScrollSettleFrameRef.current);
+            }
+            if (dealScrollSettleTimerRef.current !== null) {
+                window.clearTimeout(dealScrollSettleTimerRef.current);
+            }
             if (initialDealScrollFrameRef.current !== null) {
                 window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             }
             initialDealScrollActiveRef.current = false;
+            initialDealScrollTokenRef.current += 1;
         };
     }, []);
 
@@ -693,12 +739,17 @@ export default function BeautyMovementExperience({
                 : 0;
         const stickyHeader = document.querySelector("header");
         const stickyHeaderRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
+        const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
+        const introStage = introStageRef.current !== "hidden";
+        const promptStage = target.dataset.handStage === "prompt" || target.dataset.handStage === "prompt-out";
+        const preserveMobileEditorialFrame = isStackedLayout && (introStage || promptStage);
         // HeaderScrollBehavior translates the header out of view but keeps its
         // layout box. Only the visible portion should reserve scroll space;
         // otherwise the follow loop pushes the hero title above the viewport.
-        const headerOffset = stickyHeaderRect
+        const visibleHeaderOffset = stickyHeaderRect
             ? Math.max(0, Math.min(stickyHeaderRect.height, stickyHeaderRect.bottom)) + 4
             : 32;
+        const headerOffset = preserveMobileEditorialFrame && stickyHeaderRect ? stickyHeaderRect.height + 4 : visibleHeaderOffset;
         const scrollOffset = headerOffset + titlePeek;
         const editorialTarget = window.scrollY + target.getBoundingClientRect().top - scrollOffset;
         const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
@@ -728,11 +779,10 @@ export default function BeautyMovementExperience({
             // with the thesis. The deck remains a separate lower anchor in
             // fittedTarget and may intentionally overhang the viewport edge.
             const handBottom = cardGrid?.getBoundingClientRect().bottom ?? Math.max(tableRect.top + 312, deckRect?.bottom ?? 0);
-            const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
-            if (titleFits && !isStackedLayout) {
+            if (titleFits && (cardGrid || introStage || promptStage || !isStackedLayout)) {
                 const titleTarget = Math.max(0, titleTop - headerOffset - 12);
                 const headerCollapseTarget =
-                    stickyHeaderRect && stickyHeaderRect.bottom > 12
+                    !preserveMobileEditorialFrame && stickyHeaderRect && stickyHeaderRect.bottom > 12
                         ? Math.min(Math.max(16, Math.ceil(stickyHeaderRect.height)), Math.max(0, titleTop - 16))
                         : 0;
                 const anchorTarget = Math.max(Math.min(fittedTarget, titleTarget), headerCollapseTarget);
@@ -748,8 +798,21 @@ export default function BeautyMovementExperience({
         return fittedTarget;
     }
 
+    function clearDealScrollSettleTimer() {
+        if (dealScrollSettleFrameRef.current !== null) {
+            window.cancelAnimationFrame(dealScrollSettleFrameRef.current);
+            dealScrollSettleFrameRef.current = null;
+        }
+        if (dealScrollSettleTimerRef.current !== null) {
+            window.clearTimeout(dealScrollSettleTimerRef.current);
+            dealScrollSettleTimerRef.current = null;
+        }
+    }
+
     const stopInitialDealScroll = useCallback(() => {
+        clearDealScrollSettleTimer();
         initialDealScrollActiveRef.current = false;
+        initialDealScrollTokenRef.current += 1;
         if (initialDealScrollFrameRef.current !== null) {
             window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             initialDealScrollFrameRef.current = null;
@@ -757,15 +820,40 @@ export default function BeautyMovementExperience({
     }, []);
 
     function finishDealScroll() {
-        stopInitialDealScroll();
-
-        // The final card/deck geometry is committed one frame after the hand
-        // becomes ready. Re-anchor only after that commit so the deck does not
-        // take a short reverse step when the follow loop is released.
-        window.requestAnimationFrame(() => {
-            window.requestAnimationFrame(() => {
-                if (!mountedRef.current || handStageRef.current !== "ready") return;
-                scrollToTable();
+        // Keep the current follow loop alive through the final card/deck
+        // geometry commit, but never let an older hand stop a newer follow
+        // loop. The token ties the delayed settling work to this exact deal.
+        clearDealScrollSettleTimer();
+        const scrollToken = initialDealScrollTokenRef.current;
+        dealScrollSettleFrameRef.current = window.requestAnimationFrame(() => {
+            dealScrollSettleFrameRef.current = null;
+            if (
+                !mountedRef.current ||
+                !initialDealScrollActiveRef.current ||
+                initialDealScrollTokenRef.current !== scrollToken
+            ) {
+                return;
+            }
+            dealScrollSettleFrameRef.current = window.requestAnimationFrame(() => {
+                dealScrollSettleFrameRef.current = null;
+                if (
+                    !mountedRef.current ||
+                    !initialDealScrollActiveRef.current ||
+                    initialDealScrollTokenRef.current !== scrollToken
+                ) {
+                    return;
+                }
+                dealScrollSettleTimerRef.current = window.setTimeout(() => {
+                    dealScrollSettleTimerRef.current = null;
+                    if (
+                        !mountedRef.current ||
+                        !initialDealScrollActiveRef.current ||
+                        initialDealScrollTokenRef.current !== scrollToken
+                    ) {
+                        return;
+                    }
+                    stopInitialDealScroll();
+                }, 180);
             });
         });
     }
@@ -784,13 +872,18 @@ export default function BeautyMovementExperience({
         // every frame avoids a one-time target becoming stale during layout
         // transitions and lets the scroll itself trigger the header collapse.
         initialDealScrollActiveRef.current = true;
+        const scrollToken = initialDealScrollTokenRef.current;
         // The follow loop is part of the reading transition, not a user-scroll
         // affordance. Keyboard, pointer, touch and wheel input must not cancel
         // it: cancelling here leaves the next category at the old page anchor
         // while the deck continues moving below the cards.
         let previousTime = performance.now();
         const follow = (now: number) => {
-            if (!initialDealScrollActiveRef.current || !mountedRef.current) {
+            if (
+                !initialDealScrollActiveRef.current ||
+                !mountedRef.current ||
+                initialDealScrollTokenRef.current !== scrollToken
+            ) {
                 initialDealScrollFrameRef.current = null;
                 return;
             }
@@ -1029,9 +1122,9 @@ export default function BeautyMovementExperience({
                                 window.requestAnimationFrame(finishDealScroll);
                             });
                         });
-                    }, true);
+                    });
                 });
-            }, true);
+            });
         });
     }
 
@@ -1077,7 +1170,7 @@ export default function BeautyMovementExperience({
                             }
                         },
                     );
-                }, true);
+                });
             });
         });
     }
@@ -1122,7 +1215,6 @@ export default function BeautyMovementExperience({
                                 },
                             );
                         },
-                        true,
                     );
                 },
             );
@@ -1156,6 +1248,7 @@ export default function BeautyMovementExperience({
                 autoAdvanceTimerRef.current = null;
                 if (
                     !mountedRef.current ||
+                    reducedMotionRef.current ||
                     !autoAdvanceGateRef.current.isCurrent(token) ||
                     (handStageRef.current !== "reveal" && handStageRef.current !== "held") ||
                     displayedActIndexRef.current !== index ||
@@ -1190,11 +1283,9 @@ export default function BeautyMovementExperience({
 
     useEffect(() => {
         if (!reducedMotion) return;
+        cancelAutoAdvance();
         cancelScrollAnimation();
         stopInitialDealScroll();
-        // Keep the dependency-list shape stable for Fast Refresh. The
-        // auto-advance cancellation was intentionally removed; this
-        // dependency remains only to avoid a dev-time hook signature change.
     }, [reducedMotion, cancelAutoAdvance, cancelScrollAnimation, stopInitialDealScroll]);
 
     useEffect(() => {
@@ -1454,6 +1545,21 @@ export default function BeautyMovementExperience({
         finaleStage === "collecting" ||
         finaleStage === "merging";
 
+    function renderRevealedCardContent(card: BeautyMovementCard, actLabel: string) {
+        return (
+            <>
+                <span className={styles.cardIllustration} aria-hidden="true">
+                    <BeautyMovementCardIllustration cardId={card.id} />
+                </span>
+                <span className={styles.cardActLabel}>{actLabel}</span>
+                <span className={styles.cardCopy}>
+                    <strong>{card.title}</strong>{" "}
+                    <span>{card.shortMessage}</span>
+                </span>
+            </>
+        );
+    }
+
     function renderCard(card: BeautyMovementCard, cardIndex: number) {
         const pendingKey = `${displayedActIndex}:${card.id}`;
         const isPending = revealPendingCardId === pendingKey;
@@ -1487,12 +1593,7 @@ export default function BeautyMovementExperience({
                         </span>
                     </span>
                     <span className={`${styles.cardFace} ${styles.cardBack}`} aria-hidden={!isSelected}>
-                        <span className={styles.cardIllustration} aria-hidden="true">
-                            <BeautyMovementCardIllustration cardId={card.id} />
-                        </span>
-                        <span className={styles.cardActLabel}>{tableDefinition.label}</span>
-                        <strong>{card.title}</strong>
-                        <span>{card.shortMessage}</span>
+                        {renderRevealedCardContent(card, tableDefinition.label)}
                     </span>
                 </span>
                 <span className={styles.cardSparkles} aria-hidden="true">
@@ -1512,13 +1613,8 @@ export default function BeautyMovementExperience({
 
         return (
             <article className={styles.finaleCard} key={line.act}>
-                <div className={styles.finaleCardFace}>
-                    <span className={styles.finaleCardIllustration} aria-hidden="true">
-                        <BeautyMovementCardIllustration cardId={card.id} />
-                    </span>
-                    <span className={styles.finaleCardAct}>{line.actLabel}</span>
-                    <strong>{card.title}</strong>
-                    <span className={styles.finaleCardMessage}>{card.shortMessage}</span>
+                <div className={`${styles.finaleCardFace} ${styles.cardBack}`}>
+                    {renderRevealedCardContent(card, line.actLabel)}
                 </div>
             </article>
         );
@@ -1611,7 +1707,7 @@ export default function BeautyMovementExperience({
 
         return (
             <article
-                className={`${styles.specialCard} ${settled ? styles.specialCardSettled : ""}`.trim()}
+                className={`${styles.specialCard} ${settled ? styles.specialCardSettled : ""} ${referencePrice && unlockedPrice ? styles.specialCardWithPrice : ""}`.trim()}
                 data-special-state={revealed ? "revealed" : "locked"}
                 aria-label={revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
             >
@@ -1667,13 +1763,20 @@ export default function BeautyMovementExperience({
                         ) : null}
                         <span className={styles.specialCardKind}>{kindLabel}</span>
                         <span className={styles.specialCardIllustration} aria-hidden="true">
-                            <BeautyMovementCardIllustration cardId={iconId} />
+                            {offerPresentation && offer ? (
+                                <BeautyMovementPrizeArt outcomeKey={offer.outcomeKey} />
+                            ) : (
+                                <BeautyMovementCardIllustration cardId={iconId} />
+                            )}
                         </span>
                         <strong>{title}</strong>
                         {offerPresentation ? (
                             <>
                                 <span className={styles.specialCardOfferDescriptor}>{offerPresentation.descriptor}</span>
                                 <span className={`${styles.specialCardCopy} ${styles.specialCardOfferCopy}`}>{offerPresentation.offerText}</span>
+                                <span className={styles.specialCardGiftNote}>
+                                    Você também leva o squeeze e a ecobag da Espaço Facial, além de mais mimos da celebração.
+                                </span>
                                 {offerPresentation.conditionText ? (
                                     <span className={styles.specialCardOfferCondition}>{offerPresentation.conditionText}</span>
                                 ) : null}
@@ -1728,10 +1831,11 @@ export default function BeautyMovementExperience({
                         type="checkbox"
                         checked={operationalConsent}
                         onChange={(event) => setOperationalConsent(event.target.checked)}
+                        aria-describedby={consentInvalid ? "beauty-movement-consent-error" : undefined}
                     />
                     <span>Aceito entrar na lista exclusiva e receber comunicações operacionais sobre este evento.</span>
                 </label>
-                {consentInvalid ? <p className={styles.fieldError}>Confirme o aceite para seguir.</p> : null}
+                {consentInvalid ? <p className={styles.fieldError} id="beauty-movement-consent-error" role="alert">Confirme o aceite para seguir.</p> : null}
                 {actionError ? <p className={styles.inlineError} role="alert">{actionError}</p> : null}
                 <button
                     className={styles.primaryButton}
@@ -1977,7 +2081,7 @@ export default function BeautyMovementExperience({
                                 role="group"
                                 aria-label="Carta especial do benefício"
                             >
-                                {renderSpecialCard(false, "reopen")}
+                                {renderSpecialCard(false, "reopen", true)}
                             </div>
                         ) : finaleStage === "hidden" && introStage === "hidden" && handStage !== "waiting" && handStage !== "prompt" && handStage !== "prompt-out" ? (
                             <div className={styles.cardGrid} role="group" aria-label={`Cartas da etapa ${tableDefinition.label}`}>
@@ -2011,6 +2115,7 @@ export default function BeautyMovementExperience({
                     }}
                 >
                     <section
+                        ref={specialCardModalDialogRef}
                         className={styles.specialCardModalDialog}
                         role="dialog"
                         aria-modal="true"
