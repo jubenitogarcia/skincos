@@ -30,7 +30,7 @@ function acceptedThenIdempotentFetch(calls) {
       async json() {
         return {
           ok: true,
-          contractVersion: 'crm-core/projection-backfill-receipt/v1',
+          contractVersion: 'crm-core/projection-backfill-receipt/v2',
           status: calls.length === 1 ? 'accepted' : 'idempotent',
           batchId: input.batch.batchId,
           eventCount: input.batch.events.length,
@@ -76,6 +76,7 @@ test('delivers the real paginated producer packet twice and requires a D1-style 
         eventCount: expected.eventCount,
         eventsDigest: expected.eventsDigest,
         cursorDigest: expected.cursorDigest,
+        unitSlugs: expected.unitSlugs,
         eventIds: expected.eventIds,
       }
     },
@@ -91,11 +92,12 @@ test('delivers the real paginated producer packet twice and requires a D1-style 
   assert.equal(calls.every((call) => call.body.delivery.batchDigest === receipt.batchDigest), true)
   assert.equal(calls.every((call) => !JSON.stringify(call.body).includes(SOURCE_UUID)), true)
   assert.equal(calls[0].body.batch.events.length, 1)
+  assert.deepEqual(calls[0].body.batch.events[0].unitScope, { unitSlug: 'novo-hamburgo' })
   assert.equal(reconcileCalls.length, 1)
   assert.equal(reconcileCalls[0].batchId, receipt.batchId)
   assert.equal(reconcileCalls[0].batchDigest, receipt.batchDigest)
   assert.deepEqual(receipt, {
-    contractVersion: 'atendimento/crm-core/synthetic-remote-backfill-rehearsal-receipt/v1',
+    contractVersion: 'atendimento/crm-core/synthetic-remote-backfill-rehearsal-receipt/v2',
     status: 'reconciled',
     target: TARGET,
     batchId: receipt.batchId,
@@ -108,6 +110,7 @@ test('delivers the real paginated producer packet twice and requires a D1-style 
       eventCount: 1,
       eventsDigest: reconcileCalls[0].eventsDigest,
       cursorDigest: reconcileCalls[0].cursorDigest,
+      unitSlugs: ['novo-hamburgo'],
     },
   })
   assert.doesNotMatch(JSON.stringify(receipt), new RegExp(SOURCE_UUID, 'i'))
@@ -126,6 +129,7 @@ test('refuses a mismatched D1 reconciliation after delivery', async () => {
         eventCount: expected.eventCount,
         eventsDigest: expected.eventsDigest,
         cursorDigest: `sha256:${'f'.repeat(64)}`,
+        unitSlugs: expected.unitSlugs,
         eventIds: expected.eventIds,
       }
     },

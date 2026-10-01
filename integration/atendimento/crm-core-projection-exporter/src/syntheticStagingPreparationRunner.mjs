@@ -1,22 +1,50 @@
 import {
-  ATENDIMENTO_CRM_PROJECTION_MAX_ROWS,
-  ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL,
-  ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL,
+  ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS,
   ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL,
-  ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL,
-  ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL,
   ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL,
+  ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
+  assertAtendimentoProjectionSourceRow,
   assertAtendimentoProjectionExportTarget,
+  createAtendimentoUnitScopedProjectionSource,
   exportAtendimentoClientProjectionBatch,
 } from './atendimentoProjectionExporter.mjs'
 
-export const ATENDIMENTO_SYNTHETIC_STAGING_PREPARATION_INTENT = 'atendimento/crm-core/synthetic-staging-preparation/v1'
+export const ATENDIMENTO_SYNTHETIC_STAGING_PREPARATION_INTENT = 'atendimento/crm-core/synthetic-staging-preparation/v2'
+
+// This descriptor is deliberately synthetic. A production caller must inject
+// an Atendimento-owned source contract rather than repurposing this fixture.
+export const ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE = createAtendimentoUnitScopedProjectionSource({
+  contract: ATENDIMENTO_UNIT_SCOPED_PROJECTION_SOURCE_CONTRACT,
+  countSql: `SELECT count(*)::int AS row_count
+FROM synthetic_atendimento_unit_projection_source`,
+  rowsSql: `/* bounded source-input fingerprint */
+SELECT id::text AS id,
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
+  unit_slug AS unit_slug
+FROM synthetic_atendimento_unit_projection_source
+ORDER BY updated_at ASC, id ASC, unit_slug ASC
+LIMIT $1`,
+  firstPageSql: `/* first keyset page */
+SELECT id::text AS id,
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
+  unit_slug AS unit_slug
+FROM synthetic_atendimento_unit_projection_source
+ORDER BY updated_at ASC, id ASC, unit_slug ASC
+LIMIT $1`,
+  nextPageSql: `SELECT id::text AS id,
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
+  unit_slug AS unit_slug
+FROM synthetic_atendimento_unit_projection_source
+WHERE (updated_at, id, unit_slug) > ($1::timestamptz, $2::uuid, $3::text)
+ORDER BY updated_at ASC, id ASC, unit_slug ASC
+LIMIT $4`,
+})
 
 const INPUT_KEYS = Object.freeze(['syntheticIntent', 'target', 'fixturePool', 'hmacKey', 'keyId', 'receiver', 'maxRows'])
 const SYNTHETIC_FIXTURE_POOLS = new WeakSet()
 const SYNTHETIC_FIXTURE_RECEIVERS = new WeakSet()
 const SYNTHETIC_FIXTURE_RECEIPTS = new WeakMap()
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const SOURCE_CURSOR_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{1,6})Z$/
 
 function fail(code) {
   throw new Error(code)
@@ -42,7 +70,10 @@ function timestamp(value, code) {
 }
 
 function cursorTimestamp(value, code) {
-  return timestamp(value, code).replace(/\.(\d{3})Z$/, (_match, milliseconds) => `.${milliseconds}000Z`)
+  const raw = String(value || '').trim()
+  const match = SOURCE_CURSOR_TIMESTAMP.exec(raw)
+  if (!match || Number.isNaN(new Date(raw).getTime())) fail(code)
+  return `${match[1]}.${match[2].padEnd(6, '0')}Z`
 }
 
 function explicitSyntheticIntent(value) {
@@ -59,8 +90,8 @@ function stagingTarget(value) {
 }
 
 function boundedCount(value) {
-  const count = value === undefined ? ATENDIMENTO_CRM_PROJECTION_MAX_ROWS : Number(value)
-  if (!Number.isSafeInteger(count) || count < 1 || count > ATENDIMENTO_CRM_PROJECTION_MAX_ROWS) {
+  const count = value === undefined ? ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS : Number(value)
+  if (!Number.isSafeInteger(count) || count < 1 || count > ATENDIMENTO_CRM_PROJECTION_BACKFILL_MAX_EVENTS) {
     fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_COUNT_INVALID')
   }
   return count
@@ -91,16 +122,30 @@ function sanitizedReceipt(batch) {
 
 function syntheticSourceRows(value) {
   if (!Array.isArray(value)) fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID')
-  const identifiers = new Set()
+  const identities = new Set()
   const rows = value.map((item) => {
     const row = object(item, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID')
-    exactKeys(row, ['id', 'updated_at'], 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID')
-    const id = String(row.id || '').trim().toLowerCase()
-    if (!UUID_PATTERN.test(id) || identifiers.has(id)) fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID')
-    identifiers.add(id)
-    return Object.freeze({ id, updated_at: timestamp(row.updated_at, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID') })
+    exactKeys(row, ['id', 'updated_at', 'unit_slug'], 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID')
+    let normalized
+    try {
+      normalized = assertAtendimentoProjectionSourceRow(row)
+    } catch {
+      fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID')
+    }
+    const identity = `${normalized.id}\u0000${normalized.unitSlug}`
+    if (identities.has(identity)) fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_INVALID')
+    identities.add(identity)
+    return Object.freeze({
+      id: normalized.id,
+      updated_at: normalized.sourceUpdatedAt,
+      unit_slug: normalized.unitSlug,
+    })
   })
-  return Object.freeze(rows.sort((left, right) => left.updated_at.localeCompare(right.updated_at) || left.id.localeCompare(right.id)))
+  return Object.freeze(rows.sort((left, right) => (
+    left.updated_at.localeCompare(right.updated_at)
+    || left.id.localeCompare(right.id)
+    || left.unit_slug.localeCompare(right.unit_slug)
+  )))
 }
 
 /**
@@ -125,33 +170,41 @@ export function createSyntheticAtendimentoProjectionFixturePool(value) {
       if (sql === 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY' || sql === 'ROLLBACK') return { rows: [] }
       if (sql === ATENDIMENTO_PROJECTION_EXPORT_IDENTITY_SQL) return { rows: [identity] }
       if (sql === ATENDIMENTO_PROJECTION_EXPORT_SNAPSHOT_SQL) return { rows: [{ captured_at: capturedAt }] }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_COUNT_SQL) return { rows: [{ row_count: rows.length }] }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_ROWS_SQL) {
+      if (sql === ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE.countSql) return { rows: [{ row_count: rows.length }] }
+      if (sql === ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE.rowsSql) {
         if (!Array.isArray(params) || params.length !== 1 || params[0] !== rows.length) {
           fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
         }
         return { rows }
       }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_FIRST_PAGE_SQL) {
+      if (sql === ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE.firstPageSql) {
         const [limit] = params
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > rows.length) {
           fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
         }
         return { rows: rows.slice(0, limit) }
       }
-      if (sql === ATENDIMENTO_PROJECTION_EXPORT_NEXT_PAGE_SQL) {
-        const [updatedAt, id, limit] = params
-        if (
-          !Number.isSafeInteger(limit)
-          || limit < 1
-          || typeof updatedAt !== 'string'
-          || !UUID_PATTERN.test(String(id || ''))
-        ) fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
-        const cursorUpdatedAt = cursorTimestamp(updatedAt, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
+      if (sql === ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE.nextPageSql) {
+        const [updatedAt, id, unitSlug, limit] = params
+        if (!Number.isSafeInteger(limit) || limit < 1) fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
+        let cursor
+        try {
+          const normalized = assertAtendimentoProjectionSourceRow({ id, updated_at: updatedAt, unit_slug: unitSlug })
+          cursor = Object.freeze({
+            updatedAt: cursorTimestamp(updatedAt, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID'),
+            id: normalized.id,
+            unitSlug: normalized.unitSlug,
+          })
+        } catch {
+          fail('ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID')
+        }
         return {
           rows: rows.filter((row) => (
-            cursorTimestamp(row.updated_at, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID').localeCompare(cursorUpdatedAt) > 0
-            || (cursorTimestamp(row.updated_at, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID') === cursorUpdatedAt && row.id.localeCompare(id) > 0)
+            cursorTimestamp(row.updated_at, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID').localeCompare(cursor.updatedAt) > 0
+            || (cursorTimestamp(row.updated_at, 'ATENDIMENTO_CRM_SYNTHETIC_PREPARATION_FIXTURE_QUERY_INVALID') === cursor.updatedAt && (
+              row.id.localeCompare(cursor.id) > 0
+              || (row.id === cursor.id && row.unit_slug.localeCompare(cursor.unitSlug) > 0)
+            ))
           )).slice(0, limit),
         }
       }
@@ -201,6 +254,7 @@ export async function prepareSyntheticAtendimentoProjectionStaging(options = {})
 
   const batch = await exportAtendimentoClientProjectionBatch({
     pool,
+    source: ATENDIMENTO_SYNTHETIC_UNIT_SCOPED_PROJECTION_SOURCE,
     hmacKey: input.hmacKey,
     keyId: input.keyId,
     target,

@@ -13,7 +13,7 @@ import {
 export const ATENDIMENTO_CRM_BACKFILL_HTTP_PATH = '/crm/_internal/backfill/atendimento'
 export const ATENDIMENTO_CRM_BACKFILL_HTTP_MAX_BODY_BYTES = 64 * 1024
 export const ATENDIMENTO_CRM_BACKFILL_HTTP_TIMEOUT_MS = 15_000
-export const ATENDIMENTO_CRM_BACKFILL_RECEIPT_VERSION = 'crm-core/projection-backfill-receipt/v1'
+export const ATENDIMENTO_CRM_BACKFILL_RECEIPT_VERSION = 'crm-core/projection-backfill-receipt/v2'
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,120}$/
 const OUTCOMES = new Set(['accepted', 'idempotent'])
