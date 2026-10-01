@@ -164,6 +164,40 @@ test("Ponto release custody pins the active coordination key at every release bo
   assert.match(release, /SKINCOS_GLOBAL_COORDINATION_KEY_ID: \$\{\{ inputs\.key_id \}\}/);
 });
 
+test("Ponto staging candidate is a secretless artifact attester and never a Ponto Workers writer", () => {
+  const policy = loadPolicy();
+  const candidateEntry = policy.nonPublishingWorkflows.find(
+    (entry) => entry.workflow === ".github/workflows/ponto-core-staging-candidate.yml",
+  );
+  assert.ok(candidateEntry);
+  assert.deepEqual(candidateEntry.requiredMarkers, [
+    "Build the Pages-consumable candidate from canonical-only evidence",
+    "ponto-core-staging-rollback-drill-coreApi-$RELEASE_SHA",
+    "ponto-core-staging-rollback-drill-identityWorkforce-$RELEASE_SHA",
+  ]);
+
+  const pontoWorkers = policy.surfaces.find((surface) => surface.id === "ponto-core-and-identity-workers");
+  assert.equal(pontoWorkers?.canonicalDeployWorkflow, ".github/workflows/deploy-core-workers.yml");
+  assert.equal(pontoWorkers?.mutationWorkflows.includes(candidateEntry.workflow), false);
+
+  const candidate = read(candidateEntry.workflow);
+  assert.match(candidate, /permissions:\n  actions: read\n  contents: read/);
+  assert.match(candidate, /gh run download/);
+  assert.match(candidate, /Build the Pages-consumable candidate from canonical-only evidence/);
+  assert.doesNotMatch(candidate, /\bsecrets\./);
+  assert.doesNotMatch(candidate, /CLOUDFLARE_(?:API_TOKEN|ACCOUNT_ID)\b/);
+  assert.doesNotMatch(candidate, /^\s+environment:/m);
+  assert.doesNotMatch(candidate, /global-coordination|ponto-surface-mutation|\bwrangler\b|\bversions\s+(?:upload|deploy)\b|execute_same_artifact_rollback/i);
+
+  const canonical = read(".github/workflows/deploy-core-workers.yml");
+  assert.match(canonical, /same_artifact_rollback_drill/);
+  assert.match(canonical, /core_candidate_version_id/);
+  assert.match(canonical, /ponto-core-staging-rollback-drill-coreApi-/);
+  assert.match(canonical, /ponto-core-staging-rollback-drill-identityWorkforce-/);
+  assert.match(canonical, /wrangler rollback/);
+  assert.match(canonical, /wrangler versions deploy/);
+});
+
 test("legacy recovery and WAF mutators are fail-closed through the same authority", () => {
   const waf = jobBlock(read(".github/workflows/ponto-waf-security.yml"), "apply");
   assert.match(waf, /resource: cloudflare:ponto-waf:production/);

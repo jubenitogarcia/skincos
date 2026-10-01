@@ -1,0 +1,222 @@
+name: Ponto Core staging candidate
+run-name: Ponto Core staging candidate ${{ inputs.release_sha }} timekeeping=${{ inputs.timekeeping_staging_run_id }} core=${{ inputs.core_staging_run_id }} identity=${{ inputs.identity_staging_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact current main SHA published by the canonical Ponto workflows
+        required: true
+        type: string
+      timekeeping_staging_run_id:
+        description: Exact successful Deploy Workforce Timekeeping staging run for release_sha
+        required: true
+        type: string
+      core_staging_run_id:
+        description: Exact successful Deploy Core Worker API staging run carrying canonical rollback-drill evidence
+        required: true
+        type: string
+      identity_staging_run_id:
+        description: Exact successful Deploy Core Worker Inventory staging run carrying canonical rollback-drill evidence
+        required: true
+        type: string
+
+# This is an artifact attester, not a Cloudflare writer. It never receives a
+# Cloudflare credential or environment, and it only downloads immutable output
+# from the canonical staging publisher runs.
+concurrency:
+  group: ponto-core-staging-candidate-${{ inputs.release_sha }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      source_tree: ${{ steps.source.outputs.source_tree }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Require one fresh trusted main source identity
+        id: source
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto Core staging candidate must run from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Ponto Core staging candidate cannot be rerun; dispatch a fresh candidate'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$RELEASE_SHA" == "$GITHUB_SHA" ]] || { echo 'release_sha must be the exact trusted main workflow SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'candidate checkout differs from release_sha'; exit 1; }
+          echo "source_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_tree=$(git rev-parse "${RELEASE_SHA}^{tree}")" >> "$GITHUB_OUTPUT"
+
+  attest:
+    needs: source
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_SHA: ${{ needs.source.outputs.source_sha }}
+      SOURCE_TREE: ${{ needs.source.outputs.source_tree }}
+      TIMEKEEPING_RUN_ID: ${{ inputs.timekeeping_staging_run_id }}
+      CORE_RUN_ID: ${{ inputs.core_staging_run_id }}
+      IDENTITY_RUN_ID: ${{ inputs.identity_staging_run_id }}
+      PONTO_CANDIDATE_SOURCE_REPOSITORY: ${{ github.repository }}
+      PONTO_CANDIDATE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+      PONTO_CANDIDATE_SOURCE_TREE: ${{ needs.source.outputs.source_tree }}
+      PONTO_CANDIDATE_RUN_ID: ${{ github.run_id }}
+      CANDIDATE_ROOT: ${{ runner.temp }}/ponto-core-staging-candidate
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 1
+
+      - name: Require canonical staging artifact identifiers
+        run: |
+          set -euo pipefail
+          for value in "$TIMEKEEPING_RUN_ID" "$CORE_RUN_ID" "$IDENTITY_RUN_ID"; do
+            [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo 'Upstream staging run IDs must be numeric'; exit 1; }
+          done
+          mkdir -p "$CANDIDATE_ROOT/upstream"
+
+      - name: Download only immutable canonical staging evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$CANDIDATE_ROOT/upstream"
+          for pair in timekeeping:"$TIMEKEEPING_RUN_ID" core:"$CORE_RUN_ID" identity:"$IDENTITY_RUN_ID"; do
+            name="${pair%%:*}"
+            run_id="${pair#*:}"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$root/$name/run.json"
+            head_branch="$(node -e "const run=require(process.argv[1]);process.stdout.write(String(run.head_branch||''))" "$root/$name/run.json")"
+            if [[ "$head_branch" == main ]]; then
+              printf '%s\n' '{"ref":"","object":{"type":"","sha":""}}' > "$root/$name/release-ref.json"
+            elif [[ "$head_branch" == "skincos/release/ponto/$RELEASE_SHA" ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$head_branch" > "$root/$name/release-ref.json"
+            else
+              # Preserve the untrusted child identity for the validator.  It
+              # deliberately fails closed rather than widening the accepted
+              # branch/tag set before any artifact is consumed.
+              printf '%s\n' '{"ref":"","object":{"type":"","sha":""}}' > "$root/$name/release-ref.json"
+            fi
+          done
+          gh run download "$TIMEKEEPING_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-surface-timekeeping-staging-$RELEASE_SHA" --dir "$root/timekeeping/surface"
+          gh run download "$CORE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-surface-core-api-staging-$RELEASE_SHA" --dir "$root/core/surface"
+          gh run download "$CORE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-mutation-core-api-staging-$RELEASE_SHA" --dir "$root/core/mutation"
+          gh run download "$CORE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-core-staging-rollback-drill-coreApi-$RELEASE_SHA" --dir "$root/core/drill"
+          gh run download "$IDENTITY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-surface-identity-workforce-staging-$RELEASE_SHA" --dir "$root/identity/surface"
+          gh run download "$IDENTITY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-mutation-identity-workforce-staging-$RELEASE_SHA" --dir "$root/identity/mutation"
+          gh run download "$IDENTITY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-core-staging-rollback-drill-identityWorkforce-$RELEASE_SHA" --dir "$root/identity/drill"
+
+      - name: Bind only exact canonical child artifacts to this candidate
+        run: |
+          set -euo pipefail
+          root="$CANDIDATE_ROOT/upstream"
+          find_one() {
+            local directory="$1" filename="$2"
+            mapfile -t found < <(find "$directory" -type f -name "$filename" -print)
+            [[ "${#found[@]}" == 1 ]] || { echo "Expected exactly one $filename in $directory"; exit 1; }
+            printf '%s' "${found[0]}"
+          }
+          timekeeping_surface="$(find_one "$root/timekeeping/surface" surface.json)"
+          core_surface="$(find_one "$root/core/surface" surface.json)"
+          core_mutation="$(find_one "$root/core/mutation" mutation.json)"
+          core_drill="$(find_one "$root/core/drill" ponto-core-staging-rollback-drill.json)"
+          identity_surface="$(find_one "$root/identity/surface" surface.json)"
+          identity_mutation="$(find_one "$root/identity/mutation" mutation.json)"
+          identity_drill="$(find_one "$root/identity/drill" ponto-core-staging-rollback-drill.json)"
+          TIMEKEEPING_SURFACE="$timekeeping_surface" CORE_SURFACE="$core_surface" CORE_MUTATION="$core_mutation" CORE_DRILL="$core_drill" \
+          IDENTITY_SURFACE="$identity_surface" IDENTITY_MUTATION="$identity_mutation" IDENTITY_DRILL="$identity_drill" \
+            node - "$CANDIDATE_ROOT/candidate-input.json" <<'NODE'
+          const fs = require("fs");
+          const load = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+          const sanitizeRun = (run, releaseRef) => ({
+            runId: String(run?.id || ""),
+            workflowPath: String(run?.path || "").replace(/@refs\/(?:heads|tags)\/[^\s]+$/, ""),
+            event: String(run?.event || ""),
+            status: String(run?.status || ""),
+            conclusion: String(run?.conclusion || ""),
+            runAttempt: Number(run?.run_attempt),
+            headSha: String(run?.head_sha || "").toLowerCase(),
+            headBranch: String(run?.head_branch || ""),
+            repository: String(run?.repository?.full_name || ""),
+            headRepository: String(run?.head_repository?.full_name || ""),
+            releaseRef: String(releaseRef?.ref || ""),
+            releaseTagObjectType: String(releaseRef?.object?.type || ""),
+            releaseTagTarget: String(releaseRef?.object?.sha || "").toLowerCase(),
+          });
+          const root = process.env.CANDIDATE_ROOT;
+          const output = process.argv[2];
+          const input = {
+            schemaVersion: 1,
+            source: {
+              repository: process.env.GITHUB_REPOSITORY,
+              sha: process.env.RELEASE_SHA,
+              tree: process.env.SOURCE_TREE,
+              candidateRunId: process.env.GITHUB_RUN_ID,
+            },
+            upstream: {
+              timekeeping: {
+                run: sanitizeRun(
+                  load(`${root}/upstream/timekeeping/run.json`),
+                  load(`${root}/upstream/timekeeping/release-ref.json`),
+                ),
+                surface: load(process.env.TIMEKEEPING_SURFACE),
+              },
+              core: {
+                run: sanitizeRun(
+                  load(`${root}/upstream/core/run.json`),
+                  load(`${root}/upstream/core/release-ref.json`),
+                ),
+                surface: load(process.env.CORE_SURFACE),
+                mutation: load(process.env.CORE_MUTATION),
+              },
+              identity: {
+                run: sanitizeRun(
+                  load(`${root}/upstream/identity/run.json`),
+                  load(`${root}/upstream/identity/release-ref.json`),
+                ),
+                surface: load(process.env.IDENTITY_SURFACE),
+                mutation: load(process.env.IDENTITY_MUTATION),
+              },
+            },
+          };
+          fs.writeFileSync(output, `${JSON.stringify(input, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          node .github/scripts/ponto-core-staging-candidate.mjs validate-input \
+            "$CANDIDATE_ROOT/candidate-input.json" "$CANDIDATE_ROOT/candidate-validated.json"
+          cp "$core_drill" "$CANDIDATE_ROOT/core-drill.json"
+          cp "$identity_drill" "$CANDIDATE_ROOT/identity-drill.json"
+
+      - name: Build the Pages-consumable candidate from canonical-only evidence
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-candidate.mjs build-receipt \
+            "$CANDIDATE_ROOT/candidate-input.json" \
+            "$CANDIDATE_ROOT/core-drill.json" \
+            "$CANDIDATE_ROOT/identity-drill.json" \
+            "$CANDIDATE_ROOT/ponto-core-staging-candidate.json"
+
+      - name: Upload sanitized Ponto Core staging candidate receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-core-staging-candidate-${{ needs.source.outputs.source_sha }}
+          path: ${{ runner.temp }}/ponto-core-staging-candidate/ponto-core-staging-candidate.json
+          retention-days: 90
+          if-no-files-found: error
