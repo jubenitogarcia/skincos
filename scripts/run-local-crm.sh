@@ -62,6 +62,9 @@ CRM_INSUMOS_SEED_TOKEN="${CRM_INSUMOS_SEED_TOKEN:-dev-seed-token}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
+CRM_OPERATOR_RUNTIME_ROOT="${CRM_OPERATOR_RUNTIME_ROOT:-/mnt/c/CodexRuntime/operator/admin/skincos}"
+CRM_PLAYWRIGHT_BROWSERS_PATH="${CRM_PLAYWRIGHT_BROWSERS_PATH:-${PLAYWRIGHT_BROWSERS_PATH:-$CRM_OPERATOR_RUNTIME_ROOT/playwright-browsers}}"
+CRM_BUILD_STATE_FILE="${CRM_BUILD_STATE_FILE:-$CRM_OPERATOR_RUNTIME_ROOT/state/crm-local-build-state.env}"
 SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
 
 report_timestamp() {
@@ -95,6 +98,9 @@ Opções:
   --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
   --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
   CRM_LOCAL_LOG_LEVEL=LEVEL      Nível dos runtimes locais: warn (default), info, debug, error ou none
+  CRM_PLAYWRIGHT_BROWSERS_PATH   Cache privado dos navegadores Playwright
+  CRM_BUILD_BEFORE_START=auto    Reutiliza o dist somente quando os insumos do build não mudaram
+  CRM_BUILD_STATE_FILE           Estado privado da impressão do build automático
   --smoke                        Roda uma smoke local do módulo após subir o CRM
   --exit-after-smoke             Encerra o CRM local depois da smoke
   --headed-smoke                 Roda a smoke com janela visível para debug
@@ -271,21 +277,37 @@ stop_owned_port_listener() {
   local pid
   for pid in $pids; do
     local candidate_pid="$pid"
+    local fallback_pid=""
+    local runner_pid=""
     local owned=0
     while [[ -n "$candidate_pid" && "$candidate_pid" != "1" ]]; do
       local args
       args="$(ps -p "$candidate_pid" -o args= 2>/dev/null || true)"
       if [[ "$args" == *"$ROOT_DIR"* ]] && [[ "$args" == *"vite"* || "$args" == *"wrangler"* || "$args" == *"workerd"* || "$args" == *"dev_pages.sh"* || "$args" == *"insumos.sh"* ]]; then
         owned=1
+        fallback_pid="$candidate_pid"
+      fi
+      # A PID file may have been written by an older launcher location. Once a
+      # listener is proven to belong to this checkout, terminate its root
+      # launcher so Vite, Pages and the wrapper do not survive as orphans.
+      if [[ "$owned" == "1" ]] && [[ "$args" == *"run-local-crm.sh"* ]]; then
+        runner_pid="$candidate_pid"
         break
       fi
       candidate_pid="$(ps -p "$candidate_pid" -o ppid= 2>/dev/null | tr -d ' ' || true)"
     done
     if [[ "$owned" == "1" ]]; then
-      echo "[crm-local] Encerrando $label preso na porta $port (pid: $pid)"
-      terminate_pid "$pid"
+      local target_pid="${runner_pid:-$fallback_pid}"
+      echo "[crm-local] Encerrando instância local anterior em $label (porta $port, pid: $target_pid)"
+      terminate_pid "$target_pid"
     fi
   done
+}
+
+remove_controlled_shutdown_noise() {
+  if [[ -f "$LOG_FILE" ]]; then
+    sed -i '/ELIFECYCLE.*Command failed\.$/d' "$LOG_FILE"
+  fi
 }
 
 assert_port_free() {
@@ -333,17 +355,64 @@ wait_for_crm_api() {
 }
 
 open_browser() {
+  echo "[crm-local] Abrindo navegador em $DEFAULT_URL"
+  # On WSL, /usr/bin/open is xdg-open and starts Linux Chromium. Prefer the
+  # Windows handler to keep browser diagnostics out of the local CRM terminal.
+  if command -v cmd.exe >/dev/null 2>&1; then
+    cmd.exe /c start "" "$DEFAULT_URL" >/dev/null 2>&1 && return 0
+  fi
   if command -v open >/dev/null 2>&1; then
-    open "$DEFAULT_URL"
+    open "$DEFAULT_URL" >/dev/null 2>&1 &
   elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$DEFAULT_URL" >/dev/null 2>&1 || true
+    xdg-open "$DEFAULT_URL" >/dev/null 2>&1 &
   fi
 }
 
 ensure_frontend_ready() {
   if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
     echo "Dependências do frontend não encontradas. Instalando..."
-    npm --prefix "$FRONTEND_DIR" install
+    if [[ -f "$FRONTEND_DIR/package-lock.json" ]]; then
+      npm --prefix "$FRONTEND_DIR" ci
+    else
+      npm --prefix "$FRONTEND_DIR" install
+    fi
+  fi
+}
+
+ensure_playwright_browser_ready() {
+  local playwright_bin="$FRONTEND_DIR/node_modules/.bin/playwright"
+  local browsers_manifest="$FRONTEND_DIR/node_modules/playwright-core/browsers.json"
+  local chromium_revision
+  local headless_revision
+  local ffmpeg_revision
+
+  if [[ ! -x "$playwright_bin" || ! -f "$browsers_manifest" ]]; then
+    echo "[crm-local] Playwright não foi instalado com as dependências do frontend." >&2
+    echo "[crm-local] Reinstale com npm ci em $FRONTEND_DIR." >&2
+    exit 1
+  fi
+
+  mkdir -p "$CRM_PLAYWRIGHT_BROWSERS_PATH"
+  read -r chromium_revision headless_revision ffmpeg_revision < <(
+    node - "$browsers_manifest" <<'NODE'
+const manifest = require(process.argv[2])
+const revision = (name) => manifest.browsers.find((entry) => entry.name === name)?.revision || ''
+process.stdout.write(`${revision('chromium')} ${revision('chromium-headless-shell')} ${revision('ffmpeg')}\n`)
+NODE
+  )
+  if [[ -n "$chromium_revision" && -n "$headless_revision" && -n "$ffmpeg_revision" ]] &&
+    [[ -x "$CRM_PLAYWRIGHT_BROWSERS_PATH/chromium-$chromium_revision/chrome-linux64/chrome" ]] &&
+    [[ -x "$CRM_PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-$headless_revision/chrome-headless-shell-linux64/chrome-headless-shell" ]] &&
+    [[ -x "$CRM_PLAYWRIGHT_BROWSERS_PATH/ffmpeg-$ffmpeg_revision/ffmpeg-linux" ]]; then
+    echo "[crm-local] Chromium headless $headless_revision pronto em $CRM_PLAYWRIGHT_BROWSERS_PATH"
+    return 0
+  fi
+
+  echo "[crm-local] Validando Chromium headless em $CRM_PLAYWRIGHT_BROWSERS_PATH"
+  if ! PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" "$playwright_bin" install chromium; then
+    echo "[crm-local] Não foi possível provisionar o Chromium exigido pelo gate." >&2
+    echo "[crm-local] Verifique rede e permissão de escrita em $CRM_PLAYWRIGHT_BROWSERS_PATH." >&2
+    exit 1
   fi
 }
 
@@ -353,6 +422,143 @@ ensure_frontend_dist_ready() {
   fi
   echo "[crm-local] Build local do frontend ausente; gerando dist inicial para o Pages local..."
   npm --prefix "$FRONTEND_DIR" run build
+}
+
+build_input_fingerprint() {
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "[crm-local] sha256sum é necessário para validar o cache do build." >&2
+    exit 1
+  fi
+
+  (
+    cd "$FRONTEND_DIR"
+    find . -type f \
+      ! -path './node_modules/*' \
+      ! -path './dist/*' \
+      ! -path './.wrangler/*' \
+      ! -path './.vite/*' \
+      ! -path './coverage/*' \
+      ! -path './test-results/*' \
+      ! -path './playwright-report/*' \
+      ! -path './.playwright-*/*' \
+      ! -name '.dev.vars' \
+      ! -name '.dev.vars.*' \
+      -print0 |
+      LC_ALL=C sort -z |
+      xargs -0 sha256sum |
+      sha256sum |
+      awk '{print $1}'
+  )
+}
+
+lockfile_fingerprint() {
+  if [[ -f "$FRONTEND_DIR/package-lock.json" ]]; then
+    sha256sum "$FRONTEND_DIR/package-lock.json" | awk '{print $1}'
+  else
+    sha256sum "$FRONTEND_DIR/package.json" | awk '{print $1}'
+  fi
+}
+
+frontend_dist_is_newer_than_inputs() {
+  local dist_index="$FRONTEND_DIR/dist/index.html"
+  [[ -f "$dist_index" ]] || return 1
+
+  ! (
+    cd "$FRONTEND_DIR"
+    find . -type f \
+      ! -path './node_modules/*' \
+      ! -path './dist/*' \
+      ! -path './.wrangler/*' \
+      ! -path './.vite/*' \
+      ! -path './coverage/*' \
+      ! -path './test-results/*' \
+      ! -path './playwright-report/*' \
+      ! -path './.playwright-*/*' \
+      ! -name '.dev.vars' \
+      ! -name '.dev.vars.*' \
+      -newer 'dist/index.html' \
+      -print -quit | grep -q .
+  )
+}
+
+read_build_state_value() {
+  local key="$1"
+  [[ -f "$CRM_BUILD_STATE_FILE" ]] || return 0
+  sed -n "s/^${key}=//p" "$CRM_BUILD_STATE_FILE" | head -n 1
+}
+
+write_build_state() {
+  local inputs_fingerprint="$1"
+  local lockfile_fingerprint_value="$2"
+  local state_dir
+  local temporary_state
+
+  state_dir="$(dirname "$CRM_BUILD_STATE_FILE")"
+  mkdir -p "$state_dir"
+  temporary_state="$(mktemp "$state_dir/.crm-local-build-state.XXXXXX")"
+  printf 'version=1\ninputs=%s\nlockfile=%s\n' "$inputs_fingerprint" "$lockfile_fingerprint_value" > "$temporary_state"
+  mv -f "$temporary_state" "$CRM_BUILD_STATE_FILE"
+}
+
+ensure_auto_build_dependencies() {
+  local previous_lockfile_fingerprint="$1"
+  local current_lockfile_fingerprint="$2"
+
+  if [[ "$previous_lockfile_fingerprint" == "$current_lockfile_fingerprint" ]]; then
+    return 0
+  fi
+
+  if [[ -f "$FRONTEND_DIR/package-lock.json" ]]; then
+    echo "[crm-local] Lockfile alterado ou sem estado anterior; alinhando dependências do frontend..."
+    npm --prefix "$FRONTEND_DIR" ci
+  fi
+}
+
+ensure_frontend_build_current() {
+  local current_inputs_fingerprint
+  local current_lockfile_fingerprint
+  local previous_inputs_fingerprint
+  local previous_lockfile_fingerprint
+
+  case "$CRM_BUILD_BEFORE_START" in
+    0)
+      ensure_frontend_dist_ready
+      return 0
+      ;;
+    1)
+      echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
+      npm --prefix "$FRONTEND_DIR" run build
+      return 0
+      ;;
+    auto)
+      current_inputs_fingerprint="$(build_input_fingerprint)"
+      current_lockfile_fingerprint="$(lockfile_fingerprint)"
+      previous_inputs_fingerprint="$(read_build_state_value inputs)"
+      previous_lockfile_fingerprint="$(read_build_state_value lockfile)"
+
+      if [[ -f "$FRONTEND_DIR/dist/index.html" && "$current_inputs_fingerprint" == "$previous_inputs_fingerprint" && "$current_lockfile_fingerprint" == "$previous_lockfile_fingerprint" ]]; then
+        echo "[crm-local] Build atual: reutilizando dist validado pela impressão privada."
+        return 0
+      fi
+
+      if frontend_dist_is_newer_than_inputs; then
+        echo "[crm-local] Build atual: adotando dist mais novo que os fontes e registrando a impressão privada."
+        write_build_state "$current_inputs_fingerprint" "$current_lockfile_fingerprint"
+        return 0
+      fi
+
+      ensure_auto_build_dependencies "$previous_lockfile_fingerprint" "$current_lockfile_fingerprint"
+      echo "[crm-local] Build desatualizado ou ausente; gerando dist atual do frontend..."
+      npm --prefix "$FRONTEND_DIR" run build
+      write_build_state "$current_inputs_fingerprint" "$current_lockfile_fingerprint"
+      return 0
+      ;;
+    *)
+      echo "CRM_BUILD_BEFORE_START inválido: $CRM_BUILD_BEFORE_START" >&2
+      echo "Use 0, 1 ou auto." >&2
+      exit 1
+      ;;
+  esac
 }
 
 ensure_insumos_seed_config() {
@@ -431,6 +637,7 @@ if [[ "$STOP_ONLY" == "1" ]]; then
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
   fi
+  remove_controlled_shutdown_noise
   echo "CRM local finalizado."
   exit 0
 fi
@@ -491,17 +698,21 @@ echo "Log: $LOG_FILE"
 echo ""
 
 stop_existing
+stop_owned_port_listener "$CRM_VITE_PORT" "vite"
+stop_owned_port_listener "$CRM_PAGES_PORT" "pages"
+if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+  stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
+fi
 rotate_current_log
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
 ensure_frontend_ready
 
-if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
-  echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
-  npm --prefix "$FRONTEND_DIR" run build
-else
-  ensure_frontend_dist_ready
+if [[ "$CRM_GATE_STRICT" == "1" || "$CRM_SMOKE" == "1" ]]; then
+  ensure_playwright_browser_ready
 fi
+
+ensure_frontend_build_current
 
 INSUMOS_PID=""
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
@@ -572,7 +783,7 @@ run_gate_smoke() {
   echo "[crm-local] Rodando gate obrigatório do shell local..."
   (
     cd "$FRONTEND_DIR"
-    PLAYWRIGHT_BROWSERS_PATH=0 \
+    PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" \
       CRM_URL="$DEFAULT_URL" \
       HEADED=0 \
       TIMEOUT_MS="${CRM_GATE_TIMEOUT_MS:-120000}" \
@@ -625,19 +836,19 @@ if [[ "$CRM_SMOKE" == "1" ]]; then
     echo "[crm-local] Rodando smoke local do Meta Ads..."
     (
       cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
+      PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
     )
   elif [[ "$CRM_MODULE" == "site-tracking" ]]; then
     echo "[crm-local] Rodando smoke local do Site EF..."
     (
       cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
+      PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
     )
   else
     echo "[crm-local] Rodando smoke local padrão..."
     (
       cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
+      PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
     )
   fi
 
