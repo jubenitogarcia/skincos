@@ -82,13 +82,16 @@ carga exceder isso, ele não cria um backfill parcial.
 
 `src/atendimentoConfirmedUnitScopedProjectionSource.mjs` fornece o descritor
 canônico `ATENDIMENTO_CONFIRMED_UNIT_SCOPED_PROJECTION_SOURCE` (semântica
-`v3`). Ele não reproduz todos os sinais do runtime comercial legado: a
+`v4`). Ele não reproduz todos os sinais do runtime comercial legado: a
 projeção CRM Core é limitada a relações cujo lifecycle pertence a Atendimento.
 Uma identidade tem escopo em cada unidade comprovada pelo canal abaixo, e o
 slug só é aceito após resolver contra `crm_atendimento.units`.
 
-- atendimento ativo: `global_client_identity_members` →
-  `attendance_client_links` → `attendances` não deletado;
+- atendimento ativo e explicitamente confirmado:
+  `crm_core_identity_members` → `crm_core_attendance_client_links` (`status`
+  `confirmed`) → `attendances` não deletado. O grafo precisa ter sido criado
+  pela migration de identidade exclusiva de Atendimento e passar no preflight
+  de schema antes de qualquer snapshot;
 - Finance/Caixa: `crm_caixa.sales` não é lido, não recebe grant para este
   exportador e permanece no domínio Finance explicitamente excluído. Uma
   futura projeção de venda exigirá contrato, admissão e evidência próprios do
