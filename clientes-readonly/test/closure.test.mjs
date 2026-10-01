@@ -21,6 +21,7 @@ function importSpecifiers(source) {
 
 test('the extraction seed is self-contained and has no commercial implementation import', () => {
   const files = sourceFiles(sourceRoot)
+  const workerEntrypoint = path.join(sourceRoot, 'worker.js')
   assert.ok(files.length > 0)
   for (const file of files) {
     const source = fs.readFileSync(file, 'utf8')
@@ -29,7 +30,11 @@ test('the extraction seed is self-contained and has no commercial implementation
       assert.doesNotMatch(specifier, /(?:^|\/)(?:crm|harmonia|caixa)(?:\/|$)|atendimento/i)
     }
     assert.doesNotMatch(source, /\bprocess\.env\b/)
-    assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|WebSocket)\s*\(/)
+    if (file === workerEntrypoint) {
+      assert.match(source, /^import \{ createClientesReadonlyRuntime \} from '\.\/runtime\.js'\n\nexport default \{\n  fetch\(request, env\) \{\n    return createClientesReadonlyRuntime\(env\)\.fetch\(request\)\n  \},\n\}\n$/)
+    } else {
+      assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|WebSocket)\s*\(/)
+    }
   }
 })
 

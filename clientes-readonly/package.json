@@ -6,6 +6,8 @@
   "description": "Fail-closed readonly boundary for the future Clientes product extraction.",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/contract.js && node --check src/handler.js && node --check src/index.js"
+    "check": "node --check src/contract.js && node --check src/handler.js && node --check src/authenticated-actor-adapter.js && node --check src/dedicated-read-model.js && node --check src/release-contract.js && node --check src/runtime.js && node --check src/worker.js && node --check src/index.js && node --check scripts/release-evidence.mjs && node --check scripts/release-gate.mjs && node --check scripts/staging-synthetic-smoke.mjs",
+    "smoke:synthetic": "node scripts/staging-synthetic-smoke.mjs",
+    "release:gate": "node scripts/release-gate.mjs --plan release/staging-gate.json"
   }
 }

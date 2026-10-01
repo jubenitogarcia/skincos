@@ -1,0 +1,26 @@
+{
+  "name": "skincos-clientes-readonly",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-31",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "CLIENTES_READONLY_DEPLOY_ENABLED": "false",
+    "CLIENTES_READONLY_ENVIRONMENT": "unconfigured",
+    "CLIENTES_READONLY_SYNTHETIC_ONLY": "true",
+    "CLIENTES_READONLY_READ_MODEL_VERSION": "clientes-readonly/read-model/v1"
+  },
+  "env": {
+    "staging": {
+      "name": "skincos-clientes-readonly-staging",
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": {
+        "CLIENTES_READONLY_DEPLOY_ENABLED": "false",
+        "CLIENTES_READONLY_ENVIRONMENT": "staging",
+        "CLIENTES_READONLY_SYNTHETIC_ONLY": "true",
+        "CLIENTES_READONLY_READ_MODEL_VERSION": "clientes-readonly/read-model/v1"
+      }
+    }
+  }
+}
