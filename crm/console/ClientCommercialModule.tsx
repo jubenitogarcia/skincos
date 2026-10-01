@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarSign, RefreshCw, Save, ShieldCheck, UserRoundCheck, UsersRound } from 'lucide-react'
 import { Button } from '@/button'
+import { IdentityClusterWorkspace } from './IdentityClusterWorkspace'
 import {
   createCommercialAction,
   commercialCadenceManagerStatuses,
@@ -370,7 +371,17 @@ function CommercialDataQualityPanel({ queue, loading, onRefresh }: {
 }
 
 const reviewTypeLabel: Record<ClientIdentityReviewItem['type'], string> = { attendance_name_merge: 'Grafia no Atendimento', attendance_caixa: 'Atendimento ↔ Caixa', app_attendance: 'Cadastro app ↔ Atendimento', app_caixa: 'Cadastro app ↔ Caixa', lead_app: 'Planilha ↔ Cadastro app', lead_caixa: 'Planilha ↔ Caixa' }
-function reviewValue(value: unknown) { return Array.isArray(value) ? value.filter(Boolean).join(', ') : typeof value === 'string' || typeof value === 'number' ? String(value) : '' }
+function reviewKnownList(value: unknown) { return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [] }
+function reviewStructuredSummary(item: ClientIdentityReviewItem) {
+  const evidence = item.evidence || {}
+  const context = item.context || {}
+  const fields = reviewKnownList(evidence.matchedFields || evidence.sharedFields).filter((field) => ['name', 'phone', 'email', 'unit'].includes(field))
+  const units = reviewKnownList(evidence.sharedUnits || context.appUnits || context.leadUnits).slice(0, 8)
+  const method = typeof evidence.method === 'string' ? evidence.method : ''
+  const counts = [context.leftAttendanceCount, context.rightAttendanceCount, context.attendanceCount, context.sales]
+    .filter((value) => typeof value === 'number').map((value) => String(value))
+  return [method ? `Método: ${method}` : '', fields.length ? `Campos coincidentes: ${fields.join(', ')}` : '', units.length ? `Unidades: ${units.join(', ')}` : '', counts.length ? `Contagens estruturadas: ${counts.join(', ')}` : 'Evidência estruturada disponível no cluster'].filter(Boolean).join(' · ')
+}
 
 function reviewItemKey(item: ClientIdentityReviewItem) { return `${item.type}:${item.sourceId}:${item.targetId}` }
 function reviewDecisionLabel(item: ClientIdentityReviewItem) {
@@ -465,7 +476,19 @@ export function IdentityReviewQueue() {
       const draft = drafts[key] || { reason: '', survivorClientId: '' }
       const isActing = acting === key
       const undoable = item.decisionState === 'resolved' || item.decisionState === 'stale'
-      return <article key={key} className="rounded-xl border border-slate-800/80 bg-slate-900/35 p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="text-xs text-sky-300">{reviewTypeLabel[item.type]}</div><div className="mt-1 text-sm font-semibold text-white">{item.primaryName} <span className="mx-1 text-slate-600">↔</span> {item.secondaryName}</div></div><div className={`text-xs ${item.decisionState === 'stale' ? 'text-amber-200' : 'text-slate-400'}`}>{reviewDecisionLabel(item)} · confiança {Math.round(item.confidence * 100)}%</div></div><div className="mt-3 grid gap-2 text-xs text-slate-400 md:grid-cols-2"><div><span className="text-slate-500">Contexto: </span>{Object.entries(item.context).map(([entryKey, value]) => { const shown = reviewValue(value); return shown ? <span key={entryKey} className="mr-3 inline-block">{entryKey}: <span className="text-slate-200">{shown}</span></span> : null })}</div><div><span className="text-slate-500">Evidência: </span>{Object.entries(item.evidence).map(([entryKey, value]) => { const shown = reviewValue(value); return shown ? <span key={entryKey} className="mr-3 inline-block">{entryKey}: <span className="text-slate-200">{shown}</span></span> : null })}</div></div>{item.decisionState === 'stale' ? <p className="mt-3 text-xs text-amber-200">A fonte mudou depois da última decisão. Desfaça-a explicitamente e registre um novo motivo antes de revisar de novo.</p> : null}<div className="mt-3 grid gap-2 border-t border-slate-800/70 pt-3 md:grid-cols-[minmax(0,1fr)_auto]">{item.type === 'attendance_name_merge' && !undoable ? <select aria-label={`Cliente sobrevivente para ${item.primaryName}`} value={draft.survivorClientId} onChange={(event) => updateDraft(item, { survivorClientId: event.target.value })} disabled={!writesReady || isActing} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"><option value="">Escolha o cliente canônico a manter</option><option value={item.sourceId}>Manter {item.primaryName}</option><option value={item.targetId}>Manter {item.secondaryName}</option></select> : null}<input aria-label={`Motivo da decisão para ${item.primaryName}`} value={draft.reason} onChange={(event) => updateDraft(item, { reason: event.target.value })} placeholder={undoable ? 'Motivo do desfazimento' : 'Motivo da decisão'} maxLength={1000} disabled={!writesReady || isActing} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><div className="flex flex-wrap gap-2 md:justify-end">{undoable ? <Button size="sm" variant="outline" onClick={() => void undo(item)} disabled={!writesReady || isActing || draft.reason.trim().length < 3}>Desfazer decisão</Button> : <><Button size="sm" onClick={() => void decide(item, 'confirmed')} disabled={!writesReady || isActing || draft.reason.trim().length < 3 || (item.type === 'attendance_name_merge' && !draft.survivorClientId)}>Confirmar</Button><Button size="sm" variant="outline" onClick={() => void decide(item, 'rejected')} disabled={!writesReady || isActing || draft.reason.trim().length < 3}>Rejeitar</Button></>}</div></div></article>
+      return <article key={key} className="rounded-xl border border-slate-800/80 bg-slate-900/35 p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div><div className="text-xs text-sky-300">{reviewTypeLabel[item.type]}</div><div className="mt-1 text-sm font-semibold text-white">{item.primaryName} <span className="mx-1 text-slate-600">↔</span> {item.secondaryName}</div></div>
+          <div className={`text-xs ${item.decisionState === 'stale' ? 'text-amber-200' : 'text-slate-400'}`}>{reviewDecisionLabel(item)} · confiança {Math.round(item.confidence * 100)}%</div>
+        </div>
+        <p className="mt-3 text-xs text-slate-400"><span className="text-slate-500">Evidência estruturada: </span>{reviewStructuredSummary(item)}</p>
+        {item.decisionState === 'stale' ? <p className="mt-3 text-xs text-amber-200">A fonte mudou depois da última decisão. Desfaça-a explicitamente e registre um novo motivo antes de revisar de novo.</p> : null}
+        <div className="mt-3 grid gap-2 border-t border-slate-800/70 pt-3 md:grid-cols-[minmax(0,1fr)_auto]">
+          {item.type === 'attendance_name_merge' && !undoable ? <select aria-label={`Cliente sobrevivente para ${item.primaryName}`} value={draft.survivorClientId} onChange={(event) => updateDraft(item, { survivorClientId: event.target.value })} disabled={!writesReady || isActing} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"><option value="">Escolha o cliente canônico a manter</option><option value={item.sourceId}>Manter {item.primaryName}</option><option value={item.targetId}>Manter {item.secondaryName}</option></select> : null}
+          <input aria-label={`Motivo da decisão para ${item.primaryName}`} value={draft.reason} onChange={(event) => updateDraft(item, { reason: event.target.value })} placeholder={undoable ? 'Motivo do desfazimento' : 'Motivo da decisão'} maxLength={1000} disabled={!writesReady || isActing} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" />
+          <div className="flex flex-wrap gap-2 md:justify-end">{undoable ? <Button size="sm" variant="outline" onClick={() => void undo(item)} disabled={!writesReady || isActing || draft.reason.trim().length < 3}>Desfazer decisão</Button> : <><Button size="sm" onClick={() => void decide(item, 'confirmed')} disabled={!writesReady || isActing || draft.reason.trim().length < 3 || (item.type === 'attendance_name_merge' && !draft.survivorClientId)}>Confirmar</Button><Button size="sm" variant="outline" onClick={() => void decide(item, 'rejected')} disabled={!writesReady || isActing || draft.reason.trim().length < 3}>Rejeitar</Button></>}</div>
+        </div>
+      </article>
     })}{!busy && !items.length ? <p className="py-6 text-center text-sm text-slate-500">Nenhuma sugestão encontrada para estes filtros.</p> : null}</div>
     {items.length < total ? <div className="mt-4 text-center"><Button size="sm" variant="outline" onClick={() => void load(items.length, true)} disabled={busy}>Carregar mais 100</Button></div> : null}
   </section>
@@ -713,6 +736,6 @@ export function ClientCommercialModule() {
     </div>
     <footer className="flex items-center gap-2 text-xs text-slate-500"><CheckCircle2 className="h-4 w-4 text-emerald-400" />Recência = último procedimento realizado. Vendas e procedimentos continuam separados no perfil comercial.</footer>
     </> : null}
-    {workspaceView === 'identities' ? <IdentityReviewQueue /> : null}
+    {workspaceView === 'identities' ? <div className="space-y-6"><IdentityClusterWorkspace /><IdentityReviewQueue /></div> : null}
   </section>
 }

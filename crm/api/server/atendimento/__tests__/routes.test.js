@@ -275,3 +275,54 @@ test('maps review payload and source-state conflicts to their client-safe status
     assert.equal(undo.state.status, 409)
     assert.deepEqual(undo.state.body, { ok: false, error: 'IDENTITY_REVIEW_CONFLICT', hint: undefined })
 })
+
+test('keeps cluster workspace, reveal and deterministic bulk routes inside the GESTOR boundary', async () => {
+    const calls = []
+    const store = {
+        async identityClusterWorkspace(query, actor) {
+            calls.push({ operation: 'workspace', query, actor })
+            return { clusters: [], total: 0 }
+        },
+        async identityClusterDetail(clusterKey, query, actor) {
+            calls.push({ operation: 'detail', clusterKey, query, actor })
+            return { cluster: { clusterKey } }
+        },
+        async previewIdentityClusterBulk(payload, actor) {
+            calls.push({ operation: 'preview', payload, actor })
+            return { eligibleCount: 0 }
+        },
+        async applyIdentityClusterBulk(payload, actor) {
+            calls.push({ operation: 'apply', payload, actor })
+            return { appliedClusters: 1 }
+        },
+        async revealIdentityCluster(payload, actor) {
+            calls.push({ operation: 'reveal', payload, actor })
+            return { contacts: [] }
+        },
+    }
+    const routes = captureAtendimentoRoutes(store)
+    const actor = { id: 'gestor-1', role: 'GESTOR', allowedModules: ['atendimento'] }
+    const workspace = captureResponse()
+    await routes.get('GET /commercial/identity-clusters')({ atendimentoActor: actor, query: { stale: 'true' } }, workspace)
+    assert.equal(workspace.state.status, 200)
+    assert.deepEqual(calls[0], { operation: 'workspace', query: { stale: 'true' }, actor })
+
+    const apply = captureResponse()
+    await routes.get('POST /commercial/identity-clusters/bulk/apply')({
+        atendimentoActor: actor,
+        headers: { 'idempotency-key': 'cluster-apply-001' },
+        body: { clusterKeys: ['a'.repeat(32)] },
+    }, apply)
+    assert.equal(apply.state.status, 200)
+    assert.equal(calls[1].payload.idempotencyKey, 'cluster-apply-001')
+
+    const blocked = captureResponse()
+    await routes.get('POST /commercial/identity-clusters/bulk/apply')({
+        atendimentoActor: { id: 'gerente-1', role: 'GERENTE', allowedModules: ['atendimento'] },
+        headers: { 'idempotency-key': 'blocked' },
+        body: {},
+    }, blocked)
+    assert.equal(blocked.state.status, 403)
+    assert.deepEqual(blocked.state.body, { ok: false, error: 'FORBIDDEN' })
+    assert.equal(calls.length, 2)
+})
