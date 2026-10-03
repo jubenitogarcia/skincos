@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll SKINCOS PR admission without GitHub Actions
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=15s
+Unit=skincos-native-pr-admission.service
+
+[Install]
+WantedBy=timers.target
