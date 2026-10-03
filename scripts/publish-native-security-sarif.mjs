@@ -58,12 +58,20 @@ async function main(receiptPath) {
   if (!semgrep || path.dirname(semgrep.stdout) !== path.dirname(receiptPath)) throw new Error("Semgrep output does not belong to this receipt");
   const body = sarifUploadBody(receipt, privateReport(semgrep.stdout));
   if (body.commit_sha !== publicMainSha()) throw new Error("security receipt source is no longer canonical main");
-  const configPath = "/etc/skincos/github-app/config.json";
-  const configStat = fs.lstatSync(configPath);
-  if (configStat.uid !== 0 || configStat.isSymbolicLink() || (configStat.mode & 0o777) !== 0o600) throw new Error("GitHub App metadata custody is invalid");
-  const metadata = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  if (receiptPath === "--latest") {
+    const latestPath = "/home/admin/.local/state/skincos-native-scheduled-results/latest-security.json";
+    const latestStat = fs.lstatSync(latestPath);
+    if (latestStat.isSymbolicLink() || latestStat.uid !== 1000 || (latestStat.mode & 0o777) !== 0o600) throw new Error("latest scheduled result custody is invalid");
+    const latest = JSON.parse(fs.readFileSync(latestPath, "utf8"));
+    if (latest.schemaVersion !== 1 || latest.status !== "finished" || latest.gate !== "security" || latest.mode !== "run" || !latest.receiptPath) throw new Error("no canonical terminal receipt is available for publication");
+    return main(latest.receiptPath);
+  }
   const credentials = process.env.CREDENTIALS_DIRECTORY;
   if (!credentials || !credentials.startsWith("/run/credentials/")) throw new Error("GitHub App key is unavailable in systemd credential custody");
+  const configPath = path.join(credentials, "github-app-config");
+  const configStat = fs.lstatSync(configPath);
+  if (configStat.uid !== 0 || configStat.isSymbolicLink() || ![0o400, 0o600].includes(configStat.mode & 0o777)) throw new Error("GitHub App metadata custody is invalid");
+  const metadata = JSON.parse(fs.readFileSync(configPath, "utf8"));
   const { issueInstallationToken } = await import("./codex-native-github-app.mjs");
   const privateKey = fs.readFileSync(path.join(credentials, "github-app-key"), "utf8");
   const issued = await issueInstallationToken({ appId: metadata.appId, installationId: metadata.installationId, privateKey, profile: "security" });
@@ -74,8 +82,8 @@ async function main(receiptPath) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
   try {
-    if (process.argv.length !== 4 || process.argv[2] !== "--receipt") throw new Error("usage: publish-native-security-sarif --receipt <private terminal receipt>");
-    process.stdout.write(`${JSON.stringify(await main(process.argv[3]), null, 2)}\n`);
+    if (!(process.argv.length === 3 && process.argv[2] === "--latest") && !(process.argv.length === 4 && process.argv[2] === "--receipt")) throw new Error("usage: publish-native-security-sarif --latest | --receipt <private terminal receipt>");
+    process.stdout.write(`${JSON.stringify(await main(process.argv[2] === "--latest" ? "--latest" : process.argv[3]), null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${String(error?.message || error)}\n`);
     process.exitCode = 1;

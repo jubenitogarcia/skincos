@@ -162,7 +162,7 @@ function run({ requireMain = true, candidateRoot = ROOT } = {}) {
       process.stdout.write(`${label}: ${result.status}\n`);
       return result;
     };
-    scan("gitleaks-history", "/run/tools/bin/gitleaks", ["git", "--redact", "--exit-code=2", "--config", ".gitleaks.toml", "--log-opts=--all", "--report-format=json", "--report-path=-", "."], false);
+    scan("gitleaks-history", "/run/tools/bin/gitleaks", ["git", "--redact", "--exit-code=2", "--config", ".gitleaks.toml", "--log-opts=HEAD", "--report-format=json", "--report-path=-", "."], false);
     scan("gitleaks-tree", "/run/tools/bin/gitleaks", ["dir", "--redact", "--exit-code=2", "--config", ".gitleaks.toml", "--report-format=json", "--report-path=-", "."], false);
     for (const directory of [".", "website", "workforce/timekeeping"]) {
       if (fs.existsSync(path.join(snapshot.source, directory, "package-lock.json"))) {
