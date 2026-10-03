@@ -6,7 +6,7 @@
     "canonicalRelativeRoot": ".",
     "pathTemplate": "skincos-canonical-{group}-{commitShort}",
     "managedNamePrefix": "skincos-canonical-",
-    "registryRelativeRoot": "worktree-registry",
+    "registryRelativeRoot": "../worktree-registry",
     "canonicalRole": "stable-preview-or-qualification",
     "ephemeralRole": "task-or-pr"
   },

@@ -695,7 +695,7 @@ function Get-CanonicalTopologyAudit {
         [object[]]$Worktrees
     )
 
-    $defaultRegistryRoot = Join-Path $WorktreeRoot 'worktree-registry'
+    $defaultRegistryRoot = Join-Path (Split-Path -Parent $WorktreeRoot) 'worktree-registry'
     if ($TopologyState.status -ne "ok") {
         return [pscustomobject]@{
             status = $TopologyState.status

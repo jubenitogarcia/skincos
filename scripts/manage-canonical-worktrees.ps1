@@ -17,7 +17,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ([string]::IsNullOrWhiteSpace($RuntimeRegistryRoot)) { $RuntimeRegistryRoot = Join-Path $WorktreeRoot 'worktree-registry' }
+if ([string]::IsNullOrWhiteSpace($RuntimeRegistryRoot)) { $RuntimeRegistryRoot = Join-Path (Split-Path -Parent $WorktreeRoot) 'worktree-registry' }
 if ([string]::IsNullOrWhiteSpace($TopologyPath)) { $TopologyPath = Join-Path $ProjectRoot 'ops\codex\worktree-topology.json' }
 
 function Normalize-PathString {

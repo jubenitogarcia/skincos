@@ -85,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps
 ```
 
 O registro de rotas e leases locais fica em
-`%USERPROFILE%\.codex\worktrees\worktree-registry`, fora dos checkouts e nunca
+`%USERPROFILE%\.codex\worktree-registry`, fora da raiz de checkouts e nunca
 no clone compartilhado. `claim` não substitui branch/PR de uma tarefa.
 
 “Mesclar worktrees” significa integrar commits por PR, merge ou cherry-pick
