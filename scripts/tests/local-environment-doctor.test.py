@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import os
+from types import SimpleNamespace
+from unittest import mock
 import unittest
 
 
@@ -76,7 +78,8 @@ class LocalEnvironmentDoctorTests(unittest.TestCase):
             self.assertFalse(MODULE.private_directory_status(directory))
             directory.mkdir(mode=0o700)
             self.assertTrue(MODULE.private_directory_status(directory))
-            os.chmod(directory, 0o755)
+            # Deliberately unsafe test directory; the real doctor must reject it.
+            os.chmod(directory, 0o755)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
             self.assertFalse(MODULE.private_directory_status(directory))
 
     def test_preview_rejects_world_readable_cache_even_when_complete(self):
@@ -94,8 +97,30 @@ class LocalEnvironmentDoctorTests(unittest.TestCase):
             next_bin = marker.parent / "node_modules/.bin/next"
             next_bin.parent.mkdir(parents=True)
             next_bin.write_text("", encoding="utf-8")
-            os.chmod(cache, 0o755)
+            # Deliberately unsafe test directory; the real doctor must reject it.
+            os.chmod(cache, 0o755)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
             self.assertEqual(MODULE.preview_dependency_status(ROOT, cache)["status"], "missing")
+
+    def test_disk_uses_nearest_configured_cache_ancestor_without_creating_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            state = base / "state"
+            cache = base / "cache"
+            state.mkdir()
+            cache.mkdir()
+            proposed_cache = cache / "deep" / "future" / "venv"
+            checked = []
+
+            def disk_usage(path):
+                checked.append(Path(path))
+                free = 6 * 1024 ** 3 if Path(path) == state else 4 * 1024 ** 3
+                return SimpleNamespace(free=free)
+
+            with mock.patch.object(MODULE.shutil, "disk_usage", side_effect=disk_usage):
+                report = MODULE.disk_status([state, proposed_cache])
+            self.assertEqual(report["status"], "missing")
+            self.assertEqual(checked, [state, cache])
+            self.assertFalse(proposed_cache.exists())
 
     def test_hook_status_requires_installer_ownership(self):
         absent = MODULE.hook_status_from_result(0, json.dumps({"installed": False, "configuredHooksPath": []}))

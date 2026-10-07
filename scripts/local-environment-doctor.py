@@ -81,6 +81,22 @@ def private_directory_status(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink() and stat.S_IMODE(mode) & 0o077 == 0
 
 
+def nearest_existing(path: Path) -> Path:
+    candidate = path.absolute()
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate
+
+
+def disk_status(paths: list[Path]) -> dict:
+    volumes = []
+    for path in paths:
+        ancestor = nearest_existing(path)
+        free = shutil.disk_usage(ancestor).free
+        volumes.append({"path": str(path), "checkedAt": str(ancestor), "freeBytes": free})
+    return {"status": "prepared" if all(entry["freeBytes"] >= MIN_FREE_BYTES for entry in volumes) else "missing", "minimumBytes": MIN_FREE_BYTES, "volumes": volumes}
+
+
 def preview_dependency_status(root: Path, cache: Path) -> dict:
     spec = importlib.util.spec_from_file_location("mac_local_preview_doctor", root / "scripts/mac-local-preview.py")
     if not spec or not spec.loader:
@@ -136,8 +152,12 @@ def main() -> int:
     workspace = helper_json(root, "status")
     environment = helper_environment(root)
     tools = {name: (current_python_version(root) if name == "python3" else version(name, root)) for name in REQUIRED_TOOLS}
-    free = shutil.disk_usage(root).free
-    disk = {"status": "prepared" if free >= MIN_FREE_BYTES else "missing", "freeBytes": free, "minimumBytes": MIN_FREE_BYTES}
+    disk_paths = []
+    if environment["status"] == "prepared":
+        values = environment["value"]
+        disk_paths.extend(Path(values[name]) for name in ("EF_SCRAPER_VENV_DIR", "EF_OUTPUT_DIR", "EF_DEBUG_DIR", "EF_LOG_DIR", "EF_CHROME_USER_DATA_DIR", "npm_config_cache"))
+    else:
+        disk_paths.append(root)
 
     config_path = root / ".codex/environments/environment.toml"
     try:
@@ -151,11 +171,14 @@ def main() -> int:
 
     try:
         preview_state, preview_cache = preview_paths(root)
+        disk_paths.extend((preview_state, preview_cache))
         preview = {"stateRoot": str(preview_state), **preview_dependency_status(root, preview_cache)}
         if not private_directory_status(preview_state):
             preview["status"] = "missing"
     except (OSError, RuntimeError) as error:
         preview = {"status": "unavailable", "detail": str(error)}
+
+    disk = disk_status(disk_paths)
 
     code, hook_output = run(sys.executable, "scripts/install-local-git-hooks.py", "status", "--project-root", str(root), cwd=root)
     hooks = hook_status_from_result(code, hook_output)

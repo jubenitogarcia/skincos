@@ -13,6 +13,10 @@ import subprocess
 import sys
 
 
+def lexical_path(value):
+    return Path(value).expanduser().absolute()
+
+
 def git(root, *args, optional=False):
     result = subprocess.run(
         ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(root), *args],
@@ -50,14 +54,34 @@ def local_paths(args):
         defaults = (state / "worktrees", state, Path(os.environ.get("XDG_CACHE_HOME", home / ".cache")) / "skincos")
     names = ("worktree_root", "state_root", "cache_root")
     envs = ("SKINCOS_WORKTREE_ROOT", "SKINCOS_LOCAL_STATE_ROOT", "SKINCOS_LOCAL_CACHE_ROOT")
-    return {name: Path(getattr(args, name) or os.environ.get(env) or default).expanduser().resolve()
+    return {name: lexical_path(getattr(args, name) or os.environ.get(env) or default)
             for name, env, default in zip(names, envs, defaults)}
 
 
+def guard_no_symlink_chain(path):
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        if current.exists() or current.is_symlink():
+            if current.is_symlink():
+                if current == Path("/var") and current.resolve() == Path("/private/var"):
+                    continue
+                raise ValueError("Private state/cache paths must not contain symlinks.")
+
+
+def guard_private_root(path):
+    guard_no_symlink_chain(path)
+    if path.exists() and (not path.is_dir() or path.stat().st_mode & 0o077):
+        raise ValueError("Existing private state/cache roots must be directories with no group or world access.")
+
+
 def guard_private_paths(paths, trees):
+    for root in (paths["state_root"], paths["cache_root"]):
+        guard_private_root(root)
     candidates = [paths["state_root"], paths["cache_root"], paths["cache_root"] / "ef"]
     candidates += [paths["state_root"] / p for p in ("env-overrides", "profiles", "profiles/ef-app", "scraper", "scraper/report", "scraper/debug", "scraper/logs")]
     for candidate in candidates:
+        guard_no_symlink_chain(candidate)
         if any(inside(candidate.resolve(), Path(tree["path"]).resolve()) for tree in trees):
             raise ValueError("Private state/cache paths must stay outside every Git worktree, including symlink targets.")
 
@@ -89,7 +113,7 @@ def validate_worktree(root, paths, args):
     own = Path(git(root, "rev-parse", "--path-format=absolute", "--git-dir")).resolve()
     if common == own:
         raise ValueError("Edit in a dedicated linked worktree, not the shared checkout.")
-    expected = paths["worktree_root"] / args.actor / args.task_slug
+    expected = (paths["worktree_root"] / args.actor / args.task_slug).resolve()
     branch = git(root, "symbolic-ref", "--quiet", "--short", "HEAD", optional=True)
     if root != expected or branch != f"codex/{args.actor}/{args.task_slug}":
         raise ValueError("Worktree path, actor, task slug and branch must have the same identity.")

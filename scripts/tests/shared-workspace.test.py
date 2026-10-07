@@ -83,7 +83,8 @@ class SharedWorkspaceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.base / "private").stat().st_mode & 0o777, 0o700)
         self.assertFalse((self.base / "cache/ef").exists())
-        (self.base / "private").chmod(0o755)
+        # Deliberately unsafe test directory; the real guard must reject it.
+        (self.base / "private").chmod(0o755)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
         result = self.run_helper("setup", "--apply")
         self.assertEqual(result.returncode, 2)
         self.assertEqual((self.base / "private").stat().st_mode & 0o777, 0o755)
@@ -112,6 +113,21 @@ class SharedWorkspaceTests(unittest.TestCase):
         result = self.run_helper("environment")
         self.assertEqual(result.returncode, 2)
         self.assertFalse((self.repo / "report").exists())
+
+    def test_rejects_permissive_or_symlinked_private_roots_before_exports(self):
+        private = self.base / "private"
+        private.mkdir(mode=0o700)
+        # Deliberately unsafe test directory; the real guard must reject it.
+        private.chmod(0o755)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
+        result = self.run_helper("environment")
+        self.assertEqual(result.returncode, 2)
+        private.chmod(0o700)
+        external = self.base / "external"
+        external.mkdir(mode=0o700)
+        private.rmdir()
+        private.symlink_to(external, target_is_directory=True)
+        result = self.run_helper("environment")
+        self.assertEqual(result.returncode, 2)
 
     def test_environment_changes_with_lockfile_without_creating_venv(self):
         before = self.run_helper("environment")

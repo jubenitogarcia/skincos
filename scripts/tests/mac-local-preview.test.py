@@ -216,6 +216,24 @@ class MacLocalPreviewTests(unittest.TestCase):
             self.assertFalse(preview.response_ready("http://user:password@127.0.0.1:3417/", "a", "b"))
             self.assertFalse(preview.response_ready("https://127.0.0.1:3417/", "a", "b"))
 
+    def test_response_ready_percent_encodes_unicode_route_without_double_encoding(self):
+        requests = []
+        class Response:
+            status = 200
+            def read(self): return b"<html><body>page</body></html>"
+            def getheaders(self): return [(preview.FINGERPRINT_HEADER, "a"), (preview.INSTANCE_HEADER, "b")]
+        class Connection:
+            def __init__(self, *a, **kw): pass
+            def request(self, method, target): requests.append((method, target))
+            def getresponse(self): return Response()
+            def close(self): pass
+        with mock.patch.object(preview.http.client, "HTTPConnection", Connection):
+            self.assertTrue(preview.response_ready("http://127.0.0.1:3417/serviço", "a", "b"))
+            self.assertTrue(preview.response_ready("http://127.0.0.1:3417/servi%C3%A7o", "a", "b"))
+            self.assertFalse(preview.response_ready("http://127.0.0.1:3417/bad%zz", "a", "b"))
+            self.assertFalse(preview.response_ready("http://127.0.0.1:3417/bad\npath", "a", "b"))
+        self.assertEqual(requests, [("GET", "/servi%C3%A7o"), ("GET", "/servi%C3%A7o")])
+
     def test_manifest_url_must_exactly_match_its_loopback_port_and_route(self):
         valid = {"port": 3417, "route": "/", "url": "http://127.0.0.1:3417/"}
         self.assertEqual(preview.validated_manifest_url(valid), valid["url"])

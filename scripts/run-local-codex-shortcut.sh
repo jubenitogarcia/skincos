@@ -87,7 +87,8 @@ case "$action" in
       python3 "$project_root/scripts/shared-workspace.py" environment --project-root "$project_root" >/dev/null
       exit 0
     fi
-    eval "$(python3 "$project_root/scripts/shared-workspace.py" environment --project-root "$project_root")"
+    local_exports="$(python3 "$project_root/scripts/shared-workspace.py" environment --project-root "$project_root")"
+    eval "$local_exports"
     export EF_MODE=menu
     export HEADLESS="${HEADLESS:-0}"
     exec bash "$project_root/integration/ef/scripts/run-local-python.sh" run_scraper.py

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -53,4 +53,29 @@ test('EF App starts its menu with an explicit mode and safe headed default', () 
   const source = readFileSync(launcher, 'utf8')
   assert.match(source, /export EF_MODE=menu/)
   assert.match(source, /export HEADLESS="\$\{HEADLESS:-0\}"/)
+})
+
+test('EF App refuses to launch when its private-environment helper fails', () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'skincos-shortcut-failure-'))
+  try {
+    const scripts = path.join(fixture, 'scripts')
+    const bin = path.join(fixture, 'bin')
+    const efScripts = path.join(fixture, 'integration/ef/scripts')
+    for (const directory of [scripts, bin, efScripts, path.join(fixture, '.git')]) mkdirSync(directory, { recursive: true })
+    writeFileSync(path.join(fixture, 'AGENTS.md'), 'Synthetic fixture\n')
+    const fixtureLauncher = path.join(scripts, 'run-local-codex-shortcut.sh')
+    writeFileSync(fixtureLauncher, readFileSync(launcher))
+    const python = path.join(bin, 'python3')
+    writeFileSync(python, '#!/bin/sh\necho "private environment refused" >&2\nexit 23\n')
+    chmodSync(python, 0o700)
+    writeFileSync(path.join(efScripts, 'run-local-python.sh'), '#!/bin/sh\ntouch "$EF_LAUNCH_MARKER"\n')
+    const marker = path.join(fixture, 'ef-was-launched')
+    const result = spawnSync('bash', [fixtureLauncher, 'ef-app'], {
+      cwd: fixture, encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, EF_LAUNCH_MARKER: marker },
+    })
+    assert.equal(result.status, 23, result.stderr)
+    assert.match(result.stderr, /private environment refused/)
+    assert.equal(existsSync(marker), false)
+  } finally { rmSync(fixture, { recursive: true, force: true }) }
 })

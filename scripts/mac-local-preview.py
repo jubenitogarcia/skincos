@@ -392,6 +392,8 @@ def validated_manifest_url(manifest: dict) -> str | None:
 
 def response_ready(url: str, fingerprint: str, instance: str) -> bool:
     try:
+        if not isinstance(url, str) or any(ord(character) < 32 for character in url) or re.search(r"%(?![0-9A-Fa-f]{2})", url):
+            return False
         parsed = urllib.parse.urlsplit(url)
         if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.username or parsed.password or
                 parsed.fragment or parsed.query or not parsed.path or parsed.port is None or not 1 <= parsed.port <= 65535):
@@ -400,7 +402,8 @@ def response_ready(url: str, fingerprint: str, instance: str) -> bool:
         return False
     connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=2)
     try:
-        connection.request("GET", parsed.path or "/")
+        request_path = urllib.parse.quote(parsed.path or "/", safe="/%")
+        connection.request("GET", request_path)
         response = connection.getresponse()
         body = response.read()
         headers = {key.lower(): value for key, value in response.getheaders()}
