@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SOURCE = Path(__file__).resolve().parents[2]
@@ -20,6 +21,10 @@ class SharedWorkspaceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="skincos-workspace-test-")
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
+        # Git hooks export repository-local variables. A fixture must never
+        # let those select the caller's real Git directory or index.
+        self.git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        self.git_env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(self.base / "global-git-config"), "GIT_CONFIG_SYSTEM": str(self.base / "system-git-config")})
         self.repo = self.base / "repo"
         self.repo.mkdir()
         self.git("init", "-q", "-b", "main")
@@ -35,14 +40,26 @@ class SharedWorkspaceTests(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
 
     def git(self, *args):
-        return subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True, text=True)
+        return subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True, text=True, env=self.git_env)
 
     def run_helper(self, action, *args, root=None):
         return subprocess.run(
             [sys.executable, "-B", str(HELPER), action, "--project-root", str(root or self.repo),
              "--state-root", str(self.base / "private"), "--cache-root", str(self.base / "cache"), *args],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=self.git_env,
         )
+
+    def test_hook_context_cannot_redirect_fixture_operations_to_the_caller(self):
+        before_config = (self.repo / ".git/config").read_bytes()
+        before_index = (self.repo / ".git/index").read_bytes()
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(self.base / "unrelated.git"), "GIT_INDEX_FILE": str(self.base / "unrelated-index"), "GIT_WORK_TREE": str(self.base / "unrelated-worktree")}):
+            self.git("status", "--porcelain=v1")
+            result = self.run_helper("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.base / "unrelated.git").exists())
+        self.assertFalse((self.base / "unrelated-index").exists())
+        self.assertEqual((self.repo / ".git/config").read_bytes(), before_config)
+        self.assertEqual((self.repo / ".git/index").read_bytes(), before_index)
 
     def test_status_uses_cached_refs_and_preserves_checkout(self):
         (self.repo / "unique-local.txt").write_text("synthetic local work\n")
@@ -135,14 +152,14 @@ class SharedWorkspaceTests(unittest.TestCase):
             interpreter.parent.mkdir(parents=True)
             interpreter.write_text('#!/bin/sh\nprintf "stub-interpreter:%s\\n" "$1"\n')
             interpreter.chmod(0o700)
-            env = dict(os.environ)
+            env = dict(self.git_env)
             env.pop("EF_SCRAPER_VENV_DIR", None)
             if override:
                 env["EF_SCRAPER_VENV_DIR"] = str(venv)
             result = subprocess.run(["bash", str(launcher), "run_scraper.py"], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "stub-interpreter:run_scraper.py")
-        result = subprocess.run(["bash", str(launcher), "run_scraper.py"], env=dict(os.environ, EF_SCRAPER_VENV_DIR="relative"), capture_output=True, text=True)
+        result = subprocess.run(["bash", str(launcher), "run_scraper.py"], env=dict(self.git_env, EF_SCRAPER_VENV_DIR="relative"), capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
 
 

@@ -187,6 +187,16 @@ test('accepts a supervisor only when /proc start ticks, cwd, and launcher comman
   try {
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.ok(child.pid)
+    if (process.platform !== 'linux') {
+      assert.equal(
+        runFixture({
+          env: { TARGET_PID: String(child.pid) },
+          body: 'if pid_start_ticks "$TARGET_PID"; then exit 31; fi; printf procfs-unavailable',
+        }),
+        'procfs-unavailable',
+      )
+      return
+    }
     const ticks = runFixture({
       env: { TARGET_PID: String(child.pid) },
       body: 'ticks="$(pid_start_ticks "$TARGET_PID")"; is_owned_website_supervisor "$TARGET_PID" "$ticks"; printf "$ticks"',
