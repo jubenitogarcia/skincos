@@ -12,9 +12,12 @@ test('Beauty Movement Action stays relative to the opened worktree', () => {
   const actionBlocks = environment.match(/\[\[actions\]\][\s\S]*?(?=\n\[\[actions\]\]|$)/g) ?? []
   const beautyActions = actionBlocks.filter((block) => block.includes('name = "Cartas da Beleza – Prévia Local"'))
 
-  assert.equal(beautyActions.length, 1)
-  assert.match(beautyActions[0], /-File \.\/scripts\/start-beauty-movement-local-preview\.ps1/)
-  assert.doesNotMatch(beautyActions[0], /CodexRuntime|beauty-movement-canonical/i)
+  assert.equal(beautyActions.length, 2)
+  const macAction = beautyActions.find((block) => block.includes('platform = "darwin"'))
+  const windowsAction = beautyActions.find((block) => block.includes('platform = "win32"'))
+  assert.match(macAction, /scripts\/run-local-codex-shortcut\.sh beauty-preview/)
+  assert.match(windowsAction, /-File \.\/scripts\/start-beauty-movement-local-preview\.ps1/)
+  assert.doesNotMatch(`${macAction}\n${windowsAction}`, /CodexRuntime|beauty-movement-canonical/i)
 })
 
 test('launcher v2 fails closed unless manifest, WSL process, and served headers agree', () => {

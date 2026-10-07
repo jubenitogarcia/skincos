@@ -9,7 +9,12 @@ if [[ -z "$TARGET" || "$TARGET" == */* || "$TARGET" != *.py ]]; then
   echo "Usage: $0 script.py [arguments...]" >&2
   exit 2
 fi
-if [[ ! -x "$ROOT_DIR/.venv/bin/python" ]]; then
+VENV_DIR="${EF_SCRAPER_VENV_DIR:-$ROOT_DIR/.venv}"
+if [[ "$VENV_DIR" != /* ]]; then
+  echo "EF_SCRAPER_VENV_DIR must be an absolute local path." >&2
+  exit 2
+fi
+if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   echo "Scraper venv is missing. Run EF App Setup first." >&2
   exit 1
 fi
@@ -19,4 +24,4 @@ if [[ ! -f "$ROOT_DIR/$TARGET" ]]; then
 fi
 
 cd "$ROOT_DIR"
-exec ./.venv/bin/python "$TARGET" "$@"
+exec "$VENV_DIR/bin/python" "$TARGET" "$@"

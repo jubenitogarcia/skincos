@@ -185,6 +185,9 @@ function buildVerificationPlan({ changes, diffSpecs, report, full = false }) {
   const apiChanged = files.some((file) => file.startsWith("api/"));
   const catalogChanged = files.some((file) => file.startsWith("integration/atendimento/commercial-catalog/"));
   const pythonChanged = files.some((file) => fileExtension(file) === ".py");
+  const localPython = files.filter((file) => fileExtension(file) === ".py" &&
+    (file.startsWith("scripts/") || file.startsWith(".codex/hooks/")));
+  const backendPythonChanged = files.some((file) => fileExtension(file) === ".py" && !localPython.includes(file));
 
   if (report.risk === "medium") {
     if (pontoPagesCode.length) {
@@ -198,7 +201,20 @@ function buildVerificationPlan({ changes, diffSpecs, report, full = false }) {
     }
     if (apiChanged) plan.push(command("API tests", "npm", ["--prefix", "api", "test"]));
     if (catalogChanged) plan.push(command("Atendimento catalog tests", "npm", ["--prefix", "integration/atendimento/commercial-catalog", "test"]));
-    if (pythonChanged) plan.push(command("Python unit tests", "python3", ["-m", "pytest", "backend/tests/unit"]));
+    if (backendPythonChanged) plan.push(command("Python unit tests", "python3", ["-m", "pytest", "backend/tests/unit"]));
+    const localTests = [...new Set(localPython.flatMap((file) => {
+      if (file.startsWith(".codex/hooks/")) return [];
+      const candidate = file.startsWith("scripts/tests/") ? file :
+        path.join("scripts/tests", path.basename(file, ".py") + ".test.py");
+      if (!fs.existsSync(path.join(root, candidate))) {
+        throw new Error("Local Python tooling changed without a focused test in scripts/tests/: " + file);
+      }
+      return [candidate];
+    }))];
+    for (const file of localTests) plan.push(command("Local tooling tests: " + file, "python3", ["-B", file]));
+    if (localPython.some((file) => file.startsWith(".codex/hooks/"))) {
+      plan.push(command("Codex Python hook tests", "python3", ["-B", "-m", "unittest", "discover", "-s", ".codex/hooks/tests", "-p", "test_*.py"]));
+    }
     const changedTests = presentFiles.filter(isTestFile);
     if (changedTests.length && !pontoPagesCode.length && !websiteCode.length && !apiChanged && !catalogChanged) {
       plan.push(command("changed Node tests", process.execPath, ["--test", ...changedTests]));

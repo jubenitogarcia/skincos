@@ -1,4 +1,5 @@
-# Shared Codex App actions for Skincos. Keep in sync with scripts/install-shared-codex-shortcuts.ps1.
+# Shared Codex App actions for Skincos. Windows entries stay in sync with
+# scripts/install-shared-codex-shortcuts.ps1; macOS uses the private local launcher.
 version = 1
 name = "skincos"
 
@@ -8,29 +9,71 @@ script = ""
 [[actions]]
 name = "Workspace"
 icon = "run"
+platform = "darwin"
+command = "bash ./scripts/run-local-codex-shortcut.sh workspace"
+
+[[actions]]
+name = "Workspace"
+icon = "run"
+platform = "win32"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action WorkspaceMenu"
 
 [[actions]]
 name = "Contexto"
 icon = "run"
+platform = "darwin"
+command = "bash ./scripts/run-local-codex-shortcut.sh context"
+
+[[actions]]
+name = "Contexto"
+icon = "run"
+platform = "win32"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action ContextMenu"
 
 [[actions]]
 name = "Codex – Autônomo"
 icon = "run"
+platform = "darwin"
+command = "bash ./scripts/run-local-codex-shortcut.sh autonomous"
+
+[[actions]]
+name = "Codex – Autônomo"
+icon = "run"
+platform = "win32"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-skincos-codex.ps1"
 
 [[actions]]
 name = "EF App"
 icon = "run"
+platform = "darwin"
+command = "bash ./scripts/run-local-codex-shortcut.sh ef-app"
+
+[[actions]]
+name = "EF App"
+icon = "run"
+platform = "win32"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action EfAppMenu"
 
 [[actions]]
 name = "Orb"
 icon = "run"
+platform = "darwin"
+command = "bash ./scripts/run-local-codex-shortcut.sh orb"
+
+[[actions]]
+name = "Orb"
+icon = "run"
+platform = "win32"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action OrbMenu"
 
 [[actions]]
 name = "Cartas da Beleza – Prévia Local"
 icon = "tool"
+platform = "darwin"
+command = "bash ./scripts/run-local-codex-shortcut.sh beauty-preview"
+
+[[actions]]
+name = "Cartas da Beleza – Prévia Local"
+icon = "tool"
+platform = "win32"
 command = "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-beauty-movement-local-preview.ps1"
