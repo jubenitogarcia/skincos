@@ -39,7 +39,7 @@ jobs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       source_tree: ${{ steps.source.outputs.source_tree }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -74,7 +74,7 @@ jobs:
       PONTO_CANDIDATE_RUN_ID: ${{ github.run_id }}
       CANDIDATE_ROOT: ${{ runner.temp }}/ponto-core-staging-candidate
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0
         with:
           ref: ${{ needs.source.outputs.source_sha }}
           fetch-depth: 1

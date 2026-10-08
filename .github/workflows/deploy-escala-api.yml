@@ -68,7 +68,7 @@ jobs:
 
       - name: Checkout production opt-in verifier
         if: ${{ inputs.target == 'production' && inputs.enable_schedule_public_read }}
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
 
@@ -160,7 +160,7 @@ jobs:
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
 
@@ -530,7 +530,7 @@ jobs:
       PRODUCTION_MANIFEST_SHA256: ${{ inputs.production_manifest_sha256 }}
     steps:
       - name: Checkout immutable production core
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
       - name: Setup Node
