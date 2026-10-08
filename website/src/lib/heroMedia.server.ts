@@ -343,10 +343,16 @@ async function refreshHeroMedia(variant: HeroMediaVariant, unitSlug?: string | n
     const refreshPromise: Promise<void> = (async () => {
         const localScoped = getLocalHeroItemsByScope(variant, { unitSlug });
         const remoteScoped = await resolveRemoteHeroMedia(variant, unitSlug);
+        // The active local campaign replaces the previous global rotation.
+        const hasActiveLocalCampaign = localScoped.globalItems.some((item) =>
+            item.src.startsWith("/images/hero/campaigns/outubro-2026/"),
+        );
         const items = composeHeroMediaItems({
             unitSlug,
             unitItems: [...remoteScoped.unitItems, ...localScoped.unitItems],
-            globalItems: [...remoteScoped.globalItems, ...localScoped.globalItems],
+            globalItems: hasActiveLocalCampaign
+                ? localScoped.globalItems
+                : [...remoteScoped.globalItems, ...localScoped.globalItems],
         });
 
         const finalScoped = resolveScopedHeroMediaItems({

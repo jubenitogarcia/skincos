@@ -47,20 +47,23 @@ const HERO_CAMPAIGN_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
 });
 
-const HERO_AGOSTO_2026_CAMPAIGN_ITEMS = [
-    { id: "banner-01", desktopWidth: 1733, desktopHeight: 907, alt: "Preenchimento facial de 1 ml a partir de R$ 599 durante a Vitrine de 10 a 31 de agosto" },
-    { id: "banner-02", desktopWidth: 1733, desktopHeight: 907, alt: "Botox 3 regiões 40U por R$ 599 durante a Vitrine de 10 a 31 de agosto" },
-    { id: "banner-03", desktopWidth: 1733, desktopHeight: 907, alt: "Botox Full Face 70U com preenchimento facial de 1 ml por R$ 1.499" },
-    { id: "banner-04", desktopWidth: 1733, desktopHeight: 907, alt: "Laser Lavieen por R$ 399 durante a Vitrine de 10 a 31 de agosto" },
-    { id: "banner-05", desktopWidth: 1733, desktopHeight: 907, alt: "Botox Nefertiti por R$ 1.199 durante a Vitrine de 10 a 31 de agosto" },
-    { id: "banner-06", desktopWidth: 1733, desktopHeight: 907, alt: "Skinvive por R$ 599 durante a Vitrine de 10 a 31 de agosto" },
-    { id: "banner-07", desktopWidth: 1733, desktopHeight: 907, alt: "Bioestimulador de colágeno Nutriex por R$ 899 e Diamond Intense por R$ 1.299" },
-    { id: "banner-08", desktopWidth: 1733, desktopHeight: 907, alt: "Peeling de uma sessão por R$ 149 durante a Vitrine de 10 a 31 de agosto" },
+const HERO_OUTUBRO_2026_CAMPAIGN_ITEMS = [
+    { id: "banner-01", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: Clube do Botox." },
+    { id: "banner-02", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: Botox e Restylane." },
+    { id: "banner-03", desktopWidth: 1734, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: sustentação e bioestimulação com fios." },
+    { id: "banner-04", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: PDO Sculpt." },
+    { id: "banner-05", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: combinação de fios espiculados e lisos." },
+    { id: "banner-06", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: preenchimento facial." },
+    { id: "banner-07", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: preenchimento facial." },
+    { id: "banner-08", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Espaço Facial: abra um cuidado e escolha um envelope rosa." },
+    { id: "banner-09", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: Clube do Botox." },
+    { id: "banner-10", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Espaço Facial: Pré-Black, abra um cuidado." },
+    { id: "banner-11", desktopWidth: 1733, desktopHeight: 907, mobileWidth: 941, mobileHeight: 1672, alt: "Pré-Black Espaço Facial: últimos dias para agendar sua avaliação." },
 ] as const;
 
-const HERO_AGOSTO_2026_WINDOW: HeroMediaCampaignWindow = {
-    startsOn: "2026-08-10",
-    endsOn: "2026-08-31",
+const HERO_OUTUBRO_2026_WINDOW: HeroMediaCampaignWindow = {
+    startsOn: "2026-10-01",
+    endsOn: "2026-10-31",
 };
 
 function isValidCampaignDate(value: unknown): value is string {
@@ -117,51 +120,51 @@ export function getHeroMediaAspectRatio(item: HeroMediaItem | null | undefined):
     return formatHeroAspectRatio(item.width, item.height) ?? null;
 }
 
-function heroAgosto2026DesktopItem(
-    item: (typeof HERO_AGOSTO_2026_CAMPAIGN_ITEMS)[number],
+function heroOutubro2026DesktopItem(
+    item: (typeof HERO_OUTUBRO_2026_CAMPAIGN_ITEMS)[number],
     index: number,
 ): HeroMediaItem {
     return {
-        id: `agosto-2026-desktop-${item.id}`,
+        id: `outubro-2026-desktop-${item.id}`,
         type: "image",
-        src: `/images/hero/campaigns/agosto-2026/desktop/${item.id}.png`,
+        src: `/images/hero/campaigns/outubro-2026/desktop/${item.id}.png`,
         alt: item.alt,
         width: item.desktopWidth,
         height: item.desktopHeight,
         aspectRatio: formatHeroAspectRatio(item.desktopWidth, item.desktopHeight),
-        campaignWindow: HERO_AGOSTO_2026_WINDOW,
+        campaignWindow: HERO_OUTUBRO_2026_WINDOW,
         order: index + 1,
     };
 }
 
-function heroAgosto2026MobileItem(
-    item: (typeof HERO_AGOSTO_2026_CAMPAIGN_ITEMS)[number],
+function heroOutubro2026MobileItem(
+    item: (typeof HERO_OUTUBRO_2026_CAMPAIGN_ITEMS)[number],
     index: number,
 ): HeroMediaItem {
-    const width = 941;
-    const height = 1672;
+    const width = item.mobileWidth;
+    const height = item.mobileHeight;
     return {
-        id: `agosto-2026-mobile-${item.id}`,
+        id: `outubro-2026-mobile-${item.id}`,
         type: "image",
-        src: `/images/hero/campaigns/agosto-2026/mobile/${item.id}.png`,
+        src: `/images/hero/campaigns/outubro-2026/mobile/${item.id}.png`,
         alt: item.alt,
         width,
         height,
         aspectRatio: formatHeroAspectRatio(width, height),
-        campaignWindow: HERO_AGOSTO_2026_WINDOW,
+        campaignWindow: HERO_OUTUBRO_2026_WINDOW,
         order: index + 1,
     };
 }
 
-export const HERO_AGOSTO_2026_DESKTOP_ITEMS: HeroMediaItem[] = HERO_AGOSTO_2026_CAMPAIGN_ITEMS.map(
-    heroAgosto2026DesktopItem,
+export const HERO_OUTUBRO_2026_DESKTOP_ITEMS: HeroMediaItem[] = HERO_OUTUBRO_2026_CAMPAIGN_ITEMS.map(
+    heroOutubro2026DesktopItem,
 );
 
-export const HERO_AGOSTO_2026_MOBILE_ITEMS: HeroMediaItem[] = HERO_AGOSTO_2026_CAMPAIGN_ITEMS.map(heroAgosto2026MobileItem);
+export const HERO_OUTUBRO_2026_MOBILE_ITEMS: HeroMediaItem[] = HERO_OUTUBRO_2026_CAMPAIGN_ITEMS.map(heroOutubro2026MobileItem);
 
-export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = HERO_AGOSTO_2026_DESKTOP_ITEMS;
+export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = HERO_OUTUBRO_2026_DESKTOP_ITEMS;
 
-export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = HERO_AGOSTO_2026_MOBILE_ITEMS;
+export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = HERO_OUTUBRO_2026_MOBILE_ITEMS;
 
 export const LOCAL_HERO_ITEMS_BY_UNIT: Partial<Record<string, HeroMediaUnitCampaign>> = {};
 

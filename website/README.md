@@ -200,6 +200,12 @@ Se quiser manter logs sem querystring:
 
 O hero já suporta atualização sem deploy via `/api/hero-media` (Drive folder / manifest).
 
+A campanha global ativa é **Outubro de 2026 — Pré-Black**, com 11 pares de
+artes desktop/mobile em `public/images/hero/campaigns/outubro-2026/`. A validade
+é de 01/10 a 31/10 no calendário de São Paulo. Essa seleção substitui a
+rotação global anterior; banners específicos de unidade com validade vigente continuam preservados.
+
+
 ### Campanhas por unidade
 
 A infraestrutura agora aceita campanha por unidade (fallback automático para campanha padrão):

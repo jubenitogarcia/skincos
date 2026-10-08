@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
-    HERO_AGOSTO_2026_DESKTOP_ITEMS,
-    HERO_AGOSTO_2026_MOBILE_ITEMS,
+    HERO_OUTUBRO_2026_DESKTOP_ITEMS,
+    HERO_OUTUBRO_2026_MOBILE_ITEMS,
     composeHeroMediaItems,
     filterHeroMediaItemsByCampaignWindow,
     getHeroMediaAspectRatio,
@@ -96,61 +97,63 @@ test("scoped resolver selects global + current unit and defaults missing scope t
     );
 });
 
-test("local hero items use the agosto 2026 global campaign for a unit page", () => {
+test("local hero items use the outubro 2026 global campaign for a unit page", () => {
     const items = getLocalHeroItems("desktop", {
         unitSlug: "barrashoppingsul",
-        now: new Date("2026-08-31T12:00:00-03:00"),
+        now: new Date("2026-10-07T12:00:00-03:00"),
     });
 
-    assert.equal(items.length, 8);
-    assert.ok(items.every((item) => item.src.includes("/images/hero/campaigns/agosto-2026/desktop/")));
+    assert.equal(items.length, 11);
+    assert.ok(items.every((item) => item.src.includes("/images/hero/campaigns/outubro-2026/desktop/")));
     assert.ok(items.every((item) => item.scope !== "unit:barrashoppingsul"));
 });
 
-test("agosto 2026 local hero campaign keeps separate desktop and mobile assets", () => {
-    assert.equal(HERO_AGOSTO_2026_DESKTOP_ITEMS.length, 8);
-    assert.equal(HERO_AGOSTO_2026_MOBILE_ITEMS.length, 8);
+test("outubro 2026 local hero campaign keeps separate desktop and mobile assets", () => {
+    assert.equal(HERO_OUTUBRO_2026_DESKTOP_ITEMS.length, 11);
+    assert.equal(HERO_OUTUBRO_2026_MOBILE_ITEMS.length, 11);
 
-    assert.ok(HERO_AGOSTO_2026_DESKTOP_ITEMS.every((item) => item.src.includes("/desktop/")));
-    assert.ok(HERO_AGOSTO_2026_DESKTOP_ITEMS.every((item) => item.src.endsWith(".png")));
-    assert.ok(HERO_AGOSTO_2026_MOBILE_ITEMS.every((item) => item.src.includes("/mobile/")));
-    assert.ok(HERO_AGOSTO_2026_MOBILE_ITEMS.every((item) => item.src.endsWith(".png")));
-    assert.ok(HERO_AGOSTO_2026_DESKTOP_ITEMS.every((item) => item.campaignWindow?.startsOn === "2026-08-10" && item.campaignWindow.endsOn === "2026-08-31"));
-    assert.ok(HERO_AGOSTO_2026_MOBILE_ITEMS.every((item) => item.campaignWindow?.startsOn === "2026-08-10" && item.campaignWindow.endsOn === "2026-08-31"));
+    assert.ok(HERO_OUTUBRO_2026_DESKTOP_ITEMS.every((item) => item.src.includes("/desktop/")));
+    assert.ok(HERO_OUTUBRO_2026_DESKTOP_ITEMS.every((item) => item.src.endsWith(".png")));
+    assert.ok(HERO_OUTUBRO_2026_MOBILE_ITEMS.every((item) => item.src.includes("/mobile/")));
+    assert.ok(HERO_OUTUBRO_2026_MOBILE_ITEMS.every((item) => item.src.endsWith(".png")));
+    assert.ok(HERO_OUTUBRO_2026_DESKTOP_ITEMS.every((item) => item.campaignWindow?.startsOn === "2026-10-01" && item.campaignWindow.endsOn === "2026-10-31"));
+    assert.ok(HERO_OUTUBRO_2026_MOBILE_ITEMS.every((item) => item.campaignWindow?.startsOn === "2026-10-01" && item.campaignWindow.endsOn === "2026-10-31"));
 
     assert.deepEqual(
-        HERO_AGOSTO_2026_DESKTOP_ITEMS.map((item) => item.id),
-        Array.from({ length: 8 }, (_, index) => `agosto-2026-desktop-banner-${String(index + 1).padStart(2, "0")}`),
+        HERO_OUTUBRO_2026_DESKTOP_ITEMS.map((item) => item.id),
+        Array.from({ length: 11 }, (_, index) => `outubro-2026-desktop-banner-${String(index + 1).padStart(2, "0")}`),
     );
 
     assert.deepEqual(
-        HERO_AGOSTO_2026_MOBILE_ITEMS.map((item) => item.id),
-        Array.from({ length: 8 }, (_, index) => `agosto-2026-mobile-banner-${String(index + 1).padStart(2, "0")}`),
+        HERO_OUTUBRO_2026_MOBILE_ITEMS.map((item) => item.id),
+        Array.from({ length: 11 }, (_, index) => `outubro-2026-mobile-banner-${String(index + 1).padStart(2, "0")}`),
     );
 
     assert.deepEqual(
-        HERO_AGOSTO_2026_DESKTOP_ITEMS.map((item) => item.src.replace("/desktop/", "/mobile/")),
-        HERO_AGOSTO_2026_MOBILE_ITEMS.map((item) => item.src),
+        HERO_OUTUBRO_2026_DESKTOP_ITEMS.map((item) => item.src.replace("/desktop/", "/mobile/")),
+        HERO_OUTUBRO_2026_MOBILE_ITEMS.map((item) => item.src),
     );
 });
 
-test("agosto 2026 local hero campaign exposes dimensions before image load", () => {
+test("outubro 2026 local hero campaign exposes dimensions before image load", () => {
     assert.deepEqual(
-        HERO_AGOSTO_2026_DESKTOP_ITEMS.map((item) => ({
+        HERO_OUTUBRO_2026_DESKTOP_ITEMS.map((item) => ({
             width: item.width,
             height: item.height,
             aspectRatio: getHeroMediaAspectRatio(item),
         })),
-        Array.from({ length: 8 }, () => ({ width: 1733, height: 907, aspectRatio: "1733 / 907" })),
+        [...Array.from({ length: 2 }, () => ({ width: 1733, height: 907, aspectRatio: "1733 / 907" })),
+            { width: 1734, height: 907, aspectRatio: "1734 / 907" },
+            ...Array.from({ length: 8 }, () => ({ width: 1733, height: 907, aspectRatio: "1733 / 907" }))],
     );
 
     assert.deepEqual(
-        HERO_AGOSTO_2026_MOBILE_ITEMS.map((item) => ({
+        HERO_OUTUBRO_2026_MOBILE_ITEMS.map((item) => ({
             width: item.width,
             height: item.height,
             aspectRatio: getHeroMediaAspectRatio(item),
         })),
-        Array.from({ length: 8 }, () => ({ width: 941, height: 1672, aspectRatio: "941 / 1672" })),
+        Array.from({ length: 11 }, () => ({ width: 941, height: 1672, aspectRatio: "941 / 1672" })),
     );
 });
 
@@ -179,8 +182,26 @@ test("hero selection requires a valid campaign window and treats the end date as
     );
 });
 
-test("expired August hero campaigns are not selectable on desktop or mobile", () => {
-    const expiredAt = new Date("2026-09-28T12:00:00-03:00");
+test("expired October hero campaigns are not selectable on desktop or mobile", () => {
+    const expiredAt = new Date("2026-11-01T03:00:00.000Z");
     assert.deepEqual(getLocalHeroItems("desktop", { now: expiredAt }), []);
     assert.deepEqual(getLocalHeroItems("mobile", { now: expiredAt }), []);
+});
+
+
+test("outubro hero assets match PNG dimensions and remain selectable throughout the campaign", () => {
+    for (const variant of ["desktop", "mobile"] as const) {
+        const items = variant === "desktop" ? HERO_OUTUBRO_2026_DESKTOP_ITEMS : HERO_OUTUBRO_2026_MOBILE_ITEMS;
+        for (const item of items) {
+            const bytes = readFileSync(new URL(`../public${item.src}`, import.meta.url));
+            assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+            assert.equal(bytes.readUInt32BE(16), item.width);
+            assert.equal(bytes.readUInt32BE(20), item.height);
+        }
+        assert.equal(getLocalHeroItems(variant, { now: new Date("2026-10-01T02:59:59.999Z") }).length, 0);
+        assert.equal(getLocalHeroItems(variant, { now: new Date("2026-10-01T03:00:00.000Z") }).length, 11);
+        assert.equal(getLocalHeroItems(variant, { now: new Date("2026-10-07T12:00:00.000Z") }).length, 11);
+        assert.equal(getLocalHeroItems(variant, { now: new Date("2026-11-01T02:59:59.999Z") }).length, 11);
+        assert.equal(getLocalHeroItems(variant, { now: new Date("2026-11-01T03:00:00.000Z") }).length, 0);
+    }
 });
