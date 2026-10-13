@@ -24,21 +24,7 @@ Last review: 2026-04-14
 
 ## Active Exceptions
 
-### JS/TS runtime HTML and dynamic execution hotspots
-
-- **Status**: Active with explicit allowlist.
-- **Scope**:
-  - `website/src/components/Analytics.tsx`
-  - `website/src/components/MarketingPixels.tsx`
-  - `website/src/app/layout.tsx`
-  - `website/src/app/[unit]/page.tsx`
-  - No extracted CRM or legacy `frontend/` paths remain in this repository.
-- **Reason**:
-  - JSON-LD serialization and third-party snippets still require controlled HTML/script injection.
-  - Admin HTML previews and markdown rendering remain legacy hotspots pending sanitization hardening.
-- **Enforcement**:
-  - `node scripts/check-js-security-exceptions.mjs`
-  - `.github/workflows/lint-format-static.yml`
+No active JavaScript/TypeScript exceptions remain in this monorepo.
 
 ### pip-audit dependency resolution (crawl4ai vendor requirements)
 

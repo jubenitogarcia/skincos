@@ -167,9 +167,10 @@
   health, and live endpoint verification.
 - GitHub: use for PRs, checks, automerge, workflow runs, CI failures, releases,
   and deployment evidence.
-- Sites: use for prototypes, temporary demos, or static artifacts only. Do not
-  replace the production `espacofacial.com` Cloudflare/OpenNext pipeline unless
-  the user explicitly approves a migration.
+- Sites: use for prototypes, temporary demos, or static artifacts only. The
+  Website source and publishing workflows belong exclusively to
+  `jubenitogarcia/website`; source ownership alone does not prove a Cloudflare
+  runtime cutover.
 - Security: use for auth, sessions, tokens, consent, CAPI, Meta tracking,
   WhatsApp attribution, secrets, and data-flow risk reviews.
 
@@ -184,16 +185,15 @@
 - Worktree identity validation: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-skincos-worktree.ps1 -ProjectRoot (Get-Location).Path -TaskSlug <slug> -Mode edit`
 - New thread bootstrap prompt: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\print-codex-thread-bootstrap.ps1 -TaskSlug <slug> -TaskBrief "<tarefa>"`
 - Autonomy/deploy preflight: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:preflight`
-- Site fast check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:site:check`
-- Site release check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:site:release-check`
 - CRM smoke/build: run the independent repository's own scripts from
   `C:\\CodexShared\\Projetos\\crm`; this monorepo validates only the gateway
   contract with `npm run api:test`.
 
 ## Interpretation Defaults
 
-- "site" usually means `website/` and production
-  `https://espacofacial.com`.
+- "site" usually means the independent source repository
+  `jubenitogarcia/website` and the public domain `https://espacofacial.com`;
+  this monorepo retains only public API contracts and consumers.
 - "CRM" means the independent project `jubenitogarcia/crm` at
   `C:\\CodexShared\\Projetos\\crm` and `https://crm.skincos.com.br`; this
   monorepo contains only the allowlisted gateway mount.

@@ -13,10 +13,9 @@ Actions:
   autonomous Start native Codex in this worktree using the user's defaults.
   ef-app     Open the interactive EF integration through its private venv.
   orb        Open the independent Orb repository on GitHub.
-  beauty-preview  Start the local Cartas da Beleza preview.
 
 --dry-run validates the selected action without opening a browser, Codex,
-the EF menu, or a preview server.
+or the EF menu.
 EOF
 }
 
@@ -36,7 +35,7 @@ if [[ $# -eq 2 ]]; then
 fi
 
 case "$action" in
-  workspace|context|autonomous|ef-app|orb|beauty-preview) ;;
+  workspace|context|autonomous|ef-app|orb) ;;
   *)
     echo "Unsupported local Codex action: $action" >&2
     usage >&2
@@ -97,14 +96,5 @@ case "$action" in
     require_command open
     if [[ "$dry_run" == true ]]; then exit 0; fi
     exec open "https://github.com/jubenitogarcia/orb"
-    ;;
-  beauty-preview)
-    require_command python3
-    [[ -f "$project_root/scripts/mac-local-preview.py" ]] || { echo "Mac local preview helper is missing." >&2; exit 2; }
-    if [[ "$dry_run" == true ]]; then
-      python3 "$project_root/scripts/mac-local-preview.py" --help >/dev/null
-      exit 0
-    fi
-    exec python3 "$project_root/scripts/mac-local-preview.py" start --project-root "$project_root"
     ;;
 esac

@@ -15,11 +15,11 @@ test("documentation changes require only low-risk checks", () => {
   assert.deepEqual(report.affectedSurfaces, ["documentation"]);
 });
 
-test("a localized website correction does not require unrelated domain tests", () => {
-  const report = classifyFiles(policy, ["website/src/components/Header.tsx"]);
+test("a localized booking correction does not require unrelated domain tests", () => {
+  const report = classifyFiles(policy, ["booking/src/components/Header.tsx"]);
   assert.equal(report.risk, "medium");
   assert.ok(report.skippedChecks.includes("unrelated-module-test"));
-  assert.deepEqual(report.affectedSurfaces, ["website"]);
+  assert.deepEqual(report.affectedSurfaces, ["booking"]);
 });
 
 test("ordinary auth and migration paths are elevated, not exceptional by default", () => {
@@ -75,8 +75,8 @@ test("release input digest ignores unrelated documentation but invalidates relev
 
 test("green evidence is reused only for matching release and artifact digests", () => {
   const manifest = buildReleaseManifest({
-    sourceCommit: "a".repeat(40), sourceTree: "b".repeat(40), surfaces: ["website"], policyPaths: [],
-    inputs: [{ path: "website/src/index.ts", blob: "c".repeat(40) }], artifacts: [{ name: "pages", digest: "digest-a" }]
+    sourceCommit: "a".repeat(40), sourceTree: "b".repeat(40), surfaces: ["booking"], policyPaths: [],
+    inputs: [{ path: "booking/src/index.ts", blob: "c".repeat(40) }], artifacts: [{ name: "pages", digest: "digest-a" }]
   });
   const matching = { status: "green", releaseInputDigest: manifest.releaseInputDigest, artifacts: [{ name: "pages", digest: "digest-a" }] };
   const drifted = { status: "green", releaseInputDigest: manifest.releaseInputDigest, artifacts: [{ name: "pages", digest: "digest-b" }] };
@@ -88,12 +88,12 @@ test("build-once manifests preserve exact platform identities and reject version
   const base = {
     sourceCommit: "a".repeat(40),
     sourceTree: "b".repeat(40),
-    surfaces: ["website"],
+    surfaces: ["booking"],
     policyPaths: [],
-    inputs: [{ path: "website/src/index.ts", blob: "c".repeat(40) }],
-    module: "website",
-    releaseRef: "refs/tags/skincos/release/website/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    releaseTag: "skincos/release/website/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    inputs: [{ path: "booking/src/index.ts", blob: "c".repeat(40) }],
+    module: "booking",
+    releaseRef: "refs/tags/skincos/release/booking/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    releaseTag: "skincos/release/booking/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     workflowRunId: "12345",
     rollbackIncumbents: ["worker-version-incumbent"],
     artifacts: [{

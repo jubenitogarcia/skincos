@@ -2,13 +2,11 @@
 """Read-only macOS SKINCOS environment diagnosis for the Codex Workspace action."""
 
 import argparse
-import importlib.util
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
-import stat
 import subprocess
 import sys
 import tomllib
@@ -63,24 +61,6 @@ def helper_environment(root: Path) -> dict:
     return {"status": "prepared", "value": values}
 
 
-def preview_paths(root: Path) -> tuple[Path, Path]:
-    spec = importlib.util.spec_from_file_location("mac_local_preview", root / "scripts/mac-local-preview.py")
-    if not spec or not spec.loader:
-        raise RuntimeError("mac-local-preview.py cannot be imported")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.private_default(root), module.cache_default(root)
-
-
-def private_directory_status(path: Path) -> bool:
-    """Read-only check for an existing private directory; never creates or chmods it."""
-    try:
-        mode = path.lstat().st_mode
-    except OSError:
-        return False
-    return path.is_dir() and not path.is_symlink() and stat.S_IMODE(mode) & 0o077 == 0
-
-
 def nearest_existing(path: Path) -> Path:
     candidate = path.absolute()
     while not candidate.exists() and candidate != candidate.parent:
@@ -95,30 +75,6 @@ def disk_status(paths: list[Path]) -> dict:
         free = shutil.disk_usage(ancestor).free
         volumes.append({"path": str(path), "checkedAt": str(ancestor), "freeBytes": free})
     return {"status": "prepared" if all(entry["freeBytes"] >= MIN_FREE_BYTES for entry in volumes) else "missing", "minimumBytes": MIN_FREE_BYTES, "volumes": volumes}
-
-
-def preview_dependency_status(root: Path, cache: Path) -> dict:
-    spec = importlib.util.spec_from_file_location("mac_local_preview_doctor", root / "scripts/mac-local-preview.py")
-    if not spec or not spec.loader:
-        raise RuntimeError("mac-local-preview.py cannot be imported")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    dependencies = cache / "dependencies" / module.dependency_key(root / "website") / "website"
-    marker = dependencies / ".preview-dependencies.json"
-    expected = {"version": 1, "key": module.dependency_key(root / "website")}
-    if not private_directory_status(cache):
-        return {"status": "missing", "cacheRoot": str(cache), "dependencyMarker": str(marker), "requiredModules": ["next/package.json", "react/package.json", "react-dom/package.json", ".bin/next"]}
-    try:
-        if cache.is_symlink():
-            raise module.PreviewError("Private preview cache root is a symlink")
-        module.validate_private_descendant(cache, dependencies)
-        module.validate_private_descendant(cache, marker, directory=False)
-        module.validate_private_descendant(cache, dependencies / "node_modules")
-        healthy = module.dependency_marker_matches(marker, expected) and module.dependency_tree_is_healthy(dependencies)
-        status = "prepared" if healthy else "missing"
-    except (OSError, module.PreviewError):
-        status = "unavailable"
-    return {"status": status, "cacheRoot": str(cache), "dependencyMarker": str(marker), "requiredModules": ["next/package.json", "react/package.json", "react-dom/package.json", ".bin/next"]}
 
 
 def ef_status(environment: dict) -> dict:
@@ -163,27 +119,18 @@ def main() -> int:
     try:
         actions = tomllib.loads(config_path.read_text(encoding="utf-8"))["actions"]
         platforms = {platform: sum(item.get("platform") == platform for item in actions) for platform in ("darwin", "win32")}
-        platform_actions = {"status": "prepared" if platforms == {"darwin": 6, "win32": 6} else "missing", "counts": platforms}
+        platform_actions = {"status": "prepared" if platforms == {"darwin": 5, "win32": 5} else "missing", "counts": platforms}
     except (OSError, KeyError, tomllib.TOMLDecodeError) as error:
         platform_actions = {"status": "unavailable", "detail": str(error)}
 
     ef = ef_status(environment)
 
-    try:
-        preview_state, preview_cache = preview_paths(root)
-        disk_paths.extend((preview_state, preview_cache))
-        preview = {"stateRoot": str(preview_state), **preview_dependency_status(root, preview_cache)}
-        if not private_directory_status(preview_state):
-            preview["status"] = "missing"
-    except (OSError, RuntimeError) as error:
-        preview = {"status": "unavailable", "detail": str(error)}
-
     disk = disk_status(disk_paths)
 
     code, hook_output = run(sys.executable, "scripts/install-local-git-hooks.py", "status", "--project-root", str(root), cwd=root)
     hooks = hook_status_from_result(code, hook_output)
-    checks = {"workspace": workspace, "environment": environment, "tools": tools, "disk": disk, "platformActions": platform_actions, "efVenv": ef, "previewDependencies": preview, "hooks": hooks}
-    required = [workspace["status"], environment["status"], disk["status"], platform_actions["status"], ef["status"], preview["status"], hooks["status"]]
+    checks = {"workspace": workspace, "environment": environment, "tools": tools, "disk": disk, "platformActions": platform_actions, "efVenv": ef, "hooks": hooks}
+    required = [workspace["status"], environment["status"], disk["status"], platform_actions["status"], ef["status"], hooks["status"]]
     required.extend(item["status"] for item in tools.values())
     status = "prepared" if all(item == "prepared" for item in required) else "missing"
     print(json.dumps({"status": status, "checks": checks}, indent=2))

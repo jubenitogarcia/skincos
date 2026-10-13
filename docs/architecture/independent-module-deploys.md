@@ -1,12 +1,14 @@
 # Deploy independente por domínio
 
-O monorepo publica cada domínio pelo seu próprio artefato e workflow. O CRM é
-um produto externo em `C:\CodexShared\Projetos\crm`; aqui existe somente o
+O monorepo publica cada domínio pelo seu próprio artefato e workflow. O código
+e o publisher do Website pertencem exclusivamente a `jubenitogarcia/website`;
+esta fronteira de fonte não afirma que o runtime Cloudflare foi migrado. O CRM
+é um produto externo em `C:\CodexShared\Projetos\crm`; aqui existe somente o
 contrato de gateway e a integração read-only de Atendimento.
 
 | Domínio | Artefato | Publisher | Dados/rollback |
 | --- | --- | --- | --- |
-| Website | Pages/Worker | `deploy-website-cloudflare.yml` | bindings do Website e rollback do mesmo SHA |
+| Website | repositório `jubenitogarcia/website` | publisher no repositório independente | endpoints públicos continuam contratos externos; corte do runtime não é declarado |
 | API/gateway | Worker | `deploy-core-workers.yml` | bindings da API; `/crm/*` é encaminhado ao serviço externo |
 | Ponto | Workers + Pages dedicados | workflows `ponto-*` | D1/KV de Ponto e recibos de rollback |
 | Financeiro | Worker + UI | `deploy-finance.yml` e workflows de UI | D1/KV próprios, sem copiar dados de outros domínios |

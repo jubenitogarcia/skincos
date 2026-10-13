@@ -175,9 +175,11 @@ Ele testa imports, export CSV/XLSX e se o Chrome abre a tela de login (sem logar
 
 ## Rotação do token de sync
 
-- `./scripts/rotate_agenda_sync_token.sh`
-
-O script gera um token novo, atualiza `~/.config/espacofacial/agenda_sync.env`, atualiza `AGENDA_SYNC_TOKEN` em `website/.env.local`, publica a secret no Worker Cloudflare (`espacofacial-site`) e valida o endpoint de sync.
+`EF_AGENDA_SYNC_TOKEN` continua sendo a credencial cliente usada pelo executor
+EF. A rotação de `AGENDA_SYNC_TOKEN` e a atualização do Worker devem ser
+coordenadas pelo publisher independente Website/Booking em
+`jubenitogarcia/website`. Este repositório não fornece ferramenta de rotação e
+esta documentação não atesta a configuração ou a execução de uma rotação.
 
 ## Backfill completo da agenda sincronizada
 

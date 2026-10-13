@@ -106,25 +106,6 @@ test("maps Ponto Pages to its dedicated publisher and coordination surfaces", ()
   }
 });
 
-test("maps the Beauty Movement copy update to the website release surface", () => {
-  const env = { ...process.env };
-  delete env.PROMOTION_RELEASE_INPUT_DIGEST;
-  const digest = execFileSync(process.execPath, [
-    ".github/scripts/promotion-evidence.mjs",
-    "digest",
-  ], {
-    cwd: root,
-    env: {
-      ...env,
-      PROMOTION_UNIT: "beauty-movement-campaign-copy-update",
-      PROMOTION_SOURCE_SHA: "HEAD",
-    },
-    encoding: "utf8",
-  }).trim();
-
-  assert.match(digest, /^[0-9a-f]{64}$/);
-});
-
 test("derives Schedule public-read adapter evidence from its immutable isolated release surface", () => {
   const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   const sourceTree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: root, encoding: "utf8" }).trim();

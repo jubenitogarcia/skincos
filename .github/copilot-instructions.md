@@ -2,7 +2,8 @@
 
 Este repositório é um monorepo com:
 - `backend/` (orquestração, apps, automações, ferramentas e docs)
-- `api/`, `website/` e módulos de domínio independentes
+- `api/` e módulos de domínio independentes; o código-fonte e publisher do
+  Website pertencem ao repositório `jubenitogarcia/website`
 
 ## Entrypoints (local)
 

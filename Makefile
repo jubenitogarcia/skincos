@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: dev backend-dev backend-status backend-health backend-compile backend-unit website-install website-dev website-build website-typecheck website-deploy
+.PHONY: dev backend-dev backend-status backend-health backend-compile backend-unit
 
 dev: backend-dev
 
@@ -18,18 +18,3 @@ backend-compile:
 
 backend-unit:
 	@bash ./backend/scripts/test.sh unit
-
-website-install:
-	@npm --prefix website ci
-
-website-dev:
-	@npm --prefix website run dev
-
-website-build:
-	@npm --prefix website run build
-
-website-typecheck:
-	@npm --prefix website run build && npm --prefix website run typecheck
-
-website-deploy:
-	@npm --prefix website run deploy

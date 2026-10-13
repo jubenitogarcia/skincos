@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Espaço Facial">
-  <rect width="512" height="512" rx="96" fill="#ffffff"/>
-  <g fill="#111111" transform="translate(76 90) scale(0.744)">
-    <rect x="0" y="0" width="484" height="62" />
-    <rect x="0" y="184" width="484" height="63" />
-    <rect x="0" y="184" width="63" height="248" />
-    <rect x="196" y="370" width="288" height="62" />
-  </g>
-</svg>

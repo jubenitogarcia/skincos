@@ -4,11 +4,15 @@ Skincos is moving from top-level technical buckets to a domain-first envelope.
 
 ## Canonical module roots
 
-- `website/`
 - `api/`
 - `ads/meta/`
 - `messaging/channels/whatsapp/`
 - `workforce/`, `inventory/`, `finance/`, `booking`, `service/` e `integration/`
+
+O código-fonte e os publicadores do Website vivem exclusivamente em
+`https://github.com/jubenitogarcia/website`. Este monorepo conserva apenas
+contratos e consumidores de APIs públicas; essa fronteira de fonte não declara
+a conclusão de uma migração Cloudflare.
 
 O produto CRM não possui mais uma raiz neste repositório. Seu código, Worker,
 Pages, D1 e ciclo de release vivem exclusivamente em

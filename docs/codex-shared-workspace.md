@@ -39,9 +39,9 @@ Autenticação do GitHub CLI, quando necessária, deve passar pelo gateway WSL:
 ## Ações do Codex App
 
 `.codex/environments/environment.toml` oferece Workspace, Contexto, Codex
-Autônomo, EF App, Orb e a prévia local da Beauty Movement. Os atalhos executam
-somente scripts relativos ao projeto aberto; não há ação de runtime para outro
-produto.
+Autônomo, EF App e Orb. A fonte e as ações de desenvolvimento do Website ficam
+no repositório independente `jubenitogarcia/website`; os atalhos daqui não
+operam seu runtime.
 
 Orb/n8n tem projeto e repositório próprios. Abrir
 `C:\CodexShared\Projetos\orb` para operar workflows, exportações ou dados do

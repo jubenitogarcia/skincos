@@ -13,7 +13,7 @@
       "routes": ["/booking/*"],
       "bindings": ["BOOKING_DB"],
       "stores": ["D1:espacofacial-booking"],
-      "sourceRoots": ["booking", "website"]
+      "sourceRoots": ["booking"]
     },
     {
       "id": "inventory",

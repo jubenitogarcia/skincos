@@ -16,7 +16,6 @@ const actions = [
   ['Codex – Autônomo', 'autonomous', 'run-skincos-codex.ps1'],
   ['EF App', 'ef-app', 'EfAppMenu'],
   ['Orb', 'orb', 'OrbMenu'],
-  ['Cartas da Beleza – Prévia Local', 'beauty-preview', 'start-beauty-movement-local-preview.ps1'],
 ]
 
 test('Codex actions dispatch to separate macOS and Windows implementations', () => {

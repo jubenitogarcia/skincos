@@ -60,7 +60,7 @@ Preferred flow:
 3. Codex pushes and opens a PR.
 4. GitHub checks and security gates run.
 5. Codex uses the smallest gate selected by the changed paths: static/diff checks for docs, one focused test or build for normal code, and a focal journey plus rollback for elevated changes. Full suites, staging drills, deep scans and unrelated modules are not ritual merge gates.
-6. After-merge workflows publish only monorepo-owned Workers/Pages. CRM is deployed from `C:\CodexShared\Projetos\crm` through its own publisher.
+6. After-merge workflows publish only monorepo-owned Workers/Pages. CRM is deployed from `C:\CodexShared\Projetos\crm` through its own publisher. Website source and publishers belong to `jubenitogarcia/website`; this source ownership statement does not attest to a Cloudflare runtime cutover.
 7. Codex verifies the relevant domain health endpoints.
 
 Manual deploys through local Wrangler are allowed when needed, but GitHub Actions are the preferred path because they are auditable and repeatable.
@@ -92,7 +92,7 @@ The token used by GitHub Actions should allow the current deployment surface:
 - Workers KV write
 - Pages write
 - D1 write
-- R2 write if website/session sync needs it
+- R2 access only for Cloudflare resources still owned by this repository; Website publishing scope belongs to its independent repository.
 - Zone read for routed workers and audits
 - Secrets write for workflows that sync Worker/Pages secrets
 

@@ -31,16 +31,6 @@
       ]
     },
     {
-      "workflow": ".github/workflows/beauty-movement-delivery-export.yml",
-      "reason": "Reads the active Beauty Movement campaign from D1 and derives a private delivery artifact; it has no Cloudflare mutation or deploy authority.",
-      "requiredMarkers": [
-        "beauty-movement:export-delivery",
-        "SELECT c.status, c.ends_at_ms",
-        "invite_token_hmac",
-        "Upload private delivery artifact"
-      ]
-    },
-    {
       "workflow": ".github/workflows/ponto-core-staging-candidate.yml",
       "reason": "Consumes only immutable artifacts from canonical Ponto staging publisher runs to assemble a Pages-consumable receipt. It has no Cloudflare credential, GitHub environment, coordination lease, or Cloudflare mutation authority; the same-artifact traffic drill remains inside deploy-core-workers.yml.",
       "requiredMarkers": [
@@ -69,11 +59,6 @@
       "id": "ponto-release-writer",
       "resource": "release:ponto",
       "purpose": "Serializes Ponto release-control, module-control, rollback and emergency Cloudflare mutations under the composite release authority."
-    },
-    {
-      "id": "website-writer",
-      "resource": "release:website",
-      "purpose": "Compatibility writer group for Website Pages/Worker secrets, security configuration and Instagram R2 session state."
     },
     {
       "id": "finance-writer",
@@ -208,23 +193,6 @@
       ]
     },
     {
-      "id": "website-pages-worker-and-r2",
-      "platform": "cloudflare-pages-workers-r2",
-      "canonicalDeployWorkflow": ".github/workflows/deploy-website-cloudflare.yml",
-      "coordinationGroup": "website-writer",
-      "mutationWorkflows": [
-        ".github/workflows/deploy-website-cloudflare.yml",
-        ".github/workflows/sync-website-cloudflare-security.yml",
-        ".github/workflows/website-instagram-sync.yml",
-        ".github/workflows/beauty-movement-staging-smoke.yml",
-        ".github/workflows/beauty-movement-production-activation.yml",
-        ".github/workflows/beauty-movement-short-links-sync.yml",
-        ".github/workflows/beauty-movement-team-invite-links.yml",
-        ".github/workflows/beauty-movement-campaign-copy-update.yml"
-      ],
-      "automaticDeploymentsRequired": false
-    },
-    {
       "id": "finance-worker-and-d1",
       "platform": "cloudflare-worker-d1",
       "canonicalDeployWorkflow": ".github/workflows/deploy-finance.yml",
@@ -285,8 +253,7 @@
       "canonicalDeployWorkflow": ".github/workflows/ponto-pages-staging-synthetic-smoke.yml",
       "coordinationGroup": "staging-d1-writer",
       "mutationWorkflows": [
-        ".github/workflows/ponto-pages-staging-synthetic-smoke.yml",
-        ".github/workflows/beauty-movement-staging-smoke.yml"
+        ".github/workflows/ponto-pages-staging-synthetic-smoke.yml"
       ]
     },
     {

@@ -17,7 +17,6 @@ test("Cloudflare policy is valid and has one explicit writer for each active sur
     ["ponto-pages-dedicated-writer", "deploy:ponto-pages:<environment>"],
     ["ponto-pages-writer", "global:ponto-pages-writer"],
     ["ponto-workers-writer", "global:ponto-workers-writer"],
-    ["website-writer", "release:website"],
     ["social-publisher-writer", "global:social-publisher-writer"],
   ]) {
     assert.equal(policy.coordinationGroups.find((entry) => entry.id === id)?.resource, resource, id);

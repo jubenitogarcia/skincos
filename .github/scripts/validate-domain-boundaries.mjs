@@ -5,7 +5,7 @@ const root = path.resolve(import.meta.dirname, "../..");
 const policyPath = path.join(root, "shared/domain-boundaries.json");
 const governedRoots = new Set([
   "ads", "api", "booking", "clientes-readonly", "crm", "finance", "identity", "integration", "inventory", "messaging",
-  "ops", "orb", "platform", "service", "shared", "social", "website", "workforce",
+  "ops", "orb", "platform", "service", "shared", "social", "workforce",
 ]);
 const sourceExtensions = new Set([".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".py"]);
 const ignoredDirectories = new Set([".git", ".venv", "node_modules", "dist", "build", "coverage", ".next", "vendor"]);
