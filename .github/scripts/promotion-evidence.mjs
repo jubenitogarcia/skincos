@@ -26,9 +26,6 @@ const releaseSurfacesByUnit = {
   // its own inputs plus the canonical promotion and coordination guards.
   "schedule-public-read-adapter": ["schedule-public-read-adapter", "global-coordination", "github-governance"],
   "meta-ads-report": ["runtime"],
-  "public-website-release": ["website"],
-  "beauty-movement-production-activation": ["website"],
-  "beauty-movement-campaign-copy-update": ["website"],
   // Atendimento is promoted as a read-only commercial-catalog release.  Its
   // identity spans the external product contract, API gateway and the
   // main-custodied workflow validators; keeping all three inputs in the

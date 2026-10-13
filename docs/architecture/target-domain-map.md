@@ -19,7 +19,7 @@ the former source path and public route must be removed rather than aliased.
 | `messaging` | inbox and channel adapters | social publishing |
 | `service` | clinical treatment delivery and follow-up | system services or infrastructure |
 | `social` | editorial publishing and publishing integrations | inbox conversations |
-| `website` | public web experience | direct programmatic APIs after cutover |
+| Website (external) | `jubenitogarcia/website` source and publisher | public endpoints remain external contracts; runtime cutover is not asserted |
 | `workforce` | staff schedule and timekeeping | patient appointment availability |
 | `shared` | neutral contracts and SDKs | product-owned implementations |
 | `platform` | Cloudflare governance, security and observability | product domain logic |
@@ -40,8 +40,10 @@ accepted by the semantic owner:
 ## Public and internal boundaries
 
 - All programmatic public routes use `https://api.skincos.com.br/<domain>`.
-- Website and the independent CRM keep their own UI deployments. The monorepo
-  exposes only the API gateway and never publishes a CRM UI or API runtime.
+- Website and the independent CRM keep their own UI deployments. Website source
+  and publishing are outside this monorepo; this ownership boundary does not
+  assert a Cloudflare runtime cutover. The monorepo exposes only the API gateway
+  and never publishes a CRM UI or API runtime.
 - `api/internal/*` has two callers: a CRM-authenticated human action or a
   private service identity used by Workers, the external automation contract
   and integration executors.

@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - "workforce/ponto-pages/**"
-      - "website/**"
       - "booking/**"
       - "backend/**"
       - "package.json"
@@ -15,7 +14,6 @@ on:
     branches: [main]
     paths:
       - "workforce/ponto-pages/**"
-      - "website/**"
       - "booking/**"
       - "backend/**"
       - "package.json"
@@ -29,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.scope.outputs.frontend }}
+      booking: ${{ steps.scope.outputs.booking }}
       python: ${{ steps.scope.outputs.python }}
       workflow: ${{ steps.scope.outputs.workflow }}
     steps:
@@ -56,12 +55,13 @@ jobs:
           changed() {
             if git diff --quiet "$base...$head" -- "$@"; then printf false; else printf true; fi
           }
-          echo "frontend=$(changed workforce/ponto-pages website booking package.json package-lock.json)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$(changed workforce/ponto-pages)" >> "$GITHUB_OUTPUT"
+          echo "booking=$(changed booking)" >> "$GITHUB_OUTPUT"
           echo "python=$(changed backend)" >> "$GITHUB_OUTPUT"
           echo "workflow=$(changed .github/workflows/test-coverage-quality.yml)" >> "$GITHUB_OUTPUT"
 
-  frontend-website-quality:
-    name: Frontend & Website Coverage
+  frontend-quality:
+    name: Ponto Frontend Coverage
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
     runs-on: ubuntu-latest
@@ -75,7 +75,6 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             workforce/ponto-pages/package-lock.json
-            website/package-lock.json
 
       - name: Frontend install
         if: ${{ hashFiles('workforce/ponto-pages/package-lock.json') != '' }}
@@ -91,26 +90,18 @@ jobs:
           cd workforce/ponto-pages
           npm run test
 
-      - name: Website install
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
-        run: |
-          set -euxo pipefail
-          cd website
-          npm ci
-
-      - name: Website tests
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
-        run: |
-          set -euxo pipefail
-          cd website
-          npm run test
-
-      - name: Website typecheck
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
-        run: |
-          set -euxo pipefail
-          cd website
-          npm run typecheck
+  booking-quality:
+    name: Booking contract tests
+    needs: changes
+    if: ${{ needs.changes.outputs.booking == 'true' || needs.changes.outputs.workflow == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+      - name: Run booking contract tests
+        run: npm run booking:test
 
   python-coverage:
     name: Python Coverage

@@ -41,7 +41,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.scope.outputs.frontend }}
-      website: ${{ steps.scope.outputs.website }}
       backend: ${{ steps.scope.outputs.backend }}
       python: ${{ steps.scope.outputs.python }}
       node: ${{ steps.scope.outputs.node }}
@@ -71,15 +70,13 @@ jobs:
           changed() {
             if git diff --quiet "$base...$head" -- "$@"; then printf false; else printf true; fi
           }
-          frontend="$(changed workforce/ponto-pages website package.json package-lock.json)"
-          website="$(changed website booking package.json package-lock.json)"
+          frontend="$(changed workforce/ponto-pages)"
           backend="$(changed backend package.json package-lock.json pnpm-lock.yaml)"
           python="$(changed backend)"
           workflow="$(changed .github/workflows/lint-format-static.yml)"
           node=false
-          if [[ "$frontend" == true || "$website" == true || "$backend" == true || "$workflow" == true ]]; then node=true; fi
+          if [[ "$frontend" == true || "$backend" == true || "$workflow" == true ]]; then node=true; fi
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
-          echo "website=$website" >> "$GITHUB_OUTPUT"
           echo "backend=$backend" >> "$GITHUB_OUTPUT"
           echo "python=$python" >> "$GITHUB_OUTPUT"
           echo "node=$node" >> "$GITHUB_OUTPUT"
@@ -108,7 +105,6 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             workforce/ponto-pages/package-lock.json
-            website/package-lock.json
 
       - name: Frontend install
         if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
@@ -143,27 +139,6 @@ jobs:
         run: |
           set -euxo pipefail
           cd workforce/ponto-pages
-          npm run build
-
-      - name: Website install
-        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.workflow == 'true' }}
-        run: |
-          set -euxo pipefail
-          cd website
-          npm ci
-
-      - name: Website lint
-        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.workflow == 'true' }}
-        run: |
-          set -euxo pipefail
-          cd website
-          npm run lint
-
-      - name: Website build
-        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.workflow == 'true' }}
-        run: |
-          set -euxo pipefail
-          cd website
           npm run build
 
       - name: Setup pnpm (for backend workspace)

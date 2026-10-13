@@ -1,24 +1,23 @@
 # Atalhos locais do Codex no macOS
 
-No macOS, as seis ações em `.codex/environments/environment.toml` chamam
+No macOS, as cinco ações em `.codex/environments/environment.toml` chamam
 `scripts/run-local-codex-shortcut.sh`. O arquivo mantém comandos Windows
 separados por `platform = "darwin"` e `platform = "win32"`. As ações Windows
 continuam usando os gateways PowerShell e WSL já existentes.
 
 | Ação | Comportamento no macOS |
 | --- | --- |
-| Workspace | Diagnostica Git/worktrees, ferramentas nativas, espaço em disco, venv EF, cache da prévia e configuração de hooks, sem criar arquivos ou iniciar serviços. |
+| Workspace | Diagnostica Git/worktrees, ferramentas nativas, espaço em disco, venv EF e configuração de hooks, sem criar arquivos ou iniciar serviços. |
 | Contexto | Imprime o snapshot de contexto do checkout atual. |
 | Codex – Autônomo | Abre `codex --cd <worktree>` com as configurações já escolhidas pelo operador. |
 | EF App | Inicia o menu interativo pelo venv privado selecionado por `shared-workspace.py`. Não faz login ou coleta até a escolha explícita no menu. |
 | Orb | Abre o repositório independente do Orb no GitHub; não cria clone nem opera workflows. |
-| Cartas da Beleza – Prévia Local | Inicia a prévia isolada em `scripts/mac-local-preview.py`. |
 
 Para conferir os contratos sem abrir Codex, navegador, menu EF ou servidor,
 execute:
 
 ```sh
-for action in workspace context autonomous ef-app orb beauty-preview; do
+for action in workspace context autonomous ef-app orb; do
   bash scripts/run-local-codex-shortcut.sh "$action" --dry-run
 done
 ```
@@ -46,23 +45,11 @@ O último comando instala dependências apenas no cache privado indicado por
 `EF_SCRAPER_VENV_DIR`. O Workspace exige pelo menos 5 GiB livres antes de
 reportar o ambiente como preparado.
 
-## Prévia Cartas da Beleza
+## Website independente
 
-O atalho e o [start-website-local.command](../start-website-local.command)
-usam o mesmo runner no macOS. Ele mantém cópia de runtime, `node_modules`,
-cache npm, manifest e logs fora do worktree. Os comandos abaixo são explícitos:
-
-```sh
-python3 scripts/mac-local-preview.py prepare --project-root .
-python3 scripts/mac-local-preview.py start --project-root .
-python3 scripts/mac-local-preview.py status --project-root .
-python3 scripts/mac-local-preview.py stop --project-root .
-```
-
-`prepare` e `start` podem instalar as dependências da prévia no cache privado;
-`status` e `stop` não iniciam uma nova prévia. O diagnóstico Workspace só
-aceita o cache quando o marker versionado, sua chave e `next`, `react` e
-`react-dom` correspondem ao worktree atual.
+A fonte, os testes e o publisher do Website pertencem a
+`jubenitogarcia/website`. Os atalhos deste monorepo não iniciam uma prévia do
+site; essa fronteira de fonte não declara corte do runtime Cloudflare.
 
 ## Hooks privados e credenciais EF
 

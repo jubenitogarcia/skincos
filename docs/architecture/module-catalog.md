@@ -15,8 +15,10 @@ Cada módulo declara obrigatoriamente:
 
 Módulos com `executionBoundary: "external"` são contratos de integração com
 outro repositório e não representam código executável neste monorepo. O CRM é
-o único módulo nessa categoria; sua implementação, publicação e dados vivem
-exclusivamente em `jubenitogarcia/crm`.
+o único módulo catalogado nessa categoria; sua implementação, publicação e
+dados vivem exclusivamente em `jubenitogarcia/crm`. O Website não tem módulo ou
+fonte neste catálogo: seu código e publisher vivem em `jubenitogarcia/website`;
+os contratos públicos que outros produtos consomem permanecem externos.
 
 Uma feature flag ausente é registrada como `not-yet-implemented`. Isso é uma
 lacuna explícita, não uma autorização implícita para publicar uma capacidade:

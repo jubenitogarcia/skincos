@@ -21,7 +21,6 @@
     "service",
     "shared",
     "social",
-    "website",
     "workforce"
   ],
   "authorizedDependencies": [
@@ -49,11 +48,6 @@
     { "from": "service", "to": "integration", "kind": "optional" },
     { "from": "service", "to": "shared", "kind": "hard" },
     { "from": "social", "to": "shared", "kind": "hard" },
-    { "from": "website", "to": "ads", "kind": "optional" },
-    { "from": "website", "to": "api", "kind": "optional" },
-    { "from": "website", "to": "booking", "kind": "optional" },
-    { "from": "website", "to": "shared", "kind": "hard" },
-    { "from": "website", "to": "workforce", "kind": "optional" },
     { "from": "workforce", "to": "shared", "kind": "hard" }
   ],
   "modules": [
@@ -97,13 +91,13 @@
       "dependencies": { "hard": ["shared"], "optional": ["integration", "workforce"] },
       "services": ["Website booking API", "systemd booking.service"],
       "datastores": ["D1:espacofacial-booking"],
-      "routes": ["api.skincos.com.br/booking/*", "website /api/booking/*"],
+      "routes": ["api.skincos.com.br/booking/*", "https://espacofacial.com/api/booking/*"],
       "healthChecks": [{ "name": "booking status", "command": "curl -fsS https://espacofacial.com/api/booking/status" }],
-      "testCommands": ["npm --prefix booking test", "npm --prefix website run test"],
+      "testCommands": ["npm --prefix booking test"],
       "featureFlag": { "key": "not-yet-implemented", "defaultState": "not-applicable", "enforcement": "No module-wide booking flag is present; new booking flows must ship disabled until an approved pilot is enabled." },
       "fallback": "Expose a controlled manual-contact path and preserve the request for operator recovery; never create a duplicate reservation on retry.",
-      "slo": { "availability": "99.9% monthly", "latency": "p95 <= 800 ms for booking status", "measurement": "Website release check and booking status probe" },
-      "rollback": "Promote the previous website/booking artifact and disable the new flow; keep additive D1 schema and reconcile pending requests manually."
+      "slo": { "availability": "99.9% monthly", "latency": "p95 <= 800 ms for booking status", "measurement": "Booking status probe and external Website release evidence" },
+      "rollback": "Roll back the external Website release and booking artifact independently; keep additive D1 schema and reconcile pending requests manually."
     },
     {
       "id": "crm",
@@ -290,22 +284,6 @@
       "fallback": "Retain drafts/review items and require human publication; no automatic retry may publish after an uncertain provider response.",
       "slo": { "availability": "99.0% during approved publish windows", "latency": "queue acknowledgement p95 <= 2 s", "measurement": "Worker health and workflow review evidence" },
       "rollback": "Set SOCIAL_PUBLISHER_ENABLED=false, promote the previous Worker version, and reconcile publication IDs before any retry."
-    },
-    {
-      "id": "website",
-      "maturity": "experimental",
-      "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
-      "dataOwnership": ["Public web content, redirect mappings, consent-safe tracking context and public form input before handoff"],
-      "dependencies": { "hard": ["shared"], "optional": ["ads", "api", "booking", "workforce"] },
-      "services": ["Cloudflare Worker/Pages espacofacial-site", "Cloudflare Worker skincos-site", "Cloudflare Worker esfa-redirects"],
-      "datastores": ["D1:espacofacial-booking for booking/managed redirects", "Cloudflare static assets"],
-      "routes": ["https://espacofacial.com/*", "https://www.espacofacial.com/*", "https://esfa.co/*"],
-      "healthChecks": [{ "name": "public site", "command": "curl -fsS https://espacofacial.com/" }],
-      "testCommands": ["npm --prefix website run lint", "npm --prefix website run typecheck", "npm --prefix website run test", "npm --prefix website run build"],
-      "featureFlag": { "key": "not-yet-implemented", "defaultState": "not-applicable", "enforcement": "No site-wide flag exists; new public flows must be guarded by an explicit disabled-by-default flag or remain unpublished." },
-      "fallback": "Serve the last immutable static/public artifact and preserve a safe manual booking/contact alternative.",
-      "slo": { "availability": "99.9% monthly", "latency": "p95 <= 1 s for cached public pages", "measurement": "Site release check, HTTP probe and redirect validation" },
-      "rollback": "Promote the previous immutable Pages/Worker artifact and restore the prior managed redirect snapshot if routing changed."
     },
     {
       "id": "workforce",

@@ -168,15 +168,12 @@ para exclusão física e mantém a evidência da recomendação.
   - `Atualizar agora`
 - Reload manual continua possível.
 
-## 5) Testes de regressão obrigatórios
-Do root deste repositório:
-```bash
-npm run website:test -- \
-  insumos-no-request-storm.spec.ts \
-  insumos-api-concurrency.spec.ts \
-  insumos-zero-demo-default.spec.ts \
-  insumos-circuit-breaker.spec.ts
-```
+## 5) Critérios de regressão
+
+A interface de Insumos pertence agora ao repositório independente
+`jubenitogarcia/website`. Os cenários abaixo continuam como critérios de
+aceitação; execute-os com os comandos e testes atuais desse repositório, pois
+`npm run website:test` não existe neste monorepo.
 
 Critérios:
 - Nenhum storm em `health/me`.

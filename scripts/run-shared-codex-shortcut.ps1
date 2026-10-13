@@ -4,8 +4,7 @@ param(
         "WorkspaceMenu", "ContextMenu", "LocalMenu", "EfAppMenu", "OrbMenu",
         "SharedSetup", "SharedValidate", "RuntimeSetup", "GitHubAuthLoginWsl",
         "GitHubAuthStatus", "SharedStatus", "CodexContext", "CodexContextOnline",
-        "ThreadBootstrap", "NewWorktree", "WebsiteLocalStart", "WebsiteLocalStop",
-        "WebsiteSiteCheck", "WebsiteReleaseCheck", "PlatformLocalStart",
+        "ThreadBootstrap", "NewWorktree", "PlatformLocalStart",
         "EfAppSetup", "EfAppSelftest", "EfAppCaixa", "EfAppAgendaDelta",
         "EfAppAgendaFullSync", "EfAppBookingApi", "EfAppProcedures",
         "EfAppClientRegistration", "EfAppRecorder", "EfAppRotateAgendaSyncToken"
@@ -34,6 +33,7 @@ $operatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 $tmpRoot = Join-Path $localStateRoot "tmp"
 $logRoot = Join-Path $operatorRuntimeRoot "logs"
 $wslInvoker = Join-Path $scriptRoot "invoke-skincos-wsl.ps1"
+$websiteRepositoryRoot = Join-Path (Split-Path $ProjectRoot -Parent) "website"
 
 function Convert-WindowsPathToWsl {
     param([string]$Path)
@@ -122,11 +122,6 @@ function Read-MenuSelection {
 function Pause-AfterMenuAction { Write-Host ""; [void](Read-Host "Pressione ENTER para voltar ao menu") }
 
 Ensure-LocalState
-$websitePid = Join-Path $tmpRoot "website-local-dev.pid"
-$websiteLog = Join-Path $logRoot "website-local-dev.log"
-$websitePort = Join-Path $tmpRoot "website-local-dev.port"
-$sharedRoot = Split-Path (Split-Path $ProjectRoot -Parent) -Parent
-$websiteSourceRoot = Join-Path $sharedRoot "Worktrees\skincos\shared\website-local-main"
 
 $efAppStateRoot = Join-Path $localStateRoot "espacofacial-app"
 $efAppArtifactRoot = Join-Path $operatorRuntimeRoot "scraper"
@@ -311,14 +306,6 @@ function Invoke-ShortcutActionInternal {
         "CodexContextOnline" { Invoke-ShortcutWsl -ScriptPath "./scripts/codex-context.sh" -ArgumentList @("--online") }
         "ThreadBootstrap" { & (Join-Path $scriptRoot "print-codex-thread-bootstrap.ps1") -Interactive }
         "NewWorktree" { & (Join-Path $scriptRoot "new-shared-worktree.ps1") -Fetch }
-        "WebsiteLocalStart" {
-            $websiteSourceWsl = Convert-WindowsPathToWsl -Path $websiteSourceRoot
-            Invoke-ShortcutWsl -ScriptPath "./scripts/prepare-local-website-source.sh" -ArgumentList @($websiteSourceWsl, "/home/admin/.cache/skincos-local-root")
-            Invoke-ShortcutWsl -ScriptPath "./scripts/run-local-website.sh" -EnvVar @("WEBSITE_SOURCE_ROOT=/home/admin/.cache/skincos-local-root", "WEBSITE_SKIP_WORKERD_CHECK=0", "WEBSITE_STATE_DIR=$(Convert-WindowsPathToWsl -Path $tmpRoot)", "WEBSITE_PID_FILE=$(Convert-WindowsPathToWsl -Path $websitePid)", "WEBSITE_LOG_FILE=$(Convert-WindowsPathToWsl -Path $websiteLog)", "WEBSITE_PORT_FILE=$(Convert-WindowsPathToWsl -Path $websitePort)", "WEBSITE_DETACH=1", "OPEN_BROWSER=0")
-        }
-        "WebsiteLocalStop" { Invoke-ShortcutWsl -ScriptPath "./scripts/run-local-website.sh" -ArgumentList @("--stop") -EnvVar @("WEBSITE_SOURCE_ROOT=/home/admin/.cache/skincos-local-root", "WEBSITE_STATE_DIR=$(Convert-WindowsPathToWsl -Path $tmpRoot)", "WEBSITE_PID_FILE=$(Convert-WindowsPathToWsl -Path $websitePid)", "WEBSITE_PORT_FILE=$(Convert-WindowsPathToWsl -Path $websitePort)") }
-        "WebsiteSiteCheck" { Invoke-ShortcutWsl -NpmScript "codex:site:check" }
-        "WebsiteReleaseCheck" { Invoke-ShortcutWsl -NpmScript "codex:site:release-check" }
         "PlatformLocalStart" { Invoke-ShortcutWsl -ScriptPath "./backend/scripts/dev.sh" -ArgumentList @("watch") -EnvVar @("OPEN_BROWSER=0") }
         "EfAppSetup" { Invoke-ShortcutWsl -ScriptPath "integration/ef/scripts/setup-local-venv.sh" -EnvVar $efAppEnvVars -SkipNodeCheck -SkipNpmCheck }
         "EfAppSelftest" { Invoke-ShortcutWsl -ScriptPath "integration/ef/scripts/run-local-python.sh" -ArgumentList @("selftest.py") -EnvVar ($efAppEnvVars + @("HEADLESS=1")) -SkipNodeCheck -SkipNpmCheck }
@@ -329,7 +316,7 @@ function Invoke-ShortcutActionInternal {
         "EfAppProcedures" { Invoke-EfAppPythonMode -Mode "procedures" }
         "EfAppClientRegistration" { Invoke-EfAppPythonMode -Mode "client_registration" }
         "EfAppRecorder" { Invoke-EfAppPythonMode -Mode "recorder" -Headed }
-        "EfAppRotateAgendaSyncToken" { Invoke-ShortcutWsl -ScriptPath "integration/ef/scripts/rotate_agenda_sync_token.sh" -ArgumentList @("--website-dir", "website") -EnvVar $efAppEnvVars -SkipNodeCheck -SkipNpmCheck }
+        "EfAppRotateAgendaSyncToken" { Invoke-ShortcutWsl -ScriptPath "integration/ef/scripts/rotate_agenda_sync_token.sh" -ArgumentList @("--website-dir", (Convert-WindowsPathToWsl -Path $websiteRepositoryRoot)) -EnvVar $efAppEnvVars -SkipNodeCheck -SkipNpmCheck }
         "OrbMenu" { Write-Host "O Orb possui projeto independente em C:\CodexShared\Projetos\orb. Abra esse projeto para operar os workflows." }
         "WorkspaceMenu" { Show-WorkspaceMenu }
         "ContextMenu" { Show-ContextMenu }
@@ -371,26 +358,12 @@ function Show-ContextMenu {
     }
 }
 
-function Show-WebsiteMenu {
-    while ($true) {
-        $selection = Read-MenuSelection -Title "Local > Website" -Options @(
-            (New-MenuOption -Label "Start" -Action "WebsiteLocalStart"),
-            (New-MenuOption -Label "Stop" -Action "WebsiteLocalStop"),
-            (New-MenuOption -Label "Site Check" -Action "WebsiteSiteCheck"),
-            (New-MenuOption -Label "Release Check" -Action "WebsiteReleaseCheck")
-        )
-        if ($null -eq $selection) { return }; Invoke-MenuAction -SelectedAction $selection.Action
-    }
-}
-
 function Show-LocalMenu {
     while ($true) {
         $selection = Read-MenuSelection -Title "Local" -Options @(
-            (New-MenuOption -Label "Website" -Action "ShowWebsiteMenu"),
             (New-MenuOption -Label "Platform Local" -Action "PlatformLocalStart")
         )
-        if ($null -eq $selection) { return }
-        if ($selection.Action -eq "ShowWebsiteMenu") { Show-WebsiteMenu } else { Invoke-MenuAction -SelectedAction $selection.Action }
+        if ($null -eq $selection) { return }; Invoke-MenuAction -SelectedAction $selection.Action
     }
 }
 

@@ -139,8 +139,8 @@
       "patterns": ["clientes-readonly/**"],
       "sharedInputs": true
     },
-    "website": {
-      "patterns": ["website/**", "booking/**", ".github/workflows/deploy-website-cloudflare.yml", ".github/workflows/website-instagram-sync.yml", ".github/workflows/sync-website-cloudflare-security.yml"],
+    "booking": {
+      "patterns": ["booking/**", ".github/workflows/booking-executor-contract.yml"],
       "sharedInputs": true
     },
     "escala-api": {

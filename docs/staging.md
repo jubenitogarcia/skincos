@@ -14,7 +14,9 @@ desenvolvimento e não autoriza deploy por si só.
 
 ## Superfícies
 
-- Website: Pages/Worker do Website, publicado por `deploy-website-cloudflare.yml`.
+- Website: fonte e publisher pertencem ao repositório independente
+  `jubenitogarcia/website`; este documento não declara corte do runtime
+  Cloudflare.
 - API e gateway: Workers do domínio API, com `/crm/*` encaminhando para o
   serviço externo; nenhum código do CRM é montado neste repositório.
 - Ponto: Workers e Pages dedicados, publicados pelos workflows `ponto-*`.

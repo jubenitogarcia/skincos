@@ -16,11 +16,11 @@
       }
     },
     {
-      "name": "localized website typescript",
-      "files": ["website\\src\\components\\Header.tsx"],
+      "name": "localized booking typescript",
+      "files": ["booking\\src\\components\\Header.tsx"],
       "expect": {
         "risk": "medium",
-        "surfaces": ["website"],
+        "surfaces": ["booking"],
         "languages": ["typescript"],
         "dependencies_changed": false,
         "shared_contracts_changed": false,
@@ -55,20 +55,20 @@
       "files": [
         {
           "status": "C100",
-          "oldPath": "website/src/package.json",
+          "oldPath": "booking/src/package.json",
           "newPath": "shared/identity-contract/package.json"
         }
       ],
       "expect": {
         "risk": "high",
-        "surfaces": ["shared-contracts", "website"],
+        "surfaces": ["shared-contracts", "booking"],
         "languages": ["json"],
         "dependencies_changed": true,
         "shared_contracts_changed": true,
         "production_sensitive": true,
         "security_sensitive": false,
         "status": "classified",
-        "classified_files": ["shared/identity-contract/package.json", "website/src/package.json"]
+        "classified_files": ["shared/identity-contract/package.json", "booking/src/package.json"]
       }
     },
     {
@@ -87,10 +87,10 @@
     },
     {
       "name": "known surface with unknown language",
-      "files": ["website/assets/logo.bin"],
+      "files": ["booking/assets/logo.bin"],
       "expect": {
         "risk": "medium",
-        "surfaces": ["website"],
+        "surfaces": ["booking"],
         "languages": ["unknown"],
         "dependencies_changed": false,
         "shared_contracts_changed": false,

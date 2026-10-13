@@ -55,7 +55,7 @@ fi
 
 section "Source Of Truth"
 cat <<'EOF'
-site_public=website/ (espacofacial.com, booking, tracking, WhatsApp, CAPI)
+site_public=external source jubenitogarcia/website (espacofacial.com public API contracts, booking, tracking, WhatsApp, CAPI)
 crm=external repository C:\\CodexShared\\Projetos\\crm (crm.skincos.com.br); monorepo has gateway contracts only
 automations=independent Orb repository (https://github.com/jubenitogarcia/orb; orb.skincos.com.br)
 meta_ads=ads/meta/ (dedicated Meta Ads workers and contracts)
@@ -69,7 +69,7 @@ Browser: local/prod UI QA, screenshots, interaction checks
 Build Web Apps: React/frontend refactors, dashboard UX, Playwright flows
 Cloudflare: Workers, Pages, D1, routes, deploy verification
 GitHub: PRs, checks, automerge, workflow/deploy evidence
-Sites: prototypes/demos only; production site stays in website/ unless explicitly migrated
+Sites: prototypes/demos only; Website source and publishers belong exclusively to jubenitogarcia/website; this does not attest to Cloudflare runtime cutover
 Security: auth/session/tracking/secrets threat review
 EOF
 
@@ -77,8 +77,7 @@ section "Fast Commands"
 cat <<'EOF'
 context=npm run codex:context
 preflight=npm run codex:preflight
-site_check=npm run codex:site:check
-site_release_check=npm run codex:site:release-check
+website_source=independent repository jubenitogarcia/website; no Website source or publisher remains here
 meta_ads_smoke=npm run influencer-intelligence:test
 api_tests=npm run api:test
 crm_local=use the independent project at C:\\CodexShared\\Projetos\\crm

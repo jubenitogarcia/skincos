@@ -14,7 +14,6 @@ flowchart LR
   module_service["service\nexperimental"]
   module_shared["shared\nexperimental"]
   module_social["social\nexperimental"]
-  module_website["website\nexperimental"]
   module_workforce["workforce\nexperimental"]
   module_ads -->|hard| module_shared
   module_api -->|hard| module_shared
@@ -40,9 +39,4 @@ flowchart LR
   module_service -. optional .-> module_booking
   module_service -. optional .-> module_integration
   module_social -->|hard| module_shared
-  module_website -->|hard| module_shared
-  module_website -. optional .-> module_ads
-  module_website -. optional .-> module_api
-  module_website -. optional .-> module_booking
-  module_website -. optional .-> module_workforce
   module_workforce -->|hard| module_shared

@@ -185,45 +185,6 @@
       "promotion": {"stagingSupported": true}
     },
     {
-      "id": "public-website-release",
-      "workflow": ".github/workflows/deploy-website-cloudflare.yml",
-      "concurrencyPrefix": "deploy-website-",
-      "publishes": ["Worker:espacofacial", "Worker:skincos-legal-hub", "Worker:esfa-redirector"],
-      "resources": ["Espaco Facial Worker", "SKINCOS legal hub Worker", "esfa redirect Worker", "espacofacial-booking D1"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_SECURITY_API_TOKEN"],
-      "migrationPaths": ["website/migrations"],
-      "environments": ["preview", "staging", "production"],
-      "promotion": {"stagingSupported": false, "blocker": "Dedicated Website, booking D1, legal hub and redirect routes are not provisioned for staging."}
-    },
-    {
-      "id": "beauty-movement-authenticated-staging-smoke",
-      "workflow": ".github/workflows/beauty-movement-staging-smoke.yml",
-      "concurrencyPrefix": "beauty-movement-staging-smoke",
-      "publishes": ["Worker:espacofacial-site-staging"],
-      "resources": ["Beauty Movement staging Worker", "espacofacial-beauty-movement-staging D1", "synthetic staging smoke fixture"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BEAUTY_MOVEMENT_TOKEN_HMAC_KEY", "BEAUTY_MOVEMENT_PII_KEY"],
-      "migrationPaths": ["website/migrations"],
-      "environments": ["staging"],
-      "promotion": {
-        "stagingSupported": true,
-        "publisherType": "authenticated-staging-smoke",
-        "smokeOnly": true,
-        "featureFlagDefault": "disabled",
-        "incumbentRestoreRequired": true
-      }
-    },
-    {
-      "id": "beauty-movement-production-activation",
-      "workflow": ".github/workflows/beauty-movement-production-activation.yml",
-      "concurrencyPrefix": "beauty-movement-production-activation",
-      "publishes": ["Worker:espacofacial-site-beauty-movement-activation"],
-      "resources": ["Beauty Movement production Worker flag and D1 activation", "espacofacial-beauty-movement production D1"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BEAUTY_MOVEMENT_TOKEN_HMAC_KEY", "BEAUTY_MOVEMENT_PII_KEY", "BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV", "BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON"],
-      "migrationPaths": ["website/migrations/beauty-movement"],
-      "environments": ["production"],
-      "promotion": {"stagingSupported": true}
-    },
-    {
       "id": "global-coordination-plane",
       "workflow": ".github/workflows/deploy-global-coordinator.yml",
       "concurrencyPrefix": "global-coordinator-writer-",
@@ -253,7 +214,7 @@
   "nonPublishingSurfaces": [
     {
       "id": "cloudflare-configuration-synchronizers",
-      "workflows": ["cloudflare-pages-sync-escala.yml", "cloudflare-sync-integrations-encryption-secret.yml", "cloudflare-workers-sync-ponto-secrets.yml", "sync-website-cloudflare-security.yml", "website-instagram-sync.yml"],
+      "workflows": ["cloudflare-pages-sync-escala.yml", "cloudflare-sync-integrations-encryption-secret.yml", "cloudflare-workers-sync-ponto-secrets.yml", ],
       "scope": "Secrets, bindings or configuration only; a source deploy command is prohibited by CI topology validation."
     },
     {

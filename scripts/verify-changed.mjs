@@ -179,9 +179,6 @@ function buildVerificationPlan({ changes, diffSpecs, report, full = false }) {
   const pontoPagesCode = files.filter((file) =>
     file.startsWith("workforce/ponto-pages/") && [".js", ".jsx", ".ts", ".tsx"].includes(fileExtension(file))
   );
-  const websiteCode = files.filter((file) =>
-    file.startsWith("website/") && [".js", ".jsx", ".ts", ".tsx"].includes(fileExtension(file))
-  );
   const apiChanged = files.some((file) => file.startsWith("api/"));
   const catalogChanged = files.some((file) => file.startsWith("integration/atendimento/commercial-catalog/"));
   const pythonChanged = files.some((file) => fileExtension(file) === ".py");
@@ -193,11 +190,6 @@ function buildVerificationPlan({ changes, diffSpecs, report, full = false }) {
     if (pontoPagesCode.length) {
       plan.push(command("Ponto Pages typecheck", "npm", ["--prefix", "workforce/ponto-pages", "run", "typecheck"]));
       plan.push(command("Ponto Pages tests", "npm", ["--prefix", "workforce/ponto-pages", "run", "test"]));
-    }
-    if (websiteCode.length) {
-      plan.push(command("website lint", "npm", ["--prefix", "website", "run", "lint"]));
-      plan.push(command("website affected tests", "npm", ["--prefix", "website", "run", "test"]));
-      plan.push(command("website typecheck", "npm", ["--prefix", "website", "run", "typecheck"]));
     }
     if (apiChanged) plan.push(command("API tests", "npm", ["--prefix", "api", "test"]));
     if (catalogChanged) plan.push(command("Atendimento catalog tests", "npm", ["--prefix", "integration/atendimento/commercial-catalog", "test"]));
@@ -216,10 +208,10 @@ function buildVerificationPlan({ changes, diffSpecs, report, full = false }) {
       plan.push(command("Codex Python hook tests", "python3", ["-B", "-m", "unittest", "discover", "-s", ".codex/hooks/tests", "-p", "test_*.py"]));
     }
     const changedTests = presentFiles.filter(isTestFile);
-    if (changedTests.length && !pontoPagesCode.length && !websiteCode.length && !apiChanged && !catalogChanged) {
+    if (changedTests.length && !pontoPagesCode.length && !apiChanged && !catalogChanged) {
       plan.push(command("changed Node tests", process.execPath, ["--test", ...changedTests]));
     }
-    if (!pontoPagesCode.length && !websiteCode.length && !apiChanged && !catalogChanged && !pythonChanged && !changedTests.length) {
+    if (!pontoPagesCode.length && !apiChanged && !catalogChanged && !pythonChanged && !changedTests.length) {
       plan.push(command("policy/classifier contract", "npm", ["run", "codex:autonomy:test"]));
     }
   } else if (report.risk === "low") {
@@ -229,10 +221,6 @@ function buildVerificationPlan({ changes, diffSpecs, report, full = false }) {
       if (tests.length) {
         plan.push(command("Ponto Pages affected tests", "npm", ["--prefix", "workforce/ponto-pages", "exec", "--", "vitest", "run", ...tests.map((file) => file.slice("workforce/ponto-pages/".length))]));
       }
-    }
-    if (websiteCode.length) {
-      const paths = websiteCode.map((file) => file.slice("website/".length));
-      plan.push(command("website focal lint", "npm", ["--prefix", "website", "exec", "--", "eslint", ...paths]));
     }
   }
 

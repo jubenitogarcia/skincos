@@ -86,10 +86,6 @@ sdist/
 # Cloudflare Workers source (keep committed even though "lib/" is ignored globally)
 !inventory/src/lib/
 !inventory/src/lib/**
-!website/src/lib/
-!website/src/lib/**
-!website/src/lib/
-!website/src/lib/**
 # Local runtime state (do not commit)
 backend/var/
 # Legacy/compat (avoid using; prefer backend/var/)
