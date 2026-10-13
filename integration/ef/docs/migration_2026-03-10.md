@@ -6,14 +6,20 @@
 - Inclui:
   - runner (`run_scraper.py`)
   - modulo `espacofacial/*`
-  - scripts utilitarios (`run_agenda_delta_all_units.sh`, `scripts/rotate_agenda_sync_token.sh`)
+  - script utilitario `run_agenda_delta_all_units.sh`
   - docs, `.env.example`, testes e artefatos locais do modulo
 
 ## Ajustes aplicados apos copia
-- `scripts/rotate_agenda_sync_token.sh`
-  - default de website atualizado para `~/Automation/skincos/website`
 - `.codex/environments/environment.toml` (dentro do modulo scraper)
   - caminhos absolutos atualizados para o novo local em `skincos`
+
+## Rotacao do token de sync
+
+O rotador local de `AGENDA_SYNC_TOKEN` foi removido. A rotação e a atualização
+do Worker devem ser coordenadas pelo publisher independente Website/Booking em
+`jubenitogarcia/website`. Este registro histórico não atesta a configuração ou
+a execução de uma rotação; o executor EF continua consumindo
+`EF_AGENDA_SYNC_TOKEN`.
 
 ## Automations do Codex App
 - Snapshot versionado no modulo:
