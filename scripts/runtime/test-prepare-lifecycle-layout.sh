@@ -8,7 +8,9 @@ bash -n "$SCRIPT"
 output="$(STATE_ROOT=/tmp/skincos-state CONFIG_ROOT=/tmp/skincos-config LOG_ROOT=/tmp/skincos-log TMP_ROOT=/tmp/skincos-tmp BACKUP_ROOT=/tmp/skincos-backup bash "$SCRIPT")"
 grep -F '/tmp/skincos-state/orb' <<<"$output" >/dev/null
 grep -F '/tmp/skincos-state/orb/ccg-executor' <<<"$output" >/dev/null
-grep -F '/tmp/skincos-state/artifacts/booking' <<<"$output" >/dev/null
+grep -F '/tmp/skincos-state/messaging-whatsapp/instances' <<<"$output" >/dev/null
+grep -F '/tmp/skincos-state/cache/npm' <<<"$output" >/dev/null
+! grep -F '/tmp/skincos-state/artifacts/booking' <<<"$output" >/dev/null
 grep -F '/tmp/skincos-state/artifacts/orb/ccg-executor' <<<"$output" >/dev/null
 grep -F '/tmp/skincos-backup/orb/daily' <<<"$output" >/dev/null
 ! grep -F '/mnt/' <<<"$output" >/dev/null

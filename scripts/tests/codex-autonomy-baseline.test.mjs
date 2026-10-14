@@ -15,11 +15,11 @@ test("documentation changes require only low-risk checks", () => {
   assert.deepEqual(report.affectedSurfaces, ["documentation"]);
 });
 
-test("a localized booking correction does not require unrelated domain tests", () => {
-  const report = classifyFiles(policy, ["booking/src/components/Header.tsx"]);
+test("a localized unclassified source correction does not require unrelated domain tests", () => {
+  const report = classifyFiles(policy, ["frontend/components/Header.tsx"]);
   assert.equal(report.risk, "medium");
   assert.ok(report.skippedChecks.includes("unrelated-module-test"));
-  assert.deepEqual(report.affectedSurfaces, ["booking"]);
+  assert.deepEqual(report.affectedSurfaces, ["unclassified"]);
 });
 
 test("ordinary auth and migration paths are elevated, not exceptional by default", () => {
@@ -62,11 +62,11 @@ test("release input digest ignores unrelated documentation but invalidates relev
     surfaces: ["timekeeping"],
     policyPaths: ["ops/codex/risk-policy.json"],
     artifacts: [{ name: "worker", digest: "worker-a" }],
-    inputs: [{ path: "workforce/timekeeping/index.ts", blob: "1".repeat(40) }]
+    inputs: [{ path: "frontend/index.ts", blob: "1".repeat(40) }]
   };
   const original = buildReleaseManifest(base);
   const documentationOnly = buildReleaseManifest({ ...base, sourceCommit: "d".repeat(40), sourceTree: "e".repeat(40), inputs: [...base.inputs] });
-  const relevantChange = buildReleaseManifest({ ...base, inputs: [{ path: "workforce/timekeeping/index.ts", blob: "2".repeat(40) }] });
+  const relevantChange = buildReleaseManifest({ ...base, inputs: [{ path: "frontend/index.ts", blob: "2".repeat(40) }] });
   assert.equal(documentationOnly.releaseInputDigest, original.releaseInputDigest);
   assert.equal(documentationOnly.dependencyClosureDigest, original.dependencyClosureDigest);
   assert.notEqual(documentationOnly.releaseIdentityDigest, original.releaseIdentityDigest);
@@ -75,8 +75,8 @@ test("release input digest ignores unrelated documentation but invalidates relev
 
 test("green evidence is reused only for matching release and artifact digests", () => {
   const manifest = buildReleaseManifest({
-    sourceCommit: "a".repeat(40), sourceTree: "b".repeat(40), surfaces: ["booking"], policyPaths: [],
-    inputs: [{ path: "booking/src/index.ts", blob: "c".repeat(40) }], artifacts: [{ name: "pages", digest: "digest-a" }]
+    sourceCommit: "a".repeat(40), sourceTree: "b".repeat(40), surfaces: ["unclassified"], policyPaths: [],
+    inputs: [{ path: "frontend/index.ts", blob: "c".repeat(40) }], artifacts: [{ name: "pages", digest: "digest-a" }]
   });
   const matching = { status: "green", releaseInputDigest: manifest.releaseInputDigest, artifacts: [{ name: "pages", digest: "digest-a" }] };
   const drifted = { status: "green", releaseInputDigest: manifest.releaseInputDigest, artifacts: [{ name: "pages", digest: "digest-b" }] };
@@ -88,12 +88,12 @@ test("build-once manifests preserve exact platform identities and reject version
   const base = {
     sourceCommit: "a".repeat(40),
     sourceTree: "b".repeat(40),
-    surfaces: ["booking"],
+    surfaces: ["unclassified"],
     policyPaths: [],
-    inputs: [{ path: "booking/src/index.ts", blob: "c".repeat(40) }],
-    module: "booking",
-    releaseRef: "refs/tags/skincos/release/booking/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    releaseTag: "skincos/release/booking/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    inputs: [{ path: "frontend/index.ts", blob: "c".repeat(40) }],
+    module: "frontend",
+    releaseRef: "refs/tags/skincos/release/frontend/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    releaseTag: "skincos/release/frontend/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     workflowRunId: "12345",
     rollbackIncumbents: ["worker-version-incumbent"],
     artifacts: [{

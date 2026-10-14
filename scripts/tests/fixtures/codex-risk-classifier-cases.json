@@ -16,11 +16,11 @@
       }
     },
     {
-      "name": "localized booking typescript",
-      "files": ["booking\\src\\components\\Header.tsx"],
+      "name": "localized timekeeping typescript",
+      "files": ["workforce\\timekeeping\\components\\Header.tsx"],
       "expect": {
         "risk": "medium",
-        "surfaces": ["booking"],
+        "surfaces": ["timekeeping"],
         "languages": ["typescript"],
         "dependencies_changed": false,
         "shared_contracts_changed": false,
@@ -55,20 +55,20 @@
       "files": [
         {
           "status": "C100",
-          "oldPath": "booking/src/package.json",
+          "oldPath": "api/package.json",
           "newPath": "shared/identity-contract/package.json"
         }
       ],
       "expect": {
         "risk": "high",
-        "surfaces": ["shared-contracts", "booking"],
+        "surfaces": ["shared-contracts", "timekeeping"],
         "languages": ["json"],
         "dependencies_changed": true,
         "shared_contracts_changed": true,
         "production_sensitive": true,
         "security_sensitive": false,
         "status": "classified",
-        "classified_files": ["shared/identity-contract/package.json", "booking/src/package.json"]
+        "classified_files": ["shared/identity-contract/package.json", "api/package.json"]
       }
     },
     {
@@ -87,10 +87,10 @@
     },
     {
       "name": "known surface with unknown language",
-      "files": ["booking/assets/logo.bin"],
+      "files": ["api/assets/logo.bin"],
       "expect": {
         "risk": "medium",
-        "surfaces": ["booking"],
+        "surfaces": ["timekeeping"],
         "languages": ["unknown"],
         "dependencies_changed": false,
         "shared_contracts_changed": false,

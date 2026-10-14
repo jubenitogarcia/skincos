@@ -36,17 +36,11 @@ done
 directories=(
   "$STATE_ROOT/messaging-whatsapp/instances"
   "$STATE_ROOT/messaging-whatsapp/store"
-  "$STATE_ROOT/booking"
-  "$STATE_ROOT/artifacts/booking/report"
-  "$STATE_ROOT/artifacts/booking/debug"
   "$STATE_ROOT/cache/npm"
   "$CONFIG_ROOT/cloudflare/runtime"
   "$LOG_ROOT/messaging-whatsapp"
-  "$LOG_ROOT/booking"
   "$LOG_ROOT/cloudflare-runtime"
   "$TMP_ROOT/messaging-whatsapp"
-  "$TMP_ROOT/booking"
-  "$ARTIFACT_ROOT/booking"
 )
 
 printf 'Native lifecycle directories:\n'

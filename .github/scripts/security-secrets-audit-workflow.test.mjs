@@ -57,8 +57,8 @@ test("low-risk documentation does not activate dependency or SAST scans", () => 
 });
 
 test("medium changes scope Semgrep to changed source and do not activate unrelated dependency audits", () => {
-  const report = reportFor(["booking/src/components/Button.tsx"]);
-  const scope = scopeFor(["booking/src/components/Button.tsx"], { riskReport: report });
+  const report = reportFor(["frontend/components/Button.tsx"]);
+  const scope = scopeFor(["frontend/components/Button.tsx"], { riskReport: report });
   assert.equal(report.risk, "medium");
   assert.equal(scope.fullScan, false);
   assert.equal(scope.semgrep, true);
@@ -69,7 +69,7 @@ test("medium changes scope Semgrep to changed source and do not activate unrelat
 });
 
 test("lockfiles and Python manifests activate only their relevant dependency gates", () => {
-  const jsScope = scopeFor(["booking/package-lock.json"], {
+  const jsScope = scopeFor(["api/package-lock.json"], {
     riskReport: { ...reportFor([]), risk: "medium", security_sensitive: false },
   });
   assert.equal(jsScope.npmAudit, true);
@@ -109,7 +109,7 @@ test("high and critical classifications remain full and blocking-capable", () =>
 
 test("auth, secrets, tracking, workflow, and migration paths force broad security coverage", () => {
   for (const { file, securitySensitive } of [
-    { file: "booking/src/lib/tracking.ts", securitySensitive: false },
+    { file: "api/src/lib/tracking.ts", securitySensitive: false },
     { file: "shared/identity-auth/worker.js", securitySensitive: true },
     { file: "platform/security/token-vault/secret-contract.md", securitySensitive: true },
     { file: ".github/workflows/example.yml", securitySensitive: true },

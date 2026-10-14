@@ -22,8 +22,12 @@ desenvolvimento e não autoriza deploy por si só.
 - Ponto: Workers e Pages dedicados, publicados pelos workflows `ponto-*`.
 - Atendimento: catálogo comercial read-only em
   `integration/atendimento/commercial-catalog`, sem escrita ou dados copiados.
-- Escala, Financeiro, Inventário, Social, Mensageria e Booking: cada domínio
-  conserva seu próprio artefato, banco, segredos e rollback.
+- Escala, Financeiro, Inventário, Social e Mensageria conservam seus próprios
+  artefatos, bancos, segredos e rollbacks.
+- Website/Booking: fonte e publisher pertencem a `jubenitogarcia/website`;
+  esta declaração não afirma migração do runtime Cloudflare ou dos dados D1.
+- O executor EF de Booking continua sob `integration/ef`, separado da fonte
+  Website/Booking.
 
 IDs de recursos, URLs privadas, dados, tokens e recibos ficam fora do Git.
 Ausência de binding, segredo ou evidência falha fechada e não produz deploy

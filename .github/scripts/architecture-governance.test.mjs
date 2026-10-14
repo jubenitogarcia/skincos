@@ -21,8 +21,8 @@ function report(files, risk = "medium", affectedSurfaces = []) {
   };
 }
 
-test("isolated booking changes keep minimum boundaries and skip unrelated domain suites", () => {
-  const plan = buildArchitectureGovernancePlan(report(["booking/src/routes.ts"], "medium", ["timekeeping"]));
+test("isolated API changes keep minimum boundaries and skip unrelated domain suites", () => {
+  const plan = buildArchitectureGovernancePlan(report(["api/src/routes.ts"], "medium", ["timekeeping"]));
 
   assert.deepEqual(plan.jobs, ["minimum"]);
   assert.equal(plan.globalClosure, false);
@@ -59,7 +59,7 @@ test("unknown paths fail closed into global closure and every domain gate", () =
 
 test("high and critical classifier outcomes force the complete matrix", () => {
   for (const risk of ["high", "critical"]) {
-    const plan = buildArchitectureGovernancePlan(report(["booking/src/routes.ts"], risk));
+    const plan = buildArchitectureGovernancePlan(report(["api/src/routes.ts"], risk));
     assert.equal(plan.full, true);
     assert.deepEqual(plan.jobs, ["minimum", "global", "ponto", "influencer", "cloudflare", "staging", "finance"]);
   }

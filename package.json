@@ -18,7 +18,6 @@
     "workflow:yaml:test": "node --test scripts/tests/workflow-yaml-syntax.test.mjs",
     "domain-boundaries:validate": "node ./.github/scripts/validate-domain-boundaries.mjs",
     "api:test": "npm --prefix api test",
-    "booking:test": "npm --prefix booking test",
     "runtime:lifecycle:prepare": "bash ./scripts/runtime/prepare-lifecycle-layout.sh",
     "finance:migrate:staging": "bash ./finance/scripts/apply-d1-migrations.sh --remote --env staging --adopt-existing-schema",
     "codex:shared:setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup-shared-codex-workspace.ps1",

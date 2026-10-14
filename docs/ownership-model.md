@@ -4,13 +4,14 @@
 
 - O produto CRM é externo e independente: `jubenitogarcia/crm` é dono do
   console, Core API, Worker/Pages, D1, identidade de entrega e rollback.
-- O código-fonte e os publicadores do Website pertencem exclusivamente a
-  `jubenitogarcia/website`. O monorepo `jubenitogarcia/skincos` não contém sua
-  implementação nem pode publicar suas superfícies; mantém contratos e
-  consumidores de APIs públicas usados por outros produtos.
+- A fonte e os publicadores do Website, incluindo Booking, pertencem
+  exclusivamente a `jubenitogarcia/website`. O monorepo
+  `jubenitogarcia/skincos` não contém essa implementação nem pode publicar
+  essas superfícies; mantém contratos e consumidores de APIs públicas usados
+  por outros produtos. Essa fronteira de fonte não declara migração do runtime
+  Cloudflare ou dos dados.
 - O monorepo `jubenitogarcia/skincos` mantém os domínios `api`, `finance`,
-  `inventory`, `workforce`, `messaging`, `booking`, `ads`, `social` e
-  `integration`.
+  `inventory`, `workforce`, `messaging`, `ads`, `social` e `integration`.
 - Dependências entre repositórios são contratos versionados e rotas
   explicitamente allowlisted. Imports locais e compartilhamento de banco,
   cookies ou segredos são proibidos. O registro de ownership do Website não

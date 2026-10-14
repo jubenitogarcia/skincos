@@ -170,7 +170,10 @@ for (const moduleId of requiredIds) {
 }
 const targetDomainMap = fs.readFileSync(path.join(root, "docs/architecture/target-domain-map.md"), "utf8");
 for (const moduleId of governedModuleIds) {
-  if (!targetDomainMap.includes(`| \`${moduleId}\` |`)) fail(`target domain map does not define governed module ${moduleId}`);
+  const row = moduleId === "booking"
+    ? "| `booking` (external) |"
+    : `| \`${moduleId}\` |`;
+  if (!targetDomainMap.includes(row)) fail(`target domain map does not define governed module ${moduleId}`);
 }
 for (const moduleId of requiredIds) {
   if (!modulesById.has(moduleId)) fail(`required module ${moduleId} is missing`);

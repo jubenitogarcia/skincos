@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - "workforce/ponto-pages/**"
-      - "booking/**"
       - "backend/**"
       - "package.json"
       - "package-lock.json"
@@ -14,7 +13,6 @@ on:
     branches: [main]
     paths:
       - "workforce/ponto-pages/**"
-      - "booking/**"
       - "backend/**"
       - "package.json"
       - "package-lock.json"
@@ -27,7 +25,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.scope.outputs.frontend }}
-      booking: ${{ steps.scope.outputs.booking }}
       python: ${{ steps.scope.outputs.python }}
       workflow: ${{ steps.scope.outputs.workflow }}
     steps:
@@ -56,7 +53,6 @@ jobs:
             if git diff --quiet "$base...$head" -- "$@"; then printf false; else printf true; fi
           }
           echo "frontend=$(changed workforce/ponto-pages)" >> "$GITHUB_OUTPUT"
-          echo "booking=$(changed booking)" >> "$GITHUB_OUTPUT"
           echo "python=$(changed backend)" >> "$GITHUB_OUTPUT"
           echo "workflow=$(changed .github/workflows/test-coverage-quality.yml)" >> "$GITHUB_OUTPUT"
 
@@ -89,19 +85,6 @@ jobs:
           set -euxo pipefail
           cd workforce/ponto-pages
           npm run test
-
-  booking-quality:
-    name: Booking contract tests
-    needs: changes
-    if: ${{ needs.changes.outputs.booking == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "22.12.0"
-      - name: Run booking contract tests
-        run: npm run booking:test
 
   python-coverage:
     name: Python Coverage

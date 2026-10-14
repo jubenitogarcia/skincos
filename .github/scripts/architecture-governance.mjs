@@ -134,7 +134,6 @@ const KNOWN_SCOPE_PATTERNS = Object.freeze([
   "social/**",
   "platform/**",
   "api/**",
-  "booking/**",
   "ads/**",
   "backend/**",
   "db/**",

@@ -37,7 +37,6 @@ jobs:
     name: Classify CI smoke surface
     runs-on: ubuntu-latest
     outputs:
-      booking: ${{ steps.scope.outputs.booking }}
       whatsapp: ${{ steps.scope.outputs.whatsapp }}
       codex: ${{ steps.scope.outputs.codex }}
       observability: ${{ steps.scope.outputs.observability }}
@@ -71,7 +70,6 @@ jobs:
           changed() {
             if git diff --quiet "$base...$head" -- "$@"; then printf false; else printf true; fi
           }
-          booking="$(changed booking package.json package-lock.json)"
           whatsapp="$(changed messaging/channels/whatsapp/engine)"
           codex="$(changed .codex skills ops/codex scripts/codex-*.mjs scripts/codex-*.sh scripts/*codex*.ps1)"
           observability="$(changed scripts/observability)"
@@ -80,8 +78,7 @@ jobs:
           storage_governance="$(changed ops/codex/storage-retention-policy.json scripts/skincos-storage-governance.ps1 scripts/dedupe-source-tars.ps1 scripts/tests/test-skincos-storage-governance.ps1)"
           all="$(changed .github/workflows/ci-smoke.yml)"
           node=false
-          if [[ "$booking" == true || "$whatsapp" == true || "$observability" == true || "$clientes_runtime_contract" == true || "$clientes_readonly_boundary" == true || "$all" == true ]]; then node=true; fi
-          echo "booking=$booking" >> "$GITHUB_OUTPUT"
+          if [[ "$whatsapp" == true || "$observability" == true || "$clientes_runtime_contract" == true || "$clientes_readonly_boundary" == true || "$all" == true ]]; then node=true; fi
           echo "whatsapp=$whatsapp" >> "$GITHUB_OUTPUT"
           echo "codex=$codex" >> "$GITHUB_OUTPUT"
           echo "observability=$observability" >> "$GITHUB_OUTPUT"
@@ -155,10 +152,6 @@ jobs:
       - name: Verify Clientes readonly extraction boundary
         if: ${{ needs.changes.outputs.clientes_readonly_boundary == 'true' || needs.changes.outputs.all == 'true' }}
         run: npm --prefix clientes-readonly run check && npm --prefix clientes-readonly run test && node .github/scripts/validate-dependency-closures.mjs
-
-      - name: Booking module tests
-        if: ${{ needs.changes.outputs.booking == 'true' || needs.changes.outputs.all == 'true' }}
-        run: npm run booking:test
 
       - name: Install WhatsApp engine dependencies
         if: ${{ needs.changes.outputs.whatsapp == 'true' || needs.changes.outputs.all == 'true' }}
