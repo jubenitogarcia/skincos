@@ -1,6 +1,7 @@
 # Ephemeral authenticated verifier; the production adapter itself stays private.
-# The protected production manifest and canonical adapter workflow are its only
-# publisher. No routes, D1, schedules, or caller-controlled proxying are allowed.
+# Each publisher uses its own protected manifest and authority. The native
+# manual lane supplies its fixed name and release UUID; old workflow authority
+# cannot substitute for it. No routes, D1, schedules or arbitrary proxying.
 name = "skincos-schedule-public-read-probe-staging"
 main = "public-read-production-probe.js"
 compatibility_date = "2026-03-02"
@@ -10,6 +11,7 @@ preview_urls = false
 [vars]
 PROBE_SOURCE_SHA = "disabled"
 PROBE_EXPIRES_AT_MS = "0"
+PROBE_NATIVE_RELEASE_ID = "disabled"
 
 [[services]]
 binding = "SCHEDULE_PUBLIC_READ"

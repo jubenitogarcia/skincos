@@ -12,7 +12,30 @@
   "retiredWorkflows": [
     ".github/workflows/ponto-core-baseline-publisher.yml"
   ],
+  "nativePublishers": [
+    {
+      "contractId": "schedule-public-read-native-production-authority/v1",
+      "entrypoint": "workforce/schedule/scripts/public-read-native-release.mjs",
+      "environment": "production",
+      "surfaces": ["escala-worker", "schedule-public-read-adapter-production"],
+      "resources": ["global:escala-writer", "deploy:schedule-public-read-adapter:production"],
+      "ownerProviders": ["codex", "mini-pc"],
+      "custody": "/etc/skincos/global-coordination/native-runtime.env",
+      "mutationProof": "remote-fenced-lease-revalidated-before-each-cloudflare-mutation",
+      "sourceGate": "clean-main-head-equals-origin-main",
+      "receiptContract": "schedule-public-read-native-production-receipt/v1",
+      "retiredProductionWorkflows": [
+        ".github/workflows/deploy-escala-api.yml",
+        ".github/workflows/deploy-schedule-public-read-adapter.yml"
+      ]
+    }
+  ],
   "nonPublishingWorkflows": [
+    {
+      "workflow": ".github/workflows/cloudflare-pages-sync-escala.yml",
+      "reason": "Retired Escala cron writer. The historical dispatch is a credential-free no-op; existing production Actor custody is preserved.",
+      "requiredMarkers": ["SCHEDULE_SECRET_SYNC_RETIRED", "permissions: {}"]
+    },
     {
       "workflow": ".github/workflows/architecture-governance.yml",
       "reason": "Architecture governance invokes Cloudflare single-writer validation and synthetic mutation fixtures for inspection only; it has no publishing authority.",
@@ -153,10 +176,11 @@
       "id": "escala-worker",
       "platform": "cloudflare-worker",
       "canonicalDeployWorkflow": ".github/workflows/deploy-escala-api.yml",
+      "workflowEnvironments": ["preview", "staging"],
+      "canonicalNativePublisher": "workforce/schedule/scripts/public-read-native-release.mjs",
       "coordinationGroup": "escala-writer",
       "mutationWorkflows": [
-        ".github/workflows/deploy-escala-api.yml",
-        ".github/workflows/cloudflare-pages-sync-escala.yml"
+        ".github/workflows/deploy-escala-api.yml"
       ]
     },
     {
@@ -171,9 +195,9 @@
     {
       "id": "schedule-public-read-adapter-production",
       "platform": "cloudflare-worker-durable-object",
-      "canonicalDeployWorkflow": ".github/workflows/deploy-schedule-public-read-adapter.yml",
+      "canonicalNativePublisher": "workforce/schedule/scripts/public-read-native-release.mjs",
       "coordinationGroup": "schedule-public-read-adapter-production-writer",
-      "mutationWorkflows": [".github/workflows/deploy-schedule-public-read-adapter.yml"]
+      "mutationWorkflows": []
     },
     {
       "id": "meta-ads-report-worker",

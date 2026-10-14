@@ -1,88 +1,16 @@
-name: Sync Escala auth secret (Worker)
+name: Retired Escala secret synchronization
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
-concurrency:
-  group: escala-worker-secret-sync
-  cancel-in-progress: false
+permissions: {}
 
-permissions:
-  contents: read
-
+# SCHEDULE_SECRET_SYNC_RETIRED. Production Actor custody is preserved by
+# additive native version publication. This historical path is a no-op and
+# owns no Cloudflare credential, environment, lease or secret mutation.
 jobs:
-  sync:
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - name: Guard Cloudflare credentials and Escala secret
-        id: guard
-        env:
-          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-        run: |
-          set -euo pipefail
-          [[ -n "${TOKEN:-}" && -n "${ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are not configured'; exit 1; }
-          [[ -n "${ESCALA_ACTOR_HMAC_KEY:-}" ]] || { echo 'ESCALA_ACTOR_HMAC_KEY is not configured'; exit 1; }
-          echo 'ready=true' >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: ${{ steps.guard.outputs.ready == 'true' }}
-
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: ${{ steps.guard.outputs.ready == 'true' }}
-        with:
-          node-version: '22.12.0'
-
-      - name: Acquire Escala Worker secret lease
-        if: ${{ steps.guard.outputs.ready == 'true' }}
-        uses: ./.github/actions/global-coordination-acquire
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-          resource: global:escala-writer
-          module: escala-api
-          source_sha: ${{ github.sha }}
-          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
-
-      - name: Check lease before Worker-secret mutation
-        if: ${{ steps.guard.outputs.ready == 'true' }}
-        uses: ./.github/actions/global-coordination-check
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
-          resource: global:escala-writer
-          module: escala-api
-          source_sha: ${{ github.sha }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-
-      - name: Sync Escala Worker secret
-        if: ${{ steps.guard.outputs.ready == 'true' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml >/dev/null
-          printf '%s' "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml --env staging >/dev/null
-          echo 'Escala Worker secret synchronized for production and staging.'
-
-      - name: Release Escala Worker secret lease
-        if: ${{ always() && steps.guard.outputs.ready == 'true' }}
-        uses: ./.github/actions/global-coordination-release
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
-          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
+      - name: Explain the retired writer
+        run: echo 'SCHEDULE_SECRET_SYNC_RETIRED: no secret or Worker mutation is performed.'

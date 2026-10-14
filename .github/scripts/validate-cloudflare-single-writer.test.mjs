@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mutationEvidence, traceMutationGraph } from "./validate-cloudflare-single-writer.mjs";
+import { mutationEvidence, traceMutationGraph, validateNativePublisher, loadPolicy } from "./validate-cloudflare-single-writer.mjs";
 
 const files = [
   ".github/workflows/demo.yml",
@@ -16,12 +16,33 @@ const contents = {
 };
 const readFile = (file) => contents[file];
 
+test("native Schedule authority cannot expand to another environment, product, custody or unclassified publisher", () => {
+  const entry = loadPolicy().nativePublishers[0];
+  for (const delta of [{ environment: "staging" }, { entrypoint: "scripts/foreign.mjs" },
+    { surfaces: ["ponto-timekeeping-worker"] }, { resources: ["global:global-coordinator-writer"] },
+    { custody: "/fixture/custody.env" }, { ownerProviders: ["github"] }, { mutationProof: "local-token" }]) {
+    assert.ok(validateNativePublisher({ ...entry, ...delta }).length);
+  }
+});
+
 test("single-writer graph follows local actions and scripts to find a mutation", () => {
   const graph = traceMutationGraph({ sourcePath: ".github/workflows/demo.yml", files, readFile });
   assert.deepEqual(graph.missing, []);
   assert.deepEqual(graph.files, [...files].sort());
   assert.equal(mutationEvidence(graph).length, 1);
   assert.match(mutationEvidence(graph)[0].file, /demo-deploy\.mjs$/);
+});
+
+test("same-directory imports cannot hide a transitive mutator or coordination guard", () => {
+  const fileList = [".github/scripts/entry.mjs", ".github/scripts/guard.mjs", ".github/scripts/mutate.mjs"];
+  const source = {
+    ".github/scripts/entry.mjs": "import { guard } from './guard.mjs'; import './mutate.mjs'",
+    ".github/scripts/guard.mjs": "export const guard = 'global-coordination-check'",
+    ".github/scripts/mutate.mjs": "await execa('wrangler', ['versions', 'deploy', 'candidate@100%']);",
+  };
+  const graph = traceMutationGraph({ sourcePath: fileList[0], files: fileList, readFile: file => source[file] });
+  assert.deepEqual(graph.files, fileList.sort());
+  assert.equal(mutationEvidence(graph).length, 1);
 });
 
 test("read-only Wrangler status is not classified as a mutation", () => {

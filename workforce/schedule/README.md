@@ -86,3 +86,24 @@ O smoke valida:
 1. Verificar se `ESCALA_ACTOR_HMAC_KEY` está sincronizada no Pages proxy e no worker.
 2. Validar timestamp/assinatura via smoke.
 3. Revisar respostas `401 UNAUTHORIZED` e `403 FORBIDDEN` nos logs do worker.
+
+## Leitura pública privada para Website
+
+O contrato [schedule-public-read/v1](PUBLIC_READ_CONTRACT.md) usa adapter
+privado e HMACs separados do acesso de gestão. A projeção inclui apenas
+profissionais explicitamente ativos com papel Injetor e unidade comprovada;
+os IDs vêm do cadastro existente, com quatro aliases públicos exatos.
+Lista e disponibilidade aplicam a mesma elegibilidade. Referência órfã no
+dia/unidade consultados falha de forma explícita, sem alterar o histórico.
+
+A rota continua desabilitada na configuração fonte. A ativação exige a
+publicação governada, readback do deployment e prova do DTO para ambas as
+unidades; /health ou /readiness isolados não bastam. A publicação nativa manual
+usa os novos scripts public-read-native-* e seus manifests/receipts próprios,
+com custódia e lease reais. Os comandos de gestão acima não substituem essa
+autoridade nem permitem reusar IDs/provas de workflows.
+
+A projeção, o adapter e o probe têm testes inteiramente sintéticos em
+public-read-projection.test.js, public-read-core.test.js,
+public-read-worker.test.js e public-read-projection-probe.test.js. Operações de
+projeto e esses testes devem passar pelo gateway tipado do repositório.

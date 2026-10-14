@@ -6,7 +6,7 @@ import {
   createSchedulePublicReadHeaders,
 } from './public-read-contract.js'
 import worker from './worker.js'
-import { PublicReadTestD1, createPublicReadTestDb } from './public-read-test-support.js'
+import { PublicReadTestD1, createPublicReadTestDb, PUBLIC_READ_TEST_ACTIVE_ID } from './public-read-test-support.js'
 
 const coreReadKey = 'schedule-public-read-core-test-key'
 const edgeReadKey = 'schedule-public-read-edge-key-must-not-authorize-core'
@@ -43,9 +43,10 @@ test('Schedule core exposes only the HMAC-authenticated v1 availability and prof
   )
   assert.equal(availability.status, 200)
   assert.deepEqual((await availability.json()).data, {
-    unit: 'novohamburgo',
+    unit: 'novo-hamburgo',
     date: '2026-09-15',
     closed: false,
+    professionals: [{ id: PUBLIC_READ_TEST_ACTIVE_ID, name: 'Dra. Ana Teste' }],
     professionalNames: ['Dra. Ana Teste'],
   })
 
@@ -56,14 +57,7 @@ test('Schedule core exposes only the HMAC-authenticated v1 availability and prof
   assert.equal(profiles.status, 200)
   const profileBody = await profiles.json()
   assert.equal(profileBody.data.professionals.length, 1)
-  assert.deepEqual(profileBody.data.professionals[0], {
-    name: 'Dra. Ana Teste',
-    status: 'Ativo',
-    role: 'Injetora',
-    nickname: 'Ana',
-    instagram: 'dra.ana.teste',
-    units: ['Novo Hamburgo'],
-  })
+  assert.deepEqual(profileBody.data.professionals[0], { id: PUBLIC_READ_TEST_ACTIVE_ID, name: 'Dra. Ana Teste' })
   assert.equal(JSON.stringify(profileBody).includes('private-phone-must-not-leak'), false)
   assert.equal(JSON.stringify(profileBody).includes('private-email-must-not-leak'), false)
 })
@@ -116,4 +110,54 @@ test('Schedule core rejects unsigned, malformed and non-read public-read request
     env,
   )
   assert.equal(write.status, 405)
+})
+
+
+test('core uses identical clinical eligibility in roster and availability with read-only primary batches', async () => {
+  const db = createPublicReadTestDb()
+  for (const [index, role] of ['Consultor', 'Diretor', 'Gerente', 'Injetora'].entries()) {
+    const id = 'aaaaaaaa-aaaa-4aaa-8aaa-' + String(index + 1).padStart(12, '0')
+    db.professionals.push({ id, name: 'Fixture staff ' + index, status: 'Ativo', role, units_json: '["Novo Hamburgo"]' })
+    db.scheduleEntries.push({ unit: 'Novo Hamburgo', date: '2026-09-15', professional_id: id, professional_name: 'Fixture staff ' + index })
+  }
+  db.scheduleEntries.push({ unit: 'Novo Hamburgo', date: '2026-09-15', professional_id: db.professionals[1].id, professional_name: db.professionals[1].name })
+  db.professionals[0].role = 'Injetor, Responsável Técnico'
+  for (const suffix of ['professionals', 'availability']) {
+    const response = await worker.fetch(await signedCoreRequest('/api/escala/internal/schedule-public-read/v1/' + suffix + '?unit=novo-hamburgo' + (suffix === 'availability' ? '&date=2026-09-15' : '')), publicReadEnv(db))
+    assert.equal(response.status, 200)
+    assert.deepEqual((await response.json()).data.professionals, [{ id: PUBLIC_READ_TEST_ACTIVE_ID, name: 'Dra. Ana Teste' }])
+  }
+  assert.deepEqual(db.sessions, ['first-primary', 'first-primary'])
+  assert.equal(db.batches.length, 2); assert.equal(db.writeAttempts, 0)
+  assert.ok(db.batches.flat().every(sql => /^select\b/i.test(sql)))
+})
+
+test('nullable exact-name references resolve while requested orphans, renames and unit mismatches fail closed', async () => {
+  const path = '/api/escala/internal/schedule-public-read/v1/availability?unit=novo-hamburgo&date=2026-09-15'
+  const db = createPublicReadTestDb(); db.scheduleEntries[0].professional_id = null
+  assert.equal((await worker.fetch(await signedCoreRequest(path), publicReadEnv(db))).status, 200)
+  db.scheduleEntries.push({ unit: 'Novo Hamburgo', date: '2000-01-01', professional_id: null, professional_name: 'Fixture historical orphan' })
+  assert.equal((await worker.fetch(await signedCoreRequest(path), publicReadEnv(db))).status, 200)
+  for (const change of [{ professional_id: null, professional_name: 'Fixture orphan' }, { professional_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff' }, { professional_name: 'Fixture renamed' }]) {
+    const corrupt = createPublicReadTestDb(); Object.assign(corrupt.scheduleEntries[0], change)
+    corrupt.closedDays.push({ unit: 'Novo Hamburgo', date: '2026-09-15' })
+    const response = await worker.fetch(await signedCoreRequest(path), publicReadEnv(corrupt))
+    assert.equal(response.status, 503); assert.equal((await response.json()).error, 'SCHEDULE_PUBLIC_READ_NOT_READY')
+    assert.equal(corrupt.writeAttempts, 0)
+  }
+  const wrongUnit = createPublicReadTestDb(); wrongUnit.professionals[0].units_json = '["BarraShoppingSul"]'
+  assert.equal((await worker.fetch(await signedCoreRequest(path), publicReadEnv(wrongUnit))).status, 503)
+})
+
+test('both canonical units retain the same source identity and accurate closed-day flag', async () => {
+  const db = createPublicReadTestDb(); db.professionals[0].units_json = '["Novo Hamburgo","BarraShoppingSul"]'
+  db.scheduleEntries.push({ unit: 'BarraShoppingSul', date: '2026-09-15', professional_name: db.professionals[0].name, professional_id: db.professionals[0].id })
+  db.holidays.push({ unit: 'BarraShoppingSul', date: '2026-09-15' })
+  for (const unit of ['novo-hamburgo', 'barra-shopping-sul']) {
+    const response = await worker.fetch(await signedCoreRequest('/api/escala/internal/schedule-public-read/v1/availability?unit=' + unit + '&date=2026-09-15'), publicReadEnv(db))
+    assert.equal(response.status, 200)
+    const data = (await response.json()).data
+    assert.equal(data.unit, unit); assert.equal(data.closed, unit === 'barra-shopping-sul')
+    assert.deepEqual(data.professionals, [{ id: PUBLIC_READ_TEST_ACTIVE_ID, name: 'Dra. Ana Teste' }])
+  }
 })

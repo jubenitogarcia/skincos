@@ -40,7 +40,9 @@ function trackedFiles(root = ROOT) {
 }
 
 function resolveLocal(sourcePath, request, files) {
-  const normalizedRequest = normalize(request);
+  // Preserve the relative prefix until the request has been classified.
+  // Removing './' first silently drops same-directory guard/mutator imports.
+  const normalizedRequest = String(request || "").replaceAll("\\", "/");
   if (!normalizedRequest.startsWith(".")) return null;
   const source = normalize(sourcePath);
   const rootRelative = source.endsWith(".yml") || source.endsWith(".yaml") || REPO_ROOT_PREFIX.test(normalizedRequest);
@@ -259,9 +261,52 @@ export function loadPolicy() {
   return JSON.parse(read(POLICY_PATH));
 }
 
+const SCHEDULE_NATIVE_ENTRYPOINT = "workforce/schedule/scripts/public-read-native-release.mjs";
+export function validateNativePublisher(entry, { files, readFile } = {}) {
+  const errors = [];
+  const same = (value, expected) => JSON.stringify(value) === JSON.stringify(expected);
+  if (entry?.contractId !== "schedule-public-read-native-production-authority/v1"
+    || entry.entrypoint !== SCHEDULE_NATIVE_ENTRYPOINT || entry.environment !== "production"
+    || !same(entry.surfaces, ["escala-worker", "schedule-public-read-adapter-production"])
+    || !same(entry.resources, ["global:escala-writer", "deploy:schedule-public-read-adapter:production"])
+    || !same(entry.ownerProviders, ["codex", "mini-pc"])
+    || entry.custody !== "/etc/skincos/global-coordination/native-runtime.env"
+    || entry.mutationProof !== "remote-fenced-lease-revalidated-before-each-cloudflare-mutation"
+    || entry.sourceGate !== "clean-main-head-equals-origin-main"
+    || entry.receiptContract !== "schedule-public-read-native-production-receipt/v1"
+    || !same(entry.retiredProductionWorkflows, [".github/workflows/deploy-escala-api.yml", ".github/workflows/deploy-schedule-public-read-adapter.yml"])) {
+    return ["native publisher scope or authority contract is invalid"];
+  }
+  const graph = traceMutationGraph({ sourcePath: entry.entrypoint, files, readFile });
+  const text = [...graph.texts.values()].join("\n");
+  for (const marker of ["createNativeAuthority", "assertNativeAuthority", "await authority.check()", "checkGlobalLease", "acquireGlobalLease",
+    "expectedArtifacts", "fencingToken", "assertNativeSource", "nativePreflight", "schedule_native_mutation_unknown",
+    "retryAllowed: false", "websiteAcceptedWritesAuthorized: false", entry.custody, ...entry.resources]) {
+    if (!text.includes(marker)) errors.push(`native Schedule publisher lacks required guard ${marker}`);
+  }
+  for (const name of ["release", "manifest", "receipts", "authority", "http"]) {
+    if (!graph.files.includes(`workforce/schedule/scripts/public-read-native-${name}.mjs`)) errors.push(`native Schedule publisher is missing its ${name} guard`);
+  }
+  if (graph.missing.length) errors.push("native Schedule publisher has unavailable source dependencies");
+  const load = readFile || (file => read(file));
+  for (const workflow of entry.retiredProductionWorkflows) {
+    const source = load(workflow);
+    if (!source.includes("SCHEDULE_PRODUCTION_NATIVE_ONLY")
+      || !/promotion:\s*\r?\n\s*needs: native-production-authority\s*\r?\n\s*if: \$\{\{ inputs.target != 'production' \}\}/.test(source)
+      || !source.includes('if [[ "$TARGET" == \'production\' ]]; then')) errors.push(`${workflow} does not retire production before promotion`);
+  }
+  return errors;
+}
+
 export function validatePolicy(policy = loadPolicy()) {
   const errors = [];
   const groups = new Map();
+  const native = new Map();
+  for (const entry of policy.nativePublishers || []) {
+    if (native.has(entry?.entrypoint)) errors.push("native publisher entrypoints must be unique");
+    errors.push(...validateNativePublisher(entry));
+    native.set(entry?.entrypoint, entry);
+  }
   for (const group of policy.coordinationGroups || []) {
     if (!group?.id || !group.resource) {
       errors.push("every coordination group requires id and resource");
@@ -294,9 +339,11 @@ export function validatePolicy(policy = loadPolicy()) {
     }
     if (graph.missing.length) errors.push(`${entry.workflow} references missing local files: ${graph.missing.join(", ")}`);
     nonPublishing.set(entry.workflow, entry);
+    if (entry.workflow === ".github/workflows/cloudflare-pages-sync-escala.yml"
+      && (mutationEvidence(graph).length || /\bschedule:|\bsecrets[.:]|\benvironment:/.test(text))) errors.push("retired Escala secret sync must remain a credential-free, cron-free no-op");
   }
   for (const surface of policy.surfaces || []) {
-    if (!surface?.id || !surface.canonicalDeployWorkflow || !surface.coordinationGroup) {
+    if (!surface?.id || !(surface.canonicalDeployWorkflow || surface.canonicalNativePublisher) || !surface.coordinationGroup) {
       errors.push("every Cloudflare surface requires id, canonicalDeployWorkflow and coordinationGroup");
       continue;
     }
@@ -307,7 +354,13 @@ export function validatePolicy(policy = loadPolicy()) {
     }
     const workflows = new Set(surface.mutationWorkflows || []);
     const exceptional = new Set(surface.exceptionalMutationWorkflows || []);
-    if (!workflows.has(surface.canonicalDeployWorkflow)) errors.push(`${surface.id} canonical deploy workflow is not in mutationWorkflows`);
+    if (surface.canonicalDeployWorkflow && !workflows.has(surface.canonicalDeployWorkflow)) errors.push(`${surface.id} canonical deploy workflow is not in mutationWorkflows`);
+    if (surface.canonicalNativePublisher) {
+      const publisher = native.get(surface.canonicalNativePublisher);
+      if (!publisher?.surfaces.includes(surface.id) || !publisher.resources.includes(group.resource)) errors.push(`${surface.id} has no scoped native authority`);
+      if (surface.id === "escala-worker" && JSON.stringify(surface.workflowEnvironments) !== '["preview","staging"]') errors.push("Escala workflow authority must be limited to preview and staging");
+      if (surface.id === "schedule-public-read-adapter-production" && (workflows.size || surface.canonicalDeployWorkflow)) errors.push("production Schedule adapter must have exactly one native publisher");
+    } else if (surface.id === "schedule-public-read-adapter-production") errors.push("production Schedule adapter is missing its native authority");
     for (const workflow of workflows) {
       const absolute = path.join(ROOT, workflow);
       if (!fs.existsSync(absolute)) {

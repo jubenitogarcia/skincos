@@ -28,7 +28,22 @@ permissions:
   contents: read
 
 jobs:
+  native-production-authority:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Production Escala publication belongs to the fenced native lane
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == 'production' ]]; then
+            echo '::error::SCHEDULE_PRODUCTION_NATIVE_ONLY: use public-read-native-release.mjs with real custody and a remote fenced lease.'
+            exit 1
+          fi
+
   promotion:
+    needs: native-production-authority
+    if: ${{ inputs.target != 'production' }}
     uses: ./.github/workflows/promotion-gate.yml
     with:
       unit: escala-api
