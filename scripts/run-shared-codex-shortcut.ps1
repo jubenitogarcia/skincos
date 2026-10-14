@@ -6,8 +6,7 @@ param(
         "GitHubAuthStatus", "SharedStatus", "CodexContext", "CodexContextOnline",
         "ThreadBootstrap", "NewWorktree", "PlatformLocalStart",
         "EfAppSetup", "EfAppSelftest", "EfAppCaixa", "EfAppAgendaDelta",
-        "EfAppAgendaFullSync", "EfAppBookingApi", "EfAppProcedures",
-        "EfAppClientRegistration", "EfAppRecorder", "EfAppRotateAgendaSyncToken"
+        "EfAppProcedures", "EfAppClientRegistration", "EfAppRecorder"
     )]
     [string]$Action,
     [string]$ProjectRoot
@@ -33,7 +32,6 @@ $operatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 $tmpRoot = Join-Path $localStateRoot "tmp"
 $logRoot = Join-Path $operatorRuntimeRoot "logs"
 $wslInvoker = Join-Path $scriptRoot "invoke-skincos-wsl.ps1"
-$websiteRepositoryRoot = Join-Path (Split-Path $ProjectRoot -Parent) "website"
 
 function Convert-WindowsPathToWsl {
     param([string]$Path)
@@ -130,8 +128,6 @@ $efAppClientRegistrationRunRoot = Join-Path $efAppArtifactRoot "client-registrat
 $efAppDebugRoot = Join-Path $efAppArtifactRoot "debug"
 $efAppLogRoot = Join-Path $efAppArtifactRoot "logs"
 $efAppChromeProfileRoot = Join-Path $efAppStateRoot "chrome-profile"
-$efAppBookingEnvFile = Join-Path $efAppStateRoot "booking_api.env"
-$efAppAgendaSyncEnvFile = Join-Path $efAppStateRoot "agenda_sync.env"
 $efAppLoginEnvFile = Join-Path $efAppStateRoot "login.env"
 
 foreach ($path in @($efAppStateRoot, $efAppOutputRoot, $efAppClientRegistrationRunRoot, $efAppDebugRoot, $efAppLogRoot, $efAppChromeProfileRoot)) {
@@ -143,8 +139,6 @@ $efAppEnvVars = @(
     "EF_DEBUG_DIR=$(Convert-WindowsPathToWsl -Path $efAppDebugRoot)",
     "EF_LOG_DIR=$(Convert-WindowsPathToWsl -Path $efAppLogRoot)",
     "EF_CHROME_USER_DATA_DIR=$(Convert-WindowsPathToWsl -Path $efAppChromeProfileRoot)",
-    "EF_BOOKING_ENV_FILE=$(Convert-WindowsPathToWsl -Path $efAppBookingEnvFile)",
-    "EF_AGENDA_SYNC_ENV_FILE=$(Convert-WindowsPathToWsl -Path $efAppAgendaSyncEnvFile)",
     "EF_LOGIN_ENV_FILE=$(Convert-WindowsPathToWsl -Path $efAppLoginEnvFile)"
 )
 
@@ -311,12 +305,9 @@ function Invoke-ShortcutActionInternal {
         "EfAppSelftest" { Invoke-ShortcutWsl -ScriptPath "integration/ef/scripts/run-local-python.sh" -ArgumentList @("selftest.py") -EnvVar ($efAppEnvVars + @("HEADLESS=1")) -SkipNodeCheck -SkipNpmCheck }
         "EfAppCaixa" { Invoke-EfAppPythonMode -Mode "caixa" }
         "EfAppAgendaDelta" { Invoke-EfAppPythonMode -Mode "agenda_delta" }
-        "EfAppAgendaFullSync" { if (-not (Ensure-EfAppLoginCredentials)) { return }; Invoke-ShortcutWsl -ScriptPath "integration/ef/run_agenda_full_sync_all_units.sh" -EnvVar ($efAppEnvVars + @("HEADLESS=1", "EF_OUTPUT_BASE_DIR=$(Convert-WindowsPathToWsl -Path $efAppOutputRoot)")) -SkipNodeCheck -SkipNpmCheck }
-        "EfAppBookingApi" { Invoke-EfAppPythonMode -Mode "booking_api" }
         "EfAppProcedures" { Invoke-EfAppPythonMode -Mode "procedures" }
         "EfAppClientRegistration" { Invoke-EfAppPythonMode -Mode "client_registration" }
         "EfAppRecorder" { Invoke-EfAppPythonMode -Mode "recorder" -Headed }
-        "EfAppRotateAgendaSyncToken" { Invoke-ShortcutWsl -ScriptPath "integration/ef/scripts/rotate_agenda_sync_token.sh" -ArgumentList @("--website-dir", (Convert-WindowsPathToWsl -Path $websiteRepositoryRoot)) -EnvVar $efAppEnvVars -SkipNodeCheck -SkipNpmCheck }
         "OrbMenu" { Write-Host "O Orb possui projeto independente em C:\CodexShared\Projetos\orb. Abra esse projeto para operar os workflows." }
         "WorkspaceMenu" { Show-WorkspaceMenu }
         "ContextMenu" { Show-ContextMenu }
@@ -374,12 +365,9 @@ function Show-EfAppMenu {
             (New-MenuOption -Label "Selftest" -Action "EfAppSelftest"),
             (New-MenuOption -Label "Caixa" -Action "EfAppCaixa"),
             (New-MenuOption -Label "Agenda Delta" -Action "EfAppAgendaDelta"),
-            (New-MenuOption -Label "Agenda Full Sync" -Action "EfAppAgendaFullSync"),
-            (New-MenuOption -Label "Booking API" -Action "EfAppBookingApi"),
             (New-MenuOption -Label "Procedures" -Action "EfAppProcedures"),
             (New-MenuOption -Label "Client Registration" -Action "EfAppClientRegistration"),
-            (New-MenuOption -Label "Recorder" -Action "EfAppRecorder"),
-            (New-MenuOption -Label "Rotate Agenda Sync Token" -Action "EfAppRotateAgendaSyncToken")
+            (New-MenuOption -Label "Recorder" -Action "EfAppRecorder")
         )
         if ($null -eq $selection) { return }; Invoke-MenuAction -SelectedAction $selection.Action
     }

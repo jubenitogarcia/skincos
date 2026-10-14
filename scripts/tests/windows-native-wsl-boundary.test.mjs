@@ -126,7 +126,7 @@ test('EF App Client Registration isolates new checkpoints and requires an explic
   assert.match(launcher, /\$normalizedMode -eq "client_registration"/)
   assert.match(launcher, /EF_CLIENT_REGISTRATION_RUN_ID=\$\(\$clientRegistrationRun\.RunId\)/)
   assert.match(launcher, /EF_CLIENT_REGISTRATION_LAUNCH_MODE=\$\(\$clientRegistrationRun\.LaunchMode\)/)
-  assert.match(launcher, /EF_OUTPUT_DIR não pode sobrescrever a execução isolada de Client Registration/)
+  assert.match(launcher, /EF_OUTPUT_DIR não pode sobrescrever a execução isolada/)
 })
 
 test('EF App prompts for absent credentials and persists them only in the private login file', () => {
@@ -139,5 +139,5 @@ test('EF App prompts for absent credentials and persists them only in the privat
   assert.match(launcher, /EF_LOGIN_PASSWORD=\$passwordValue/)
   assert.match(launcher, /Protect-EfAppLoginEnvFile -Path \$efAppLoginEnvFile/)
   assert.match(launcher, /if \(-not \(Ensure-EfAppLoginCredentials\)\) \{\s*return\s*\}/)
-  assert.match(launcher, /"EfAppAgendaFullSync" \{\s*if \(-not \(Ensure-EfAppLoginCredentials\)\) \{ return \}/)
+  assert.doesNotMatch(launcher, /EfAppAgendaFullSync|EfAppBookingApi|EfAppRotateAgendaSyncToken/)
 })

@@ -26,11 +26,11 @@
   ],
   "codeownersBlueprint": [
     {"paths": ["/.github/", "/.githooks/", "/ops/", "/scripts/", "/docs/", "/db/", "/skills/", "/packages/"], "team": "skincos-platform"},
-    {"paths": ["/api/", "/backend/", "/identity/", "/service/", "/booking/", "/integration/", "/messaging/", "/clientes-readonly/"], "team": "skincos-platform"},
+    {"paths": ["/api/", "/backend/", "/identity/", "/service/", "/integration/", "/messaging/", "/clientes-readonly/"], "team": "skincos-platform"},
     {"paths": ["/finance/"], "team": "skincos-finance"},
     {"paths": ["/workforce/"], "team": "skincos-workforce"},
     {"paths": ["/inventory/"], "team": "skincos-inventory"},
-    {"paths": ["/website/", "/ads/", "/social/"], "team": "skincos-web"},
+    {"paths": ["/ads/", "/social/"], "team": "skincos-web"},
     {"paths": ["/shared/", "/platform/", "/.github/governance/"], "team": "skincos-security"}
   ],
   "requiredPostTransferChecks": [

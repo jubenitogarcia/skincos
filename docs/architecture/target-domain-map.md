@@ -4,13 +4,13 @@ This file is the source of truth for the domain-first reorganization.  It is a
 migration contract, not a compatibility layer: after its respective cutover,
 the former source path and public route must be removed rather than aliased.
 
-## Root ownership
+## Ownership boundaries
 
-| Root | Owns | Does not own |
+| Domain or boundary | Owns | Does not own |
 | --- | --- | --- |
 | `ads` | Meta Ads campaigns, reporting and delivery | generic social publishing |
 | `api` | the only HTTP boundary at `api.skincos.com.br` | domain business rules or data ownership |
-| `booking` | availability, request lifecycle and reservation contracts | Selenium/browser execution |
+| `booking` (external) | Website Booking source and publisher in `jubenitogarcia/website`; the public API contract | a local Website implementation, publisher, or claimed Cloudflare runtime/data migration |
 | `crm` | `jubenitogarcia/crm` (Worker, Pages, D1 and release; external boundary) | qualquer implementação, datastore ou publisher dentro deste monorepo |
 | `finance` | cash, billing and financial imports | browser collection mechanics |
 | `identity` | users, sessions, invitations, roles and permissions | inventory implementation or inventory data ownership |
@@ -32,7 +32,9 @@ the former source path and public route must be removed rather than aliased.
 `integration/ef` contains only external-system mechanics.  Its outputs are
 accepted by the semantic owner:
 
-- patient availability and reservations: `booking`;
+- Website Booking requests use the external public contract; the local EF
+  runner retains general extraction modes, while its Website sync transport and
+  Booking executor belong to the external Website source;
 - cash and payments: `finance`;
 - procedures: `service`;
 - clients: Atendimento's versioned read-only catalog; CRM consumes only the gateway contract.
@@ -40,10 +42,10 @@ accepted by the semantic owner:
 ## Public and internal boundaries
 
 - All programmatic public routes use `https://api.skincos.com.br/<domain>`.
-- Website and the independent CRM keep their own UI deployments. Website source
-  and publishing are outside this monorepo; this ownership boundary does not
-  assert a Cloudflare runtime cutover. The monorepo exposes only the API gateway
-  and never publishes a CRM UI or API runtime.
+- Website and the independent CRM keep their own UI deployments. Website and
+  Booking source and publishing are outside this monorepo; this ownership
+  boundary does not assert a Cloudflare runtime or data cutover. The monorepo
+  exposes only the API gateway and never publishes a CRM UI or API runtime.
 - `api/internal/*` has two callers: a CRM-authenticated human action or a
   private service identity used by Workers, the external automation contract
   and integration executors.

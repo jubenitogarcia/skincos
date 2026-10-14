@@ -70,13 +70,9 @@ selecionada; elas podem vir das variáveis `EF_LOGIN_EMAIL` e
 `EF_LOGIN_PASSWORD`, de `EF_LOGIN_ENV_FILE` privado ou do keychain. O
 Workspace não lê, mostra ou cria credenciais.
 
-Para rodar os contratos sintéticos do executor EF no Mac, canonicalize apenas
-o diretório temporário dessa execução. O alias `/var` do macOS aponta para
-`/private/var`; o ledger recusa pais com symlinks por segurança.
+Para validar a seleção de unidade do runner EF comum:
 
 ```sh
 cd integration/ef
-TMPDIR="$(python3 -c 'import tempfile; from pathlib import Path; print(Path(tempfile.gettempdir()).resolve())')" \
-  "$EF_SCRAPER_VENV_DIR/bin/python" -B -m unittest \
-  test_booking_executor tests_test_booking test_auth_unit_selection
+"$EF_SCRAPER_VENV_DIR/bin/python" -B -m unittest test_auth_unit_selection
 ```

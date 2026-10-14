@@ -33,8 +33,11 @@ if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.owners) || catalog.own
 }
 
 const map = fs.readFileSync(path.join(root, "docs/architecture/target-domain-map.md"), "utf8");
-for (const rootName of ["api", "booking", "integration", "messaging", "workforce", "shared", "platform", "ops", "scripts"]) {
+for (const rootName of ["api", "integration", "messaging", "workforce", "shared", "platform", "ops", "scripts"]) {
   if (!map.includes(`\`${rootName}\``)) fail(`target domain map is missing ${rootName}`);
+}
+if (!map.includes("jubenitogarcia/website") || !map.includes("booking")) {
+  fail("target domain map must retain the external Website Booking boundary");
 }
 
 // The monorepo is a gateway and domain-owner repository. The CRM application,
@@ -56,7 +59,6 @@ if (!catalogService.includes("/api/atendimento/internal/commercial/catalog")) {
 
 const lifecycleUnits = [
   "messaging-whatsapp.service",
-  "booking.service",
   "cloudflare-runtime.service",
   "atendimento-commercial-catalog.service",
 ];

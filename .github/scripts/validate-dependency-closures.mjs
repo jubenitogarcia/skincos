@@ -67,7 +67,7 @@ function resolveLocal(source, request, files) {
   const normalizedRequest = normalize(request);
   if (!normalizedRequest.startsWith(".")) return null;
   const normalizedSource = normalize(source);
-  const repoRelativeWorkflowImport = /^(?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|orb|integration)\//.test(normalizedRequest);
+  const repoRelativeWorkflowImport = /^(?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|crm|finance|inventory|workforce|orb|integration)\//.test(normalizedRequest);
   const base = repoRelativeWorkflowImport || normalizedSource.endsWith(".yml") || normalizedSource.endsWith(".yaml")
     ? path.posix.normalize(normalizedRequest.replace(/^\.\//, ""))
     : path.posix.normalize(path.posix.join(path.posix.dirname(normalizedSource), normalizedRequest));
@@ -120,7 +120,7 @@ function referencesFrom(sourcePath, source, files, readFile, packageScriptStack 
     const candidate = normalize(match[1]).replace(/^\.\//, "");
     if (!candidate.includes("/node_modules/") && files.has(candidate)) references.add(candidate);
   }
-  for (const match of source.matchAll(/\b(?:node|bash|sh|python3?)\s+((?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|orb|integration)\/[A-Za-z0-9_./-]+)/g)) {
+  for (const match of source.matchAll(/\b(?:node|bash|sh|python3?)\s+((?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|crm|finance|inventory|workforce|orb|integration)\/[A-Za-z0-9_./-]+)/g)) {
     const candidate = normalize(match[1]).replace(/^\.\//, "");
     if (!candidate.includes("/node_modules/") && files.has(candidate)) references.add(candidate);
   }

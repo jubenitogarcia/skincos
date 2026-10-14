@@ -11,9 +11,6 @@ import csv
 import json
 import time
 import re
-import email.utils
-import urllib.request
-import urllib.error
 from collections import Counter
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -21,7 +18,6 @@ from typing import Callable
 
 from selenium.webdriver.common.by import By
 
-from agenda_sync_endpoint import AgendaSyncEndpointError, normalize_agenda_sync_endpoint
 from espacofacial.auth import (
     Credentials,
     configure_file_logging,
@@ -301,301 +297,6 @@ def _write_changes_report(
     return csv_path, json_path
 
 
-def _post_agenda_sync(
-    *,
-    unit_name: str,
-    changes_json_path: Path,
-    endpoint: str,
-    token: str,
-) -> bool:
-    if not changes_json_path.exists():
-        return False
-    payload = {
-        "unit": unit_name,
-        "runId": datetime.now().strftime("%Y%m%d_%H%M%S"),
-    }
-    try:
-        data = json.loads(changes_json_path.read_text(encoding="utf-8"))
-        rows = data.get("rows") if isinstance(data, dict) else None
-        if not isinstance(rows, list):
-            rows = []
-        added: list[dict[str, str]] = []
-        removed: list[dict[str, str]] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            time_norm = _normalize_sync_time(row.get("Horário", "") or row.get("Horario", ""))
-            if not time_norm:
-                continue
-            duration_min = row.get("Duração Min", "") or row.get("Duracao Min", "")
-            if not duration_min:
-                parsed_duration = parse_duration_minutes_from_time_text(row.get("Horário", "") or row.get("Horario", ""))
-                duration_min = str(parsed_duration) if parsed_duration else ""
-            change = (row.get("Mudança") or row.get("Mudanca") or "").strip().upper()
-            item = {
-                "data": row.get("Data", ""),
-                "horario": time_norm,
-                "duration_min": duration_min,
-                "cliente": row.get("Cliente", ""),
-                "tipo": row.get("Tipo de Agendamento", ""),
-                "profissional": row.get("Profissional", ""),
-            }
-            if change == "ADICIONADO":
-                added.append(item)
-            elif change == "REMOVIDO":
-                removed.append(item)
-    except Exception:
-        return False
-
-    payload["added"] = added
-    payload["removed"] = removed
-    return _post_agenda_sync_payload(payload=payload, endpoint=endpoint, token=token)
-
-
-def _post_agenda_sync_payload(*, payload: dict[str, object], endpoint: str, token: str) -> bool:
-    try:
-        endpoint = normalize_agenda_sync_endpoint(endpoint)
-    except AgendaSyncEndpointError:
-        log("ERROR: agenda sync endpoint rejected by outbound policy.")
-        return False
-
-    def _retry_after_seconds(err: urllib.error.HTTPError) -> int | None:
-        header = ""
-        try:
-            header = (err.headers.get("Retry-After") or "").strip()
-        except Exception:
-            header = ""
-        if not header:
-            return None
-        if header.isdigit():
-            return max(int(header), 0)
-        try:
-            dt = email.utils.parsedate_to_datetime(header)
-            if dt is None:
-                return None
-            return max(int((dt - datetime.now(dt.tzinfo)).total_seconds()), 0)
-        except Exception:
-            return None
-
-    def _is_retryable_status(status: int) -> bool:
-        return status == 429 or status >= 500
-
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    timeout = int(os.getenv("EF_AGENDA_SYNC_TIMEOUT", "45"))
-    attempts = int(os.getenv("EF_AGENDA_SYNC_ATTEMPTS", "3"))
-    delay = float(os.getenv("EF_AGENDA_SYNC_RETRY_DELAY", "2"))
-    max_delay = float(os.getenv("EF_AGENDA_SYNC_MAX_RETRY_DELAY", "30"))
-    last_error = None
-
-    for attempt in range(1, max(attempts, 1) + 1):
-        headers = {
-            "content-type": "application/json",
-            "user-agent": "agenda-sync/1.0",
-        }
-        if token:
-            headers["authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return 200 <= resp.status < 300
-        except urllib.error.HTTPError as e:
-            response_excerpt = ""
-            try:
-                response_excerpt = e.read(256).decode("utf-8", errors="replace").strip()
-            except Exception:
-                response_excerpt = ""
-            last_error = f"HTTP {e.code}"
-            if response_excerpt:
-                last_error = f"{last_error} body={response_excerpt}"
-            if not _is_retryable_status(e.code):
-                if e.code in {401, 403}:
-                    log(
-                        f"ERROR: agenda sync HTTP {e.code} (unauthorized/forbidden). "
-                        "Validate EF_AGENDA_SYNC_TOKEN."
-                    )
-                else:
-                    log(f"ERROR: agenda sync HTTP {e.code} (non-retryable client error)")
-                return False
-            retry_after = _retry_after_seconds(e)
-            if retry_after is not None:
-                delay = min(max(delay, float(retry_after)), max_delay)
-        except Exception as e:
-            last_error = str(e)
-
-        if attempt < attempts:
-            log(f"WARNING: agenda sync attempt {attempt} failed ({last_error}); retrying in {delay:.0f}s")
-            time.sleep(delay)
-            delay = min(max(delay * 2, delay), max_delay)
-
-    log(f"ERROR: agenda sync failed: {last_error}")
-    return False
-
-
-def _post_agenda_full_sync(
-    *,
-    unit_name: str,
-    rows: list[dict[str, str]],
-    endpoint: str,
-    token: str,
-) -> bool:
-    added: list[dict[str, str]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        time_norm = _normalize_sync_time(row.get("Horário", "") or row.get("Horario", ""))
-        if not time_norm:
-            continue
-        duration_min = row.get("Duração Min", "") or row.get("Duracao Min", "")
-        if not duration_min:
-            parsed_duration = parse_duration_minutes_from_time_text(row.get("Horário", "") or row.get("Horario", ""))
-            duration_min = str(parsed_duration) if parsed_duration else ""
-        added.append(
-            {
-                "data": row.get("Data", ""),
-                "horario": time_norm,
-                "duration_min": duration_min,
-                "cliente": row.get("Cliente", ""),
-                "tipo": row.get("Tipo de Agendamento", ""),
-                "profissional": row.get("Profissional", ""),
-                "telefone": row.get("Telefone", ""),
-                "cpf": row.get("CPF", ""),
-                "servico": row.get("Serviço a realizar", "") or row.get("Servico a realizar", ""),
-                "observacoes": row.get("Observações", "") or row.get("Observacoes", ""),
-                "status": row.get("Status", ""),
-                "source": "scraper_full",
-            }
-        )
-
-    payload: dict[str, object] = {
-        "unit": unit_name,
-        "schema_version": 1,
-        "removed": [],
-    }
-    if not added:
-        payload["runId"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        payload["added"] = []
-        return _post_agenda_sync_payload(payload=payload, endpoint=endpoint, token=token)
-
-    batch_size_raw = os.getenv("EF_AGENDA_SYNC_BATCH_SIZE", "").strip()
-    try:
-        batch_size = max(int(batch_size_raw), 1) if batch_size_raw else 100
-    except ValueError:
-        batch_size = 100
-
-    run_id_base = datetime.now().strftime("%Y%m%d_%H%M%S")
-    total_batches = (len(added) + batch_size - 1) // batch_size
-    for index in range(total_batches):
-        start = index * batch_size
-        end = min(start + batch_size, len(added))
-        batch = added[start:end]
-        batch_payload = dict(payload)
-        batch_payload["runId"] = f"{run_id_base}_part{index + 1}of{total_batches}"
-        batch_payload["added"] = batch
-        log(
-            f"Posting agenda full sync batch {index + 1}/{total_batches} "
-            f"for {unit_name} ({len(batch)} rows)"
-        )
-        if not _post_agenda_sync_payload(payload=batch_payload, endpoint=endpoint, token=token):
-            return False
-
-    return True
-
-
-def _unit_slug_for_agenda_api(unit_name: str) -> str:
-    raw = (unit_name or "").strip().lower()
-    if raw in {"barra shopping sul", "barrashoppingsul", "barra-shopping-sul"}:
-        return "barrashoppingsul"
-    if raw in {"novo hamburgo", "novohamburgo", "novo-hamburgo"}:
-        return "novo-hamburgo"
-    return raw.replace(" ", "-")
-
-
-def _date_key_from_row_date(value: str) -> str:
-    parsed = _parse_ddmmyyyy(value)
-    if parsed is None:
-        return ""
-    return parsed.strftime("%Y-%m-%d")
-
-
-def _fetch_agenda_api_rows(*, unit_slug: str, date_from: str, date_to: str, endpoint: str, token: str) -> list[dict[str, object]]:
-    try:
-        sync_endpoint = normalize_agenda_sync_endpoint(endpoint)
-    except AgendaSyncEndpointError:
-        log("ERROR: agenda audit endpoint rejected by outbound policy.")
-        return []
-    agenda_endpoint = sync_endpoint.removesuffix("/sync")
-
-    rows: list[dict[str, object]] = []
-    page = 1
-    page_size = 500
-    timeout = int(os.getenv("EF_AGENDA_SYNC_TIMEOUT", "45"))
-    while True:
-        url = (
-            f"{agenda_endpoint}?unit_slug={unit_slug}&date_from={date_from}"
-            f"&date_to={date_to}&page={page}&page_size={page_size}"
-        )
-        headers = {
-            "user-agent": "agenda-sync-audit/1.0",
-        }
-        if token:
-            headers["authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        page_rows = payload.get("appointments")
-        if not isinstance(page_rows, list):
-            break
-        rows.extend(r for r in page_rows if isinstance(r, dict))
-        if not payload.get("has_more"):
-            break
-        page += 1
-    return rows
-
-
-def _audit_full_sync_rows(*, unit_name: str, rows: list[dict[str, str]], endpoint: str, token: str) -> bool:
-    sync_keys: set[tuple[str, str]] = set()
-    for row in rows:
-        date_key = _date_key_from_row_date(row.get("Data", ""))
-        time_key = _normalize_sync_time(row.get("Horário", "") or row.get("Horario", ""))
-        if not date_key or not time_key:
-            continue
-        sync_keys.add((date_key, time_key))
-    if not sync_keys:
-        log("Agenda audit skipped: no sync keys extracted from rows.")
-        return True
-
-    date_keys = sorted({_date_key_from_row_date(row.get("Data", "")) for row in rows if _date_key_from_row_date(row.get("Data", ""))})
-    if not date_keys:
-        log("Agenda audit skipped: no valid dates extracted from rows.")
-        return True
-
-    unit_slug = _unit_slug_for_agenda_api(unit_name)
-    remote_rows = _fetch_agenda_api_rows(
-        unit_slug=unit_slug,
-        date_from=date_keys[0],
-        date_to=date_keys[-1],
-        endpoint=endpoint,
-        token=token,
-    )
-    remote_keys = {
-        (str(row.get("date_key") or "").strip(), str(row.get("time_key") or "").strip())
-        for row in remote_rows
-        if str(row.get("date_key") or "").strip() and str(row.get("time_key") or "").strip()
-    }
-
-    missing_remote = sorted(sync_keys - remote_keys)
-    extra_remote = sorted(remote_keys - sync_keys)
-    log(
-        f"Agenda audit for {unit_name}: local_slots={len(sync_keys)} "
-        f"remote_slots={len(remote_keys)} missing_remote={len(missing_remote)} extra_remote={len(extra_remote)}"
-    )
-    if missing_remote:
-        preview = ", ".join(f"{d} {t}" for d, t in missing_remote[:10])
-        log(f"WARNING: agenda audit missing remote slots for {unit_name}: {preview}")
-        return False
-    return True
-
-
 def _load_index_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
@@ -845,18 +546,6 @@ def main(mode: str = "full") -> bool:
             )
             log(f"✓ Saved changes CSV: {changes_csv}")
             log(f"✓ Saved changes JSON: {changes_json}")
-            endpoint = os.getenv("EF_AGENDA_SYNC_URL", "").strip()
-            token = os.getenv("EF_AGENDA_SYNC_TOKEN", "").strip()
-            if endpoint:
-                if _post_agenda_sync(
-                    unit_name=cfg.unit_name,
-                    changes_json_path=changes_json,
-                    endpoint=endpoint,
-                    token=token,
-                ):
-                    log("✓ Agenda sync posted")
-                else:
-                    log("WARNING: agenda sync failed")
             return True
 
         index_rows_for_sync: list[dict[str, str]] = []
@@ -892,7 +581,7 @@ def main(mode: str = "full") -> bool:
             rows = date_filter(rows)
             log(f"Full filter ({date_filter_label}): {before} -> {len(rows)}")
 
-        # Ensure sync coverage from index rows, even when complete extraction misses events.
+        # Preserve index-only appointments when the complete export misses events.
 
         if index_rows_for_sync:
             index_signatures = _count_signatures(index_rows_for_sync)
@@ -911,7 +600,7 @@ def main(mode: str = "full") -> bool:
                 existing_keys.add(key)
                 added_from_index += 1
             if added_from_index:
-                log(f"Added {added_from_index} index fallback rows for full sync coverage.")
+                log(f"Added {added_from_index} index fallback rows to the full export.")
 
         if not rows:
             log("ERROR: No appointments extracted after date filter")
@@ -925,31 +614,6 @@ def main(mode: str = "full") -> bool:
         csv_path, xlsx_path = save(rows, output_dir=cfg.output_dir, prefix=FULL_PREFIX)
         log(f"✓ Saved CSV: {csv_path}")
         log(f"✓ Saved Excel: {xlsx_path}")
-        endpoint = os.getenv("EF_AGENDA_SYNC_URL", "").strip()
-        token = os.getenv("EF_AGENDA_SYNC_TOKEN", "").strip()
-        if endpoint and _env_truthy("EF_AGENDA_SYNC_FULL"):
-            audit_enabled = not os.getenv("EF_AGENDA_SYNC_AUDIT", "").strip().lower() in {"0", "false", "no", "n", "off"}
-            if _post_agenda_full_sync(
-                unit_name=cfg.unit_name,
-                rows=rows,
-                endpoint=endpoint,
-                token=token,
-            ):
-                log("✓ Agenda full sync posted")
-                if audit_enabled:
-                    if _audit_full_sync_rows(
-                        unit_name=cfg.unit_name,
-                        rows=rows,
-                        endpoint=endpoint,
-                        token=token,
-                    ):
-                        log("✓ Agenda full sync audit passed")
-                    else:
-                        log("ERROR: agenda full sync audit detected missing remote slots")
-                        return False
-            else:
-                log("WARNING: agenda full sync failed")
-                return False
         return True
     except Exception as e:
         log_exception("ERROR: Unexpected failure", e)

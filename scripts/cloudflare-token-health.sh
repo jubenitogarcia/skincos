@@ -4,8 +4,8 @@ set -euo pipefail
 ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
 TOKEN="${CLOUDFLARE_API_TOKEN:-}"
 PROJECT="${CLOUDFLARE_PAGES_PROJECT:-}"
-BOOKING_DB="${CLOUDFLARE_BOOKING_D1_NAME:-${CLOUDFLARE_WEBSITE_D1_NAME:-espacofacial-booking}}"
-WRANGLER_CWD="${WRANGLER_CWD:-booking}"
+API_DB="${CLOUDFLARE_API_D1_NAME:-skincos-db}"
+WRANGLER_CWD="${WRANGLER_CWD:-api}"
 STRICT="${STRICT:-0}"
 
 usage() {
@@ -18,7 +18,7 @@ Checks Cloudflare access without printing secrets:
   credential that deliberately does not expose the user-token endpoint.
 - Account-scoped API access when CLOUDFLARE_ACCOUNT_ID is present.
 - Pages project read access.
-- D1 database visibility for the booking service (espacofacial-booking by default).
+- D1 database visibility for the API gateway (skincos-db by default).
 - Local Wrangler OAuth fallback when no API token is present.
 
 Required for CI/automation:
@@ -29,9 +29,8 @@ Required for account-scoped checks:
   CLOUDFLARE_PAGES_PROJECT       Pages project to audit (no implicit default)
 
 Optional:
-  CLOUDFLARE_BOOKING_D1_NAME     default: espacofacial-booking
-  CLOUDFLARE_WEBSITE_D1_NAME     legacy override for existing environments
-  WRANGLER_CWD                   default: booking
+  CLOUDFLARE_API_D1_NAME         default: skincos-db
+  WRANGLER_CWD                   default: api
 EOF
 }
 
@@ -122,10 +121,10 @@ if [[ -n "$TOKEN" ]]; then
     const data = JSON.parse(fs.readFileSync(0, "utf8"));
     const found = Array.isArray(data.result) && data.result.some((db) => db.name === dbName);
     process.exit(found ? 0 : 1);
-  ' "$BOOKING_DB" <<<"$d1_payload"; then
-    ok "Cloudflare D1 database is visible: ${BOOKING_DB}"
+  ' "$API_DB" <<<"$d1_payload"; then
+    ok "Cloudflare D1 database is visible: ${API_DB}"
   else
-    fail "Cloudflare D1 database not visible to token: ${BOOKING_DB}"
+    fail "Cloudflare D1 database not visible to token: ${API_DB}"
   fi
 
   exit 0
@@ -135,14 +134,14 @@ if [[ -d "$WRANGLER_CWD" ]]; then
   if (cd "$WRANGLER_CWD" && npx --yes wrangler@4 whoami >/tmp/skincos-wrangler-whoami.log 2>&1); then
     ok "Wrangler local OAuth is authenticated"
     sed -n '1,28p' /tmp/skincos-wrangler-whoami.log | sed 's/^/     /'
-    if (cd "$WRANGLER_CWD" && npx --yes wrangler@4 d1 execute "$BOOKING_DB" --remote --command "SELECT 1 AS ok;" >/tmp/skincos-wrangler-d1-smoke.log 2>&1); then
-      ok "Wrangler local OAuth can read remote D1: ${BOOKING_DB}"
+    if (cd "$WRANGLER_CWD" && npx --yes wrangler@4 d1 execute "$API_DB" --remote --command "SELECT 1 AS ok;" >/tmp/skincos-wrangler-d1-smoke.log 2>&1); then
+      ok "Wrangler local OAuth can read remote D1: ${API_DB}"
     else
       cat /tmp/skincos-wrangler-d1-smoke.log >&2 || true
       if [[ "$STRICT" == "1" ]]; then
-        fail "Wrangler local OAuth is authenticated but cannot access remote D1: ${BOOKING_DB}"
+        fail "Wrangler local OAuth is authenticated but cannot access remote D1: ${API_DB}"
       fi
-      warn "Wrangler local OAuth is authenticated but cannot access remote D1: ${BOOKING_DB}"
+      warn "Wrangler local OAuth is authenticated but cannot access remote D1: ${API_DB}"
     fi
     exit 0
   fi

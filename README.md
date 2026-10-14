@@ -5,12 +5,13 @@ Plataforma interna para automações e operações da clínica.
 ## Arquitetura atual
 
 - `api/` é o único gateway de `api.skincos.com.br`.
-- `finance/`, `inventory/`, `workforce/`, `messaging/`, `booking/`, `ads/`,
+- `finance/`, `inventory/`, `workforce/`, `messaging/`, `ads/`,
   `social/` e `integration/` mantêm seus próprios domínios.
-- O código-fonte e os publicadores do Website pertencem exclusivamente a
+- A fonte e os publicadores do Website, incluindo Booking, pertencem exclusivamente a
   [`jubenitogarcia/website`](https://github.com/jubenitogarcia/website). Este
-  repositório mantém contratos e consumidores de APIs públicas; esse registro
-  de ownership não declara concluída uma migração de runtime Cloudflare.
+  repositório mantém contratos e consumidores de APIs públicas, como
+  `/api/booking/*`; esse registro de ownership não declara migração de runtime
+  Cloudflare ou de dados.
 - O CRM não está neste repositório. O projeto canônico é
   [`jubenitogarcia/crm`](https://github.com/jubenitogarcia/crm), localizado em
   `C:\\CodexShared\\Projetos\\crm`, com console, Core API, Worker/Pages, D1 e
@@ -35,8 +36,8 @@ npm run domain-boundaries:validate
 npm run api:test
 ```
 
-Cada domínio possui seu próprio `README` e scripts. Para trabalhar no CRM,
-abra o projeto independente em `C:\\CodexShared\\Projetos\\crm`.
+Cada domínio deste monorepo possui seu próprio `README` e scripts. Para trabalhar
+no Website/Booking ou no CRM, abra o respectivo repositório independente.
 
 ## Operação e segurança
 

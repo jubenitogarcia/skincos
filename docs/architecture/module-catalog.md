@@ -14,11 +14,11 @@ Cada módulo declara obrigatoriamente:
 - comandos de teste, feature flag, fallback, SLO e rollback.
 
 Módulos com `executionBoundary: "external"` são contratos de integração com
-outro repositório e não representam código executável neste monorepo. O CRM é
-o único módulo catalogado nessa categoria; sua implementação, publicação e
-dados vivem exclusivamente em `jubenitogarcia/crm`. O Website não tem módulo ou
-fonte neste catálogo: seu código e publisher vivem em `jubenitogarcia/website`;
-os contratos públicos que outros produtos consomem permanecem externos.
+outro repositório e não representam código executável neste monorepo. CRM e
+Booking são contratos externos: CRM pertence a `jubenitogarcia/crm`, e a fonte
+e o publisher de Website/Booking pertencem a `jubenitogarcia/website`. Os
+contratos públicos permanecem registrados para seus consumidores. A fronteira
+de fonte não declara migração do runtime Cloudflare ou dos dados de Booking.
 
 Uma feature flag ausente é registrada como `not-yet-implemented`. Isso é uma
 lacuna explícita, não uma autorização implícita para publicar uma capacidade:

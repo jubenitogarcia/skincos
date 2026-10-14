@@ -19,9 +19,11 @@ CRM: o único projeto CRM é `jubenitogarcia/crm`, em
 - Repositório exclusivo de fonte e publicação:
   <https://github.com/jubenitogarcia/website>.
 - Este monorepo conserva contratos e consumidores de APIs públicas, incluindo
-  booking e tracking, quando outros produtos dependem deles.
-- O registro de ownership da fonte não afirma que o runtime ou as rotas
-  Cloudflare já foram migrados.
+  `/api/booking/*`, `/api/booking/status` e tracking, quando outros produtos
+  dependem deles. A fonte e o publisher de Booking também pertencem a esse
+  repositório.
+- O registro de ownership da fonte não afirma que o runtime, os dados ou as
+  rotas Cloudflare já foram migrados.
 
 ## API e domínios
 
@@ -31,7 +33,8 @@ CRM: o único projeto CRM é `jubenitogarcia/crm`, em
 - `inventory/`: insumos, estoque e movimentos.
 - `workforce/`: Escala e Ponto.
 - `messaging/`: engine e adaptadores de WhatsApp.
-- `booking/`: disponibilidade e reservas.
+- Booking: contrato público do Website, mantido em
+  `jubenitogarcia/website`; o monorepo preserva as rotas e os consumidores.
 - `ads/`, `social/`: campanhas, relatórios e publicação editorial.
 - `integration/atendimento/commercial-catalog/`: contrato somente-leitura
   `crm-commercial-catalog/v1` para automações; não é CRM e não grava dados.

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const POLICY_PATH = ".github/governance/cloudflare-single-writer-policy.json";
 const SOURCE_EXTENSIONS = ["", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".yml", ".yaml", ".sh", ".py"];
-const REPO_ROOT_PREFIX = /^(?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|orb|integration|identity)\//;
+const REPO_ROOT_PREFIX = /^(?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|crm|finance|inventory|workforce|orb|integration|identity)\//;
 
 const MUTATION_PATTERNS = [
   /\bwrangler(?:@[A-Za-z0-9._-]+)?\b[^\r\n]*(?:\bpages\b[^\r\n]*\bdeploy\b|\bversions\b[^\r\n]*(?:\bupload\b|\bdeploy\b)|\bdeploy\b|\brollback\b|\bsecret\b[^\r\n]*(?:\bput\b|\bbulk\b|\bdelete\b)|\bkv\b[^\r\n]*\bkey\b[^\r\n]*(?:\bput\b|\bdelete\b)|\bd1\b[^\r\n]*(?:\bexecute\b|\bmigrations\b[^\r\n]*\bapply\b)|\br2\b[^\r\n]*\bobject\b[^\r\n]*(?:\bput\b|\bdelete\b))/i,
@@ -78,11 +78,11 @@ function referencesFrom(sourcePath, source, files) {
   ]) {
     for (const match of source.matchAll(pattern)) addRelative(match[1]);
   }
-  for (const match of source.matchAll(/\buses:\s*['"]?(\.\/(?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|orb|integration)[^\s'"@#]*)/g)) {
+  for (const match of source.matchAll(/\buses:\s*['"]?(\.\/(?:\.github|scripts|ops|platform|shared|api|crm|finance|inventory|workforce|orb|integration)[^\s'"@#]*)/g)) {
     const resolved = resolveRepoPath(match[1], files);
     if (resolved) references.add(resolved);
   }
-  for (const match of source.matchAll(/\b(?:node|bash|sh|python3?)\s+(?:--[^\s]+\s+)*((?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|orb|integration)\/[A-Za-z0-9_./-]+)/g)) {
+  for (const match of source.matchAll(/\b(?:node|bash|sh|python3?)\s+(?:--[^\s]+\s+)*((?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|crm|finance|inventory|workforce|orb|integration)\/[A-Za-z0-9_./-]+)/g)) {
     const resolved = resolveRepoPath(match[1], files);
     if (resolved) references.add(resolved);
   }

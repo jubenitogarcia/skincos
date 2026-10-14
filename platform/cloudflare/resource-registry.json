@@ -9,11 +9,12 @@
   "resources": [
     {
       "id": "booking",
-      "owner": "booking",
+      "owner": "booking API contract",
       "routes": ["/booking/*"],
       "bindings": ["BOOKING_DB"],
       "stores": ["D1:espacofacial-booking"],
-      "sourceRoots": ["booking"]
+      "sourceRepository": "jubenitogarcia/website",
+      "sourceRoots": []
     },
     {
       "id": "inventory",

@@ -203,10 +203,10 @@
       "id": "native-runtime",
       "workflow": null,
       "canonicalRunbook": "docs/runbooks/lifecycle-runtime-cutover.md",
-      "publishes": ["Native:messaging-whatsapp", "Native:booking", "Native:atendimento-commercial-catalog", "Native:cloudflare-runtime"],
-      "resources": ["messaging-whatsapp", "booking", "atendimento-commercial-catalog", "cloudflare-runtime"],
+      "publishes": ["Native:messaging-whatsapp", "Native:atendimento-commercial-catalog", "Native:cloudflare-runtime"],
+      "resources": ["messaging-whatsapp", "atendimento-commercial-catalog", "cloudflare-runtime"],
       "secrets": ["/etc/skincos"],
-      "migrationPaths": ["booking/migrations"],
+      "migrationPaths": [],
       "environments": ["preview", "staging", "production"],
       "promotion": {"stagingSupported": false, "blocker": "Native runtime has immutable releases but no isolated native staging host; production remains operator-gated."}
     }
@@ -214,7 +214,7 @@
   "nonPublishingSurfaces": [
     {
       "id": "cloudflare-configuration-synchronizers",
-      "workflows": ["cloudflare-pages-sync-escala.yml", "cloudflare-sync-integrations-encryption-secret.yml", "cloudflare-workers-sync-ponto-secrets.yml", ],
+      "workflows": ["cloudflare-pages-sync-escala.yml", "cloudflare-sync-integrations-encryption-secret.yml", "cloudflare-workers-sync-ponto-secrets.yml"],
       "scope": "Secrets, bindings or configuration only; a source deploy command is prohibited by CI topology validation."
     },
     {

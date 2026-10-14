@@ -139,10 +139,6 @@
       "patterns": ["clientes-readonly/**"],
       "sharedInputs": true
     },
-    "booking": {
-      "patterns": ["booking/**", ".github/workflows/booking-executor-contract.yml"],
-      "sharedInputs": true
-    },
     "escala-api": {
       "patterns": ["workforce/schedule/**", "inventory/**", ".github/workflows/deploy-escala-api.yml", ".github/workflows/cloudflare-pages-sync-escala.yml", ".github/scripts/promotion-*.mjs"],
       "sharedInputs": true
@@ -212,7 +208,6 @@
     "native-runtime": {
       "patterns": [
         "integration/ef/**",
-        "booking/**",
         "messaging/**",
         "ops/runtime/**",
         "scripts/runtime/**"

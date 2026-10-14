@@ -127,23 +127,6 @@ def _load_login_env_file() -> None:
     _load_simple_env_file(path, allowed_keys={"EF_LOGIN_EMAIL", "EF_LOGIN_PASSWORD"})
 
 
-def _load_booking_env_file() -> None:
-    """Load booking API runtime vars from secrets/booking_api.env when present."""
-
-    raw = os.getenv("EF_BOOKING_ENV_FILE", "").strip()
-    path = Path(raw).expanduser() if raw else (PROJECT_DIR / "secrets" / "booking_api.env")
-    _load_simple_env_file(
-        path,
-        allowed_keys={
-            "EF_BOOKING_API_HOST",
-            "EF_BOOKING_API_PORT",
-            "EF_BOOKING_API_TOKEN",
-            "EF_BOOKING_WEBHOOK_SECRET",
-            "EF_MODE",
-            "HEADLESS",
-        },
-    )
-
 
 def _prompt_yes_no(prompt: str, default: bool) -> bool:
     if _is_non_interactive():
@@ -1652,9 +1635,6 @@ def main() -> int:
     _load_env()
 
     pre_mode = os.getenv("EF_MODE", "").strip().lower()
-    if pre_mode in {"booking_api", "agenda_booking_api", "reserve_api"}:
-        _load_booking_env_file()
-
     print("=== scraper (Runner) ===")
 
     # Exports go into report/ by default, but can be overridden via EF_OUTPUT_DIR.
@@ -1686,7 +1666,7 @@ def main() -> int:
     mode = os.getenv("EF_MODE", "").strip().lower()
     if not mode:
         print("EF_MODE não definido. Configure uma ação no Codex.")
-        print("Valores aceitos: agenda | agenda_index | agenda_delta | caixa | procedures | client_registration | recorder | selftest | booking_api | menu")
+        print("Valores aceitos: agenda | agenda_index | agenda_delta | caixa | procedures | client_registration | recorder | selftest | menu")
         return 2
 
     unit_name = os.getenv("EF_UNIT_NAME", "").strip()
@@ -1743,16 +1723,6 @@ def main() -> int:
         rc = _run_selftest(headless=headless, output_dir=default_debug_dir())
         _maybe_print_log_path()
         return rc
-    if mode in {"booking_api", "agenda_booking_api", "reserve_api"}:
-        from espacofacial.booking_server import run_booking_server
-
-        _load_booking_env_file()
-        email, password = _get_credentials(persist_session=persist_session)
-        _set_runtime_env(email, password, output_dir, headless, unit_name, persist_session)
-        rc = run_booking_server()
-        _maybe_print_log_path()
-        return rc
-
     if mode in {"menu", "custom"}:
         headless_env = _env_flag("HEADLESS")
         if headless_env is None:
@@ -1769,9 +1739,8 @@ def main() -> int:
         print("5) Exportar procedimentos realizados dos clientes (todas as unidades)")
         print("6) Exportar cadastro dos clientes (todas as unidades)")
         print("7) Recorder: abrir navegador e gravar cliques/preenchimentos")
-        print("8) Booking API (listener HTTP para reservas)")
-        print("9) Self-test (verifica ambiente/Chrome/export)")
-        print("10) Sair")
+        print("8) Self-test (verifica ambiente/Chrome/export)")
+        print("9) Sair")
 
         choice = input("> ").strip()
         if choice == "1":
@@ -1821,19 +1790,10 @@ def main() -> int:
             _maybe_print_log_path()
             return rc
         if choice == "8":
-            from espacofacial.booking_server import run_booking_server
-
-            _load_booking_env_file()
-            email, password = _get_credentials(persist_session=persist_session)
-            _set_runtime_env(email, password, output_dir, headless, unit_name, persist_session)
-            rc = run_booking_server()
-            _maybe_print_log_path()
-            return rc
-        if choice == "9":
             rc = _run_selftest(headless=headless, output_dir=default_debug_dir())
             _maybe_print_log_path()
             return rc
-        if choice == "10":
+        if choice == "9":
             print("Saindo.")
             return 0
         print("Opção inválida.")
