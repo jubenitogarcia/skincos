@@ -465,6 +465,11 @@ export async function handleMetaAdsPublishRequest(input) {
     return updateRun(decodeURIComponent(runMatch[1]), request, env, requestId);
   }
 
+  const imageReadbackMatch = pathname.match(/^\/v1\/meta-ads-publish\/runs\/([^/]+)\/image-readback$/);
+  if (request.method === 'GET' && imageReadbackMatch) {
+    return readRunImage({ runId: imageReadbackMatch[1], request, env, decryptToken });
+  }
+
   const heartbeatMatch = pathname.match(/^\/v1\/meta-ads-publish\/runs\/([^/]+)\/heartbeat$/);
   if (request.method === 'POST' && heartbeatMatch) {
     return heartbeatRun(decodeURIComponent(heartbeatMatch[1]), env, requestId);
@@ -6536,6 +6541,102 @@ async function claimEvent(runId, request, env, requestId) {
   }, 201);
 }
 
+// Recovery reads must also work on terminal runs. This route only SELECTs the
+// existing run/receipt and reads Graph; it never reopens a run, journals a new
+// operation, or replays a cached result as evidence of current availability.
+async function readRunImage({ runId, request, env, decryptToken }) {
+  // Do not echo caller-controlled correlation headers in this private projection.
+  const requestId = crypto.randomUUID();
+  const safeErrors = new Set([
+    'image_readback_request_invalid', 'image_readback_run_not_found',
+    'image_readback_upload_not_completed', 'image_readback_hash_not_in_receipt',
+    'image_readback_receipt_account_mismatch', 'image_readback_response_invalid',
+    'image_readback_response_account_mismatch', 'image_readback_response_hash_mismatch',
+    'graph_response_too_large', 'facebook_token_not_available',
+    'account_not_authorized_for_token', 'unsupported_api_version',
+  ]);
+  try {
+    const allowed = new Set(['upload_operation_key', 'image_hash', 'token_id', 'account_id', 'api_version']);
+    const query = new URL(request.url).searchParams;
+    if (!/^[A-Za-z0-9_.:-]{8,200}$/.test(runId)
+        || [...query.keys()].some((key) => !allowed.has(key) || query.getAll(key).length !== 1)) {
+      throw failure('image_readback_request_invalid');
+    }
+    const uploadKey = query.get('upload_operation_key') || '';
+    const imageHash = query.get('image_hash') || '';
+    const tokenId = query.get('token_id') || '';
+    const accountId = query.get('account_id') || '';
+    if (!/^[A-Za-z0-9_.:-]{8,200}$/.test(uploadKey) || !/^[a-f0-9]{32}$/.test(imageHash)
+        || !/^[A-Za-z0-9_.:-]{1,200}$/.test(tokenId) || !/^\d{5,30}$/.test(accountId)
+        || (query.has('api_version') && !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(query.get('api_version')))) {
+      throw failure('image_readback_request_invalid');
+    }
+    const run = await dbFirst(env, 'SELECT id FROM meta_ads_publish_runs WHERE id = ?', runId);
+    if (!run) throw failure('image_readback_run_not_found', { http_status: 404 });
+    const upload = await dbFirst(env,
+      `SELECT action, status, result_json FROM meta_ads_publish_operations
+        WHERE run_id = ? AND operation_key = ?`, runId, uploadKey);
+    if (!upload || upload.action !== 'upload_image' || upload.status !== 'completed') {
+      throw failure('image_readback_upload_not_completed', { http_status: 409 });
+    }
+    const receipt = parseObject(upload.result_json);
+    const images = Object.values(asObject(receipt.images));
+    const matching = images.filter((image) => asObject(image).hash === imageHash);
+    if (!matching.length) throw failure('image_readback_hash_not_in_receipt', { http_status: 404 });
+    for (const record of [receipt, ...matching]) {
+      for (const field of ['account_id', 'ad_account_id', '_gateway_account_id']) {
+        if (Object.hasOwn(record, field) && clean(record[field]).replace(/^act_/, '') !== accountId) {
+          throw failure('image_readback_receipt_account_mismatch', { http_status: 409 });
+        }
+      }
+    }
+    const context = { env, decryptToken, action: 'read_image', attempts: 0, rateUsage: {}, traceId: '' };
+    const auth = await resolveGraphAuth({ token_id: tokenId, account_id: accountId, api_version: query.get('api_version') || undefined }, context);
+    const graph = await graphRequest(graphUrl(auth.apiVersion, `act_${auth.accountId}/adimages`, {
+      hashes: JSON.stringify([imageHash]), fields: 'hash,account_id,status,width,height', limit: '2',
+    }), { method: 'GET', redirect: 'error' }, auth, context, { maxAttempts: 1, maxResponseBytes: 32 * 1024 });
+    const data = graph.body?.data;
+    if (!Array.isArray(data) || data.length > 1 || graph.body?.paging?.next) {
+      throw failure('image_readback_response_invalid', { http_status: 502 });
+    }
+    const image = data[0];
+    if (image && (typeof image !== 'object' || Array.isArray(image) || image.hash !== imageHash)) {
+      throw failure('image_readback_response_hash_mismatch', { http_status: 502 });
+    }
+    if (data.length && (!image || clean(image.account_id).replace(/^act_/, '') !== auth.accountId)) {
+      throw failure('image_readback_response_account_mismatch', { http_status: 502 });
+    }
+    const dimension = (value) => Number.isSafeInteger(value) && value > 0 && value <= 100_000 ? value : null;
+    return response({
+      ok: true,
+      image: {
+        source: 'meta_graph_adimages', checked_at: nowIso(), receipt_hash_confirmed: true,
+        hash_fingerprint: await sha256(imageHash), found: data.length === 1,
+        account_match: data.length === 1 ? true : null,
+        graph_status: image ? (['ACTIVE', 'DELETED', 'INTERNAL'].includes(image.status) ? image.status : 'UNKNOWN') : null,
+        width: dimension(image?.width), height: dimension(image?.height),
+        creative_acceptance_verified: false,
+      },
+      meta_mutations_performed: false, journal_mutations_performed: false, requestId,
+    });
+  } catch (error) {
+    const normalized = normalizeFailure(error);
+    const status = Number.isInteger(normalized.http_status) && normalized.http_status >= 400 && normalized.http_status <= 599
+      ? normalized.http_status : 502;
+    const safeInteger = (value) => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    return response({
+      ok: false,
+      error: safeErrors.has(error?.message) ? error.message : 'meta_image_readback_failed',
+      detail: {
+        classification: ['auth', 'permanent', 'transient', 'unknown'].includes(normalized.classification) ? normalized.classification : 'unknown',
+        retryable: normalized.retryable === true, http_status: status,
+        code: safeInteger(normalized.code), error_subcode: safeInteger(normalized.error_subcode),
+      },
+      meta_mutations_performed: false, journal_mutations_performed: false, requestId,
+    }, status);
+  }
+}
+
 async function executeOperation(context) {
   const { runId, request, env, requestId, decryptToken, encryptToken, writeAudit } = context;
   const run = await loadRun(env, runId);
@@ -8012,7 +8113,7 @@ async function resolveGraphAuth(body, context) {
   return { tokenId, accountId, apiVersion, accessToken, appSecretProof, config };
 }
 
-async function graphRequest(url, init, auth, context, { maxAttempts = MAX_GRAPH_ATTEMPTS } = {}) {
+async function graphRequest(url, init, auth, context, { maxAttempts = MAX_GRAPH_ATTEMPTS, maxResponseBytes = 0 } = {}) {
   let lastFailure;
   const started = Date.now();
   const attemptsAllowed = clampInteger(maxAttempts, MAX_GRAPH_ATTEMPTS, 1, MAX_GRAPH_ATTEMPTS);
@@ -8033,7 +8134,7 @@ async function graphRequest(url, init, auth, context, { maxAttempts = MAX_GRAPH_
       headers.set('Authorization', `Bearer ${auth.accessToken}`);
       const graphFetch = context.env.META_GRAPH_FETCH || fetch;
       const graphResponse = await graphFetch(target, { ...init, headers, signal: controller.signal });
-      const body = await parseGraphBody(graphResponse);
+      const body = await parseGraphBody(graphResponse, maxResponseBytes);
       const rateUsage = extractRateUsage(graphResponse.headers);
       context.rateUsage = mergeRateUsage(context.rateUsage, rateUsage);
       context.traceId = clean(body?.error?.fbtrace_id || context.traceId);
@@ -8775,8 +8876,10 @@ function jsonRequest(method, body) {
   };
 }
 
-async function parseGraphBody(graphResponse) {
-  const text = await graphResponse.text();
+async function parseGraphBody(graphResponse, maxResponseBytes = 0) {
+  const text = maxResponseBytes > 0
+    ? await readBoundedText(graphResponse.body, maxResponseBytes, () => failure('graph_response_too_large', { http_status: 502 }))
+    : await graphResponse.text();
   if (!text) return {};
   try { return JSON.parse(text); } catch { return { raw_response: redactText(text.slice(0, 1000)) }; }
 }

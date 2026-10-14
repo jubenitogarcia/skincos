@@ -22,6 +22,8 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
 - `POST /internal/token-vault/v1/analytics/operations`
+- `GET /internal/token-vault/v1/meta-ads-publish/runs/:run_id`
+- `GET /internal/token-vault/v1/meta-ads-publish/runs/:run_id/image-readback`
 
 Os endpoints administrativos exigem `Authorization: Bearer <TOKEN_VAULT_API_TOKEN>`.
 O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
@@ -59,6 +61,67 @@ endpoint para diagnóstico controlado).
   explícita `INFLUENCER_INTELLIGENCE_ENABLED=true`)
 
 Os tokens são gravados em D1 como AES-GCM ciphertext. Logs, auditoria e respostas de PATCH não retornam token em claro.
+
+## Leitura de imagem para recuperação de publicação
+
+`GET .../runs/:run_id/image-readback` verifica um hash que já consta no recibo
+de uma operação `upload_image` concluída **no mesmo run**, inclusive quando o
+run terminou com falha. A rota usa os papéis existentes `operational` ou
+`admin`; os bearers de configuração e analytics não a alcançam. Ela não
+reabre runs, grava journal, cria operações nem publica ou altera objetos Meta.
+
+Os parâmetros obrigatórios são `upload_operation_key`, `image_hash`,
+`token_id` e `account_id`; `api_version` é opcional e aceita a mesma família
+de versões do gateway (v25.0 ou superior). Exemplo exclusivamente sintético:
+
+```text
+GET /internal/token-vault/v1/meta-ads-publish/runs/map_synthetic_image/image-readback?upload_operation_key=upload:v3:synthetic&image_hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&token_id=unit-facebook-token&account_id=123456789
+```
+
+Esta interface aceita somente hashes de 32 caracteres hexadecimais minúsculos,
+IDs de conta numéricos e referências limitadas de run, operação e credencial.
+Parâmetros desconhecidos ou repetidos são rejeitados. O Vault confirma o
+recibo antes de acessar a credencial; a conta solicitada precisa corresponder
+à configuração da credencial. Quando o recibo também contém uma conta, ela
+precisa coincidir. Recibos legados sem conta comprovam o hash no run, mas não
+comprovam em qual conta ocorreu o upload original.
+
+O único acesso externo é um GET fixo a
+`/{api_version}/act_{account_id}/adimages`, com `hashes=[image_hash]` e os
+campos `hash,account_id,status,width,height`. A implementação não segue
+redirects nem paginação, limita a resposta a 32 KiB e usa uma única tentativa
+com o timeout Graph de 60 segundos. O contrato é corroborado pelas fontes
+oficiais da Meta: [GET adimages e filtro hashes no SDK Python](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adaccount.py)
+e [campos e estados AdImage](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adimage.py).
+
+A resposta permite apenas presença, concordância da conta, estado conhecido,
+dimensões, horário e fingerprint SHA-256 do hash. Erros preservam somente
+classificação, indicação de retry, HTTP e códigos numéricos; nomes, URLs,
+payloads, traces e credenciais não são devolvidos. `found: false` significa
+que a consulta não retornou a imagem; `found: true` ou `ACTIVE` não comprova
+aceitação por `adcreative`. Por isso `creative_acceptance_verified` permanece
+`false`. Cada leitura consulta a Meta novamente, sem reutilizar um recibo
+como prova de disponibilidade atual.
+
+O journal original continua acessível por `GET .../runs/:run_id`, mas sua
+resposta inclui resultados e estados privados: o consumidor deve projetar
+somente status, contagens e referências opacas antes de produzir logs ou
+evidência. Este patch não adiciona um consumidor MCP ou nova custódia. A
+integração operacional precisa de ferramentas tipadas de leitura, origem e
+rotas fixas, limites de entrada/saída e segredo próprio sob custódia. Não
+reutilize o resolver de credenciais como proxy e não retire o bearer do n8n.
+Se for necessário novo acesso, um papel restrito a essas leituras deve ser
+revisado e provisionado separadamente; os bearers atuais têm poderes maiores.
+
+Para recuperar somente uma unidade incompleta, primeiro reconcilie o journal
+do run original e preserve as operações concluídas das outras unidades.
+Mantenha `operation_key` e identidade do payload em qualquer retomada válida;
+um payload alterado não pode reutilizar a mesma chave. Não repita a execução
+inteira, não crie outro run para contornar estado terminal e não limpe o
+journal. Runs terminais, resultados ambíguos ou mudança da configuração
+vinculada exigem um plano de recuperação específico antes de qualquer escrita.
+Esta leitura não implementa essa retomada nem muda a classificação de erros
+de criação de criativo.
 
 ## Configuração governada do Meta Ads Publish
 
