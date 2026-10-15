@@ -57,8 +57,22 @@ permissions:
   contents: read
 
 jobs:
+  native-production-authority:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Production Schedule publication belongs to the fenced native lane
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == 'production' ]]; then
+            echo '::error::SCHEDULE_PRODUCTION_NATIVE_ONLY: use public-read-native-release.mjs with real custody and a remote fenced lease.'
+            exit 1
+          fi
+
   promotion:
-    if: ${{ !(inputs.target == 'production' && (inputs.operation == 'disable' || inputs.operation == 'reconcile-probe')) }}
+    needs: native-production-authority
+    if: ${{ inputs.target != 'production' }}
     uses: ./.github/workflows/promotion-gate.yml
     with:
       unit: schedule-public-read-adapter
@@ -580,10 +594,10 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-staging.json
 
   production:
-    needs: [promotion, recovery-source]
+    needs: [native-production-authority, promotion, recovery-source]
     # Keep an already-running job alive so checked fallback/cleanup can execute.
     # Normal steps retain their implicit success() and never start on cancellation.
-    if: ${{ always() && inputs.target == 'production' && inputs.operation != 'reconcile-probe' && (needs.promotion.result == 'success' || needs.recovery-source.result == 'success') }}
+    if: ${{ always() && needs.native-production-authority.result == 'success' && inputs.target == 'production' && inputs.operation != 'reconcile-probe' && (needs.promotion.result == 'success' || needs.recovery-source.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -977,6 +991,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-schedule-public-read-adapter-production.json
 
   recovery-source:
+    needs: native-production-authority
     if: ${{ inputs.target == 'production' && (inputs.operation == 'disable' || inputs.operation == 'reconcile-probe') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

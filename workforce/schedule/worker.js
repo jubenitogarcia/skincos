@@ -4,6 +4,7 @@ import {
   normalizeSchedulePublicReadSecret,
   verifySchedulePublicReadRequest,
 } from './public-read-contract.js'
+import { SCHEDULE_PUBLIC_READ_DATA_LIMITS, SCHEDULE_PUBLIC_READ_PROFILE_SQL, SCHEDULE_PUBLIC_READ_REFERENCES_SQL, normalizeSchedulePublicReadUnit, isSchedulePublicReadDate, createSchedulePublicReadCatalogue, validateSchedulePublicReadDto, assertSchedulePublicReadResponseBudget } from './public-read-projection.js'
 
 const ACTOR_SKEW_MS = 5 * 60 * 1000
 const SCHEDULE_PUBLIC_READ_INTERNAL_PREFIX = '/api/escala/internal/schedule-public-read/v1'
@@ -186,9 +187,9 @@ function normalizeUnitKey(value) {
 }
 
 function schedulePublicReadUnit(value) {
-  const key = normalizeUnitKey(value)
-  if (key === 'barrashoppingsul') return { slug: 'barrashoppingsul', label: 'BarraShoppingSul' }
-  if (key === 'novohamburgo') return { slug: 'novohamburgo', label: 'Novo Hamburgo' }
+  const key = normalizeSchedulePublicReadUnit(value)
+  if (key === 'barra-shopping-sul') return { slug: key, label: 'BarraShoppingSul' }
+  if (key === 'novo-hamburgo') return { slug: key, label: 'Novo Hamburgo' }
   return null
 }
 
@@ -271,97 +272,54 @@ function publicInstagramHandle(value) {
 
 async function handleSchedulePublicRead(request, env, url, corsHeaders, requestId) {
   const secret = normalizeSchedulePublicReadSecret(env?.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY)
-  if (!schedulePublicReadEnabled(env) || !secret || !env?.DB) {
-    return schedulePublicReadUnavailable(corsHeaders, requestId)
-  }
+  if (!schedulePublicReadEnabled(env) || !secret || !env?.DB) return schedulePublicReadUnavailable(corsHeaders, requestId)
   if (request.method !== 'GET') return schedulePublicReadMethodNotAllowed(corsHeaders, requestId)
-
-  const authorization = await verifySchedulePublicReadRequest(request, secret, {
-    allowedService: SCHEDULE_PUBLIC_READ_CORE_SERVICE,
-  })
+  const authorization = await verifySchedulePublicReadRequest(request, secret, { allowedService: SCHEDULE_PUBLIC_READ_CORE_SERVICE })
   if (!authorization.ok) return schedulePublicReadUnauthorized(corsHeaders, requestId)
-
   const suffix = url.pathname.slice(SCHEDULE_PUBLIC_READ_INTERNAL_PREFIX.length)
-  if (!['/readiness', '/availability', '/professionals'].includes(suffix)) {
-    return schedulePublicReadNotFound(corsHeaders, requestId)
-  }
-
+  if (!['/readiness', '/availability', '/professionals'].includes(suffix)) return schedulePublicReadNotFound(corsHeaders, requestId)
+  const permitted = suffix === '/availability' ? ['unit', 'date'] : suffix === '/professionals' ? ['unit'] : []
+  if ([...url.searchParams.keys()].some((key) => !permitted.includes(key))
+    || permitted.some((key) => url.searchParams.getAll(key).length !== 1)) return schedulePublicReadBadRequest(corsHeaders, requestId, 'INVALID_QUERY')
+  const unit = suffix === '/readiness' ? null : schedulePublicReadUnit(url.searchParams.get('unit'))
+  if (suffix !== '/readiness' && !unit) return schedulePublicReadBadRequest(corsHeaders, requestId, 'INVALID_UNIT')
+  const date = suffix === '/availability' ? url.searchParams.get('date') : null
+  if (suffix === '/availability' && !isSchedulePublicReadDate(date)) return schedulePublicReadBadRequest(corsHeaders, requestId, 'INVALID_DATE')
   try {
+    // A primary-anchored session and one read-only batch keep profiles, day
+    // references and closed flags in the same D1 transaction snapshot.
+    const db = env.DB.withSession('first-primary')
+    const queries = [db.prepare(SCHEDULE_PUBLIC_READ_PROFILE_SQL)
+      .bind(SCHEDULE_PUBLIC_READ_DATA_LIMITS.maxProfiles + 1)]
+    if (suffix === '/readiness') queries.push(db.prepare('select professional_id, professional_name from schedule_entries limit 0'))
+    if (suffix === '/availability') queries.push(
+      db.prepare(SCHEDULE_PUBLIC_READ_REFERENCES_SQL)
+        .bind(unit.label, date, SCHEDULE_PUBLIC_READ_DATA_LIMITS.maxReferences + 1),
+      db.prepare('select 1 as found from closed_days where unit = ?1 and date = ?2 limit 1').bind(unit.label, date),
+      db.prepare('select 1 as found from holidays where unit = ?1 and date = ?2 limit 1').bind(unit.label, date),
+    )
+    const results = await db.batch(queries)
+    if (!Array.isArray(results) || results.length !== queries.length
+      || results.some((result) => result?.success !== true || !Array.isArray(result.results))) throw new Error('schedule_public_projection_invalid')
+    const catalogue = createSchedulePublicReadCatalogue(results[0].results)
+    let body
     if (suffix === '/readiness') {
-      await env.DB.prepare('select 1 as ready').first()
-      return jsonResponse({
-        ok: true,
-        contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
-        ready: true,
-        dependencies: { schedule: 'available' },
-      }, { headers: schedulePublicReadHeaders(corsHeaders, requestId) })
+      catalogue.roster('barra-shopping-sul'); catalogue.roster('novo-hamburgo')
+      body = { ok: true, contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION, ready: true, dependencies: { schedule: 'available' } }
+    } else {
+      const professionals = suffix === '/professionals' ? catalogue.roster(unit.slug) : catalogue.availability(results[1].results, unit.slug)
+      body = { ok: true, contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION, data: { unit: unit.slug, professionals } }
+      if (suffix === '/availability') Object.assign(body.data, { date,
+        closed: results[2].results.length > 0 || results[3].results.length > 0,
+        professionalNames: professionals.map((professional) => professional.name) })
     }
-
-    const unit = schedulePublicReadUnit(url.searchParams.get('unit'))
-    if (!unit) return schedulePublicReadBadRequest(corsHeaders, requestId, 'INVALID_UNIT')
-
-    if (suffix === '/availability') {
-      const date = String(url.searchParams.get('date') || '').trim()
-      if (!isValidDate(date)) return schedulePublicReadBadRequest(corsHeaders, requestId, 'INVALID_DATE')
-
-      const [scheduleResult, closedDay, holiday] = await Promise.all([
-        env.DB.prepare(
-          `select professional_name as professional
-           from schedule_entries
-           where unit = ?1 and date = ?2
-           order by professional_name asc`,
-        ).bind(unit.label, date).all(),
-        env.DB.prepare(
-          'select 1 as found from closed_days where unit = ?1 and date = ?2 limit 1',
-        ).bind(unit.label, date).first(),
-        env.DB.prepare(
-          'select 1 as found from holidays where unit = ?1 and date = ?2 limit 1',
-        ).bind(unit.label, date).first(),
-      ])
-      const professionalNames = Array.from(new Set(
-        (scheduleResult.results || []).map((row) => publicOneLine(row.professional)).filter(Boolean),
-      ))
-      return jsonResponse({
-        ok: true,
-        contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
-        data: {
-          unit: unit.slug,
-          date,
-          closed: Boolean(closedDay || holiday),
-          professionalNames,
-        },
-      }, { headers: schedulePublicReadHeaders(corsHeaders, requestId) })
-    }
-
-    const result = await env.DB.prepare(
-      `select name, status, role, nickname, instagram, units_json
-       from professionals
-       order by name asc`,
-    ).all()
-    const professionals = (result.results || [])
-      .map((row) => {
-        const units = parseSchedulePublicReadUnits(row.units_json)
-        return {
-          name: publicOneLine(row.name),
-          status: publicOneLine(row.status) || null,
-          role: publicOneLine(row.role) || null,
-          nickname: publicOneLine(row.nickname) || null,
-          instagram: publicInstagramHandle(row.instagram),
-          units,
-        }
-      })
-      .filter((row) => row.name && (!row.status || row.status.toLowerCase() === 'ativo'))
-      .filter((row) => row.units.some((entry) => schedulePublicReadUnit(entry)?.slug === unit.slug))
-
-    return jsonResponse({
-      ok: true,
-      contract: SCHEDULE_PUBLIC_READ_CONTRACT_VERSION,
-      data: { unit: unit.slug, professionals },
-    }, { headers: schedulePublicReadHeaders(corsHeaders, requestId) })
+    const dto = validateSchedulePublicReadDto(body, { suffix, unit: unit?.slug, date })
+    return jsonResponse(assertSchedulePublicReadResponseBudget(dto), { headers: schedulePublicReadHeaders(corsHeaders, requestId) })
   } catch {
     return schedulePublicReadUnavailable(corsHeaders, requestId, 'SCHEDULE_PUBLIC_READ_NOT_READY')
   }
 }
+
 
 async function getTableColumns(env, tableName) {
   if (!globalThis.__escalaSchemaCache) {

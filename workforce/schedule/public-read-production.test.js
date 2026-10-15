@@ -155,8 +155,10 @@ test('production readback verifies active version, flag, source/run and private 
   assert.throws(() => assertProductionReadback(coreDeployment, version, { ...options, surface: 'core', sourceSha: 'f'.repeat(40) }), /readback_invalid/)
 })
 
-const adapter = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8')
-const core = readFileSync(new URL('../../.github/workflows/deploy-escala-api.yml', import.meta.url), 'utf8')
+const adapter = readFileSync(new URL('../../.github/workflows/deploy-schedule-public-read-adapter.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const core = readFileSync(new URL('../../.github/workflows/deploy-escala-api.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+assert.ok(adapter.includes('\n  production:\n'), 'adapter production job must remain present')
+assert.ok(core.includes('\n  production-public-read:\n'), 'core public-read production job must remain present')
 const production = adapter.slice(adapter.indexOf('\n  production:\n'))
 const coreProduction = core.slice(core.indexOf('\n  production-public-read:\n'))
 test('production adapter remains private and probe has one fixed binding with no data store', () => {
