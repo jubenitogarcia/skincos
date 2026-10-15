@@ -7,17 +7,34 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8')
 
-test('visible Codex actions start in PowerShell and use no direct WSL shell string', () => {
+const assertPlatformAction = (platform, command) => {
+  assert.ok(platform === 'win32' || platform === 'darwin', `unapproved action platform: ${platform}`)
+  if (platform === 'win32') assert.match(command, /^powershell\.exe /)
+  else assert.match(command, /^bash \.\/scripts\/run-local-codex-shortcut\.sh [a-z-]+$/)
+}
+
+test('visible Codex actions use their approved platform launcher and no direct WSL shell string', () => {
   const environment = read('.codex/environments/environment.toml')
   const launcher = read('scripts/run-shared-codex-shortcut.ps1')
-  for (const command of environment.matchAll(/^command = "(.+)"$/gm)) {
-    assert.match(command[1], /^powershell\.exe /)
+  const counts = { win32: 0, darwin: 0 }
+  for (const action of environment.split(/^\[\[actions\]\]\r?$/m).slice(1)) {
+    const platform = action.match(/^platform = "([^"]+)"\r?$/m)?.[1]
+    const command = action.match(/^command = "([^"]+)"\r?$/m)?.[1]
+    assertPlatformAction(platform, command)
+    counts[platform] += 1
   }
+  assert.deepEqual(counts, { win32: 6, darwin: 6 })
+  assert.doesNotThrow(() => assertPlatformAction('darwin', 'bash ./scripts/run-local-codex-shortcut.sh context'))
+  assert.throws(() => assertPlatformAction('win32', 'bash ./scripts/run-local-codex-shortcut.sh context'))
+  assert.throws(() => assertPlatformAction('linux', 'bash ./scripts/run-local-codex-shortcut.sh context'))
+  assert.throws(() => assertPlatformAction(undefined, 'powershell.exe -File ./scripts/run-shared-codex-shortcut.ps1'))
   assert.doesNotMatch(launcher, /\bwsl\.exe\b/i)
   assert.doesNotMatch(launcher, /bash\s+-lc/)
   assert.doesNotMatch(launcher, /RepoCommand/)
   assert.match(launcher, /-ScriptPath/)
-  assert.match(launcher, /-NpmScript/)
+  assert.match(launcher, /ParameterSetName = "NpmScript"/)
+  assert.match(launcher, /\$invokeParameters\.NpmScript = \$NpmScript/)
+  assert.match(launcher, /& \$wslInvoker @invokeParameters/)
   assert.match(launcher, /-Executable/)
 })
 
@@ -40,6 +57,7 @@ test('the WSL gateway exposes typed operations and fail-closed preflight', () =>
 test('direct WSL process ownership remains limited to documented infrastructure', () => {
   const allowed = new Set([
     'scripts/invoke-skincos-wsl.ps1',
+    'scripts/bootstrap-schedule-public-read-custody.ps1',
     'scripts/install-wsl-runtime-keepalive.ps1',
     'scripts/start-wsl-runtime-keepalive.ps1',
     'scripts/test-wsl-runtime-keepalive.ps1',
@@ -61,7 +79,7 @@ test('direct WSL process ownership remains limited to documented infrastructure'
         // shape) without owning a WSL process. Restrict this audit to actual
         // invocation forms, including the typed gateway's resolved executable
         // and the keepalive's Start-Process form.
-        const ownsWslProcess = /\bwsl\.exe\s+(?:--[a-z]|-[a-z])|&\s+\$wsl(?:\.Source)?\b|Start-Process[\s\S]{0,240}-FilePath\s+\$wslPath\b/i.test(contents)
+        const ownsWslProcess = /\bwsl\.exe\s+(?:--[a-z]|-[a-z])|&\s+\$wsl(?:\.Source)?\b|Start-Process[\s\S]{0,240}-FilePath\s+\$wslPath\b|\$info\.FileName\s*=\s*\$wsl\.Source/i.test(contents)
         if (ownsWslProcess) found.push(relative)
       }
     }
@@ -75,6 +93,21 @@ test('direct WSL process ownership remains limited to documented infrastructure'
     }
   }
   assert.doesNotMatch(read('scripts/show-github-auth-status.ps1'), /&\s*wsl\.exe/i)
+})
+
+test('Schedule custody VM enrollment is a fixed pinned infrastructure exception', () => {
+  const source = read('scripts/bootstrap-schedule-public-read-custody.ps1')
+  assert.match(source, /WSL_BOUNDARY_EXCEPTION/)
+  assert.match(source, /'--distribution', 'Ubuntu-24.04', '--user', 'root'/)
+  assert.match(source, /'--exec', '\/usr\/bin\/python3', '-I', '-B', '-c'/)
+  assert.match(source, /if \(-not \$Apply\)/)
+  assert.match(source, /Assert-ScheduleEnrollmentSourceMetadata -Metadata \$last/)
+  assert.match(source, /Get-ScheduleApprovedBlob/)
+  assert.match(source, /ScheduleHelperSha256/)
+  assert.match(source, /ScheduleReceiverSha256/)
+  assert.match(source, /EnvironmentVariables\.Clear\(\)/)
+  assert.doesNotMatch(source, /-Skip(?:Bootstrap|Node|Npm|Git|Repo)Check/)
+  assert.doesNotMatch(source, /(?:registration-token|sudoers|groupadd|useradd|bash\s+-lc)/)
 })
 
 test('project instructions reserve npm and Python project work for Ubuntu', () => {
