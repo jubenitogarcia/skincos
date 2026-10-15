@@ -75,7 +75,7 @@ export function nativeConfigDigest(root = path.resolve(import.meta.dirname, '../
   return hash.digest('hex')
 }
 
-export function validateNativeManifest(raw, { sourceSha, sourceTree, configDigest, expectedDigest, now = Date.now(), starting = false, recovery = false }) {
+export function validateNativeManifest(raw, { sourceSha, sourceTree, configDigest, expectedDigest, now = Date.now(), starting = false, recovery = false, historical = false }) {
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > 8192 || !digest.test(expectedDigest ?? '')
     || nativeDigest(raw) !== expectedDigest || !sha.test(sourceSha ?? '') || !sha.test(sourceTree ?? '')
     || !digest.test(configDigest ?? '') || !Number.isSafeInteger(now)) fail()
@@ -84,19 +84,41 @@ export function validateNativeManifest(raw, { sourceSha, sourceTree, configDiges
   const expected = { contract: NATIVE_MANIFEST_CONTRACT, sourceSha, sourceTree, configDigest,
     ...NATIVE_RESOURCES, wranglerVersion: NATIVE_WRANGLER_VERSION, probeLifetimeSeconds: 1800 }
   const names = [...Object.keys(expected), 'releaseId', 'createdAt', 'expiresAt']
+  if (!historical || Object.hasOwn(parsed, 'adapterPredecessor')) names.push('adapterPredecessor')
   if (Object.keys(parsed).length !== names.length || Object.keys(parsed).some(key => !names.includes(key))) fail()
   for (const [key, value] of Object.entries(expected)) if (parsed[key] !== value) fail()
   const created = Date.parse(parsed.createdAt), expiry = Date.parse(parsed.expiresAt)
   if (!NATIVE_UUID.test(parsed.releaseId ?? '') || !Number.isSafeInteger(created) || !Number.isSafeInteger(expiry)
     || created > now || !recovery && expiry <= now || expiry <= created || expiry - created > 24 * 60 * 60_000
     || starting && expiry - now < 35 * 60_000) fail()
+  if (Object.hasOwn(parsed, 'adapterPredecessor') && parsed.adapterPredecessor !== null) {
+    const prior = parsed.adapterPredecessor
+    const keys = ['releaseId', 'sourceSha', 'sourceTree', 'configDigest', 'manifestDigest', 'receiptDigest',
+      'operation', 'mode', 'versionId', 'deploymentId', 'namespaceId']
+    if (!prior || Object.keys(prior).length !== keys.length || Object.keys(prior).some(key => !keys.includes(key))
+      || !NATIVE_UUID.test(prior.releaseId ?? '') || prior.releaseId === parsed.releaseId
+      || !sha.test(prior.sourceSha ?? '') || !sha.test(prior.sourceTree ?? '') || !digest.test(prior.configDigest ?? '')
+      || !digest.test(prior.manifestDigest ?? '') || !digest.test(prior.receiptDigest ?? '')
+      || prior.mode !== nativeAdapterMode(prior.operation) || !NATIVE_UUID.test(prior.versionId ?? '')
+      || typeof prior.deploymentId !== 'string' || !prior.deploymentId || prior.deploymentId.length > 128
+      || typeof prior.namespaceId !== 'string' || !prior.namespaceId || prior.namespaceId.length > 128) fail()
+  }
   return parsed
+}
+
+export function nativeAdapterMode(operation) {
+  if (operation === 'adapter-bootstrap-disabled') return 'bootstrap-disabled'
+  if (operation === 'adapter-enable') return 'ready'
+  if (operation === 'adapter-disable') return 'disabled'
+  if (operation === 'adapter-reconcile-disable') return 'reconciled-disabled'
+  fail()
 }
 
 export const nativeMessage = (manifest, surface, mode) => `schedule-native:${surface}:${mode}:${manifest.sourceSha}:${manifest.releaseId}`
 
 export function assertNativeVersion(deployment, version, { manifest, surface, mode, expectedVersionId, expiresAtMs }) {
-  if (!['core', 'adapter', 'probe'].includes(surface) || !['ready', 'disabled', 'bootstrap-disabled', 'probe'].includes(mode)
+  if (!['core', 'adapter', 'probe'].includes(surface) || !['ready', 'disabled', 'bootstrap-disabled', 'reconciled-disabled', 'probe'].includes(mode)
+    || mode === 'reconciled-disabled' && surface !== 'adapter'
     || !NATIVE_UUID.test(version?.id ?? '') || deployment?.versions?.length !== 1
     || deployment.versions[0].percentage !== 100 || deployment.versions[0].version_id !== version.id
     || expectedVersionId !== undefined && expectedVersionId !== version.id) fail()

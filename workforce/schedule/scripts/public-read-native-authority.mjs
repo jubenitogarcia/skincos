@@ -58,7 +58,7 @@ export function readNativeCoordinationCustody() {
 
 export function nativeResource(operation) {
   if (['core-enable', 'core-disable'].includes(operation)) return Object.freeze({ resource: 'global:escala-writer', module: 'escala-api' })
-  if (['adapter-bootstrap-disabled', 'adapter-enable', 'adapter-disable', 'reconcile-probe'].includes(operation)) return Object.freeze({ resource: 'deploy:schedule-public-read-adapter:production', module: 'schedule-public-read-adapter' })
+  if (['adapter-bootstrap-disabled', 'adapter-enable', 'adapter-disable', 'adapter-reconcile-disable', 'reconcile-probe'].includes(operation)) return Object.freeze({ resource: 'deploy:schedule-public-read-adapter:production', module: 'schedule-public-read-adapter' })
   fail()
 }
 

@@ -35,7 +35,8 @@ export function assertNativeMutationCommand(args, { operation, manifest, secrets
   if (!Array.isArray(args) || args.some(item => typeof item !== 'string')) fail('schedule_native_mutation_scope_invalid')
   const config = { core: 'workforce/schedule/wrangler.toml', adapter: 'workforce/schedule/public-read.wrangler.toml' }
   const surface = operation.startsWith('core-') ? 'core' : 'adapter'
-  const mode = operation === 'adapter-bootstrap-disabled' ? 'bootstrap-disabled' : operation.endsWith('enable') ? 'ready' : 'disabled'
+  const mode = operation === 'adapter-bootstrap-disabled' ? 'bootstrap-disabled'
+    : operation === 'adapter-reconcile-disable' ? 'reconciled-disabled' : operation.endsWith('enable') ? 'ready' : 'disabled'
   const versionArgs = ['--config', config[surface], '--keep-vars', '--var', `SCHEDULE_PUBLIC_READ_ENABLED:${mode === 'ready'}`,
     '--var', `SCHEDULE_PUBLIC_READ_SOURCE_SHA:${manifest.sourceSha}`, '--var', `SCHEDULE_PUBLIC_READ_NATIVE_RELEASE_ID:${manifest.releaseId}`,
     '--var', `SCHEDULE_PUBLIC_READ_NATIVE_CONFIG_SHA256:${manifest.configDigest}`, '--message', nativeMessage(manifest, surface, mode)]
@@ -44,7 +45,7 @@ export function assertNativeMutationCommand(args, { operation, manifest, secrets
   let secretNames = null
   if (operation === 'adapter-bootstrap-disabled' && same(['deploy', ...versionArgs, '--secrets-file', '/dev/stdin'])) {
     secretNames = ['SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY', 'SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY']
-  } else if (['core-enable', 'core-disable', 'adapter-enable', 'adapter-disable'].includes(operation)) {
+  } else if (['core-enable', 'core-disable', 'adapter-enable', 'adapter-disable', 'adapter-reconcile-disable'].includes(operation)) {
     if (same(['versions', 'upload', ...versionArgs, '--tag', tag, '--secrets-file', '/dev/stdin'])) {
       secretNames = surface === 'core' ? ['SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY'] : ['SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY', 'SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY']
     } else if (same(['versions', 'deploy', '--config', config[surface], '--version-tag', `${tag}@100%`, '--yes', '--message', nativeMessage(manifest, surface, mode)])) {

@@ -6,27 +6,32 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { assertNativeSource, createNativeAuthority, nativeResource } from './public-read-native-authority.mjs'
 import { assertNativeVersion, nativeConfigDigest, nativeDigest, nativeMessage, NATIVE_UUID, validateNativeManifest, snapshotNativeData,
-  NATIVE_MANIFEST_CONTRACT, NATIVE_RESOURCES, NATIVE_WRANGLER_VERSION } from './public-read-native-manifest.mjs'
-import { assertPrivateDirectory, createNativeJournal, readNativePredecessor, readPrivateJson } from './public-read-native-receipts.mjs'
+  NATIVE_MANIFEST_CONTRACT, NATIVE_RESOURCES, NATIVE_WRANGLER_VERSION, nativeAdapterMode } from './public-read-native-manifest.mjs'
+import { assertPrivateDirectory, claimNativeAdapterVersion, createNativeJournal, readNativeAdapterHistory, readNativeAdapterLineage, readNativeIncompleteAdapterReadback, readNativePredecessor, readPrivateJson } from './public-read-native-receipts.mjs'
 import { createNativeTransport, resolveNativeWrangler, runNativeProcess } from './public-read-native-http.mjs'
 import { createSchedulePublicReadHeaders } from '../public-read-contract.js'
 import { boundedProductionJson } from './public-read-production-http.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 const fail = code => { throw new Error(code) }
-const OPERATIONS = ['preflight', 'core-enable', 'core-disable', 'adapter-bootstrap-disabled', 'adapter-enable', 'adapter-disable', 'reconcile-probe']
+const OPERATIONS = ['preflight', 'core-enable', 'core-disable', 'adapter-bootstrap-disabled', 'adapter-enable', 'adapter-disable', 'adapter-reconcile-disable', 'reconcile-probe']
 const CORE_CONFIG = 'workforce/schedule/wrangler.toml'
 const ADAPTER_CONFIG = 'workforce/schedule/public-read.wrangler.toml'
 const PROBE_CONFIG = 'workforce/schedule/public-read-production-probe.wrangler.toml'
 const sha256Pattern = /^[a-f0-9]{64}$/
 
-export function prepareNativeManifest({ sourceSha, receiptDirectory }) {
+export function prepareNativeManifest({ sourceSha, receiptDirectory, predecessorReleaseId, predecessorOperation, predecessorManifestDigest }) {
   const source = assertNativeSource(sourceSha)
   assertPrivateDirectory(receiptDirectory, ROOT)
   const now = Date.now()
   const manifest = { contract: NATIVE_MANIFEST_CONTRACT, ...source, configDigest: nativeConfigDigest(), ...NATIVE_RESOURCES,
-    wranglerVersion: NATIVE_WRANGLER_VERSION, probeLifetimeSeconds: 1800, releaseId: randomUUID(),
+    wranglerVersion: NATIVE_WRANGLER_VERSION, probeLifetimeSeconds: 1800, releaseId: randomUUID(), adapterPredecessor: null,
     createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 60 * 60_000).toISOString() }
+  if ([predecessorReleaseId, predecessorOperation, predecessorManifestDigest].some(value => value !== undefined)) {
+    const history = readNativeAdapterHistory({ directory: receiptDirectory, root: ROOT, releaseId: predecessorReleaseId,
+      operation: predecessorOperation, manifestDigest: predecessorManifestDigest })
+    manifest.adapterPredecessor = history.descriptor
+  }
   const raw = JSON.stringify(manifest) + '\n', digest = nativeDigest(raw)
   validateNativeManifest(raw, { ...source, configDigest: manifest.configDigest, expectedDigest: digest, now, starting: true })
   const file = path.join(receiptDirectory, `${manifest.releaseId}-manifest.json`)
@@ -182,6 +187,68 @@ async function verifyProjection({ transport, manifest, capabilities, journal }) 
   return projected
 }
 
+function operationExists(directory, manifest, operation) {
+  try { fs.lstatSync(path.join(directory, manifest.releaseId, operation)); return true }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error }
+}
+
+function currentAdapterReceipt({ receiptDirectory, manifest, manifestDigest, activating }) {
+  const choices = activating ? ['adapter-bootstrap-disabled', 'adapter-disable'] : ['adapter-enable', 'adapter-bootstrap-disabled']
+  const present = choices.filter(operation => operationExists(receiptDirectory, manifest, operation))
+  if (!present.length || activating && present.length !== 1) fail('schedule_native_adapter_predecessor_invalid')
+  // An incomplete enable is never replaced by an older bootstrap receipt.
+  const operation = present[0]
+  return { manifest, receipt: readNativePredecessor({ directory: receiptDirectory, root: ROOT, manifest, operation, manifestDigest }),
+    mode: nativeAdapterMode(operation) }
+}
+
+// Production calls this only with its real branded transport, after preflight
+// and lease acquisition. Tests exercise the same state machine with a local fake.
+export async function transitionNativeAdapter({ operation, transport, manifest, manifestDigest, receiptDirectory, journal, capabilities }) {
+  if (!['adapter-bootstrap-disabled', 'adapter-enable', 'adapter-disable', 'adapter-reconcile-disable'].includes(operation)) fail('schedule_native_operation_invalid')
+  const before = await currentVersion(transport, manifest, manifest.adapterWorker, operation === 'adapter-bootstrap-disabled')
+  journal.append('checkpoint', { worker: manifest.adapterWorker, versionId: before?.version?.id ?? null,
+    deploymentId: before?.deployment?.id ?? null, absent: before === null })
+  const secrets = { SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY,
+    SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY }
+  if (operation === 'adapter-bootstrap-disabled') {
+    if (before !== null || manifest.adapterPredecessor !== null) fail('schedule_native_bootstrap_requires_absence')
+    claimNativeAdapterVersion({ directory: receiptDirectory, root: ROOT, manifest, operation,
+      versionId: 'absent', namespaceId: null, basisDigest: manifestDigest })
+    await transport.mutateWrangler(['deploy', ...versionArgs(manifest, 'adapter', 'bootstrap-disabled'), '--secrets-file', '/dev/stdin'],
+      { phase: 'adapter-bootstrap', secrets })
+    return await readback(transport, manifest, 'adapter', 'bootstrap-disabled')
+  }
+  let prior
+  if (operation === 'adapter-reconcile-disable') {
+    const incomplete = readNativeIncompleteAdapterReadback({ directory: receiptDirectory, root: ROOT, manifest, manifestDigest })
+    const baseline = currentAdapterReceipt({ receiptDirectory, manifest, manifestDigest, activating: true })
+    if (incomplete.data.metadata.namespaceId !== baseline.receipt.data.metadata.namespaceId) fail('schedule_native_namespace_changed')
+    prior = { manifest, receipt: incomplete, mode: 'ready' }
+  } else if (operation === 'adapter-enable') {
+    const core = readNativePredecessor({ directory: receiptDirectory, root: ROOT, manifest, operation: 'core-enable', manifestDigest })
+    await readback(transport, manifest, 'core', 'ready', { expectedVersionId: core.data.metadata.versionId })
+    prior = currentAdapterReceipt({ receiptDirectory, manifest, manifestDigest, activating: true })
+  } else if (operationExists(receiptDirectory, manifest, 'adapter-enable')
+    || operationExists(receiptDirectory, manifest, 'adapter-bootstrap-disabled')) {
+    prior = currentAdapterReceipt({ receiptDirectory, manifest, manifestDigest, activating: false })
+  } else {
+    const history = readNativeAdapterLineage({ directory: receiptDirectory, root: ROOT, manifest })
+    prior = { manifest: history.manifest, receipt: history.receipt, mode: history.descriptor.mode }
+  }
+  const expected = prior.receipt.data.metadata
+  const observed = await readback(transport, prior.manifest, 'adapter', prior.mode, { expectedVersionId: expected.versionId })
+  if (observed.namespaceId !== expected.namespaceId || observed.deploymentId !== expected.deploymentId) fail('schedule_native_adapter_predecessor_changed')
+  journal.append('adapter-predecessor-verified', { releaseId: prior.manifest.releaseId, receiptDigest: prior.receipt.digest,
+    versionId: observed.versionId, deploymentId: observed.deploymentId, namespaceId: observed.namespaceId })
+  claimNativeAdapterVersion({ directory: receiptDirectory, root: ROOT, manifest, operation,
+    versionId: observed.versionId, namespaceId: observed.namespaceId, basisDigest: prior.receipt.digest })
+  const mode = operation === 'adapter-reconcile-disable' ? 'reconciled-disabled' : operation === 'adapter-enable' ? 'ready' : 'disabled'
+  const metadata = await publish(transport, manifest, 'adapter', mode, secrets, journal)
+  if (metadata.namespaceId !== observed.namespaceId) fail('schedule_native_namespace_changed')
+  return operation === 'adapter-reconcile-disable' ? { ...metadata, incompleteActivationReconciled: true, activationApproved: false } : metadata
+}
+
 export async function runNativeRelease(options) {
   const { operation, sourceSha, manifestFile, manifestDigest, receiptDirectory, cliFile, owner } = snapshotNativeData(options)
   if (!OPERATIONS.includes(operation)) fail('schedule_native_operation_invalid')
@@ -202,26 +269,12 @@ export async function runNativeRelease(options) {
   try {
     const transport = createNativeTransport({ cliFile, root: ROOT, manifest, journal, authority })
     const surface = operation.startsWith('core-') ? 'core' : 'adapter'
-    const before = await currentVersion(transport, manifest, manifest[`${surface}Worker`], operation === 'adapter-bootstrap-disabled')
-    journal.append('checkpoint', { worker: manifest[`${surface}Worker`], versionId: before?.version?.id ?? null,
-      deploymentId: before?.deployment?.id ?? null, absent: before === null })
     let metadata
-    if (operation === 'adapter-bootstrap-disabled') {
-      if (before !== null) fail('schedule_native_bootstrap_requires_absence')
-      await transport.mutateWrangler(['deploy', ...versionArgs(manifest, 'adapter', 'bootstrap-disabled'), '--secrets-file', '/dev/stdin'],
-        { phase: 'adapter-bootstrap', secrets: { SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY,
-          SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY } })
-      metadata = await readback(transport, manifest, 'adapter', 'bootstrap-disabled')
-    } else if (operation === 'adapter-enable') {
-      const core = readNativePredecessor({ directory: receiptDirectory, root: ROOT, manifest, operation: 'core-enable' })
-      const bootstrap = readNativePredecessor({ directory: receiptDirectory, root: ROOT, manifest, operation: 'adapter-bootstrap-disabled' })
-      await readback(transport, manifest, 'core', 'ready', { expectedVersionId: core.data.metadata.versionId })
-      const disabled = await readback(transport, manifest, 'adapter', 'bootstrap-disabled', { expectedVersionId: bootstrap.data.metadata.versionId })
-      if (disabled.namespaceId !== bootstrap.data.metadata.namespaceId) fail('schedule_native_namespace_changed')
-      metadata = await publish(transport, manifest, 'adapter', 'ready', { SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY,
-        SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY }, journal)
-      if (metadata.namespaceId !== disabled.namespaceId) fail('schedule_native_namespace_changed')
-      metadata = { ...metadata, publicProjection: await verifyProjection({ transport, manifest, capabilities, journal }) }
+    if (operation.startsWith('adapter-')) {
+      metadata = await transitionNativeAdapter({ operation, transport, manifest, manifestDigest: document.digest,
+        receiptDirectory, journal, capabilities })
+      if (operation === 'adapter-enable') metadata = { ...metadata,
+        publicProjection: await verifyProjection({ transport, manifest, capabilities, journal }) }
     } else if (operation === 'reconcile-probe') {
       const state = await currentVersion(transport, manifest, manifest.probeWorker, true)
       if (!state) fail('schedule_native_probe_reconcile_not_needed')
@@ -232,16 +285,12 @@ export async function runNativeRelease(options) {
       // numeric workflow run or foreign probe is accepted as ownership.
       await transport.deleteOwnedProbe({ expectedVersionId: identity.versionId, expiresAtMs: expiry }); metadata = { ...identity, absent: true }
     } else {
+      const before = await currentVersion(transport, manifest, manifest.coreWorker)
+      journal.append('checkpoint', { worker: manifest.coreWorker, versionId: before?.version?.id ?? null,
+        deploymentId: before?.deployment?.id ?? null, absent: before === null })
       if (!before) fail('schedule_native_checkpoint_missing')
-      if (operation === 'adapter-disable') {
-        const bindings = before.version.resources?.bindings
-        if (!bindings?.some(item => item.name === 'SCHEDULE_PUBLIC_READ_NONCE_GUARD' && typeof item.namespace_id === 'string')) fail('schedule_native_namespace_unavailable')
-      }
-      metadata = await publish(transport, manifest, surface, operation.endsWith('enable') ? 'ready' : 'disabled', surface === 'core'
-        ? { SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }
-        : { SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY,
-          SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_EDGE_HMAC_KEY }, journal)
-      if (operation === 'adapter-disable' && metadata.namespaceId !== before.version.resources.bindings.find(item => item.name === 'SCHEDULE_PUBLIC_READ_NONCE_GUARD').namespace_id) fail('schedule_native_namespace_changed')
+      metadata = await publish(transport, manifest, surface, operation.endsWith('enable') ? 'ready' : 'disabled',
+        { SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY: capabilities.SCHEDULE_PUBLIC_READ_CORE_HMAC_KEY }, journal)
     }
     assertNativeSource(sourceSha); await authority.check()
     return journal.complete({ ...metadata, resource: nativeResource(operation).resource, websiteAcceptedWritesAuthorized: false })
@@ -265,8 +314,11 @@ function commandOptions(args) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv[2] === '--prepare-manifest') {
-      if (process.argv.length !== 7 || process.argv[3] !== '--source-sha' || process.argv[5] !== '--receipts') fail('schedule_native_arguments_invalid')
-      process.stdout.write(JSON.stringify(prepareNativeManifest({ sourceSha: process.argv[4], receiptDirectory: process.argv[6] })) + '\n')
+      if (![7, 13].includes(process.argv.length) || process.argv[3] !== '--source-sha' || process.argv[5] !== '--receipts') fail('schedule_native_arguments_invalid')
+      if (process.argv.length === 13 && (process.argv[7] !== '--predecessor-release-id'
+        || process.argv[9] !== '--predecessor-operation' || process.argv[11] !== '--predecessor-manifest-sha256')) fail('schedule_native_arguments_invalid')
+      process.stdout.write(JSON.stringify(prepareNativeManifest({ sourceSha: process.argv[4], receiptDirectory: process.argv[6],
+        predecessorReleaseId: process.argv[8], predecessorOperation: process.argv[10], predecessorManifestDigest: process.argv[12] })) + '\n')
     } else {
     const result = await runNativeRelease(commandOptions(process.argv.slice(2)))
     process.stdout.write(JSON.stringify({ ok: true, contract: result.record.contract, operation: result.record.operation,
