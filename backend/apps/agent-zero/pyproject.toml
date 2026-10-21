@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=84.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -78,7 +78,7 @@ dependencies = [
     "protobuf==6.33.5",
     "requests>=2.32.4",
     "urllib3>=1.26.0",
-    "Pillow>=9.0.0",
+    "Pillow>=12.3.0",
     "python-dateutil>=2.8.0",
     "cloudinary",
     "six",
