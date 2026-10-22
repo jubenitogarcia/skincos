@@ -7,6 +7,11 @@ import {
 
 const ACTOR_SKEW_MS = 5 * 60 * 1000
 const SCHEDULE_PUBLIC_READ_INTERNAL_PREFIX = '/api/escala/internal/schedule-public-read/v1'
+const ATOMIC_SCHEDULE_SNAPSHOT_CONTRACT = 'crm/atendimento/atomic-schedule/v1'
+const SERVICE_TIME_ZONE = 'America/Sao_Paulo'
+// Read-only GET routes the CRM API may sign with its dedicated key
+// (ESCALA_CRM_API_READ_HMAC_KEY); every other route keeps ESCALA_ACTOR_HMAC_KEY only.
+const CRM_API_READ_PATHS = new Set(['/api/escala/schedule', '/api/escala/schedule/snapshot'])
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -74,6 +79,15 @@ async function signHmacSha256(secret, message) {
   return base64UrlEncode(sig)
 }
 
+function timingSafeEqualString(left, right) {
+  const a = String(left || '')
+  const b = String(right || '')
+  let diff = a.length ^ b.length
+  const length = Math.max(a.length, b.length)
+  for (let i = 0; i < length; i += 1) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0)
+  return diff === 0
+}
+
 async function requireActor(request, env) {
   const payload = request.headers.get('x-crm-user') || ''
   const tsRaw = request.headers.get('x-crm-ts') || ''
@@ -82,7 +96,9 @@ async function requireActor(request, env) {
     return { ok: false, status: 401, body: { ok: false, error: 'UNAUTHORIZED' } }
   }
   const secret = String(env.ESCALA_ACTOR_HMAC_KEY || '').trim()
-  if (!secret) {
+  const crmApiReadSecret = String(env.ESCALA_CRM_API_READ_HMAC_KEY || '').trim()
+  const crmApiReadEligible = request.method === 'GET' && CRM_API_READ_PATHS.has(new URL(request.url).pathname)
+  if (!secret && !(crmApiReadSecret && crmApiReadEligible)) {
     return { ok: false, status: 503, body: { ok: false, error: 'ACTOR_KEY_MISSING' } }
   }
   const ts = Number(tsRaw)
@@ -92,10 +108,17 @@ async function requireActor(request, env) {
   if (Math.abs(Date.now() - ts) > ACTOR_SKEW_MS) {
     return { ok: false, status: 401, body: { ok: false, error: 'ACTOR_TS_SKEW' } }
   }
-  const expected = await signHmacSha256(secret, `${tsRaw}.${payload}`)
-  if (expected !== sig) {
+  const message = `${tsRaw}.${payload}`
+  // On eligible requests both candidates are computed and compared, so the
+  // response time does not reveal which key slot matched.
+  const primaryMatch = secret ? timingSafeEqualString(await signHmacSha256(secret, message), sig) : false
+  const crmApiReadMatch = crmApiReadSecret && crmApiReadEligible
+    ? timingSafeEqualString(await signHmacSha256(crmApiReadSecret, message), sig)
+    : false
+  if (!primaryMatch && !crmApiReadMatch) {
     return { ok: false, status: 401, body: { ok: false, error: 'ACTOR_SIGNATURE_INVALID' } }
   }
+  const keySlot = primaryMatch ? 'primary' : 'crm-api-read'
   let actor = null
   try {
     const decoded = base64UrlDecode(payload)
@@ -120,7 +143,8 @@ async function requireActor(request, env) {
       name: actor.name ? String(actor.name) : undefined,
       role,
       allowedUnits,
-      allowedUnitKeys
+      allowedUnitKeys,
+      keySlot
     }
   }
 }
@@ -190,6 +214,19 @@ function schedulePublicReadUnit(value) {
   if (key === 'barrashoppingsul') return { slug: 'barrashoppingsul', label: 'BarraShoppingSul' }
   if (key === 'novohamburgo') return { slug: 'novohamburgo', label: 'Novo Hamburgo' }
   return null
+}
+
+function atomicScheduleUnit(value) {
+  const key = normalizeUnitKey(value)
+  if (key === 'barrashoppingsul') return { unitSlug: 'barra-shopping-sul', label: 'BarraShoppingSul', key }
+  if (key === 'novohamburgo') return { unitSlug: 'novo-hamburgo', label: 'Novo Hamburgo', key }
+  return null
+}
+
+function isValidGregorianServiceDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 function schedulePublicReadEnabled(env) {
@@ -467,6 +504,203 @@ async function handleProfessionals(env, unit, actor) {
     })
     .map(({ unitKeys, ...row }) => row)
   return { data }
+}
+
+async function sha256Json(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function parseSnapshotUnits(value) {
+  try {
+    const parsed = JSON.parse(String(value || '[]'))
+    if (!Array.isArray(parsed)) return { valid: false, units: [] }
+    return { valid: true, units: parsed.map((entry) => atomicScheduleUnit(entry)?.unitSlug).filter(Boolean) }
+  } catch {
+    return { valid: false, units: [] }
+  }
+}
+
+async function handleScheduleSnapshot(env, actor, requestId, unitValue, serviceDate) {
+  const unit = atomicScheduleUnit(unitValue)
+  if (!unit) return { status: 400, body: { ok: false, error: 'INVALID_UNIT' } }
+  if (!isValidGregorianServiceDate(serviceDate)) {
+    return { status: 400, body: { ok: false, error: 'INVALID_SERVICE_DATE' } }
+  }
+  const unitAllowed = ensureUnitAllowed(actor, unit.label)
+  if (!unitAllowed.ok) return { status: unitAllowed.status, body: unitAllowed.body }
+  if (!env?.DB || typeof env.DB.batch !== 'function') {
+    return { status: 503, body: { ok: false, error: 'SCHEDULE_ATOMIC_SNAPSHOT_UNAVAILABLE' } }
+  }
+
+  const hasWorkforceEmployeeId = await tableHasColumn(env, 'professionals', 'workforce_employee_id')
+  const hasScheduleProfessionalId = await tableHasColumn(env, 'schedule_entries', 'professional_id')
+  if (!hasWorkforceEmployeeId || !hasScheduleProfessionalId) {
+    return { status: 503, body: { ok: false, error: 'SCHEDULE_ATOMIC_SNAPSHOT_SCHEMA_UNSUPPORTED' } }
+  }
+  const hasShiftKey = await tableHasColumn(env, 'schedule_entries', 'shift_key')
+  const hasShiftLabel = await tableHasColumn(env, 'schedule_entries', 'shift_label')
+  const hasShiftName = !hasShiftLabel && await tableHasColumn(env, 'schedule_entries', 'shift_name')
+  const scheduleShiftKey = hasShiftKey ? 'se.shift_key' : "''"
+  const scheduleShiftLabel = hasShiftLabel
+    ? 'se.shift_label'
+    : hasShiftName ? 'se.shift_name' : 'p.shift'
+  const scheduleQuery = `
+    select se.id as id, se.date as date, se.unit as unit,
+           se.professional_id as professionalId,
+           se.professional_name as professionalName,
+           ${scheduleShiftKey} as shiftKey,
+           ${scheduleShiftLabel} as shiftName
+    from schedule_entries se
+    left join professionals p on p.id = se.professional_id
+    where se.date = ?1
+    order by se.id asc
+  `
+  const professionalsQuery = `
+    select id, name, status, role, shift, units_json, workforce_employee_id
+    from professionals
+    order by id asc
+  `
+
+  let results
+  try {
+    // D1 batch executes the roster and schedule reads in one transaction; do
+    // not replace this with parallel .all() calls or a post-read local digest.
+    results = await env.DB.batch([
+      env.DB.prepare(professionalsQuery),
+      env.DB.prepare(scheduleQuery).bind(serviceDate),
+    ])
+  } catch {
+    return { status: 503, body: { ok: false, error: 'SCHEDULE_ATOMIC_SNAPSHOT_UNAVAILABLE' } }
+  }
+  if (!Array.isArray(results) || results.length !== 2
+    || results.some((result) => result?.success !== true || !Array.isArray(result.results))) {
+    return { status: 503, body: { ok: false, error: 'SCHEDULE_ATOMIC_SNAPSHOT_UNAVAILABLE' } }
+  }
+
+  const rawProfessionals = results[0].results
+  const rawSchedule = results[1].results
+  const roster = []
+  let rosterScopeVerified = true
+  for (const row of rawProfessionals) {
+    const parsedUnits = parseSnapshotUnits(row.units_json)
+    if (!parsedUnits.valid) {
+      rosterScopeVerified = false
+      continue
+    }
+    if (!parsedUnits.units.includes(unit.unitSlug)) continue
+    roster.push({
+      professionalId: String(row.id || ''),
+      workforceEmployeeId: String(row.workforce_employee_id || ''),
+      name: String(row.name || '').trim(),
+      status: String(row.status || '').trim(),
+      role: String(row.role || '').trim(),
+      // A professional may hold several comma-separated roles (e.g. 'Injetor, Responsável Técnico').
+      // Split and sort them so consumers see each role and the content digest stays canonical.
+      roles: String(row.role || '').split(',').map((value) => value.trim()).filter(Boolean).sort(),
+      units: [unit.unitSlug],
+      validFrom: '',
+      validUntil: '',
+    })
+  }
+
+  const schedule = rawSchedule
+    .filter((row) => normalizeUnitKey(row.unit) === unit.key)
+    .map((row) => ({
+      id: String(row.id || ''),
+      date: String(row.date || ''),
+      unit: unit.unitSlug,
+      professionalId: String(row.professionalId || ''),
+      professionalName: String(row.professionalName || '').trim(),
+      shiftKey: String(row.shiftKey || '').trim(),
+      shiftName: String(row.shiftName || '').trim(),
+    }))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+  roster.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+
+  const shiftKeySupported = hasShiftKey
+  const rosterIds = new Set(roster.map((row) => row.professionalId).filter(Boolean))
+  const sourceScheduleIds = new Set()
+  const sourceRowsValid = rawSchedule.every((row) => {
+    const rowUnit = atomicScheduleUnit(row.unit)
+    const id = String(row.id || '').trim()
+    if (!rowUnit || String(row.date || '') !== serviceDate || !id || sourceScheduleIds.has(id)) return false
+    sourceScheduleIds.add(id)
+    return true
+  })
+  const scheduleIdentityCoverageComplete = schedule.every((row) => row.professionalId && rosterIds.has(row.professionalId))
+  const duplicateProfessionalIds = new Set()
+  const rowsByProfessional = new Map()
+  for (const row of schedule) {
+    if (!row.professionalId) continue
+    const rows = rowsByProfessional.get(row.professionalId) || []
+    rows.push(row)
+    rowsByProfessional.set(row.professionalId, rows)
+  }
+  for (const rows of rowsByProfessional.values()) {
+    if (rows.length < 2) continue
+    if (!shiftKeySupported || rows.some((row) => !row.shiftKey)
+      || new Set(rows.map((row) => row.shiftKey)).size !== rows.length) {
+      for (const row of rows) duplicateProfessionalIds.add(row.professionalId)
+    }
+  }
+  const complete = rosterScopeVerified
+    && sourceRowsValid
+    && scheduleIdentityCoverageComplete
+    && duplicateProfessionalIds.size === 0
+  const contentDigest = await sha256Json({
+    contract: ATOMIC_SCHEDULE_SNAPSHOT_CONTRACT,
+    scope: { unitSlug: unit.unitSlug, serviceDate, timeZone: SERVICE_TIME_ZONE },
+    schedule,
+    professionals: roster,
+  })
+  const sourceVersion = `escala-d1-sha256:${contentDigest}`
+  // This is the Worker's UTC observation/emission time after D1.batch; D1
+  // does not expose a commit timestamp for this read.
+  const asOf = new Date().toISOString()
+  const snapshotId = crypto.randomUUID()
+  const body = {
+    ok: true,
+    contract: ATOMIC_SCHEDULE_SNAPSHOT_CONTRACT,
+    requestId,
+    unitSlug: unit.unitSlug,
+    serviceDate,
+    timeZone: SERVICE_TIME_ZONE,
+    observedAt: asOf,
+    sourceVersion,
+    contentDigest,
+    atomicReceipt: {
+      contract: ATOMIC_SCHEDULE_SNAPSHOT_CONTRACT,
+      snapshotId,
+      sourceVersion,
+      contentDigest,
+      asOf,
+      scope: { unitSlug: unit.unitSlug, serviceDate, timeZone: SERVICE_TIME_ZONE },
+      atomicAcrossEndpoints: true,
+      atomicityMechanism: 'd1-batch-transaction',
+    },
+    coverage: {
+      unitSlug: unit.unitSlug,
+      serviceDate,
+      timeZone: SERVICE_TIME_ZONE,
+      complete,
+      atomic: true,
+      readMode: 'd1-batch-snapshot',
+      scheduleCount: schedule.length,
+      professionalCount: roster.length,
+      hasMore: false,
+      nextCursor: null,
+      rosterScopeVerified,
+      scheduleIdentityCoverageComplete,
+      shiftContextComplete: shiftKeySupported,
+      shiftKeySupported,
+      shiftContextMode: shiftKeySupported ? 'schedule-entry-key' : 'professional-profile-label-only',
+      unresolvedProfessionalIds: Array.from(duplicateProfessionalIds).sort(),
+    },
+    schedule,
+    professionals: roster,
+  }
+  return { status: 200, body }
 }
 
 function buildScheduleWhere(params) {
@@ -1387,9 +1621,14 @@ export default {
     const path = url.pathname
     const requestId = request.headers.get('x-request-id') || newRequestId()
     const corsHeaders = buildCorsHeaders(request, env)
+    const responseHeaders = {
+      ...corsHeaders,
+      'x-request-id': requestId,
+      ...(path === '/api/escala/schedule/snapshot' ? { 'cache-control': 'no-store' } : {}),
+    }
 
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders })
+      return new Response(null, { status: 204, headers: responseHeaders })
     }
 
     if (path === '/health' || path === '/api/escala/health') {
@@ -1409,7 +1648,7 @@ export default {
 
     const auth = await requireActor(request, env)
     if (!auth.ok) {
-      return jsonResponse(auth.body, { status: auth.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
+      return jsonResponse(auth.body, { status: auth.status, headers: responseHeaders })
     }
 
     const actor = auth.actor
@@ -1452,6 +1691,26 @@ export default {
         const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
         console.log(JSON.stringify({ event: 'escala.professionals', requestId, actor: actor.id, unit, total: data.data.length, hasColorColumn }))
         return jsonResponse({ ok: true, ...data }, { headers: { ...corsHeaders, 'x-request-id': requestId } })
+      }
+
+      if (path === '/api/escala/schedule/snapshot') {
+        if (request.method !== 'GET') {
+          return jsonResponse({ ok: false, error: 'METHOD_NOT_ALLOWED' }, { status: 405, headers: responseHeaders })
+        }
+        const unit = url.searchParams.get('unit') || ''
+        const serviceDate = url.searchParams.get('date') || ''
+        const result = await handleScheduleSnapshot(env, actor, requestId, unit, serviceDate)
+        console.log(JSON.stringify({
+          event: 'escala.schedule.snapshot',
+          requestId,
+          actor: actor.id,
+          keySlot: actor.keySlot,
+          unit: atomicScheduleUnit(unit)?.unitSlug || null,
+          serviceDate: isValidGregorianServiceDate(serviceDate) ? serviceDate : null,
+          status: result.status,
+          complete: result.body?.coverage?.complete === true,
+        }))
+        return jsonResponse(result.body, { status: result.status, headers: responseHeaders })
       }
 
       if (path === '/api/escala/schedule') {
@@ -1576,7 +1835,7 @@ export default {
       return jsonResponse({ ok: false, error: 'Not found' }, { status: 404, headers: { ...corsHeaders, 'x-request-id': requestId } })
     } catch (err) {
       console.log(JSON.stringify({ event: 'escala.error', requestId, error: err?.message || String(err) }))
-      return jsonResponse({ ok: false, error: err?.message || 'Internal error' }, { status: 500, headers: { ...corsHeaders, 'x-request-id': requestId } })
+      return jsonResponse({ ok: false, error: err?.message || 'Internal error' }, { status: 500, headers: responseHeaders })
     }
   }
 }
