@@ -595,7 +595,9 @@ async function handleScheduleSnapshot(env, actor, requestId, unitValue, serviceD
       name: String(row.name || '').trim(),
       status: String(row.status || '').trim(),
       role: String(row.role || '').trim(),
-      roles: String(row.role || '').trim() ? [String(row.role).trim()] : [],
+      // A professional may hold several comma-separated roles (e.g. 'Injetor, Responsável Técnico').
+      // Split and sort them so consumers see each role and the content digest stays canonical.
+      roles: String(row.role || '').split(',').map((value) => value.trim()).filter(Boolean).sort(),
       units: [unit.unitSlug],
       validFrom: '',
       validUntil: '',

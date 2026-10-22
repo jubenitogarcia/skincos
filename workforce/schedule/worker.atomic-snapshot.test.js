@@ -289,3 +289,20 @@ test('treats an actor without allowedUnits as unrestricted, as the existing rout
   assert.equal(response.status, 200)
   assert.equal(body.unitSlug, unit.slug)
 })
+
+test('splits comma-separated roles into a sorted list without changing the digest contract', async () => {
+  const db = new AtomicSnapshotFakeD1()
+  db.professionals[0].role = 'Injetor, Responsável Técnico'
+  const { response, body } = await fetchSnapshot(db)
+  assert.equal(response.status, 200)
+  const row = body.professionals.find((professional) => professional.professionalId === 'escala-a')
+  assert.equal(row.role, 'Injetor, Responsável Técnico')
+  assert.deepEqual(row.roles, ['Injetor', 'Responsável Técnico'])
+  const expectedDigest = createHash('sha256').update(JSON.stringify({
+    contract: 'crm/atendimento/atomic-schedule/v1',
+    scope: { unitSlug: unit.slug, serviceDate, timeZone: 'America/Sao_Paulo' },
+    schedule: body.schedule,
+    professionals: body.professionals,
+  })).digest('hex')
+  assert.equal(body.contentDigest, expectedDigest)
+})
