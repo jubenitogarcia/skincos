@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Auth routes extracted from the main worker router.
 
-import { resolveIdentityTables } from '../store/d1.js';
+import { identityTableHasColumn, resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
 import { normalizeCorporateEmail, normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
@@ -260,27 +260,27 @@ export async function handleAuthRoutes({
 	            return [];
 	        };
 
-	        const tableHasColumn = async (tableName, columnName) => {
-	            if (!env?.DB || !tableName || !columnName) return false;
-	            const t = String(tableName);
-            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_account_links'].includes(t)) return false;
-	            try {
-	                const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
-	                const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
-	                return cols.includes(String(columnName).toLowerCase());
-	            } catch {
-	                return false;
-	            }
-	        };
+	        // Schema probes are cached per isolate (identity/store/d1.js) and run in parallel.
+	        const tableHasColumn = (tableName, columnName) => identityTableHasColumn(env, tableName, columnName);
 
         const { usersTable, invitesTable, passwordResetsTable } = await resolveIdentityTables(env);
-	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
-	        const usersHasIdentitySubject = await tableHasColumn(usersTable, 'identity_subject');
-	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
-	        const invitesHasInviteeEmail = await tableHasColumn(invitesTable, 'invitee_email');
-	        const invitesHasCorporateEmail = await tableHasColumn(invitesTable, 'corporate_email');
-	        const invitesHasRequestedUsername = await tableHasColumn(invitesTable, 'requested_username');
-	        const accountLinksReady = await tableHasColumn('crm_employee_account_links', 'id');
+	        const [
+	            usersHasModules,
+	            usersHasIdentitySubject,
+	            invitesHasModules,
+	            invitesHasInviteeEmail,
+	            invitesHasCorporateEmail,
+	            invitesHasRequestedUsername,
+	            accountLinksReady,
+	        ] = await Promise.all([
+	            tableHasColumn(usersTable, 'allowed_modules_json'),
+	            tableHasColumn(usersTable, 'identity_subject'),
+	            tableHasColumn(invitesTable, 'allowed_modules_json'),
+	            tableHasColumn(invitesTable, 'invitee_email'),
+	            tableHasColumn(invitesTable, 'corporate_email'),
+	            tableHasColumn(invitesTable, 'requested_username'),
+	            tableHasColumn('crm_employee_account_links', 'id'),
+	        ]);
 
         const sha256Hex = async (input) => {
 	            const data = new TextEncoder().encode(String(input || ''));
