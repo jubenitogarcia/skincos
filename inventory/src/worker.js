@@ -791,15 +791,28 @@ export async function issueTrackedSessionCookies({
     return { headers, csrf, sid };
 }
 
-export async function touchTrackedSession(db, { sid, username, sessionVersion }) {
+// last_seen_at is activity telemetry (listed by /auth/sessions), not an access
+// control input: revocation and session_version are still checked on every call.
+// Refreshing it at most every 5 minutes, off the response path, removes one D1
+// write round trip from every authenticated request.
+export const SESSION_LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
+
+export async function touchTrackedSession(db, { sid, username, sessionVersion }, { waitUntil, now = Date.now() } = {}) {
     if (!db?.prepare) throw new Error('SESSION_INVENTORY_UNAVAILABLE');
-    const stored = await db.prepare('SELECT id FROM crm_identity_sessions WHERE id=? AND username=? AND session_version=? AND revoked_at IS NULL LIMIT 1')
+    const stored = await db.prepare('SELECT id, last_seen_at FROM crm_identity_sessions WHERE id=? AND username=? AND session_version=? AND revoked_at IS NULL LIMIT 1')
         .bind(String(sid), String(username), Number(sessionVersion || 0))
         .first();
     if (!stored?.id) return false;
-    await db.prepare('UPDATE crm_identity_sessions SET last_seen_at=? WHERE id=?')
-        .bind(new Date().toISOString(), String(sid))
+    const lastSeenMs = Date.parse(String(stored.last_seen_at || ''));
+    if (Number.isFinite(lastSeenMs) && now - lastSeenMs < SESSION_LAST_SEEN_REFRESH_MS) return true;
+    const update = db.prepare('UPDATE crm_identity_sessions SET last_seen_at=? WHERE id=? AND (last_seen_at IS NULL OR last_seen_at < ?)')
+        .bind(new Date(now).toISOString(), String(sid), new Date(now - SESSION_LAST_SEEN_REFRESH_MS).toISOString())
         .run();
+    if (typeof waitUntil === 'function') {
+        waitUntil(Promise.resolve(update).catch(() => {}));
+    } else {
+        await update;
+    }
     return true;
 }
 
@@ -1430,6 +1443,8 @@ export default {
                     sid: session.sid,
                     username: sessionUsername,
                     sessionVersion,
+                }, {
+                    waitUntil: typeof ctx?.waitUntil === 'function' ? (promise) => ctx.waitUntil(promise) : undefined,
                 });
             } catch {
                 return withCORS(

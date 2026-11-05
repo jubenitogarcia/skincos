@@ -8,6 +8,17 @@ preview_urls = false
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 
+# Run the fetch handler next to the D1 primary (skincos-db lives in ENAM).
+# /auth/me and the Insumos routes make several sequential D1 round trips, so
+# paying one hop to the eastern US is cheaper than ~150 ms per query from GRU.
+# https://developers.cloudflare.com/workers/configuration/placement/
+[placement]
+region = "aws:us-east-1"
+
+# Persist Workers Logs (invocation logs + console output) for this Worker.
+[observability]
+enabled = true
+
 [secrets]
 required = ["IDENTITY_WORKFORCE_HMAC_KEY", "SESSION_SECRET"]
 

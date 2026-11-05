@@ -18,10 +18,51 @@ const parseScopes = (value) => {
   return value.split(/[,;|]/g).map((item) => item.trim()).filter(Boolean);
 };
 
+// Schema probes (sqlite_master / PRAGMA table_info) only change through D1
+// migrations, so each isolate caches their results for a short TTL instead of
+// paying one D1 round trip per probe on every request. The cache is keyed by the
+// D1 binding object and holds schema metadata only (never user or session data).
+// Failed probes are never cached: the request falls back to the legacy result.
+export const SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
+const schemaCacheByDb = new WeakMap();
+
+function schemaCacheFor(db) {
+  if (!db || (typeof db !== 'object' && typeof db !== 'function')) return null;
+  let cache = schemaCacheByDb.get(db);
+  if (!cache) {
+    cache = new Map();
+    schemaCacheByDb.set(db, cache);
+  }
+  return cache;
+}
+
+async function cachedSchemaProbe(env, key, load) {
+  const cache = schemaCacheFor(env?.DB);
+  const now = Date.now();
+  const hit = cache?.get(key);
+  if (hit && hit.expiresAt > now) return hit.promise;
+  const promise = load();
+  cache?.set(key, { promise, expiresAt: now + SCHEMA_CACHE_TTL_MS });
+  try {
+    return await promise;
+  } catch (error) {
+    if (cache?.get(key)?.promise === promise) cache.delete(key);
+    throw error;
+  }
+}
+
+export function clearIdentitySchemaCache(env) {
+  if (env?.DB && schemaCacheByDb.has(env.DB)) schemaCacheByDb.delete(env.DB);
+}
+
+async function objectTypeUncached(env, name) {
+  const row = await env.DB.prepare('SELECT type FROM sqlite_master WHERE name = ? LIMIT 1').bind(name).first();
+  return row?.type ? String(row.type) : null;
+}
+
 async function objectType(env, name) {
   try {
-    const row = await env.DB.prepare('SELECT type FROM sqlite_master WHERE name = ? LIMIT 1').bind(name).first();
-    return row?.type ? String(row.type) : null;
+    return await cachedSchemaProbe(env, `type:${name}`, () => objectTypeUncached(env, name));
   } catch {
     return null;
   }
@@ -39,14 +80,29 @@ export async function resolveIdentityTables(env) {
   };
 }
 
-async function hasColumn(env, table, column) {
-  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(table)) return false;
+const PROBED_TABLES = ['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_account_links'];
+
+async function tableColumnsUncached(env, table) {
+  const result = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+  return new Set((result?.results ?? []).map((row) => String(row?.name || '').toLowerCase()));
+}
+
+// Returns false for unknown tables, missing columns and failed probes.
+export async function identityTableHasColumn(env, table, column) {
+  if (!env?.DB || !table || !column) return false;
+  const name = String(table);
+  if (!PROBED_TABLES.includes(name)) return false;
   try {
-    const result = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
-    return (result?.results ?? []).some((row) => String(row?.name || '').toLowerCase() === column);
+    const columns = await cachedSchemaProbe(env, `columns:${name}`, () => tableColumnsUncached(env, name));
+    return columns.has(String(column).toLowerCase());
   } catch {
     return false;
   }
+}
+
+async function hasColumn(env, table, column) {
+  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(table)) return false;
+  return identityTableHasColumn(env, table, column);
 }
 
 function toIdentityUser(row) {
