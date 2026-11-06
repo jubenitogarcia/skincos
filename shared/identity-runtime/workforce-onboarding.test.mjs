@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import test from 'node:test';
-import { probeIdentityWorkforceContract, syncIdentityWorkforceOnboarding } from './workforce-onboarding.js';
+import { probeIdentityWorkforceContract, syncIdentityWorkforceOnboarding, workforceOnboardingPayload } from './workforce-onboarding.js';
 
 const testHmacKey = randomBytes(32).toString('base64url');
 
@@ -158,4 +158,12 @@ test('Identity contract probe pins the exact Timekeeping candidate and authentic
   assert.equal(captured.init.headers['x-skincos-workforce-sig'], expected);
   assert.equal(data.matched, true);
   assert.equal(data.timekeepingVersionId, timekeepingVersionId);
+});
+
+test('Unified Team onboarding without a department sends the profile area to Workforce', () => {
+  assert.equal(workforceOnboardingPayload({ profile: 'CONSULTOR', department: '' }).department, 'Comercial');
+  assert.equal(workforceOnboardingPayload({ profile: 'injetor' }).department, 'Clínico');
+  assert.equal(workforceOnboardingPayload({ profile: 'CONSULTOR', department: 'Recepção' }).department, 'Recepção');
+  const unknown = { profile: 'OUTRO', department: '' };
+  assert.equal(workforceOnboardingPayload(unknown), unknown);
 });
