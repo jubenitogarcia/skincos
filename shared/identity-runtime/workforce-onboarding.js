@@ -119,8 +119,25 @@ export async function probeIdentityWorkforceContract(env, requestId) {
   return data;
 }
 
+// Unified Team (/admin/team) no longer asks for a department, but Workforce still
+// requires one to file the employee. Use the profile's area when none was given.
+const DEFAULT_WORKFORCE_DEPARTMENT = {
+  CONSULTOR: 'Comercial',
+  INJETOR: 'Clínico',
+  SUPERVISOR: 'Supervisão',
+  GERENTE: 'Gestão',
+  GESTOR: 'Gestão',
+};
+
+export function workforceOnboardingPayload(payload) {
+  const department = String(payload?.department || '').trim();
+  if (department) return payload;
+  const fallback = DEFAULT_WORKFORCE_DEPARTMENT[String(payload?.profile || '').trim().toUpperCase()];
+  return fallback ? { ...payload, department: fallback } : payload;
+}
+
 export function syncIdentityWorkforceOnboarding(env, payload, requestId) {
-  return callWorkforce(env, '/api/ponto/internal/onboarding', payload, requestId);
+  return callWorkforce(env, '/api/ponto/internal/onboarding', workforceOnboardingPayload(payload), requestId);
 }
 
 export function syncIdentityWorkforceStatus(env, payload, requestId) {
