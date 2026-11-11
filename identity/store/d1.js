@@ -1,4 +1,5 @@
 import { normalizeAllowedUnits, toAuthenticatedActor } from '../../shared/identity-contract/index.js';
+import { normalizeProfessionalActorIdentity } from '../../shared/atendimento-actor-identity/index.js';
 
 const toInt = (value, fallback = 0) => {
   const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
@@ -149,6 +150,30 @@ export async function getIdentityActorByUsername(env, username) {
   return toAuthenticatedActor(await getIdentityUserByUsername(env, username));
 }
 
+// The account and its reviewed link share the Inventory host's DB binding.
+// Only the already authenticated account key is accepted; contact data is not
+// evidence of a Workforce relationship. No professional UUID is inferred here.
+export async function getIdentityProfessionalLinkByUsername(env, username) {
+  try {
+    if (!env?.DB || typeof username !== 'string' || !username.trim()) throw new Error();
+    const result = await env.DB.prepare(
+      `SELECT crm_username, workforce_employee_id, review_status
+       FROM crm_employee_account_links
+       WHERE crm_username = ? AND review_status = 'CONFIRMED' LIMIT 2`,
+    ).bind(username).all();
+    if (result?.success === false || !Array.isArray(result?.results) || result.results.length > 1) throw new Error();
+    const row = result.results[0];
+    if (!row || row.review_status !== 'CONFIRMED') return {};
+    if (row.crm_username !== username) throw new Error();
+    const identity = normalizeProfessionalActorIdentity({ workforceEmployeeId: row.workforce_employee_id });
+    return identity?.workforceEmployeeId ? identity : {};
+  } catch {
+    const error = new Error('IDENTITY_PROFESSIONAL_LINK_UNAVAILABLE');
+    error.code = 'IDENTITY_PROFESSIONAL_LINK_UNAVAILABLE';
+    throw error;
+  }
+}
+
 export async function updateIdentityProfile(env, username, updates) {
   if (!env?.DB) return { ok: false, status: 500, error: 'DB_NOT_CONFIGURED' };
   const current = await getIdentityUserByUsername(env, username);
@@ -197,6 +222,7 @@ export function createIdentityD1Store(env) {
     enabled: Boolean(env?.DB),
     getUserByUsername: (username) => getIdentityUserByUsername(env, username),
     getUserByIdentifier: (identifier) => getIdentityUserByIdentifier(env, identifier),
+    getProfessionalLinkByUsername: (username) => getIdentityProfessionalLinkByUsername(env, username),
     updateUserProfile: (_ignoredEnv, username, updates) => updateIdentityProfile(env, username, updates),
   };
 }

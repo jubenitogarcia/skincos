@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Auth routes extracted from the main worker router.
 
-import { identityTableHasColumn, resolveIdentityTables } from '../store/d1.js';
+import { getIdentityProfessionalLinkByUsername, identityTableHasColumn, resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
 import { normalizeCorporateEmail, normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
@@ -59,6 +59,29 @@ export async function handleAuthRoutes({
     const isCurrentSession = (user) => Boolean(
         user?.ativo && toInt(sessionVersion, 0) === toInt(user.sessionVersion, 0)
     );
+
+    const publicAuthenticatedUser = async (userDb) => {
+        const user = {
+            name: userDb.displayName || userDb.username,
+            displayName: userDb.displayName || userDb.username,
+            username: userDb.username,
+            email: userDb.email,
+            role: userDb.role || "CONSULTOR",
+            photoUrl: userDb.photoUrl,
+            allowedUnits: userDb.allowedUnits || [],
+            allowedModules: userDb.allowedModules || [],
+        };
+        // This optional Atendimento relationship must not gate authentication
+        // or cookie renewal for other modules. Only consultants need a lookup.
+        if (String(user.role).trim().toUpperCase() !== 'CONSULTOR') return user;
+        try {
+            const link = await getIdentityProfessionalLinkByUsername(env, userDb.username);
+            return { ...user, ...link, professionalIdentityStatus: link.workforceEmployeeId ? 'CONFIRMED' : 'UNLINKED' };
+        } catch (error) {
+            if (error?.code !== 'IDENTITY_PROFESSIONAL_LINK_UNAVAILABLE') throw error;
+            return { ...user, professionalIdentityStatus: 'UNAVAILABLE' };
+        }
+    };
 
     const textEncoder = new TextEncoder();
     const bytesToB64Url = (bytes) => {
@@ -421,16 +444,7 @@ export async function handleAuthRoutes({
                         appOrigin
                     );
                 }
-	                const user = {
-	                    name: userDb.displayName || userDb.username,
-	                    displayName: userDb.displayName || userDb.username,
-	                    username: userDb.username,
-	                    email: userDb.email,
-	                    role: userDb.role || "CONSULTOR",
-	                    photoUrl: userDb.photoUrl,
-	                    allowedUnits: userDb.allowedUnits || [],
-	                    allowedModules: userDb.allowedModules || [],
-	                };
+                const user = await publicAuthenticatedUser(userDb);
                 // `/auth/me` is read-only. Rotating cookies here invalidates CSRF tokens
                 // cached by other open tabs/modules and causes intermittent mutation failures.
                 const csrfToken = cookies.csrfToken || sessionCsrf || null;
@@ -457,16 +471,7 @@ export async function handleAuthRoutes({
                         appOrigin
                     );
                 }
-	                const user = {
-	                    name: userDb.displayName || userDb.username,
-	                    displayName: userDb.displayName || userDb.username,
-	                    username: userDb.username,
-	                    email: userDb.email,
-	                    role: userDb.role || "CONSULTOR",
-	                    photoUrl: userDb.photoUrl,
-	                    allowedUnits: userDb.allowedUnits || [],
-	                    allowedModules: userDb.allowedModules || [],
-	                };
+                const user = await publicAuthenticatedUser(userDb);
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username, sv: userDb.sessionVersion || 0 });
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
@@ -533,16 +538,7 @@ export async function handleAuthRoutes({
                         // ignore upgrade failures
                     }
                 }
-	                const user = {
-	                    name: userDb.displayName || userDb.username,
-	                    displayName: userDb.displayName || userDb.username,
-	                    username: userDb.username,
-	                    email: userDb.email,
-	                    role: userDb.role || "CONSULTOR",
-	                    photoUrl: userDb.photoUrl,
-	                    allowedUnits: userDb.allowedUnits || [],
-	                    allowedModules: userDb.allowedModules || [],
-	                };
+                const user = await publicAuthenticatedUser(userDb);
                 await clearAuthFailures(identifier);
                 await logAuthAudit({ action: 'AUTH_LOGIN_SUCCESS', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
                 const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username, sv: userDb.sessionVersion || 0 });

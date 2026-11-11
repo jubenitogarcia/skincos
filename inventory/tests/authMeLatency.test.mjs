@@ -85,7 +85,11 @@ test('/auth/me keeps its response contract and reuses cached schema probes acros
   assert.equal(first.status, 200)
   const payload = await first.json()
   assert.deepEqual(Object.keys(payload).sort(), ['csrfToken', 'success', 'user'])
-  assert.deepEqual(Object.keys(payload.user).sort(), ['allowedModules', 'allowedUnits', 'displayName', 'email', 'name', 'photoUrl', 'role', 'username'])
+  // A CONSULTOR profile also carries the typed state of its reviewed Workforce link
+  // (UNLINKED here: the double has no crm_employee_account_links row).
+  assert.deepEqual(Object.keys(payload.user).sort(), ['allowedModules', 'allowedUnits', 'displayName', 'email', 'name', 'photoUrl', 'professionalIdentityStatus', 'role', 'username'])
+  assert.equal(payload.user.professionalIdentityStatus, 'UNLINKED')
+  assert.equal(Object.hasOwn(payload.user, 'workforceEmployeeId'), false)
   assert.equal(payload.user.username, 'existing-user')
   assert.deepEqual(payload.user.allowedModules, ['inventory'])
   assert.equal(payload.csrfToken, 'csrf')
@@ -102,6 +106,8 @@ test('/auth/me keeps its response contract and reuses cached schema probes acros
   const statements = db.calls.map((call) => call.sql)
   assert.equal(statements.filter((sql) => sql.includes('FROM crm_identity_sessions')).length, 1)
   assert.equal(statements.filter((sql) => sql.includes('FROM crm_users')).length, 1)
+  // The consultant link costs exactly one extra D1 read on /auth/me.
+  assert.equal(statements.filter((sql) => sql.includes('FROM crm_employee_account_links')).length, 1)
 })
 
 test('revocation is still checked on every request after the schema cache is warm', async () => {

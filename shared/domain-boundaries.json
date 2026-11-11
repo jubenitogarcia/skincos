@@ -24,6 +24,13 @@
       "owner": "identity"
     },
     {
+      "id": "atendimento-actor-identity-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/atendimento-actor-identity/**"],
+      "consumers": ["api", "crm", "identity"],
+      "owner": "identity"
+    },
+    {
       "id": "identity-runtime-adapter-v1",
       "kind": "adapter",
       "paths": ["shared/identity-runtime/**"],
