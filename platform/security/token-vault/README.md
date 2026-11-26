@@ -28,6 +28,12 @@ históricas somente `GET` (insights, anúncios arquivados, datas e orçamento),
 anunciadas em `capabilities.read_only`. Contrato, análise de impacto, promoção
 e rollback: [META_ADS_READ.md](META_ADS_READ.md).
 
+As rotas por objetivo do Meta Ads (`objroute_v1`: campanha e conjunto criados pausados,
+aprovação e ativação com teto mensal por unidade) ficam em
+`/v1/meta-ads-objective-routes` e nascem desligadas
+(`META_ADS_OBJECTIVE_ROUTES_MODE = "off"`). Contrato, guardas, ordem de promoção e
+rollback: [META_ADS_OBJECTIVE_ROUTES.md](META_ADS_OBJECTIVE_ROUTES.md).
+
 Os endpoints administrativos exigem `Authorization: Bearer <TOKEN_VAULT_API_TOKEN>`.
 O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
 `health`, `contract` e a configuração Meta Ads, ou chamar o planejamento e

@@ -1,4 +1,4 @@
-import { handleRequest } from './index.js';
+import { handleRequest, handleScheduled } from './index.js';
 
 const TOKEN_PREFIX = '/internal/token-vault';
 const LEGACY_TOKEN_METADATA_PATH = '/v1/token-metadata';
@@ -31,5 +31,8 @@ export async function handleCompatRequest(request, env, ctx) {
 export default {
   async fetch(request, env, ctx) {
     return handleCompatRequest(request, env, ctx);
+  },
+  async scheduled(event, env, ctx) {
+    return handleScheduled(event, env, ctx);
   },
 };
