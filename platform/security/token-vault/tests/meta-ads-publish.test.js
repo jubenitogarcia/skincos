@@ -124,6 +124,12 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.deepEqual(body.capabilities.video_upload.supported_actions, __test.videoUploadActions);
   assert.equal(body.capabilities.video_upload.max_file_bytes, 90 * 1024 * 1024);
   assert.equal(body.capabilities.video_upload.max_chunk_bytes, 16 * 1024 * 1024);
+  // A capacidade de leitura histórica é uma chave aditiva: não altera a
+  // revisão do contrato nem as chaves que o workflow confere.
+  assert.deepEqual(Object.keys(body.capabilities).sort(), ['read_only', 'tracking', 'video_upload', 'workflow_contract_revision']);
+  assert.equal(body.capabilities.read_only.revision, 'meta_ads_read_v1');
+  assert.deepEqual(body.capabilities.read_only.graph_methods, ['GET']);
+  assert.deepEqual(body.capabilities.read_only.actions, ['get_insights']);
 });
 
 test('tracking binding revision excludes volatile live landing-page probe results', async () => {
