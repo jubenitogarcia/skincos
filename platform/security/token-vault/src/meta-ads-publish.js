@@ -1,3 +1,10 @@
+import {
+  META_ADS_READ_NEW_ACTIONS,
+  createMetaAdsReadActions,
+  isMetaAdsReadRequest,
+  metaAdsReadCapabilities,
+} from './meta-ads-read.js';
+
 const PREFIX = '/v1/meta-ads-publish';
 const GRAPH_ORIGIN = 'https://graph.facebook.com';
 const GRAPH_VIDEO_ORIGIN = 'https://graph-video.facebook.com';
@@ -131,6 +138,8 @@ const ALLOWED_ACTIONS = new Set([
   'stage_batch',
   'activate_batch',
   'rollback_batch',
+  // Leituras históricas aditivas (somente Graph GET); ver meta-ads-read.js.
+  ...META_ADS_READ_NEW_ACTIONS,
 ]);
 
 const AD_INVENTORY_FIELDS = [
@@ -351,6 +360,9 @@ async function getConfig(env, requestId) {
         max_file_bytes: MAX_VIDEO_BYTES,
         max_chunk_bytes: MAX_VIDEO_CHUNK_BYTES,
       },
+      // Chave aditiva e independente do contrato do workflow: anuncia as
+      // leituras históricas (somente GET) sem alterar as chaves acima.
+      read_only: metaAdsReadCapabilities(),
     },
     secrets_exposed: false,
     requestId,
@@ -638,7 +650,29 @@ async function executeOperation(context) {
   }
 }
 
+// As leituras históricas reutilizam, por injeção, a mesma autenticação,
+// allowlist de conta e medição de rate limit das ações existentes.
+let metaAdsReadActions;
+function readActions() {
+  if (!metaAdsReadActions) {
+    metaAdsReadActions = createMetaAdsReadActions({
+      resolveGraphAuth,
+      graphRequest,
+      graphUrl,
+      sanitizeGraphValue,
+      normalizeNumericId,
+      failure,
+      dbFirst,
+      dbRun,
+    });
+  }
+  return metaAdsReadActions;
+}
+
 async function performOperation(action, body, context) {
+  // Só entra aqui a ação nova ou uma ação de leitura existente que traga um
+  // parâmetro novo explícito; os pedidos atuais seguem o caminho de sempre.
+  if (isMetaAdsReadRequest(action, body)) return readActions().perform(action, body, context);
   if (action === 'list_ads') return listAds(body, context);
   if (action === 'upload_image') return uploadImage(body, context);
   if (action === 'start_video_upload') return startVideoUpload(body, context);
@@ -1145,12 +1179,15 @@ async function finishGraphMutationSlot(slot, context, normalized, receivedRespon
     return false;
   }
 }
-async function graphRequest(url, init, auth, context) {
+async function graphRequest(url, init, auth, context, { maxAttempts = MAX_GRAPH_ATTEMPTS } = {}) {
+  // Só as leituras históricas pedem menos tentativas; sem a opção o
+  // comportamento é o de sempre.
+  const attemptsAllowed = Math.min(MAX_GRAPH_ATTEMPTS, Math.max(1, Math.trunc(Number(maxAttempts)) || MAX_GRAPH_ATTEMPTS));
   const started = Date.now();
   context.graph_request_deadline_ms ||= started + 300_000;
   const mutation = clean(init.method || 'GET').toUpperCase() === 'POST';
   let lastFailure;
-  for (let attempt = 1; attempt <= MAX_GRAPH_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= attemptsAllowed; attempt += 1) {
     const slot = mutation ? await reserveGraphMutationSlot(auth, context) : null;
     const remaining = context.graph_request_deadline_ms - Date.now();
     if (remaining <= 0) throw failure('meta_graph_request_budget_exhausted', { classification: 'transient', retryable: true, http_status: 503 });
@@ -1197,7 +1234,7 @@ async function graphRequest(url, init, auth, context) {
     if (!cooldownSaved) context.rateUsage.pacing_cooldown_update_failed = true;
     if (result) return result;
     lastFailure = normalized;
-    if (!cooldownSaved || !normalized.retryable || attempt === MAX_GRAPH_ATTEMPTS || (mutation && normalized.ambiguous)) {
+    if (!cooldownSaved || !normalized.retryable || attempt === attemptsAllowed || (mutation && normalized.ambiguous)) {
       throw Object.assign(new Error(normalized.message), normalized);
     }
     const delay = retryDelayMs(attempt, graphHeaders, started, normalized);
@@ -1789,7 +1826,9 @@ function retryAfterSeconds(headers) {
 
 function extractRateUsage(headers) {
   const out = {};
-  for (const name of ['x-business-use-case-usage', 'x-ad-account-usage', 'x-app-usage']) {
+  // `x-fb-ads-insights-throttle` só vem em respostas de insights; ele é
+  // gravado no journal, mas não entra em `maxRateUsage` (publicação inalterada).
+  for (const name of ['x-business-use-case-usage', 'x-ad-account-usage', 'x-app-usage', 'x-fb-ads-insights-throttle']) {
     const raw = clean(headers?.get?.(name));
     if (!raw) continue;
     try { out[name] = JSON.parse(raw); } catch { out[name] = { unparsed: true }; }

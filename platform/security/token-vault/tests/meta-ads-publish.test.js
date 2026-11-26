@@ -91,6 +91,13 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.deepEqual(body.capabilities.video_upload.supported_actions, __test.videoUploadActions);
   assert.equal(body.capabilities.video_upload.max_file_bytes, 90 * 1024 * 1024);
   assert.equal(body.capabilities.video_upload.max_chunk_bytes, 16 * 1024 * 1024);
+  // A capacidade de leitura histórica é uma chave aditiva: não altera a
+  // revisão do contrato nem as chaves que o workflow confere.
+  assert.equal(body.capabilities.workflow_contract_revision, 'meta_destination_contract_v18_live_campaign_cta');
+  assert.deepEqual(Object.keys(body.capabilities).sort(), ['read_only', 'video_upload', 'workflow_contract_revision']);
+  assert.equal(body.capabilities.read_only.revision, 'meta_ads_read_v1');
+  assert.deepEqual(body.capabilities.read_only.graph_methods, ['GET']);
+  assert.deepEqual(body.capabilities.read_only.actions, ['get_insights']);
 });
 
 function flexibleStaticFeed() {
@@ -702,12 +709,13 @@ test('graph mutation pacing serializes POSTs per account and leaves GETs alone',
   const post = (who) => __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'POST', body: '{}' }, who, context);
   await post(auth);
   await __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'GET' }, auth, context);
+  await __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'GET' }, auth, context, { maxAttempts: 1 });
   assert.equal(db.pacingGrants.length, 1);
   assert.deepEqual(db.sleeps, []);
   await post(other);
   assert.deepEqual(db.sleeps, []);
   await post(auth);
-  assert.deepEqual(seen, ['POST', 'GET', 'POST', 'POST']);
+  assert.deepEqual(seen, ['POST', 'GET', 'GET', 'POST', 'POST']);
   const sameAccount = db.pacingGrants.filter((grant) => grant.resourceKey === 'graph-rate-account:123456789');
   assert.equal(sameAccount.length, 2);
   assert.ok(sameAccount[1].virtualMs - sameAccount[0].virtualMs >= 35_000);
