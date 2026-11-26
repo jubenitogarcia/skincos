@@ -183,6 +183,14 @@ tempo fora do ar.
 mesmos quatro pontos de ligação aplicados sobre a linha v18. Mantém v18, não
 toca D1 e não exige mudança no Orb.
 
+O branch já existe e foi construído sobre o último commit em que o gateway
+ainda declara v18 (o pai de #1415). Nessa base, os testes do gateway passam
+com o módulo aplicado (`meta-ads-read` 11/11, `meta-ads-publish` 26/26,
+`index` 11/11, `social-publish` 6/6, `compat-entry` 3/3). **Não está
+comprovado que a versão ativa do Worker corresponde a essa base**: a linha v18
+vai de 28/07 a 13/08/2026 e a versão implantada não pôde ser lida deste host.
+Por isso o passo 1 abaixo é obrigatório.
+
 1. Registrar a versão ativa do Worker (ID da versão/deployment) e confirmar
    que o código em produção corresponde à base do branch. Se não corresponder,
    reaplicar o patch sobre a base correta; não promover.
