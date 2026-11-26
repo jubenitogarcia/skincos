@@ -23,7 +23,11 @@
 // - criação idempotente por route_key, inclusive na criação parcial: a retomada
 //   reaproveita a campanha ou o conjunto que já existe com o mesmo nome;
 // - toda mutação entra no journal antes e depois da chamada à Graph;
-// - na dúvida não ativa (fail-closed): leitura que falha não vira decisão.
+// - na dúvida não ativa (fail-closed): leitura que falha não vira decisão;
+// - uma rota que pode estar gastando nunca sai da vista do monitor: ativação
+//   interrompida (ACTIVATING) é retomada ou pausada por ele, e uma rota só é
+//   fechada depois de a pausa ser confirmada por leitura (senão PAUSE_PENDING);
+// - toda troca de estado é compare-and-set sobre o estado lido.
 
 export const META_ADS_OBJECTIVE_ROUTES_REVISION = 'objroute_v1';
 export const OBJECTIVE_ROUTES_PREFIX = '/v1/meta-ads-objective-routes';
@@ -60,6 +64,15 @@ const UNNOTIFIED_DECISION_WINDOW_MS = 14 * 24 * 3600_000;
 const CODE_REUSE_WINDOW_MS = 30 * 24 * 3600_000;
 const SNAPSHOT_CACHE_MS = 15 * 60_000;
 const UNIT_LOCK_TTL_MS = 5 * 60_000;
+// Ativação parada há mais que isto é retomada pelo monitor (o teto é conferido
+// de novo); parada há mais que o segundo prazo é pausada e bloqueada.
+const ACTIVATION_RESUME_AFTER_MS = 10 * 60_000;
+const ACTIVATION_GIVE_UP_MS = 2 * 3600_000;
+// Depois de uma criação sem resposta clara (timeout, 5xx) o Vault não cria de
+// novo dentro desta janela: a Meta pode ter criado e a listagem ainda não mostrar.
+const CREATE_UNCONFIRMED_WINDOW_MS = 30 * 60_000;
+const ACCOUNT_TIMEZONE = 'America/Sao_Paulo';
+const NAME_LOOKUP_PAGE_LIMIT = 200;
 const UNIT_LOCK_OWNER = 'objective-route-unit-lock-v1';
 const ACTIVATION_GRANT_TTL_MS = 5 * 60_000;
 const MAX_LIST_PAGES = 10;
@@ -69,7 +82,12 @@ const POLICY_MAX_CEILING_BRL = 100_000;
 const POLICY_MAX_TARGETING_BYTES = 8 * 1024;
 const MINOR_UNITS_PER_BRL = 100;
 
-const LIVE_STATUSES = Object.freeze(['CREATING', 'PENDING_APPROVAL', 'ACTIVATING', 'ACTIVATED']);
+const LIVE_STATUSES = Object.freeze(['CREATING', 'PENDING_APPROVAL', 'ACTIVATING', 'ACTIVATED', 'PAUSE_PENDING']);
+// Estados em que a campanha ou o conjunto da rota podem estar ACTIVE na Meta.
+// Contam no comprometido da unidade e são acompanhados pelo monitor.
+const SPENDING_STATUSES = Object.freeze(['ACTIVATING', 'ACTIVATED', 'PAUSE_PENDING']);
+const SPENDING_STATUSES_SQL = SPENDING_STATUSES.map((status) => `'${status}'`).join(', ');
+const STOPPED_OBJECT_STATUSES = Object.freeze(['PAUSED', 'ARCHIVED', 'DELETED']);
 const FINAL_STATUSES = Object.freeze(['REJECTED', 'BLOCKED', 'EXPIRED', 'PAUSED_BY_MONITOR']);
 
 // Catálogo ODAX (Marketing API v25) do próprio Vault. O pedido do workflow tem
@@ -290,7 +308,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
   const conflict = (code, extra = {}) => failure(code, { classification: 'permanent', http_status: 409, ...extra });
   const unavailable = (code, extra = {}) => failure(code, { classification: 'transient', retryable: false, http_status: 503, ...extra });
 
-  function graphContext(base, action) {
+  function graphContext(base, action, unitLock = null) {
     return {
       env: base.env,
       decryptToken: base.decryptToken,
@@ -299,7 +317,14 @@ export function createMetaAdsObjectiveRoutes(deps) {
       traceId: '',
       action,
       operationKey: `objective-route:${action}`,
+      // Renovada antes de cada mutação: uma ativação longa não perde a trava.
+      unitLock,
     };
+  }
+
+  function changedRows(result) {
+    const changes = Number(result && result.meta && result.meta.changes);
+    return Number.isFinite(changes) ? changes : 1;
   }
 
   // ---------------------------------------------------------------- journal
@@ -311,12 +336,17 @@ export function createMetaAdsObjectiveRoutes(deps) {
       crypto.randomUUID(), route.id, route.route_key, event, JSON.stringify(payload), iso(nowMs(env)));
   }
 
+  // Compare-and-set: a gravação só vale se o registro ainda está no estado que
+  // esta chamada leu. Quem perde a corrida recebe 409 e não muda nada.
   async function saveRoute(env, route, changes) {
     const next = { ...changes, updated_at: iso(nowMs(env)) };
     const keys = Object.keys(next);
-    await dbRun(env,
-      `UPDATE meta_ads_objective_routes SET ${keys.map((key) => `${key} = ?`).join(', ')} WHERE id = ?`,
-      ...keys.map((key) => next[key]), route.id);
+    const result = await dbRun(env,
+      `UPDATE meta_ads_objective_routes SET ${keys.map((key) => `${key} = ?`).join(', ')} WHERE id = ? AND status = ?`,
+      ...keys.map((key) => next[key]), route.id, route.status);
+    if (changedRows(result) === 0) {
+      throw failure('objective_route_state_changed', { classification: 'transient', retryable: false, http_status: 409 });
+    }
     Object.assign(route, next);
     return route;
   }
@@ -357,8 +387,20 @@ export function createMetaAdsObjectiveRoutes(deps) {
         retry_after_seconds: Math.ceil(remaining / 1000),
       });
     }
+    const lock = {
+      async renew() {
+        const at = nowMs(env);
+        const result = await dbRun(env,
+          `UPDATE meta_ads_publish_locks SET heartbeat_at = ?, expires_at = ?, updated_at = ?
+            WHERE resource_key = ? AND operation_key = ?`,
+          iso(at), iso(at + UNIT_LOCK_TTL_MS), iso(at), resourceKey, owner);
+        if (changedRows(result) === 0) {
+          throw failure('objective_route_unit_lock_lost', { classification: 'transient', retryable: false, http_status: 409 });
+        }
+      },
+    };
     try {
-      return await fn();
+      return await fn(lock);
     } finally {
       try {
         await dbRun(env,
@@ -547,8 +589,11 @@ export function createMetaAdsObjectiveRoutes(deps) {
   async function readAccountSnapshot(auth, context, calendar) {
     const invalid = [];
     const account = await graphRequest(
-      graphUrl(auth.apiVersion, `act_${auth.accountId}`, { fields: 'currency' }), { method: 'GET' }, auth, context);
+      graphUrl(auth.apiVersion, `act_${auth.accountId}`, { fields: 'currency,timezone_name' }), { method: 'GET' }, auth, context);
     if (readText(account.body && account.body.currency).toUpperCase() !== 'BRL') invalid.push('account_currency_not_brl');
+    // O `time_range` de Insights segue o fuso da conta; o calendário do teto é
+    // America/Sao_Paulo. Com outro fuso o "gasto do mês" seria de outro período.
+    if (readText(account.body && account.body.timezone_name) !== ACCOUNT_TIMEZONE) invalid.push('account_timezone_not_sao_paulo');
 
     const adsetList = await listAll(auth, context, `act_${auth.accountId}/adsets`, {
       fields: ADSET_LIST_FIELDS, limit: String(ADSET_PAGE_LIMIT),
@@ -589,6 +634,25 @@ export function createMetaAdsObjectiveRoutes(deps) {
       }
       spend[id] = roundBrl((spend[id] || 0) + value);
     }
+    // Total da conta no mesmo período. O que as linhas por conjunto não explicam
+    // (conjunto arquivado ou apagado no mês, por exemplo) conta para as duas unidades.
+    const accountInsights = await listAll(auth, context, `act_${auth.accountId}/insights`, {
+      level: 'account',
+      fields: 'spend',
+      time_range: JSON.stringify({ since: calendar.month_start, until: calendar.today }),
+      limit: '10',
+    });
+    if (!accountInsights.complete) invalid.push('insights_listing_incomplete');
+    let accountSpend = 0;
+    for (const row of accountInsights.rows.filter(isPlainObject)) {
+      const value = Number(row.spend);
+      if (!Number.isFinite(value) || value < 0) {
+        invalid.push('insights_row_invalid');
+        continue;
+      }
+      accountSpend += value;
+    }
+    const attributed = Object.values(spend).reduce((sum, value) => sum + value, 0);
     return {
       account_id: auth.accountId,
       as_of: iso(nowMs(context.env)),
@@ -596,6 +660,8 @@ export function createMetaAdsObjectiveRoutes(deps) {
       month_key: calendar.month_key,
       adsets,
       spend_by_adset: spend,
+      account_spend_brl: roundBrl(accountSpend),
+      unattributed_spend_brl: Math.max(0, roundBrl(accountSpend - attributed)),
       route_ads: {},
       invalid: [...new Set(invalid)],
     };
@@ -673,11 +739,12 @@ export function createMetaAdsObjectiveRoutes(deps) {
     for (const route of liveRoutes) {
       const adsetId = readText(route.adset_id);
       if (readText(route.unit) !== unit || adsetId === excludeAdsetId || countedAdsets.has(adsetId)) continue;
-      if (!['ACTIVATING', 'ACTIVATED'].includes(readText(route.status))) continue;
+      if (!SPENDING_STATUSES.includes(readText(route.status))) continue;
       committed += minorToBrl(route.daily_budget_minor_units);
       committedNext += minorToBrl(route.daily_budget_minor_units);
     }
-    let spend = 0;
+    // Gasto que nenhum conjunto listado explica entra inteiro em cada unidade.
+    let spend = Number(snapshot.unattributed_spend_brl) > 0 ? Number(snapshot.unattributed_spend_brl) : 0;
     for (const [adsetId, value] of Object.entries(snapshot.spend_by_adset)) if (mine(adsetId)) spend += value;
 
     const current = ceilingForMonth(policy, calendar.month_key);
@@ -700,7 +767,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
 
   async function liveRouteRows(env) {
     return dbAll(env,
-      `SELECT * FROM meta_ads_objective_routes WHERE status IN ('ACTIVATING', 'ACTIVATED')`);
+      `SELECT * FROM meta_ads_objective_routes WHERE status IN (${SPENDING_STATUSES_SQL})`);
   }
 
   // ------------------------------------------------------ mutações na Graph
@@ -724,6 +791,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
       await journal(context.env, route, 'mutation_refused_by_guard', { kind, path_kind: path.split('/').pop(), status });
       throw failure('objective_route_mutation_guard', { classification: 'permanent', http_status: 500 });
     }
+    if (context.unitLock) await context.unitLock.renew();
     await journal(context.env, route, `${kind}_requested`, { path, status });
     try {
       const result = await graphRequest(
@@ -874,14 +942,37 @@ export function createMetaAdsObjectiveRoutes(deps) {
     return !['DELETED', 'ARCHIVED'].includes(readText(row.status).toUpperCase());
   }
 
+  // Lista sem filtro e compara o nome aqui: a idempotência da criação não pode
+  // depender do comportamento de um filtro da Graph. Listagem truncada falha.
   async function findByName(auth, context, path, name, fields) {
-    const list = await listAll(auth, context, path, {
-      fields,
-      filtering: JSON.stringify([{ field: 'name', operator: 'CONTAIN', value: name }]),
-      limit: '50',
-    });
+    const list = await listAll(auth, context, path, { fields, limit: String(NAME_LOOKUP_PAGE_LIMIT) });
     if (!list.complete) throw unavailable('objective_route_lookup_incomplete');
     return list.rows.filter(isPlainObject).filter((row) => readText(row.name) === name && notDeleted(row));
+  }
+
+  // Antes de criar: se a última criação neste caminho ficou sem resposta clara
+  // (pedido no journal sem resultado, timeout ou 5xx) e é recente, a Meta pode
+  // ter criado o objeto e a listagem ainda não o mostrar. Criar de novo agora
+  // duplicaria; a retomada espera a janela e procura pelo nome outra vez.
+  async function assertNoUnconfirmedCreate(env, route, path) {
+    const rows = await dbAll(env,
+      `SELECT event, payload_json, created_at FROM meta_ads_objective_route_events
+        WHERE route_key = ? AND event IN ('create_requested', 'create_done', 'create_failed')
+        ORDER BY created_at DESC, rowid DESC LIMIT 40`,
+      route.route_key);
+    const last = rows.find((row) => parseJsonObject(row.payload_json).path === path);
+    if (!last || last.event === 'create_done') return;
+    const payload = parseJsonObject(last.payload_json);
+    const refused = last.event === 'create_failed' && ['permanent', 'auth'].includes(readText(payload.classification))
+      && payload.ambiguous !== true;
+    if (refused) return;
+    const availableAt = Date.parse(readText(last.created_at)) + CREATE_UNCONFIRMED_WINDOW_MS;
+    if (availableAt > nowMs(env)) {
+      throw failure('objective_route_create_unconfirmed', {
+        classification: 'transient', retryable: false, http_status: 503,
+        retry_after_seconds: Math.ceil((availableAt - nowMs(env)) / 1000),
+      });
+    }
   }
 
   // Um id herdado de um pedido anterior pode ter sido apagado na Meta; nesse
@@ -906,6 +997,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
         current = found[0];
         await journal(context.env, route, 'campaign_reused_by_name', { id: readText(current.id) });
       } else {
+        await assertNoUnconfirmedCreate(context.env, route, `act_${auth.accountId}/campaigns`);
         const created = await mutate('create', {
           auth, context, route,
           path: `act_${auth.accountId}/campaigns`,
@@ -965,6 +1057,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
         current = found[0];
         await journal(context.env, route, 'adset_reused_by_name', { id: readText(current.id) });
       } else {
+        await assertNoUnconfirmedCreate(context.env, route, `act_${auth.accountId}/adsets`);
         const created = await mutate('create', {
           auth, context, route,
           path: `act_${auth.accountId}/adsets`,
@@ -1011,6 +1104,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
         http_status: normalized.http_status === 409 ? 409 : 502,
         cause_code: normalized.message,
         route_status: 'CREATING',
+        ...(error && error.retry_after_seconds ? { retry_after_seconds: error.retry_after_seconds } : {}),
       });
     }
     const now = nowMs(context.env);
@@ -1040,10 +1134,16 @@ export function createMetaAdsObjectiveRoutes(deps) {
         WHERE status IN ('CREATING', 'PENDING_APPROVAL') ${routeKey ? 'AND route_key = ?' : ''}`,
       ...(routeKey ? [routeKey] : []));
     for (const route of rows) {
-      if (route.status === 'PENDING_APPROVAL' && Date.parse(route.expires_at) + DECISION_GRACE_MS < now) {
-        await finalize(env, route, 'EXPIRED', 'BLOCKED', ['approval_expired'], { decided_by: 'expiry' });
-      } else if (route.status === 'CREATING' && Date.parse(route.created_at) + CREATING_ABANDON_MS < now) {
-        await finalize(env, route, 'BLOCKED', 'BLOCKED', ['creation_abandoned'], { decided_by: 'expiry' });
+      try {
+        if (route.status === 'PENDING_APPROVAL' && Date.parse(route.expires_at) + DECISION_GRACE_MS < now) {
+          await finalize(env, route, 'EXPIRED', 'BLOCKED', ['approval_expired'], { decided_by: 'expiry' });
+        } else if (route.status === 'CREATING' && Date.parse(route.created_at) + CREATING_ABANDON_MS < now) {
+          await finalize(env, route, 'BLOCKED', 'BLOCKED', ['creation_abandoned'], { decided_by: 'expiry' });
+        }
+      } catch (error) {
+        // A lista de pendências roda fora da trava: se uma decisão mudou o
+        // estado neste meio-tempo, vale a decisão e o vencimento não se aplica.
+        if (readText(error && error.message) !== 'objective_route_state_changed') throw error;
       }
     }
   }
@@ -1065,13 +1165,13 @@ export function createMetaAdsObjectiveRoutes(deps) {
       route_key: request.route_key, daily_minor: request.daily_minor, campaign: request.names.campaign, adset: request.names.adset,
     }));
 
-    return withUnitLock(env, request.unit, 'ensure', async () => {
+    return withUnitLock(env, request.unit, 'ensure', async (lock) => {
       await sweepStale(env, request.route_key);
-      const context = graphContext(base, 'ensure_objective_route');
+      const context = graphContext(base, 'ensure_objective_route', lock);
       let route = await latestRoute(env, request.route_key);
       let inherited = {};
       if (route && LIVE_STATUSES.includes(route.status)) {
-        if (['ACTIVATING', 'ACTIVATED'].includes(route.status)) return routeSummary(route);
+        if (SPENDING_STATUSES.includes(route.status)) return routeSummary(route);
         if (route.request_hash !== requestHash) throw conflict('objective_route_request_conflict');
         if (route.status === 'PENDING_APPROVAL') return routeSummary(route);
       } else {
@@ -1236,12 +1336,46 @@ export function createMetaAdsObjectiveRoutes(deps) {
         WHERE decided_at IS NOT NULL AND decision_notified_at IS NULL AND decided_at >= ?
         ORDER BY decided_at, id`,
       iso(nowMs(env) - UNNOTIFIED_DECISION_WINDOW_MS));
+    const inProgress = await dbAll(env,
+      `SELECT * FROM meta_ads_objective_routes WHERE status IN ('ACTIVATING', 'PAUSE_PENDING') ORDER BY updated_at, id`);
+    let monitor = [];
+    try {
+      monitor = await dbAll(env,
+        `SELECT unit, last_run_at, last_ok_at, last_reason, consecutive_failures
+           FROM meta_ads_objective_route_monitor ORDER BY unit`);
+    } catch {
+      // Sem a tabela a lista segue sem a saúde do monitor.
+    }
     return {
       ok: true,
       pending,
       // Decisões que o operador ainda não recebeu (inclui as pausas do monitor
       // e as ativações cuja resposta se perdeu num timeout).
       unnotified_decisions: decided.map(decisionView),
+      // Rotas aprovadas que ainda não fecharam: ativação interrompida
+      // (ACTIVATING) ou pausa sem confirmação (PAUSE_PENDING). Não são
+      // pendências de aprovação; o monitor as resolve e a decisão final aparece
+      // em `unnotified_decisions`.
+      in_progress: inProgress.map((route) => ({
+        route_key: route.route_key,
+        unit: route.unit,
+        objective: route.objective,
+        approval_code: route.approval_code,
+        status: route.status,
+        since: route.status === 'ACTIVATING' ? (route.activating_at || route.updated_at) : route.updated_at,
+        reasons: decisionView(route).reasons,
+        campaign_status: route.campaign_status || null,
+        adset_status: route.adset_status || null,
+      })),
+      // Última rodada do monitor por unidade. `consecutive_failures` maior que
+      // zero significa que as rotas ativas estão sem conferência de teto.
+      monitor: monitor.map((row) => ({
+        unit: readText(row.unit),
+        last_run_at: row.last_run_at || null,
+        last_ok_at: row.last_ok_at || null,
+        last_reason: readText(row.last_reason),
+        consecutive_failures: Number(row.consecutive_failures) || 0,
+      })),
       as_of: iso(nowMs(env)),
     };
   }
@@ -1336,17 +1470,90 @@ export function createMetaAdsObjectiveRoutes(deps) {
     return { reasons, budget: budgetView(check, state), ads, invalid: state.invalid };
   }
 
-  async function pauseRouteObjects(route, auth, context) {
-    let safe = true;
+  // Estado de um objeto que não gasta mais, conferido por leitura. Vazio quando
+  // a leitura não confirma (ainda ACTIVE, ou não deu para ler).
+  async function readStoppedStatus(auth, context, objectId) {
+    try {
+      const status = readText((await readStatus(auth, context, objectId)).status).toUpperCase();
+      return { status: STOPPED_OBJECT_STATUSES.includes(status) ? status : '', missing: false };
+    } catch (error) {
+      const normalized = normalizeFailure(error);
+      return { status: '', missing: normalized.classification === 'permanent' && !normalized.ambiguous };
+    }
+  }
+
+  // Pausa conjunto e campanha e só dá a rota por parada com leitura na Graph:
+  // a resposta do POST não basta. O conjunto parado já basta para não gastar;
+  // a campanha é pausada junto e o estado lido fica no registro.
+  async function pauseAndConfirm(route, auth, context) {
+    const statuses = {};
+    let stopped = false;
+    let adsetMissing = false;
     // Conjunto antes da campanha: o que gasta para primeiro.
-    for (const objectId of [route.adset_id, route.campaign_id]) {
+    for (const [column, objectId] of [['adset_status', route.adset_id], ['campaign_status', route.campaign_id]]) {
+      if (!objectId) continue;
       try {
         await mutate('pause', { auth, context, route, path: objectId, payload: { status: 'PAUSED' } });
       } catch {
-        safe = false;
+        // Quem decide é a leitura abaixo.
+      }
+      const read = await readStoppedStatus(auth, context, objectId);
+      if (read.status) {
+        statuses[column] = read.status;
+        stopped = true;
+      } else if (column === 'adset_status') {
+        adsetMissing = read.missing;
       }
     }
-    return safe;
+    if (!stopped && adsetMissing) {
+      // Conjunto que a Graph diz não existir: só vale como parado se a listagem
+      // completa da conta também não o mostra ativo (apagado no Gerenciador).
+      try {
+        const list = await listAll(auth, context, `act_${auth.accountId}/adsets`, { fields: 'id,status', limit: String(ADSET_PAGE_LIMIT) });
+        const row = list.rows.filter(isPlainObject).find((entry) => readText(entry.id) === route.adset_id);
+        const listed = readText(row && row.status).toUpperCase();
+        if (list.complete && (!row || STOPPED_OBJECT_STATUSES.includes(listed))) {
+          statuses.adset_status = row ? listed : 'DELETED';
+          stopped = true;
+        }
+      } catch {
+        // Sem a listagem a pausa segue sem confirmação.
+      }
+    }
+    return { confirmed: stopped, statuses };
+  }
+
+  // Fecha uma rota que pode estar gastando. Com a pausa confirmada grava o
+  // estado final; sem confirmação a rota fica em PAUSE_PENDING (ainda conta no
+  // comprometido) e o monitor repete a pausa até conseguir ler PAUSED.
+  async function stopRoute(route, auth, context, final) {
+    const env = context.env;
+    const stop = await pauseAndConfirm(route, auth, context);
+    if (stop.confirmed) {
+      // Uma rota já avisada como ativada precisa de aviso novo ao ser fechada.
+      await saveRoute(env, route, { ...stop.statuses, decision_notified_at: null });
+      await finalize(env, route, final.status, final.outcome, final.reasons, final.extra);
+      return { confirmed: true, reasons: final.reasons };
+    }
+    const reasons = [...final.reasons, 'pause_after_failure_unconfirmed'];
+    if (route.status !== 'PAUSE_PENDING') {
+      await saveRoute(env, route, {
+        status: 'PAUSE_PENDING',
+        decision: final.outcome,
+        decision_json: JSON.stringify({ outcome: final.outcome, reasons, ...final.extra, pending_final: final }),
+      });
+      await journal(env, route, 'route_pause_pending', { outcome: final.outcome, reasons });
+    }
+    return { confirmed: false, reasons };
+  }
+
+  function pendingFinal(route) {
+    const stored = parseJsonObject(route.decision_json).pending_final;
+    const valid = isPlainObject(stored) && FINAL_STATUSES.includes(stored.status)
+      && ['BLOCKED', 'PAUSED_BY_MONITOR'].includes(stored.outcome) && Array.isArray(stored.reasons);
+    return valid
+      ? { status: stored.status, outcome: stored.outcome, reasons: stored.reasons.map(readText), extra: isPlainObject(stored.extra) ? stored.extra : {} }
+      : { status: 'BLOCKED', outcome: 'BLOCKED', reasons: ['activation_failed'], extra: { decided_by: 'monitor' } };
   }
 
   async function activate(route, auth, context, evaluation) {
@@ -1370,20 +1577,40 @@ export function createMetaAdsObjectiveRoutes(deps) {
     } catch (error) {
       const normalized = normalizeFailure(error);
       if (normalized.ambiguous || normalized.classification === 'transient') {
-        // Fica em ACTIVATING: a próxima rodada confere o teto de novo e
-        // termina a ativação ou pausa tudo.
+        // Fica em ACTIVATING (já conta no comprometido). O monitor retoma em
+        // até ACTIVATION_RESUME_AFTER_MS + um ciclo: confere o teto de novo e
+        // termina a ativação, ou pausa tudo.
+        await journal(env, route, 'activation_incomplete', { error: normalized.message });
         throw failure('objective_route_activation_incomplete', {
           classification: 'transient', retryable: false, http_status: 502, cause_code: normalized.message,
+          route_status: 'ACTIVATING',
         });
       }
-      const paused = await pauseRouteObjects(route, auth, context);
-      const decision = await finalize(env, route, 'BLOCKED', 'BLOCKED',
-        paused ? ['activation_failed'] : ['activation_failed', 'pause_after_failure_unconfirmed'],
-        { budget: evaluation.budget, decided_by: 'operator_reply' });
-      return decisionResponse(route, 'BLOCKED', true, decision.reasons, evaluation.budget);
+      const stop = await stopRoute(route, auth, context, {
+        status: 'BLOCKED', outcome: 'BLOCKED', reasons: ['activation_failed'],
+        extra: { budget: evaluation.budget, decided_by: 'operator_reply' },
+      });
+      return decisionResponse(route, 'BLOCKED', true, stop.reasons, evaluation.budget, { route_status: route.status });
     }
     await finalize(env, route, 'ACTIVATED', 'ACTIVATED', [], { budget: evaluation.budget, decided_by: 'operator_reply' });
     return decisionResponse(route, 'ACTIVATED', true, [], evaluation.budget);
+  }
+
+  // Retomada de uma ativação interrompida (pela rodada seguinte do workflow ou
+  // pelo monitor). Vale a aprovação já registrada, com o teto conferido de
+  // novo; `giveUp` desiste sem conferir e só pausa.
+  async function resumeActivation(route, auth, context, { giveUp = false, decidedBy = 'operator_reply' } = {}) {
+    const evaluation = giveUp ? null : await evaluateActivation(route, auth, context, { resuming: true });
+    const reasons = giveUp ? ['activation_incomplete'] : evaluation.reasons;
+    const budget = evaluation ? evaluation.budget : null;
+    if (reasons.length) {
+      const stop = await stopRoute(route, auth, context, {
+        status: 'BLOCKED', outcome: 'BLOCKED', reasons, extra: { budget, decided_by: decidedBy },
+      });
+      return decisionResponse(route, 'BLOCKED', true, stop.reasons, budget, { route_status: route.status });
+    }
+    await journal(context.env, route, 'activation_resumed', { by: decidedBy });
+    return activate(route, auth, context, evaluation);
   }
 
   function normalizeDecision(body) {
@@ -1407,7 +1634,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
   async function decideRoute(base, body) {
     const input = normalizeDecision(body);
     const env = base.env;
-    return withUnitLock(env, input.unit, 'decide', async () => {
+    return withUnitLock(env, input.unit, 'decide', async (lock) => {
       const route = await dbFirst(env,
         `SELECT * FROM meta_ads_objective_routes WHERE route_key = ? AND approval_code = ? ORDER BY created_at DESC LIMIT 1`,
         input.route_key, input.approval_code);
@@ -1419,22 +1646,20 @@ export function createMetaAdsObjectiveRoutes(deps) {
           decided_outcome: view.outcome, decided_at: view.decided_at, notified_at: view.notified_at,
         });
       }
-      const context = graphContext(base, 'decide_objective_route');
+      const context = graphContext(base, 'decide_objective_route', lock);
       const now = nowMs(env);
 
+      if (route.status === 'PAUSE_PENDING') {
+        // Já decidida como bloqueio; falta só o monitor confirmar a pausa.
+        const view = decisionView(route);
+        return decisionResponse(route, 'ALREADY_DECIDED', false, view.reasons, view.budget, {
+          decided_outcome: view.outcome, decided_at: null, notified_at: null, route_status: route.status,
+        });
+      }
       if (route.status === 'ACTIVATING') {
-        // Retomada de uma ativação interrompida. O pedido atual não muda nada:
-        // vale a aprovação já registrada, com o teto conferido de novo.
+        // O pedido atual não muda nada: vale a aprovação já registrada.
         const auth = await resolveGraphAuth({ token_id: route.token_id }, context);
-        const evaluation = await evaluateActivation(route, auth, context, { resuming: true });
-        if (evaluation.reasons.length) {
-          const paused = await pauseRouteObjects(route, auth, context);
-          const reasons = paused ? evaluation.reasons : [...evaluation.reasons, 'pause_after_failure_unconfirmed'];
-          await finalize(env, route, 'BLOCKED', 'BLOCKED', reasons, { budget: evaluation.budget, decided_by: 'operator_reply' });
-          return decisionResponse(route, 'BLOCKED', true, reasons, evaluation.budget);
-        }
-        await journal(env, route, 'activation_resumed', {});
-        return activate(route, auth, context, evaluation);
+        return resumeActivation(route, auth, context);
       }
 
       const pendingAt = Date.parse(route.pending_at);
@@ -1481,7 +1706,9 @@ export function createMetaAdsObjectiveRoutes(deps) {
         });
         return decisionResponse(route, 'BLOCKED', true, evaluation.reasons, evaluation.budget);
       }
-      await saveRoute(env, route, { ...reply, status: 'ACTIVATING', decision_json: JSON.stringify({ budget: evaluation.budget }) });
+      await saveRoute(env, route, {
+        ...reply, status: 'ACTIVATING', activating_at: iso(now), decision_json: JSON.stringify({ budget: evaluation.budget }),
+      });
       await journal(env, route, 'activation_approved', { budget: evaluation.budget });
       return activate(route, auth, context, evaluation);
     });
@@ -1489,38 +1716,80 @@ export function createMetaAdsObjectiveRoutes(deps) {
 
   // ---------------------------------------------------------------- monitor
 
-  // Passo do monitor contínuo: o teto conferido na ativação não cobre o gasto
-  // real depois dela. Quando a projeção do mês passa do teto com a margem, as
-  // rotas objroute_v1 ativas da unidade são pausadas (conjunto e campanha).
+  async function recordMonitorHealth(env, unit, ok, reason) {
+    const now = iso(nowMs(env));
+    try {
+      await dbRun(env,
+        `INSERT INTO meta_ads_objective_route_monitor (unit, last_run_at, last_ok_at, last_reason, consecutive_failures)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(unit) DO UPDATE SET
+           last_run_at = excluded.last_run_at,
+           last_ok_at = COALESCE(excluded.last_ok_at, meta_ads_objective_route_monitor.last_ok_at),
+           last_reason = excluded.last_reason,
+           consecutive_failures = CASE WHEN excluded.consecutive_failures = 0 THEN 0
+             ELSE meta_ads_objective_route_monitor.consecutive_failures + 1 END`,
+        unit, now, ok ? now : null, readText(reason).slice(0, 120), ok ? 0 : 1);
+    } catch {
+      // A saúde do monitor é só informativa.
+    }
+  }
+
+  // Passo do monitor contínuo, por unidade com rota que pode estar gastando
+  // (ACTIVATING, ACTIVATED ou PAUSE_PENDING):
+  // 1. repete a pausa das rotas fechadas sem confirmação (PAUSE_PENDING);
+  // 2. retoma, ou pausa, as ativações interrompidas (ACTIVATING parada);
+  // 3. confere o teto: o que foi conferido na ativação não cobre o gasto real
+  //    depois dela. Quando a projeção do mês passa do teto com a margem, as
+  //    rotas objroute_v1 da unidade são pausadas (conjunto e campanha).
   async function runMonitor(base) {
     const env = base.env;
     if (objectiveRoutesMode(env) !== 'on') return { ok: true, mode: 'off', units: [] };
     const calendar = objectiveRouteCalendar(nowMs(env));
     const policies = await loadPolicies(env);
-    const active = await dbAll(env, `SELECT * FROM meta_ads_objective_routes WHERE status = 'ACTIVATED' ORDER BY unit, id`);
+    const spending = await dbAll(env,
+      `SELECT * FROM meta_ads_objective_routes WHERE status IN (${SPENDING_STATUSES_SQL}) ORDER BY unit, id`);
     const units = [];
     for (const unit of UNITS) {
-      const routes = active.filter((route) => route.unit === unit);
+      const routes = spending.filter((route) => route.unit === unit);
       if (!routes.length) continue;
       const policy = policies.find((entry) => entry.unit === unit);
-      const report = { unit, action: 'none', reason: 'within_ceiling', paused_route_keys: [] };
+      const report = { unit, action: 'none', reason: 'within_ceiling', paused_route_keys: [], recovered: [], unresolved_route_keys: [] };
       units.push(report);
       try {
-        await withUnitLock(env, unit, 'monitor', async () => {
-          const context = graphContext(base, 'monitor_objective_routes');
+        await withUnitLock(env, unit, 'monitor', async (lock) => {
+          const context = graphContext(base, 'monitor_objective_routes', lock);
           const auth = await resolveGraphAuth({ token_id: routes[0].token_id }, context);
+
+          for (const route of routes) {
+            const stalled = route.status === 'ACTIVATING'
+              ? nowMs(env) - Date.parse(readText(route.activating_at || route.updated_at)) : 0;
+            if (route.status !== 'PAUSE_PENDING' && !(stalled > ACTIVATION_RESUME_AFTER_MS)) continue;
+            try {
+              if (route.status === 'PAUSE_PENDING') await stopRoute(route, auth, context, pendingFinal(route));
+              else await resumeActivation(route, auth, context, { giveUp: stalled > ACTIVATION_GIVE_UP_MS, decidedBy: 'monitor' });
+              if (!['ACTIVATING', 'PAUSE_PENDING'].includes(route.status)) {
+                report.recovered.push({ route_key: route.route_key, status: route.status });
+              }
+            } catch (error) {
+              // Fica como está e a próxima rodada tenta de novo.
+              await journal(env, route, 'monitor_recovery_failed', { status: route.status, error: normalizeFailure(error).message });
+            }
+            if (['ACTIVATING', 'PAUSE_PENDING'].includes(route.status)) report.unresolved_route_keys.push(route.route_key);
+          }
+
+          const watched = routes.filter((route) => ['ACTIVATING', 'ACTIVATED'].includes(route.status));
+          if (!watched.length) return;
           const snapshot = await readAccountSnapshot(auth, context, calendar);
           const state = policy
             ? unitBudgetState({ snapshot, unit, policy, calendar, known: await knownAdsetUnits(env, policies), liveRoutes: await liveRouteRows(env) })
             : { invalid: ['policy_missing'] };
-          let reasons = [];
           if (state.invalid.length) {
             // Sem conseguir medir, o monitor não pausa por conta própria: a
-            // falha fica no journal e aparece no relatório do passo.
+            // falha fica no journal, no relatório do passo e na saúde do monitor.
             report.action = 'skipped';
             report.reason = 'budget_inputs_invalid';
             report.invalid = state.invalid;
-            for (const route of routes) await journal(env, route, 'monitor_inputs_invalid', { invalid: state.invalid });
+            for (const route of watched) await journal(env, route, 'monitor_inputs_invalid', { invalid: state.invalid });
             return;
           }
           const projected = roundBrl(state.spend_mtd_brl + state.committed_daily_brl * state.days_remaining);
@@ -1528,22 +1797,23 @@ export function createMetaAdsObjectiveRoutes(deps) {
           report.projected_brl = projected;
           report.limit_brl = limit;
           if (projected <= limit) return;
-          reasons = ['monitor_ceiling_exceeded'];
           report.action = 'paused';
           report.reason = 'monitor_ceiling_exceeded';
-          for (const route of routes) {
-            const paused = await pauseRouteObjects(route, auth, context);
-            if (!paused) {
-              report.action = 'pause_incomplete';
-              await journal(env, route, 'monitor_pause_incomplete', { projected_brl: projected, limit_brl: limit });
-              continue;
-            }
-            await saveRoute(env, route, { campaign_status: 'PAUSED', adset_status: 'PAUSED', decision_notified_at: null });
-            await finalize(env, route, 'PAUSED_BY_MONITOR', 'PAUSED_BY_MONITOR', reasons, {
-              budget: { projected_brl: projected, ceiling_monthly_brl: state.ceiling_monthly_brl, limit_brl: limit, as_of: state.as_of },
-              decided_by: 'monitor',
+          for (const route of watched) {
+            const stop = await stopRoute(route, auth, context, {
+              status: 'PAUSED_BY_MONITOR', outcome: 'PAUSED_BY_MONITOR', reasons: ['monitor_ceiling_exceeded'],
+              extra: {
+                budget: { projected_brl: projected, ceiling_monthly_brl: state.ceiling_monthly_brl, limit_brl: limit, as_of: state.as_of },
+                decided_by: 'monitor',
+              },
             });
-            report.paused_route_keys.push(route.route_key);
+            if (stop.confirmed) {
+              report.paused_route_keys.push(route.route_key);
+            } else {
+              report.action = 'pause_incomplete';
+              report.unresolved_route_keys.push(route.route_key);
+              await journal(env, route, 'monitor_pause_incomplete', { projected_brl: projected, limit_brl: limit });
+            }
           }
         });
       } catch (error) {
@@ -1554,6 +1824,9 @@ export function createMetaAdsObjectiveRoutes(deps) {
           try { await journal(env, route, 'monitor_failed', { error: normalized.message }); } catch { /* journal indisponível */ }
         }
       }
+      report.unresolved_route_keys = [...new Set(report.unresolved_route_keys)];
+      const healthy = report.action !== 'skipped' && report.action !== 'pause_incomplete' && !report.unresolved_route_keys.length;
+      await recordMonitorHealth(env, unit, healthy, healthy ? 'ok' : (report.action === 'none' ? 'route_unresolved' : report.reason));
     }
     return { ok: true, mode: 'on', as_of: iso(nowMs(env)), units };
   }
@@ -1585,6 +1858,9 @@ export function createMetaAdsObjectiveRoutes(deps) {
 
   // Origem da rota nos placement_checks do inventário: o `enforce` do workflow
   // só aceita um conjunto novo com `objective_route_outcome: 'ACTIVATED'`.
+  // Só anota os conjuntos que o chamador listou; nunca acrescenta entradas (um
+  // conjunto de tráfego ou vídeo não passa no preflight de WhatsApp do Publish
+  // e uma entrada a mais bloquearia o lote inteiro).
   async function annotatePlacementChecks(env, checks) {
     if (objectiveRoutesMode(env) !== 'on' || !Array.isArray(checks) || !checks.length) return checks;
     try {
@@ -1603,18 +1879,6 @@ export function createMetaAdsObjectiveRoutes(deps) {
       // Sem a tabela o inventário segue como antes, sem a origem da rota.
     }
     return checks;
-  }
-
-  async function activatedRouteAdsets(env, accountId) {
-    if (objectiveRoutesMode(env) !== 'on') return [];
-    try {
-      const rows = await dbAll(env,
-        `SELECT adset_id, unit FROM meta_ads_objective_routes WHERE status = 'ACTIVATED' AND account_id = ? ORDER BY created_at`,
-        accountId);
-      return rows.map((row) => ({ adset_id: readText(row.adset_id), unit: readText(row.unit) }));
-    } catch {
-      return [];
-    }
   }
 
   // ------------------------------------------------------------------- HTTP
@@ -1683,7 +1947,7 @@ export function createMetaAdsObjectiveRoutes(deps) {
     }
   }
 
-  return Object.freeze({ handle, runMonitor, capabilities, annotatePlacementChecks, activatedRouteAdsets });
+  return Object.freeze({ handle, runMonitor, capabilities, annotatePlacementChecks });
 }
 
 // Nomes únicos no bundle, só para testes.
@@ -1697,4 +1961,8 @@ export const metaAdsObjectiveRoutesInternals = Object.freeze({
   approvalTtlMs: APPROVAL_TTL_MS,
   decisionGraceMs: DECISION_GRACE_MS,
   rerequestCooldownMs: REREQUEST_COOLDOWN_MS,
+  activationResumeAfterMs: ACTIVATION_RESUME_AFTER_MS,
+  activationGiveUpMs: ACTIVATION_GIVE_UP_MS,
+  createUnconfirmedWindowMs: CREATE_UNCONFIRMED_WINDOW_MS,
+  unitLockTtlMs: UNIT_LOCK_TTL_MS,
 });

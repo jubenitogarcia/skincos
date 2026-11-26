@@ -8,7 +8,6 @@ import {
 import {
   createMetaAdsObjectiveRoutes,
   isObjectiveRoutesPath,
-  objectiveRouteUnitCode,
 } from './meta-ads-objective-routes.js';
 
 const PREFIX = '/v1/meta-ads-publish';
@@ -6092,7 +6091,7 @@ async function getInventory({ request, env, requestId, decryptToken, writeAudit 
         ...await readAdsetPlacements(body, adsetId, context),
       });
     }
-    await appendObjectiveRoutePlacementChecks(body, env, context, placementChecks, seenAdsets);
+    await annotateObjectiveRoutePlacementChecks(env, placementChecks);
     await writeAudit(env, {
       event: 'meta_ads_publish.inventory',
       status: 'ok',
@@ -6741,32 +6740,12 @@ export async function runMetaAdsObjectiveRouteMonitor({ env, decryptToken }) {
   return objectiveRoutes().runMonitor({ env, decryptToken });
 }
 
-// Acrescenta ao inventário os conjuntos das rotas já ativadas e marca a origem
-// da rota em cada placement_check. Nunca falha o inventário: com o interruptor
+// Marca a origem da rota por objetivo nos placement_checks que o chamador
+// pediu. Nunca acrescenta conjuntos nem falha o inventário: com o interruptor
 // desligado, sem a tabela ou com erro de leitura, a resposta fica como antes.
-async function appendObjectiveRoutePlacementChecks(body, env, context, placementChecks, seenAdsets) {
+async function annotateObjectiveRoutePlacementChecks(env, placementChecks) {
   try {
-    const routes = objectiveRoutes();
-    const groupByUnit = new Map();
-    for (const check of placementChecks) {
-      const unit = objectiveRouteUnitCode(check.destination_group);
-      if (unit && !groupByUnit.has(unit)) groupByUnit.set(unit, check.destination_group);
-    }
-    const accountId = clean(body.account_id).replace(/^act_/, '');
-    for (const extra of await routes.activatedRouteAdsets(env, accountId)) {
-      if (!/^\d{5,30}$/.test(extra.adset_id) || seenAdsets.has(extra.adset_id)) continue;
-      seenAdsets.add(extra.adset_id);
-      try {
-        placementChecks.push({
-          adset_id: extra.adset_id,
-          destination_group: groupByUnit.get(extra.unit) || extra.unit,
-          ...await readAdsetPlacements(body, extra.adset_id, context),
-        });
-      } catch {
-        // Conjunto ilegível fica de fora; o workflow o trata como não verificado.
-      }
-    }
-    await routes.annotatePlacementChecks(env, placementChecks);
+    await objectiveRoutes().annotatePlacementChecks(env, placementChecks);
   } catch {
     // Mantém o inventário como era.
   }

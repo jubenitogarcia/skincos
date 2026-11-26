@@ -70,6 +70,9 @@ function graphError(message, code = 100, status = 400) {
 class FakeGraph {
   constructor() {
     this.currency = 'BRL';
+    this.timezone = 'America/Sao_Paulo';
+    // Gasto do mês que nenhuma linha por conjunto explica (conjunto apagado).
+    this.unattributedSpend = 0;
     this.campaigns = new Map();
     this.adsets = new Map();
     this.ads = new Map();
@@ -142,10 +145,14 @@ class FakeGraph {
       return entry ? (row) => row.name.includes(entry.value) : () => true;
     };
     if (method === 'GET') {
-      if (path === account) return this.ok({ id: account, currency: this.currency });
+      if (path === account) return this.ok({ id: account, currency: this.currency, timezone_name: this.timezone });
       if (path === `${account}/campaigns`) return this.ok({ data: [...this.campaigns.values()].filter(nameFilter()) });
       if (path === `${account}/adsets`) return this.ok({ data: [...this.adsets.values()].map((adset) => this.adsetView(adset)) });
       if (path === `${account}/ads`) return this.ok({ data: [...this.ads.values()] });
+      if (path === `${account}/insights` && query.level === 'account') {
+        const total = [...this.spend.values()].reduce((sum, value) => sum + value, 0) + this.unattributedSpend;
+        return this.ok({ data: total > 0 ? [{ spend: total.toFixed(2) }] : [] });
+      }
       if (path === `${account}/insights`) {
         return this.ok({ data: [...this.spend].map(([adsetId, spend]) => ({ adset_id: adsetId, spend: spend.toFixed(2) })) });
       }
@@ -591,6 +598,15 @@ test('criação parcial: a retomada reaproveita a campanha e nunca duplica (acei
   assert.equal(stored.adset_id, null);
   // Em CREATING a rota não aparece como pendência nem pode ser decidida.
   assert.deepEqual((await ctx.call('/pending', { action: 'list_pending_objective_routes' })).body.pending, []);
+
+  // Timeout sem resposta: a Meta pode ter criado o conjunto. Dentro da janela
+  // o Vault procura pelo nome e, sem achar, espera em vez de criar de novo.
+  const waiting = await ensure(ctx);
+  assert.equal(waiting.status, 502);
+  assert.equal(waiting.body.detail.cause_code, 'objective_route_create_unconfirmed');
+  assert.ok(waiting.body.detail.retry_after_seconds > 0);
+  assert.equal(ctx.graph.posts().filter((call) => call.path.endsWith('/adsets')).length, 1);
+  ctx.clock.now += internals.createUnconfirmedWindowMs + 60_000;
 
   const resumed = await ensure(ctx);
   assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
@@ -1289,7 +1305,8 @@ test('placement_checks do inventário trazem a origem da rota (aceite 11)', asyn
   assert.equal(activated.optimization_goal, 'LANDING_PAGE_VIEWS');
   assert.equal(activated.destination_type, 'WEBSITE');
 
-  // Rota ativada entra no inventário mesmo quando o chamador não a lista.
+  // Rota ativada NÃO entra no inventário quando o chamador não a lista: a
+  // resposta é a mesma de antes das rotas (ver o teste de contrato abaixo).
   const implicit = await handleMetaAdsPublishRequest({
     request: new Request('https://vault.test/v1/meta-ads-publish/inventory', {
       method: 'POST',
@@ -1298,9 +1315,7 @@ test('placement_checks do inventário trazem a origem da rota (aceite 11)', asyn
     env: ctx.env, requestId: 'req', pathname: '/v1/meta-ads-publish/inventory',
     decryptToken: async () => 'synthetic-access-token', writeAudit: async () => {},
   });
-  const added = (await implicit.json()).placement_checks.find((check) => check.adset_id === route.adset_id);
-  assert.equal(added.objective_route_outcome, 'ACTIVATED');
-  assert.equal(added.destination_group, GROUP.BSS);
+  assert.deepEqual((await implicit.json()).placement_checks.map((check) => check.adset_id), [WPP_ADSET.BSS]);
 
   // Com o interruptor desligado o inventário fica como antes.
   const off = await inventory({ ...ctx.env, META_ADS_OBJECTIVE_ROUTES_MODE: 'off' });

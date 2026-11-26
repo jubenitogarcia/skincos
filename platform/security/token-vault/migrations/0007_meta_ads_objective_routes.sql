@@ -1,7 +1,7 @@
 -- Rotas por objetivo do Meta Ads (objroute_v1): pedido de campanha + conjunto
 -- PAUSADOS, aprovação e ativação com teto mensal por unidade.
 --
--- Migration só aditiva: cria quatro tabelas novas e nenhum ALTER em tabelas
+-- Migration só aditiva: cria cinco tabelas novas e nenhum ALTER em tabelas
 -- existentes. As rotas ficam desligadas até META_ADS_OBJECTIVE_ROUTES_MODE=on,
 -- então aplicar esta migration antes do Worker novo não muda nada em produção.
 -- A trava por unidade usa a tabela meta_ads_publish_locks já existente.
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS meta_ads_objective_routes (
   unit TEXT NOT NULL CHECK(unit IN ('BSS', 'NH')),
   objective TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN (
-    'CREATING', 'PENDING_APPROVAL', 'ACTIVATING', 'ACTIVATED',
+    'CREATING', 'PENDING_APPROVAL', 'ACTIVATING', 'ACTIVATED', 'PAUSE_PENDING',
     'REJECTED', 'BLOCKED', 'EXPIRED', 'PAUSED_BY_MONITOR'
   )),
   approval_code TEXT NOT NULL,
@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS meta_ads_objective_routes (
   reply_ts INTEGER,
   pending_at TEXT,
   expires_at TEXT,
+  -- Quando a aprovação passou no teto e a ativação começou. O monitor retoma
+  -- ou pausa a rota que fica parada em ACTIVATING.
+  activating_at TEXT,
   decided_at TEXT,
   request_notified_at TEXT,
   decision_notified_at TEXT,
@@ -60,9 +63,11 @@ CREATE INDEX IF NOT EXISTS idx_meta_ads_objective_routes_unit_status
   ON meta_ads_objective_routes(unit, status);
 
 -- Só um registro vivo por route_key (idempotência da criação e da ativação).
+-- PAUSE_PENDING é uma rota já decidida como fechada cuja pausa na Meta ainda
+-- não foi confirmada por leitura: segue viva até o monitor confirmar.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_meta_ads_objective_routes_live_key
   ON meta_ads_objective_routes(route_key)
-  WHERE status IN ('CREATING', 'PENDING_APPROVAL', 'ACTIVATING', 'ACTIVATED');
+  WHERE status IN ('CREATING', 'PENDING_APPROVAL', 'ACTIVATING', 'ACTIVATED', 'PAUSE_PENDING');
 
 -- Código de aprovação único entre as pendências abertas.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_meta_ads_objective_routes_open_code
@@ -93,4 +98,14 @@ CREATE TABLE IF NOT EXISTS meta_ads_objective_route_snapshots (
   account_id TEXT PRIMARY KEY,
   payload_json TEXT NOT NULL,
   as_of TEXT NOT NULL
+);
+
+-- Última rodada do monitor por unidade. Só informativa: deixa visível, na
+-- lista de pendências, quando as rotas ativas estão sem conferência de teto.
+CREATE TABLE IF NOT EXISTS meta_ads_objective_route_monitor (
+  unit TEXT PRIMARY KEY CHECK(unit IN ('BSS', 'NH')),
+  last_run_at TEXT NOT NULL,
+  last_ok_at TEXT,
+  last_reason TEXT NOT NULL DEFAULT '',
+  consecutive_failures INTEGER NOT NULL DEFAULT 0
 );
