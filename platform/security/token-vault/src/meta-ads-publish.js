@@ -5,6 +5,11 @@ import {
   isMetaAdsReadRequest,
   metaAdsReadCapabilities,
 } from './meta-ads-read.js';
+import {
+  createMetaAdsObjectiveRoutes,
+  isObjectiveRoutesPath,
+  objectiveRouteUnitCode,
+} from './meta-ads-objective-routes.js';
 
 const PREFIX = '/v1/meta-ads-publish';
 const GRAPH_ORIGIN = 'https://graph.facebook.com';
@@ -6087,6 +6092,7 @@ async function getInventory({ request, env, requestId, decryptToken, writeAudit 
         ...await readAdsetPlacements(body, adsetId, context),
       });
     }
+    await appendObjectiveRoutePlacementChecks(body, env, context, placementChecks, seenAdsets);
     await writeAudit(env, {
       event: 'meta_ads_publish.inventory',
       status: 'ok',
@@ -6230,6 +6236,9 @@ async function getConfig(env, requestId) {
       // Chave aditiva e independente do contrato do workflow: anuncia as
       // leituras históricas (somente GET) sem alterar as chaves acima.
       read_only: metaAdsReadCapabilities(),
+      // Rotas por objetivo (objroute_v1): as chaves só existem com
+      // META_ADS_OBJECTIVE_ROUTES_MODE=on e a migration 0007 aplicada.
+      ...(await objectiveRoutes().capabilities(env) || {}),
     },
     secrets_exposed: false,
     requestId,
@@ -6694,6 +6703,72 @@ async function executeOperation(context) {
       },
     });
     return response({ ok: false, error: 'meta_operation_failed', detail: normalized, requestId }, normalized.http_status || 502);
+  }
+}
+
+// Rotas por objetivo (objroute_v1): módulo separado, com as primitivas do
+// gateway injetadas. Ver meta-ads-objective-routes.js.
+let metaAdsObjectiveRoutes;
+function objectiveRoutes() {
+  if (!metaAdsObjectiveRoutes) {
+    metaAdsObjectiveRoutes = createMetaAdsObjectiveRoutes({
+      resolveGraphAuth,
+      graphRequest,
+      graphUrl,
+      normalizeNumericId,
+      failure,
+      normalizeFailure,
+      listConfigRows: listMetaAdsPublishConfigRows,
+      dbFirst,
+      dbAll,
+      dbRun,
+      response,
+    });
+  }
+  return metaAdsObjectiveRoutes;
+}
+
+export function isMetaAdsObjectiveRoutesPath(pathname) {
+  return isObjectiveRoutesPath(pathname);
+}
+
+export async function handleMetaAdsObjectiveRoutesRequest(input) {
+  return objectiveRoutes().handle(input);
+}
+
+// Passo do monitor contínuo, chamado pelo gatilho agendado do Worker.
+export async function runMetaAdsObjectiveRouteMonitor({ env, decryptToken }) {
+  return objectiveRoutes().runMonitor({ env, decryptToken });
+}
+
+// Acrescenta ao inventário os conjuntos das rotas já ativadas e marca a origem
+// da rota em cada placement_check. Nunca falha o inventário: com o interruptor
+// desligado, sem a tabela ou com erro de leitura, a resposta fica como antes.
+async function appendObjectiveRoutePlacementChecks(body, env, context, placementChecks, seenAdsets) {
+  try {
+    const routes = objectiveRoutes();
+    const groupByUnit = new Map();
+    for (const check of placementChecks) {
+      const unit = objectiveRouteUnitCode(check.destination_group);
+      if (unit && !groupByUnit.has(unit)) groupByUnit.set(unit, check.destination_group);
+    }
+    const accountId = clean(body.account_id).replace(/^act_/, '');
+    for (const extra of await routes.activatedRouteAdsets(env, accountId)) {
+      if (!/^\d{5,30}$/.test(extra.adset_id) || seenAdsets.has(extra.adset_id)) continue;
+      seenAdsets.add(extra.adset_id);
+      try {
+        placementChecks.push({
+          adset_id: extra.adset_id,
+          destination_group: groupByUnit.get(extra.unit) || extra.unit,
+          ...await readAdsetPlacements(body, extra.adset_id, context),
+        });
+      } catch {
+        // Conjunto ilegível fica de fora; o workflow o trata como não verificado.
+      }
+    }
+    await routes.annotatePlacementChecks(env, placementChecks);
+  } catch {
+    // Mantém o inventário como era.
   }
 }
 

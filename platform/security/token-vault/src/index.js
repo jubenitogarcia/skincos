@@ -1,6 +1,9 @@
 import {
+  handleMetaAdsObjectiveRoutesRequest,
   handleMetaAdsPublishRequest,
+  isMetaAdsObjectiveRoutesPath,
   isMetaAdsPublishPath,
+  runMetaAdsObjectiveRouteMonitor,
   updateMetaAdsPublishConfig,
 } from './meta-ads-publish.js';
 import { handleSocialPublishOperation } from './social-publish.js';
@@ -31,7 +34,18 @@ export default {
   async fetch(request, env, ctx) {
     return handleRequest(request, env, ctx);
   },
+  async scheduled(event, env, ctx) {
+    return handleScheduled(event, env, ctx);
+  },
 };
+
+// Gatilho agendado: monitor contínuo das rotas por objetivo. Com
+// META_ADS_OBJECTIVE_ROUTES_MODE desligado o passo não lê nem muda nada.
+export async function handleScheduled(event, env, ctx) {
+  const step = runMetaAdsObjectiveRouteMonitor({ env, decryptToken }).catch(() => ({ ok: false }));
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(step);
+  return step;
+}
 
 export async function handleRequest(request, env) {
   const requestId = request.headers.get('cf-ray') || crypto.randomUUID();
@@ -172,6 +186,21 @@ export async function handleRequest(request, env) {
         pathname,
         decryptToken,
         encryptToken,
+        writeAudit,
+      });
+    }
+
+    if (isMetaAdsObjectiveRoutesPath(pathname)) {
+      if (!['admin', 'operational'].includes(auth.role)) {
+        return roleRequired(requestId, 'write_gateway_credential_required');
+      }
+      return await handleMetaAdsObjectiveRoutesRequest({
+        request,
+        env,
+        requestId,
+        pathname,
+        role: auth.role,
+        decryptToken,
         writeAudit,
       });
     }

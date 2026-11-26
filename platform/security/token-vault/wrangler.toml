@@ -11,6 +11,13 @@ WORKER_AUTH_HEADER_NAME = "Authorization"
 WORKER_AUTH_SCHEME = "Bearer"
 INFLUENCER_INTELLIGENCE_ANALYTICS_MODE = "off"
 INFLUENCER_INTELLIGENCE_ENABLED = "false"
+# Rotas por objetivo do Meta Ads (objroute_v1). "off": as rotas recusam tudo, a
+# capacidade não é anunciada e o monitor agendado não faz nada.
+META_ADS_OBJECTIVE_ROUTES_MODE = "off"
+
+# Monitor contínuo das rotas por objetivo (sem efeito com o modo "off").
+[triggers]
+crons = ["*/30 * * * *"]
 
 [secrets]
 required = ["TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_ANALYTICS_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY", "TOKEN_VAULT_N8N_API_TOKEN"]
@@ -33,6 +40,7 @@ WORKER_AUTH_HEADER_NAME = "Authorization"
 WORKER_AUTH_SCHEME = "Bearer"
 INFLUENCER_INTELLIGENCE_ANALYTICS_MODE = "shadow"
 INFLUENCER_INTELLIGENCE_ENABLED = "false"
+META_ADS_OBJECTIVE_ROUTES_MODE = "off"
 
 [env.staging.secrets]
 required = ["TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_ANALYTICS_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY", "TOKEN_VAULT_N8N_API_TOKEN"]
