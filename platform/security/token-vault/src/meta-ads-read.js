@@ -1,8 +1,8 @@
 // Leituras históricas do Meta Ads (somente Graph GET).
 //
 // Este módulo é deliberadamente separado de meta-ads-publish.js e recebe as
-// primitivas do gateway por injeção (autenticação, allowlist de conta, retry,
-// rate usage, journal). Ele não importa nada do gateway, não conhece D1 nem
+// primitivas do gateway por injeção (autenticação, allowlist de conta, rate
+// usage, journal, acesso ao D1). Ele não importa nada do gateway, não conhece
 // tokens e não altera o contrato do workflow (WORKFLOW_CONTRACT_REVISION): as
 // leituras são anunciadas numa chave nova e independente de capacidades.
 //
@@ -13,7 +13,14 @@
 //   nada demográfico ou por pessoa (idade, gênero, região, país, DMA);
 // - cada operação lê no máximo UMA página da Graph; o chamador pagina com o
 //   cursor opaco devolvido (`paging.after`). URLs de paginação da Graph, que
-//   podem carregar credenciais, nunca saem do Worker.
+//   podem carregar credenciais, nunca saem do Worker;
+// - cada operação faz no máximo UMA chamada à Graph (sem retry no gateway):
+//   uma consulta histórica pesada que estoura o tempo não é repetida;
+// - a leitura é recusada, antes de chamar a Graph, enquanto houver publicação
+//   recente na conta (lease do limitador de mutações) ou enquanto o uso de
+//   cota medido na última leitura estiver em 80% ou mais (guarda de leitura);
+// - uma falha de leitura nunca é ambígua: não há efeito externo a reconciliar,
+//   então ela não pode levar o run a `reconciliation_required`.
 
 export const META_ADS_READ_REVISION = 'meta_ads_read_v1';
 
@@ -81,8 +88,10 @@ const EFFECTIVE_STATUSES = Object.freeze([
   'IN_PROCESS',
   'WITH_ISSUES',
 ]);
-const ADS_PAGE_DEFAULT_LIMIT = 100;
-const ADS_PAGE_MAX_LIMIT = 200;
+// Cada anúncio carrega o criativo completo; páginas pequenas mantêm o
+// resultado bem abaixo do teto de 1 MB do journal.
+const ADS_PAGE_DEFAULT_LIMIT = 50;
+const ADS_PAGE_MAX_LIMIT = 100;
 const ADS_PAGE_FIELDS = Object.freeze([
   'id',
   'name',
@@ -143,6 +152,29 @@ const ADSET_HISTORY_FIELDS = Object.freeze([
   'budget_remaining',
 ]);
 
+// Guarda de cota das leituras. O estado mora na tabela de locks já existente
+// (uma linha por conta, chave própria), sem migration: a leitura confere duas
+// linhas por chave primária antes de chamar a Graph.
+const LOCK_ROW_SQL = 'SELECT run_id, expires_at FROM meta_ads_publish_locks WHERE resource_key = ?';
+const MUTATION_PACING_OWNER = 'graph-rate-limiter-v1';
+const READ_GUARD_OWNER = 'graph-read-guard-v1';
+const READ_GUARD_WARNING_PCT = 80;
+const READ_GUARD_PAUSE_PCT = 95;
+const READ_GUARD_WARNING_MS = 10 * 60_000;
+const READ_GUARD_PAUSE_MS = 30 * 60_000;
+const READ_GUARD_MAX_MS = 60 * 60_000;
+const RATE_USAGE_PERCENT_KEYS = Object.freeze([
+  'call_count',
+  'total_cputime',
+  'total_time',
+  // x-fb-ads-insights-throttle
+  'app_id_util_pct',
+  'acc_id_util_pct',
+]);
+// Códigos da Graph para limite de chamadas (app, usuário, página, conta de
+// anúncios e a faixa 80000–80014 de business use case).
+const THROTTLE_CODES = Object.freeze([4, 17, 32, 613]);
+
 const CURSOR_PATTERN = /^[A-Za-z0-9_=-]{1,1024}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ACTION_TYPE_PATTERN = /^[A-Za-z0-9_.:-]{1,120}$/;
@@ -188,6 +220,12 @@ export function metaAdsReadCapabilities() {
       get_campaign: [...OBJECT_VIEWS],
       get_adset: [...OBJECT_VIEWS],
     },
+    guard: {
+      graph_calls_per_operation: 1,
+      refuse_at_usage_percent: READ_GUARD_WARNING_PCT,
+      refuse_during_publish: true,
+      errors: ['meta_ads_read_rate_guard', 'meta_ads_read_publish_in_progress', 'meta_ads_read_guard_unavailable'],
+    },
   };
 }
 
@@ -213,9 +251,11 @@ export function createMetaAdsReadActions(deps) {
     sanitizeGraphValue,
     normalizeNumericId,
     failure,
+    dbFirst,
+    dbRun,
   } = deps || {};
   for (const [name, dep] of Object.entries({
-    resolveGraphAuth, graphRequest, graphUrl, sanitizeGraphValue, normalizeNumericId, failure,
+    resolveGraphAuth, graphRequest, graphUrl, sanitizeGraphValue, normalizeNumericId, failure, dbFirst, dbRun,
   })) {
     if (typeof dep !== 'function') throw new Error(`meta_ads_read_dependency_missing:${name}`);
   }
@@ -278,6 +318,115 @@ export function createMetaAdsReadActions(deps) {
     return hasNext && CURSOR_PATTERN.test(after)
       ? { has_next: true, after }
       : { has_next: false, after: null };
+  }
+
+  function leaseRemainingMs(row, owner, nowMs) {
+    if (!isPlainObject(row) || text(row.run_id) !== owner) return 0;
+    const expires = Date.parse(row.expires_at);
+    // Linha ilegível conta como guarda ativa: na dúvida a leitura espera.
+    if (!Number.isFinite(expires)) return READ_GUARD_WARNING_MS;
+    return Math.max(0, expires - nowMs);
+  }
+
+  function refuse(code, httpStatus, remainingMs) {
+    return failure(code, {
+      classification: 'transient',
+      retryable: false,
+      http_status: httpStatus,
+      retry_after_seconds: Math.max(1, Math.ceil(remainingMs / 1000)),
+    });
+  }
+
+  // Confere, antes de qualquer chamada à Graph, se a conta está publicando ou
+  // com a cota alta. Sem estado legível a leitura é recusada (fail-closed).
+  async function assertReadAllowed(auth, context) {
+    let pacing;
+    let guard;
+    try {
+      pacing = await dbFirst(context.env, LOCK_ROW_SQL, `graph-rate-account:${auth.accountId}`);
+      guard = await dbFirst(context.env, LOCK_ROW_SQL, `graph-read-guard:${auth.accountId}`);
+    } catch {
+      throw failure('meta_ads_read_guard_unavailable', { classification: 'transient', retryable: false, http_status: 503 });
+    }
+    const nowMs = Date.now();
+    const publishing = leaseRemainingMs(pacing, MUTATION_PACING_OWNER, nowMs);
+    if (publishing > 0) throw refuse('meta_ads_read_publish_in_progress', 409, publishing);
+    const cooling = leaseRemainingMs(guard, READ_GUARD_OWNER, nowMs);
+    if (cooling > 0) throw refuse('meta_ads_read_rate_guard', 429, cooling);
+  }
+
+  function usageSummary(value, out = { percent: 0, regain_minutes: 0 }) {
+    if (Array.isArray(value)) {
+      for (const item of value) usageSummary(item, out);
+    } else if (isPlainObject(value)) {
+      for (const [key, item] of Object.entries(value)) {
+        const number = Number(item);
+        if (RATE_USAGE_PERCENT_KEYS.includes(key) && Number.isFinite(number)) out.percent = Math.max(out.percent, number);
+        else if (key === 'estimated_time_to_regain_access' && Number.isFinite(number)) out.regain_minutes = Math.max(out.regain_minutes, number);
+        else usageSummary(item, out);
+      }
+    }
+    return out;
+  }
+
+  function isThrottleFailure(error) {
+    if (!error || typeof error !== 'object') return false;
+    const code = Number(error.code || 0);
+    return Number(error.http_status) === 429 || THROTTLE_CODES.includes(code) || (code >= 80000 && code <= 80014);
+  }
+
+  // Depois de cada chamada, registra a guarda se a cota medida passou do
+  // limite ou se a Graph recusou por limite de chamadas. A guarda só é
+  // estendida, nunca encurtada, e vence sozinha.
+  async function recordReadUsage(auth, context, error) {
+    const usage = usageSummary(context.rateUsage);
+    const throttled = isThrottleFailure(error);
+    let cooldown = 0;
+    if (throttled || usage.percent >= READ_GUARD_PAUSE_PCT) cooldown = READ_GUARD_PAUSE_MS;
+    else if (usage.percent >= READ_GUARD_WARNING_PCT) cooldown = READ_GUARD_WARNING_MS;
+    if (!cooldown) return;
+    cooldown = Math.min(READ_GUARD_MAX_MS, Math.max(
+      cooldown,
+      usage.regain_minutes * 60_000,
+      Number(error?.retry_after_seconds || 0) * 1000,
+    ));
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    const blockedUntil = new Date(nowMs + cooldown).toISOString();
+    if (!isPlainObject(context.rateUsage)) context.rateUsage = {};
+    if (usage.percent >= READ_GUARD_PAUSE_PCT || throttled) context.rateUsage.pause_recommended = true;
+    else context.rateUsage.warning = true;
+    context.rateUsage.read_guard = { usage_percent: usage.percent, throttled, blocked_until: blockedUntil };
+    try {
+      await dbRun(context.env,
+        `INSERT INTO meta_ads_publish_locks (
+          resource_key, run_id, operation_key, heartbeat_at, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(resource_key) DO UPDATE SET
+          operation_key = excluded.operation_key, heartbeat_at = excluded.heartbeat_at,
+          expires_at = excluded.expires_at, updated_at = excluded.updated_at
+        WHERE meta_ads_publish_locks.run_id = '${READ_GUARD_OWNER}' AND
+          meta_ads_publish_locks.expires_at < excluded.expires_at`,
+        `graph-read-guard:${auth.accountId}`, READ_GUARD_OWNER, text(context.operationKey) || 'read',
+        now, blockedUntil, now, now);
+    } catch {
+      context.rateUsage.read_guard.update_failed = true;
+    }
+  }
+
+  // Única porta de saída para a Graph neste módulo: GET, uma tentativa, com a
+  // guarda conferida antes e a cota registrada depois.
+  async function readGraph(url, auth, context) {
+    await assertReadAllowed(auth, context);
+    let caught;
+    try {
+      return await graphRequest(url, { method: 'GET' }, auth, context, { maxAttempts: 1 });
+    } catch (error) {
+      caught = error;
+      throw error;
+    } finally {
+      await recordReadUsage(auth, context, caught);
+    }
   }
 
   function numeric(value) {
@@ -359,7 +508,7 @@ export function createMetaAdsReadActions(deps) {
       ...(filtering.length ? { filtering: JSON.stringify(filtering) } : {}),
       ...(after ? { after } : {}),
     });
-    const result = await graphRequest(url, { method: 'GET' }, auth, context);
+    const result = await readGraph(url, auth, context);
     const payload = isPlainObject(result.body) ? result.body : {};
     const rows = (Array.isArray(payload.data) ? payload.data : [])
       .slice(0, limit)
@@ -389,7 +538,7 @@ export function createMetaAdsReadActions(deps) {
       ...(statuses.length ? { effective_status: JSON.stringify(statuses) } : {}),
       ...(after ? { after } : {}),
     });
-    const result = await graphRequest(url, { method: 'GET' }, auth, context);
+    const result = await readGraph(url, auth, context);
     const payload = isPlainObject(result.body) ? result.body : {};
     const ads = (Array.isArray(payload.data) ? payload.data : []).slice(0, limit);
     const paging = pagingOut(payload.paging);
@@ -409,12 +558,7 @@ export function createMetaAdsReadActions(deps) {
     const view = text(body.view);
     if (!OBJECT_VIEWS.includes(view)) throw reject('read_view_invalid');
     const objectId = normalizeNumericId(body.object_id, 'object_id');
-    const result = await graphRequest(
-      graphUrl(auth.apiVersion, objectId, { fields: fields.join(',') }),
-      { method: 'GET' },
-      auth,
-      context,
-    );
+    const result = await readGraph(graphUrl(auth.apiVersion, objectId, { fields: fields.join(',') }), auth, context);
     const source = isPlainObject(result.body) ? result.body : {};
     // A visão histórica só é devolvida para objetos da conta configurada.
     if (text(source.account_id).replace(/^act_/, '') !== auth.accountId) {
@@ -425,14 +569,26 @@ export function createMetaAdsReadActions(deps) {
     return sanitizeGraphValue(out);
   }
 
-  async function perform(action, body, context) {
-    const name = text(action);
-    const input = isPlainObject(body) ? body : {};
+  async function dispatch(name, input, context) {
     if (name === 'get_insights') return getInsights(input, context);
     if (name === 'list_ads') return listAdsPage(input, context);
     if (name === 'get_campaign') return readOwnedObject(input, context, CAMPAIGN_HISTORY_FIELDS);
     if (name === 'get_adset') return readOwnedObject(input, context, ADSET_HISTORY_FIELDS);
     throw reject('invalid_action');
+  }
+
+  async function perform(action, body, context) {
+    try {
+      return await dispatch(text(action), isPlainObject(body) ? body : {}, context);
+    } catch (error) {
+      // Uma leitura não deixa efeito externo pendente: timeout ou queda de
+      // rede é falha simples, nunca motivo para `reconciliation_required`.
+      if (error && typeof error === 'object' && error.classification) {
+        error.ambiguous = false;
+        throw error;
+      }
+      throw failure('meta_ads_read_failed', { classification: 'transient', retryable: false, http_status: 502 });
+    }
   }
 
   return Object.freeze({ perform, getInsights, listAdsPage });
@@ -446,4 +602,6 @@ export const __test = Object.freeze({
   adsPageFields: ADS_PAGE_FIELDS,
   campaignHistoryFields: CAMPAIGN_HISTORY_FIELDS,
   adsetHistoryFields: ADSET_HISTORY_FIELDS,
+  readGuardOwner: READ_GUARD_OWNER,
+  mutationPacingOwner: MUTATION_PACING_OWNER,
 });

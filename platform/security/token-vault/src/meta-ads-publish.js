@@ -6698,7 +6698,7 @@ async function executeOperation(context) {
 }
 
 // As leituras históricas reutilizam, por injeção, a mesma autenticação,
-// allowlist de conta, retry e medição de rate limit das ações existentes.
+// allowlist de conta e medição de rate limit das ações existentes.
 let metaAdsReadActions;
 function readActions() {
   if (!metaAdsReadActions) {
@@ -6709,6 +6709,8 @@ function readActions() {
       sanitizeGraphValue,
       normalizeNumericId,
       failure,
+      dbFirst,
+      dbRun,
     });
   }
   return metaAdsReadActions;
@@ -8734,7 +8736,9 @@ function retryAfterSeconds(headers) {
 
 function extractRateUsage(headers) {
   const out = {};
-  for (const name of ['x-business-use-case-usage', 'x-ad-account-usage', 'x-app-usage']) {
+  // `x-fb-ads-insights-throttle` só vem em respostas de insights; ele é
+  // gravado no journal, mas não entra em `maxRateUsage` (publicação inalterada).
+  for (const name of ['x-business-use-case-usage', 'x-ad-account-usage', 'x-app-usage', 'x-fb-ads-insights-throttle']) {
     const raw = clean(headers?.get?.(name));
     if (!raw) continue;
     try { out[name] = JSON.parse(raw); } catch { out[name] = { unparsed: true }; }

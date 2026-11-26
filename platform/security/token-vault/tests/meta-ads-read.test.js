@@ -34,6 +34,11 @@ class ReadStatement {
   async first() {
     if (this.sql.includes('FROM meta_ads_publish_runs')) return this.db.run;
     if (this.sql.includes('FROM credential_tokens')) return this.db.credential;
+    if (this.sql.includes('FROM meta_ads_publish_locks')) {
+      if (this.db.failLockReads) throw new Error('D1 unavailable');
+      const lock = this.db.locks.get(this.values[0]);
+      return lock ? { ...lock } : null;
+    }
     if (this.sql.includes('FROM meta_ads_publish_operations')) {
       const [key] = this.values;
       return this.db.operations.find((row) => row.operation_key === key || row.id === key) || null;
@@ -47,6 +52,18 @@ class ReadStatement {
 
   async run() {
     this.db.statements.push({ sql: this.sql, values: this.values });
+    if (this.sql.includes('INSERT INTO meta_ads_publish_locks')) {
+      if (this.db.failLockWrites) throw new Error('D1 unavailable');
+      const [resourceKey, runId, operationKey, heartbeatAt, expiresAt] = this.values;
+      const current = this.db.locks.get(resourceKey);
+      // Mesma regra do SQL: só o dono da guarda estende, e nunca encurta.
+      if (current && !(current.run_id === runId && current.expires_at < expiresAt)) return { success: true, meta: { changes: 0 } };
+      this.db.locks.set(resourceKey, {
+        resource_key: resourceKey, run_id: runId, operation_key: operationKey,
+        heartbeat_at: heartbeatAt, expires_at: expiresAt,
+      });
+      return { success: true, meta: { changes: 1 } };
+    }
     if (this.sql.includes('INSERT INTO meta_ads_publish_operations')) {
       const [id, runId, operationKey, requestHash, action, createdAt, updatedAt] = this.values;
       this.db.operations.push({
@@ -74,6 +91,9 @@ class ReadDb {
   constructor({ runStatus = 'acquired', accountId = ACCOUNT_ID } = {}) {
     this.statements = [];
     this.operations = [];
+    this.locks = new Map();
+    this.failLockReads = false;
+    this.failLockWrites = false;
     this.run = { id: 'map_read', status: runStatus, config_revision: 'a'.repeat(64) };
     this.credential = {
       id: 'facebook_fixture',
@@ -375,20 +395,150 @@ test('read actions keep the account allowlist, run and action gates of the gatew
   assert.equal(unknown.body.error, 'invalid_action');
 });
 
-test('get_insights surfaces Graph rate limiting through the shared retry and journal', async () => {
+function lockRow(owner, msFromNow) {
+  return { run_id: owner, expires_at: new Date(Date.now() + msFromNow).toISOString() };
+}
+
+const GUARD_KEY = `graph-read-guard:${ACCOUNT_ID}`;
+const PACING_KEY = `graph-rate-account:${ACCOUNT_ID}`;
+
+test('a throttled read makes one Graph call, records the read guard and blocks the next read', async () => {
   let attempts = 0;
+  const db = new ReadDb();
   const result = await operate({ action: 'get_insights', level: 'account' }, {
+    db,
     graph: () => {
       attempts += 1;
       return jsonResponse({ error: { message: 'User request limit reached', code: 17, is_transient: true, fbtrace_id: 'Atrace' } }, 400);
     },
   });
-  assert.equal(attempts, 3);
+  // Sem retry no gateway: uma consulta recusada não vira três.
+  assert.equal(attempts, 1);
   assert.equal(result.body.ok, false);
   assert.equal(result.body.error, 'meta_operation_failed');
   assert.equal(result.body.detail.classification, 'transient');
+  assert.equal(result.body.detail.ambiguous, false);
   assert.equal(result.db.operations[0].status, 'failed');
   assert.ok(result.calls.every((call) => call.method === 'GET'));
+  const guard = db.locks.get(GUARD_KEY);
+  assert.equal(guard.run_id, read.readGuardOwner);
+  assert.ok(Date.parse(guard.expires_at) - Date.now() > 29 * 60_000);
+
+  const next = await operate({ action: 'list_ads', limit: 10 }, {
+    db,
+    graph: () => { throw new Error('graph must not be called'); },
+  });
+  assert.equal(next.status, 429);
+  assert.equal(next.body.detail.message, 'meta_ads_read_rate_guard');
+  assert.equal(next.body.detail.ambiguous, false);
+  assert.equal(next.calls.length, 0);
+});
+
+test('a read timeout is not retried and never moves the run to reconciliation_required', async () => {
+  for (const error of [new TypeError('network disconnected'), Object.assign(new Error('aborted'), { name: 'AbortError' })]) {
+    let attempts = 0;
+    const result = await operate({ action: 'get_insights', level: 'ad', period: 'monthly' }, {
+      graph: () => { attempts += 1; throw error; },
+    });
+    assert.equal(attempts, 1);
+    assert.equal(result.status, 502);
+    assert.equal(result.body.detail.ambiguous, false);
+    assert.equal(result.db.operations[0].status, 'failed');
+    assert.equal(result.db.statements.some((entry) => /UPDATE meta_ads_publish_runs/.test(entry.sql)), false);
+    assert.equal(result.db.statements.some((entry) => /INSERT INTO meta_ads_publish_locks/.test(entry.sql)), false);
+  }
+});
+
+test('insights throttle usage at 80% or more is journaled and closes the read guard until it expires', async () => {
+  const db = new ReadDb();
+  const first = await operate({ action: 'get_insights', level: 'campaign' }, {
+    db,
+    graph: () => jsonResponse({ data: [insightsRow()] }, 200, {
+      'x-fb-ads-insights-throttle': JSON.stringify({ app_id_util_pct: 12, acc_id_util_pct: 83, ads_api_access_tier: 'standard_access' }),
+    }),
+  });
+  assert.equal(first.status, 200);
+  const usage = first.body.operation.rate_usage;
+  assert.equal(usage['x-fb-ads-insights-throttle'].acc_id_util_pct, 83);
+  assert.equal(usage.warning, true);
+  assert.equal(usage.read_guard.usage_percent, 83);
+  assert.equal(usage.read_guard.throttled, false);
+  const remaining = Date.parse(db.locks.get(GUARD_KEY).expires_at) - Date.now();
+  assert.ok(remaining > 9 * 60_000 && remaining <= 10 * 60_000);
+
+  const blocked = await operate({ action: 'get_campaign', object_id: '223456789', view: 'history' }, {
+    db,
+    graph: () => { throw new Error('graph must not be called'); },
+  });
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.body.detail.message, 'meta_ads_read_rate_guard');
+
+  // A guarda vence sozinha.
+  db.locks.set(GUARD_KEY, lockRow(read.readGuardOwner, -1000));
+  const after = await operate({ action: 'get_insights', level: 'campaign' }, {
+    db,
+    graph: () => jsonResponse({ data: [insightsRow()] }, 200, {
+      'x-business-use-case-usage': JSON.stringify({ [ACCOUNT_ID]: [{ type: 'ads_insights', call_count: 20, total_cputime: 5, total_time: 9, estimated_time_to_regain_access: 0 }] }),
+    }),
+  });
+  assert.equal(after.status, 200);
+  assert.equal(after.body.operation.rate_usage.read_guard, undefined);
+  assert.ok(Date.parse(db.locks.get(GUARD_KEY).expires_at) < Date.now());
+});
+
+test('usage of 95% or more, or a regain estimate, lengthens the guard up to one hour', async () => {
+  const db = new ReadDb();
+  const result = await operate({ action: 'get_insights', level: 'account' }, {
+    db,
+    graph: () => jsonResponse({ data: [] }, 200, {
+      'x-business-use-case-usage': JSON.stringify({ [ACCOUNT_ID]: [{ type: 'ads_insights', call_count: 97, total_cputime: 10, total_time: 10, estimated_time_to_regain_access: 500 }] }),
+    }),
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.operation.rate_usage.pause_recommended, true);
+  const remaining = Date.parse(db.locks.get(GUARD_KEY).expires_at) - Date.now();
+  assert.ok(remaining > 59 * 60_000 && remaining <= 60 * 60_000);
+});
+
+test('reads are refused while the account has a recent publish mutation or unreadable guard state', async () => {
+  const publishing = new ReadDb();
+  publishing.locks.set(PACING_KEY, lockRow(read.mutationPacingOwner, 35_000));
+  const during = await operate({ action: 'get_insights', level: 'account' }, {
+    db: publishing,
+    graph: () => { throw new Error('graph must not be called'); },
+  });
+  assert.equal(during.status, 409);
+  assert.equal(during.body.detail.message, 'meta_ads_read_publish_in_progress');
+  assert.equal(during.calls.length, 0);
+  assert.equal(during.db.operations[0].status, 'failed');
+
+  // Lease vencido do limitador ou linha de outro dono não bloqueiam.
+  const idle = new ReadDb();
+  idle.locks.set(PACING_KEY, lockRow(read.mutationPacingOwner, -1));
+  idle.locks.set(GUARD_KEY, lockRow('some-other-owner', 60_000));
+  const allowed = await operate({ action: 'get_insights', level: 'account' }, { db: idle, graph: () => jsonResponse({ data: [] }) });
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.db.statements.some((entry) => /INSERT INTO meta_ads_publish_locks/.test(entry.sql)), false);
+
+  const broken = new ReadDb();
+  broken.failLockReads = true;
+  const closed = await operate({ action: 'get_insights', level: 'account' }, {
+    db: broken,
+    graph: () => { throw new Error('graph must not be called'); },
+  });
+  assert.equal(closed.status, 503);
+  assert.equal(closed.body.detail.message, 'meta_ads_read_guard_unavailable');
+  assert.equal(closed.calls.length, 0);
+
+  // Falha ao gravar a guarda não derruba a leitura; fica registrada.
+  const unwritable = new ReadDb();
+  unwritable.failLockWrites = true;
+  const noted = await operate({ action: 'get_insights', level: 'account' }, {
+    db: unwritable,
+    graph: () => jsonResponse({ data: [] }, 200, { 'x-fb-ads-insights-throttle': JSON.stringify({ app_id_util_pct: 90, acc_id_util_pct: 1 }) }),
+  });
+  assert.equal(noted.status, 200);
+  assert.equal(noted.body.operation.rate_usage.read_guard.update_failed, true);
 });
 
 test('list_ads paged mode filters archived and deleted ads and returns only an opaque cursor', async () => {
@@ -427,7 +577,7 @@ test('list_ads paged mode filters archived and deleted ads and returns only an o
   for (const [input, expected] of [
     [{ effective_status: ['NOPE'] }, 'effective_status_invalid'],
     [{ effective_status: 'ARCHIVED' }, 'effective_status_invalid'],
-    [{ limit: 500 }, 'read_limit_invalid'],
+    [{ limit: 101 }, 'read_limit_invalid'],
     [{ after: 'a b' }, 'read_cursor_invalid'],
   ]) {
     const rejected = await operate({ action: 'list_ads', ...input }, {
