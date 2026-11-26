@@ -23,6 +23,11 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
 - `POST /internal/token-vault/v1/analytics/operations`
 
+As operações de `POST /v1/meta-ads-publish/runs/:id/operations` incluem leituras
+históricas somente `GET` (insights, anúncios arquivados, datas e orçamento),
+anunciadas em `capabilities.read_only`. Contrato, análise de impacto, promoção
+e rollback: [META_ADS_READ.md](META_ADS_READ.md).
+
 Os endpoints administrativos exigem `Authorization: Bearer <TOKEN_VAULT_API_TOKEN>`.
 O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
 `health`, `contract` e a configuração Meta Ads, ou chamar o planejamento e
