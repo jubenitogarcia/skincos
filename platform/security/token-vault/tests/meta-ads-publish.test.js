@@ -413,7 +413,7 @@ test('Meta generic retry-later creative failure is retried only for creative cre
 
 test('creative creation waits for fresh image hashes and succeeds without duplicating the operation', async () => {
   let attempts = 0;
-  const delays = [];
+  const db = new GatewayDb();
   const context = {
     action: 'create_creative',
     attempts: 0,
@@ -436,21 +436,25 @@ test('creative creation waits for fresh image hashes and succeeds without duplic
           headers: { 'content-type': 'application/json' },
         });
       },
-      META_GRAPH_SLEEP: async (delay) => delays.push(delay),
+      META_GRAPH_SLEEP: async (delay) => { db.sleeps.push(delay); db.clockOffset += delay; },
+      TOKEN_VAULT_DB: db,
     },
   };
 
   const result = await __test.graphRequest(
     'https://graph.facebook.com/v25.0/act_123/adcreatives',
     { method: 'POST', body: '{}' },
-    { accessToken: 'test-token', appSecretProof: '' },
+    { accountId: '123', accessToken: 'test-token', appSecretProof: '' },
     context,
   );
 
   assert.equal(result.body.id, 'creative-accepted');
   assert.equal(attempts, 3);
   assert.equal(context.attempts, 3);
-  assert.deepEqual(delays, [15_000, 30_000]);
+  // Os backoffs de propagação continuam 15 s e 30 s; o restante das esperas é
+  // o limitador de mutações segurando o próximo POST da mesma conta.
+  assert.deepEqual(db.sleeps.filter((delay) => delay > 5_000), [15_000, 30_000]);
+  assertMutationSpacing(db, 3);
 });
 
 test('pagination accepts only the official Graph host and current API version', () => {
@@ -497,7 +501,16 @@ class GatewayStatement {
 
   async first() {
     if (this.sql.includes('FROM credential_tokens')) return this.db.credential;
-    if (this.sql.includes('FROM meta_ads_publish_locks')) return null;
+    if (this.sql.includes('FROM meta_ads_publish_locks')) {
+      if (this.db.failPacing === 'read') throw new Error('D1 unavailable');
+      const lease = this.db.pacing.get(this.values[0]);
+      if (!lease) return null;
+      return {
+        run_id: lease.run_id,
+        operation_key: lease.operation_key,
+        expires_at: new Date(lease.expiresVirtualMs - this.db.clockOffset).toISOString(),
+      };
+    }
     if (this.sql.includes('FROM meta_ads_publish_operations')) return null;
     return null;
   }
@@ -507,6 +520,29 @@ class GatewayStatement {
   }
 
   async run() {
+    const pacingSql = this.sql.includes("'graph-rate-limiter-v1'");
+    if (pacingSql && this.sql.includes('INSERT INTO meta_ads_publish_locks')) {
+      if (this.db.failPacing === 'write') throw new Error('D1 unavailable');
+      const [resourceKey, runId, owner, , expiresAt, , , casNow] = this.values;
+      const current = this.db.pacing.get(resourceKey);
+      const virtualNow = Date.parse(casNow) + this.db.clockOffset;
+      const granted = !current || (current.run_id === 'graph-rate-limiter-v1' && current.expiresVirtualMs <= virtualNow);
+      if (granted) {
+        this.db.pacing.set(resourceKey, {
+          run_id: runId, operation_key: owner, expiresVirtualMs: Date.parse(expiresAt) + this.db.clockOffset,
+        });
+        this.db.pacingGrants.push({ resourceKey, virtualMs: virtualNow });
+      }
+      return { success: true, meta: { changes: granted ? 1 : 0 } };
+    }
+    if (pacingSql && this.sql.includes('UPDATE meta_ads_publish_locks')) {
+      if (this.db.failPacing === 'cooldown') throw new Error('D1 unavailable');
+      const [expiresAt, , , resourceKey, owner] = this.values;
+      const current = this.db.pacing.get(resourceKey);
+      if (!current || current.operation_key !== owner) return { success: true, meta: { changes: 0 } };
+      current.expiresVirtualMs = Date.parse(expiresAt) + this.db.clockOffset;
+      return { success: true, meta: { changes: 1 } };
+    }
     this.db.statements.push({ sql: this.sql, values: this.values });
     return { success: true };
   }
@@ -515,6 +551,13 @@ class GatewayStatement {
 class GatewayDb {
   constructor() {
     this.statements = [];
+    // Estado do limitador de mutações por conta. O relógio virtual avança só
+    // quando o gateway "dorme", então os testes medem o espaçamento sem esperar.
+    this.pacing = new Map();
+    this.pacingGrants = [];
+    this.sleeps = [];
+    this.clockOffset = 0;
+    this.failPacing = '';
     this.credential = {
       id: 'facebook_barra',
       provider: 'facebook',
@@ -544,7 +587,7 @@ function gatewayContext(fetchImpl) {
       env: {
         TOKEN_VAULT_DB: db,
         META_GRAPH_FETCH: fetchImpl,
-        META_GRAPH_SLEEP: async () => {},
+        META_GRAPH_SLEEP: async (delay) => { db.sleeps.push(delay); db.clockOffset += delay; },
       },
       runId: 'run-test',
       operationKey: 'stage:run-test',
@@ -554,6 +597,16 @@ function gatewayContext(fetchImpl) {
       traceId: '',
     },
   };
+}
+
+// Todo POST da mesma conta só começa 35 s (relógio virtual) depois da resposta
+// do anterior.
+function assertMutationSpacing(db, expectedGrants) {
+  assert.equal(db.pacingGrants.length, expectedGrants);
+  for (let index = 1; index < db.pacingGrants.length; index += 1) {
+    const gap = db.pacingGrants[index].virtualMs - db.pacingGrants[index - 1].virtualMs;
+    assert.ok(gap >= 35_000, `POST ${index + 1} began ${gap} ms after the previous one`);
+  }
 }
 
 function replacementJob(adId, operationKey) {
@@ -634,7 +687,69 @@ test('ambiguous update timeout reconciles by reading the final ad state', async 
     context,
   );
   assert.equal(result.reconciled_after_ambiguous_response, true);
-  assert.equal(calls, 4);
+  // Um POST sem resposta não é repetido às cegas: um POST e uma leitura.
+  assert.equal(calls, 2);
+});
+
+test('graph mutation pacing serializes POSTs per account and leaves GETs alone', async () => {
+  const seen = [];
+  const { db, context } = gatewayContext(async (url, init) => {
+    seen.push(init.method);
+    return jsonResponse({ id: '1' });
+  });
+  const auth = { accountId: '123456789', apiVersion: 'v25.0', accessToken: 'fixture-secret', appSecretProof: '' };
+  const other = { ...auth, accountId: '223456789' };
+  const post = (who) => __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'POST', body: '{}' }, who, context);
+  await post(auth);
+  await __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'GET' }, auth, context);
+  assert.equal(db.pacingGrants.length, 1);
+  assert.deepEqual(db.sleeps, []);
+  await post(other);
+  assert.deepEqual(db.sleeps, []);
+  await post(auth);
+  assert.deepEqual(seen, ['POST', 'GET', 'POST', 'POST']);
+  const sameAccount = db.pacingGrants.filter((grant) => grant.resourceKey === 'graph-rate-account:123456789');
+  assert.equal(sameAccount.length, 2);
+  assert.ok(sameAccount[1].virtualMs - sameAccount[0].virtualMs >= 35_000);
+});
+
+test('graph mutation pacing fails closed without rate state and never blind-retries a POST', async () => {
+  for (const [mode, reason] of [['write', 'reservation_write_failed'], ['read', 'reservation_read_failed']]) {
+    let calls = 0;
+    const { db, context } = gatewayContext(async () => { calls += 1; return jsonResponse({ id: '1' }); });
+    const auth = { accountId: '123456789', apiVersion: 'v25.0', accessToken: 'fixture-secret', appSecretProof: '' };
+    if (mode === 'read') {
+      // Slot ocupado por outro POST: o gateway precisa ler o lease para esperar.
+      db.pacing.set('graph-rate-account:123456789', { run_id: 'graph-rate-limiter-v1', operation_key: 'other', expiresVirtualMs: Date.now() + 60_000 });
+    }
+    db.failPacing = mode;
+    await assert.rejects(
+      () => __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'POST', body: '{}' }, auth, context),
+      (error) => error.message === 'meta_graph_rate_state_unavailable' && error.rate_state_reason === reason && error.http_status === 503,
+    );
+    assert.equal(calls, 0);
+  }
+
+  // Throttle de concorrência da conta (613/4841018): espera 35 s e repete.
+  let attempts = 0;
+  const { db, context } = gatewayContext(async () => {
+    attempts += 1;
+    if (attempts === 1) return jsonResponse({ error: { code: 613, error_subcode: 4841018, message: 'Too many concurrent calls' } }, 400);
+    return jsonResponse({ id: '1' });
+  });
+  const auth = { accountId: '123456789', apiVersion: 'v25.0', accessToken: 'fixture-secret', appSecretProof: '' };
+  await __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'POST', body: '{}' }, auth, context);
+  assert.equal(attempts, 2);
+  assert.equal(db.sleeps[0], 35_000);
+
+  // 5xx em POST é ambíguo: vai para reconciliação, sem segundo POST.
+  let serverCalls = 0;
+  const failing = gatewayContext(async () => { serverCalls += 1; return jsonResponse({ error: { code: 1, message: 'Unknown error' } }, 500); });
+  await assert.rejects(
+    () => __test.graphRequest('https://graph.facebook.com/v25.0/1', { method: 'POST', body: '{}' }, auth, failing.context),
+    (error) => error.ambiguous === true,
+  );
+  assert.equal(serverCalls, 1);
 });
 
 class LockStatement {

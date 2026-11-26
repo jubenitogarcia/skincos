@@ -1061,13 +1061,110 @@ async function resolveGraphAuth(body, context) {
   return { tokenId, accountId, apiVersion, accessToken, appSecretProof };
 }
 
+// meta_graph_account_mutation_pacing_v1
+function graphRateStateFailure(reason) {
+  return failure('meta_graph_rate_state_unavailable', {
+    classification: 'transient', retryable: true, http_status: 503,
+    rate_state_reason: reason,
+  });
+}
+
+async function reserveGraphMutationSlot(auth, context) {
+  const accountId = clean(auth.accountId);
+  if (!/^\d+$/.test(accountId) || !context.env.TOKEN_VAULT_DB) {
+    throw graphRateStateFailure('invalid_account_or_binding');
+  }
+  const resourceKey = `graph-rate-account:${accountId}`;
+  const owner = crypto.randomUUID();
+  let racingReads = 0;
+  for (;;) {
+    const nowMs = Date.now();
+    if (context.graph_request_deadline_ms - nowMs <= GRAPH_TIMEOUT_MS + 35_000) {
+      throw failure('meta_graph_rate_wait_budget_exhausted', { classification: 'transient', retryable: true, http_status: 503 });
+    }
+    const now = new Date(nowMs).toISOString();
+    // Hold the slot through the network timeout, then preserve a full cooldown.
+    // A different operation cannot overlap a slow POST or erase this lease.
+    const expiresAt = new Date(nowMs + GRAPH_TIMEOUT_MS + 35_000).toISOString();
+    let reservation;
+    try {
+      reservation = await dbRun(context.env,
+        `INSERT INTO meta_ads_publish_locks (
+          resource_key, run_id, operation_key, heartbeat_at, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(resource_key) DO UPDATE SET
+          operation_key = excluded.operation_key, heartbeat_at = excluded.heartbeat_at,
+          expires_at = excluded.expires_at, updated_at = excluded.updated_at
+        WHERE meta_ads_publish_locks.expires_at <= ? AND
+          meta_ads_publish_locks.run_id = 'graph-rate-limiter-v1'`,
+        resourceKey, 'graph-rate-limiter-v1', owner, now, expiresAt, now, now, now);
+    } catch {
+      throw graphRateStateFailure('reservation_write_failed');
+    }
+    if (Number(reservation?.meta?.changes) === 1) return { resourceKey, owner, expiresAtMs: Date.parse(expiresAt) };
+    if (Number(reservation?.meta?.changes) !== 0) {
+      throw graphRateStateFailure('reservation_result_invalid');
+    }
+    let current;
+    try {
+      current = await dbFirst(context.env,
+        `SELECT run_id, operation_key, expires_at FROM meta_ads_publish_locks WHERE resource_key = ?`, resourceKey);
+    } catch {
+      throw graphRateStateFailure('reservation_read_failed');
+    }
+    const remaining = Date.parse(current?.expires_at) - Date.now();
+    if (!current || (current.run_id === 'graph-rate-limiter-v1' && Number.isFinite(remaining) && remaining <= 0)) {
+      // CAS uses the time before its D1 round trip. A contended lease can expire
+      // between that compare and this read, or disappear during expiry cleanup.
+      // Neither observation grants a slot: retry the atomic write to prove it.
+      racingReads += 1;
+      if (racingReads > 8) throw graphRateStateFailure('reservation_race_exhausted');
+      await (context.env.META_GRAPH_SLEEP || sleep)(25);
+      continue;
+    }
+    if (current.run_id !== 'graph-rate-limiter-v1') throw graphRateStateFailure('reservation_namespace_conflict');
+    if (!Number.isFinite(remaining)) throw graphRateStateFailure('reservation_expiry_invalid');
+    racingReads = 0;
+    await (context.env.META_GRAPH_SLEEP || sleep)(Math.min(5_000, remaining));
+  }
+}
+
+async function finishGraphMutationSlot(slot, context, normalized, receivedResponse) {
+  // Network ambiguity keeps the original timeout-plus-cooldown lease. Its
+  // remote POST may still be running; only a known HTTP response shortens it.
+  if (!slot || !receivedResponse) return true;
+  const cooldown = Math.max(35_000, Number(normalized?.retry_after_seconds || 0) * 1_000);
+  const now = new Date(Date.now()).toISOString();
+  try {
+    const result = await dbRun(context.env,
+      `UPDATE meta_ads_publish_locks SET expires_at = ?, heartbeat_at = ?, updated_at = ?
+       WHERE resource_key = ? AND run_id = 'graph-rate-limiter-v1' AND operation_key = ?`,
+      new Date(Date.now() + cooldown).toISOString(), now, now, slot.resourceKey, slot.owner);
+    return Number(result?.meta?.changes) === 1;
+  } catch {
+    return false;
+  }
+}
 async function graphRequest(url, init, auth, context) {
-  let lastFailure;
   const started = Date.now();
+  context.graph_request_deadline_ms ||= started + 300_000;
+  const mutation = clean(init.method || 'GET').toUpperCase() === 'POST';
+  let lastFailure;
   for (let attempt = 1; attempt <= MAX_GRAPH_ATTEMPTS; attempt += 1) {
+    const slot = mutation ? await reserveGraphMutationSlot(auth, context) : null;
+    const remaining = context.graph_request_deadline_ms - Date.now();
+    if (remaining <= 0) throw failure('meta_graph_request_budget_exhausted', { classification: 'transient', retryable: true, http_status: 503 });
+    // A slow D1 reservation consumes the lease's network window. Never start a
+    // POST whose timeout could outlive the lease and its required cooldown.
+    const attemptTimeout = Math.min(GRAPH_TIMEOUT_MS, remaining, slot ? slot.expiresAtMs - Date.now() - 35_000 : GRAPH_TIMEOUT_MS);
+    if (attemptTimeout <= 0) throw failure('meta_graph_rate_reservation_expired', { classification: 'transient', retryable: true, http_status: 503 });
     context.attempts += 1;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GRAPH_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), attemptTimeout);
+    let result;
+    let normalized;
+    let receivedResponse = false;
+    let graphHeaders;
     try {
       const target = appendAppSecretProof(url, auth.appSecretProof);
       const headers = new Headers(init.headers || {});
@@ -1075,33 +1172,40 @@ async function graphRequest(url, init, auth, context) {
       const graphFetch = context.env.META_GRAPH_FETCH || fetch;
       const graphResponse = await graphFetch(target, { ...init, headers, signal: controller.signal });
       const body = await parseGraphBody(graphResponse);
-      const rateUsage = extractRateUsage(graphResponse.headers);
+      receivedResponse = true;
+      graphHeaders = graphResponse.headers;
+      const rateUsage = extractRateUsage(graphHeaders);
       context.rateUsage = mergeRateUsage(context.rateUsage, rateUsage);
       context.traceId = clean(body?.error?.fbtrace_id || context.traceId);
       const maxUsage = maxRateUsage(rateUsage);
-      if (maxUsage >= 95 && graphResponse.ok) {
-        context.rateUsage.pause_recommended = true;
-      } else if (maxUsage >= 80) {
-        context.rateUsage.warning = true;
+      if (maxUsage >= 95 && graphResponse.ok) context.rateUsage.pause_recommended = true;
+      else if (maxUsage >= 80) context.rateUsage.warning = true;
+      if (graphResponse.ok && !body?.error) {
+        result = { body, status: graphResponse.status, headers: graphHeaders };
+      } else {
+        normalized = normalizeMetaError(body, graphResponse.status, graphHeaders, context.action);
+        // Server failures/timeouts on a write need the existing reconciliation
+        // path before another POST. A precise throttle is a known rejection.
+        if (mutation && !normalized.concurrency_retry && (graphResponse.status === 408 || graphResponse.status >= 500)) normalized.ambiguous = true;
       }
-      if (graphResponse.ok && !body?.error) return { body, status: graphResponse.status, headers: graphResponse.headers };
-
-      const normalized = normalizeMetaError(body, graphResponse.status, graphResponse.headers, context.action);
-      lastFailure = normalized;
-      if (!normalized.retryable || attempt === MAX_GRAPH_ATTEMPTS) throw Object.assign(new Error(normalized.message), normalized);
-      const delay = retryDelayMs(attempt, graphResponse.headers, started, normalized);
-      if (delay <= 0) throw Object.assign(new Error(normalized.message), normalized);
-      await (context.env.META_GRAPH_SLEEP || sleep)(delay);
     } catch (error) {
-      const normalized = normalizeFailure(error);
-      lastFailure = normalized;
-      if (!normalized.retryable || attempt === MAX_GRAPH_ATTEMPTS) throw Object.assign(new Error(normalized.message), normalized);
-      const delay = retryDelayMs(attempt, null, started);
-      if (delay <= 0) throw Object.assign(new Error(normalized.message), normalized);
-      await (context.env.META_GRAPH_SLEEP || sleep)(delay);
+      normalized = normalizeFailure(error);
     } finally {
       clearTimeout(timeout);
     }
+    const cooldownSaved = await finishGraphMutationSlot(slot, context, normalized, receivedResponse);
+    if (!cooldownSaved) context.rateUsage.pacing_cooldown_update_failed = true;
+    if (result) return result;
+    lastFailure = normalized;
+    if (!cooldownSaved || !normalized.retryable || attempt === MAX_GRAPH_ATTEMPTS || (mutation && normalized.ambiguous)) {
+      throw Object.assign(new Error(normalized.message), normalized);
+    }
+    const delay = retryDelayMs(attempt, graphHeaders, started, normalized);
+    if (delay <= 0 || Date.now() + delay + GRAPH_TIMEOUT_MS >= context.graph_request_deadline_ms) {
+      throw Object.assign(new Error(normalized.message), normalized);
+    }
+    // Exactly one backoff per rejected attempt, with no active abort timer.
+    await (context.env.META_GRAPH_SLEEP || sleep)(delay);
   }
   throw Object.assign(new Error(lastFailure?.message || 'meta_graph_failed'), lastFailure || {});
 }
@@ -1607,7 +1711,8 @@ function normalizeMetaError(body, status, headers, action = '') {
     code === 100 &&
     subcode === CREATIVE_RETRY_SUBCODE &&
     /try again later|tente novamente mais tarde/i.test(clean(error.error_user_msg || error.message));
-  const transient = propagationRetry || creativeRetry || error.is_transient === true || status === 408 || status === 429 || status >= 500;
+  const concurrencyRetry = code === 613 && subcode === 4841018;
+  const transient = concurrencyRetry || propagationRetry || creativeRetry || error.is_transient === true || status === 408 || status === 429 || status >= 500;
   const auth = [190, 102, 10, 200].includes(code) || status === 401 || status === 403;
   const permanent = auth || (!(propagationRetry || creativeRetry) && code === 100) || (!transient && status >= 400 && status < 500);
   return {
@@ -1616,6 +1721,7 @@ function normalizeMetaError(body, status, headers, action = '') {
     retryable: transient && !permanent,
     propagation_retry: propagationRetry,
     creative_retry: creativeRetry,
+    concurrency_retry: concurrencyRetry,
     ambiguous: false,
     http_status: status,
     code,
@@ -1636,6 +1742,11 @@ function normalizeFailure(error) {
       code: Number(error.code || 0),
       error_subcode: Number(error.error_subcode || 0),
       fbtrace_id: clean(error.fbtrace_id),
+      propagation_retry: Boolean(error.propagation_retry),
+      creative_retry: Boolean(error.creative_retry),
+      concurrency_retry: Boolean(error.concurrency_retry),
+      retry_after_seconds: Number(error.retry_after_seconds || 0),
+      rate_state_reason: clean(error.rate_state_reason),
       compensation: error.compensation,
     };
   }
@@ -1660,20 +1771,20 @@ function failure(message, extra = {}) {
 }
 
 function retryDelayMs(attempt, headers, startedAt, failureState = {}) {
-  const elapsed = Date.now() - startedAt;
-  const remaining = MAX_RETRY_WINDOW_MS - elapsed;
+  const remaining = MAX_RETRY_WINDOW_MS - (Date.now() - startedAt);
   if (remaining <= 0) return 0;
-  const retryAfter = retryAfterSeconds(headers) * 1000;
-  const propagationBackoff = failureState.propagation_retry === true
-    ? Math.min(60_000, IMAGE_PROPAGATION_BASE_DELAY_MS * (2 ** (attempt - 1)))
-    : 0;
-  const backoff = propagationBackoff || Math.min(30_000, (2 ** (attempt - 1)) * 1000 + Math.floor(Math.random() * 500));
-  return Math.min(remaining, retryAfter || backoff);
+  const retryAfter = Math.max(retryAfterSeconds(headers), Number(failureState.retry_after_seconds || 0)) * 1_000;
+  const concurrencyBackoff = failureState.concurrency_retry === true ? 35_000 : 0;
+  const propagationBackoff = failureState.propagation_retry === true ? Math.min(60_000, IMAGE_PROPAGATION_BASE_DELAY_MS * (2 ** (attempt - 1))) : 0;
+  const backoff = Math.max(retryAfter, concurrencyBackoff || propagationBackoff || Math.min(30_000, (2 ** (attempt - 1)) * 1_000 + Math.floor(Math.random() * 500)));
+  // Never truncate Retry-After or the known throttle window into an early POST.
+  return backoff <= remaining ? backoff : 0;
 }
 
 function retryAfterSeconds(headers) {
   const value = Number(headers?.get?.('retry-after') || 0);
-  return Number.isFinite(value) && value > 0 ? Math.min(value, 300) : 0;
+  // The operation budget bounds waiting; it must not shorten a shared lease.
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function extractRateUsage(headers) {
