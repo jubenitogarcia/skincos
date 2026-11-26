@@ -45,3 +45,11 @@ TOKEN_VAULT_API_TOKEN=... npm run seed:from-csv -- ./credentials.csv
 ```
 
 O script não imprime tokens; ele reporta apenas provider, conta externa e tamanho mascarado.
+
+## Fonte de produção e leituras do Meta Ads
+
+Este branch versiona a fonte que está em produção (contrato v18 com o
+limitador de mutações da Graph) e acrescenta as leituras históricas somente
+`GET` do Meta Ads, anunciadas em `capabilities.read_only`. Contrato, análise
+de impacto, promoção e rollback: [META_ADS_READ.md](META_ADS_READ.md).
+`scripts/compare-worker-bundle.mjs` compara o bundle local com o implantado.
