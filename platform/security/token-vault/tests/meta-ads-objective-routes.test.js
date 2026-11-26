@@ -1365,3 +1365,399 @@ test('novo pedido depois do intervalo com outro orçamento ajusta o conjunto ain
   assert.equal(approved.body.outcome, 'ACTIVATED', JSON.stringify(approved.body));
   assert.equal(approved.body.budget.days_remaining, 29);
 });
+
+// ------------------------------------------------- achados da revisão adversarial
+
+const monitorStep = (ctx) => ctx.call('/monitor', { action: 'monitor_objective_routes' });
+const listRoutes = async (ctx) => (await ctx.call('/pending', { action: 'list_pending_objective_routes' })).body;
+const routeRow = (ctx, routeKey) => ctx.d1.rows(
+  'SELECT * FROM meta_ads_objective_routes WHERE route_key = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', routeKey,
+)[0];
+const AD_ID = '900000001';
+
+// Rota de NH aprovada cuja ativação parou no anúncio: campanha e conjunto já
+// estão ACTIVE na Meta e o registro ficou em ACTIVATING.
+async function stuckActivation({ adFailure = 'timeout' } = {}) {
+  const ctx = await withPolicies(setup());
+  const route = await ensureOk(ctx);
+  ctx.graph.addAd({ id: AD_ID, adset_id: route.adset_id, status: 'PAUSED' });
+  ctx.adFails = true;
+  ctx.graph.intercept((call) => (ctx.adFails && call.method === 'POST' && call.path === AD_ID ? adFailure : undefined));
+  const interrupted = await decision(ctx, route, 'APPROVE');
+  assert.equal(interrupted.status, 502, JSON.stringify(interrupted.body));
+  assert.equal(interrupted.body.error, 'objective_route_activation_incomplete');
+  assert.equal(interrupted.body.detail.route_status, 'ACTIVATING');
+  assert.equal(ctx.graph.campaigns.get(route.campaign_id).status, 'ACTIVE');
+  assert.equal(ctx.graph.adsets.get(route.adset_id).status, 'ACTIVE');
+  return { ctx, route };
+}
+
+test('A1: ativação interrompida fica visível e o monitor a retoma sem depender do workflow', async () => {
+  const { ctx, route } = await stuckActivation();
+  // Não é pendência de aprovação, mas não some: aparece em `in_progress`.
+  const listed = await listRoutes(ctx);
+  assert.deepEqual(listed.pending, []);
+  assert.deepEqual(listed.in_progress.map((entry) => [entry.route_key, entry.status]), [[route.route_key, 'ACTIVATING']]);
+  assert.equal(listed.in_progress[0].approval_code, route.approval_code);
+
+  // Antes do prazo de retomada o monitor ainda não mexe na ativação, mas a
+  // rota já entra na conferência do teto (2100 + (81 + 23) × 5).
+  const early = (await monitorStep(ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.equal(early.action, 'none');
+  assert.equal(early.projected_brl, 2100 + 104 * 5);
+  assert.deepEqual(early.recovered, []);
+  assert.equal(routeRow(ctx, route.route_key).status, 'ACTIVATING');
+
+  // Passado o prazo, com a Graph de volta: confere o teto de novo e termina.
+  ctx.adFails = false;
+  ctx.clock.now += internals.activationResumeAfterMs + 60_000;
+  const resumed = (await monitorStep(ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(resumed.recovered, [{ route_key: route.route_key, status: 'ACTIVATED' }]);
+  assert.deepEqual(resumed.unresolved_route_keys, []);
+  assert.equal(routeRow(ctx, route.route_key).status, 'ACTIVATED');
+  assert.equal(ctx.graph.ads.get(AD_ID).status, 'ACTIVE');
+  assert.ok(events(ctx, route.route_key).includes('activation_resumed'));
+  // A decisão que o workflow nunca recebeu aparece para ser avisada.
+  const after = await listRoutes(ctx);
+  assert.deepEqual(after.in_progress, []);
+  assert.equal(after.unnotified_decisions.find((entry) => entry.route_key === route.route_key).outcome, 'ACTIVATED');
+});
+
+test('A1: ativação interrompida com o gasto acima do teto é pausada pelo monitor, mesmo antes do prazo de retomada', async () => {
+  const { ctx, route } = await stuckActivation();
+  ctx.graph.spend.set(route.adset_id, 50_000);
+  const report = (await monitorStep(ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.equal(report.action, 'paused');
+  assert.deepEqual(report.paused_route_keys, [route.route_key]);
+  assert.equal(ctx.graph.adsets.get(route.adset_id).status, 'PAUSED');
+  assert.equal(ctx.graph.campaigns.get(route.campaign_id).status, 'PAUSED');
+  assert.equal(routeRow(ctx, route.route_key).status, 'PAUSED_BY_MONITOR');
+  // O conjunto do WhatsApp não é tocado.
+  assert.equal(ctx.graph.adsets.get(WPP_ADSET.NH).status, 'ACTIVE');
+});
+
+test('A1: na retomada o teto é conferido de novo; ativação que nunca termina é pausada e bloqueada', async () => {
+  // Gasto subiu antes da retomada: o monitor pausa em vez de terminar.
+  const over = await stuckActivation();
+  over.ctx.adFails = false;
+  over.ctx.graph.spend.set(WPP_ADSET.NH, 5000);
+  over.ctx.clock.now += internals.activationResumeAfterMs + 60_000;
+  const stopped = (await monitorStep(over.ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(stopped.recovered, [{ route_key: over.route.route_key, status: 'BLOCKED' }]);
+  assert.equal(over.ctx.graph.adsets.get(over.route.adset_id).status, 'PAUSED');
+  assert.deepEqual(JSON.parse(routeRow(over.ctx, over.route.route_key).decision_json).reasons, ['ceiling_exceeded']);
+  assert.equal(over.ctx.graph.ads.get(AD_ID).status, 'PAUSED');
+
+  // O anúncio nunca ativa: o monitor tenta a cada rodada e desiste no prazo.
+  const { ctx, route } = await stuckActivation();
+  ctx.clock.now += internals.activationResumeAfterMs + 60_000;
+  const retry = (await monitorStep(ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(retry.unresolved_route_keys, [route.route_key]);
+  assert.equal(routeRow(ctx, route.route_key).status, 'ACTIVATING');
+  assert.ok(events(ctx, route.route_key).includes('monitor_recovery_failed'));
+  assert.equal((await listRoutes(ctx)).monitor.find((row) => row.unit === 'NH').consecutive_failures, 1);
+  ctx.clock.now += internals.activationGiveUpMs;
+  const gaveUp = (await monitorStep(ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(gaveUp.recovered, [{ route_key: route.route_key, status: 'BLOCKED' }]);
+  const row = routeRow(ctx, route.route_key);
+  assert.equal(row.status, 'BLOCKED');
+  assert.deepEqual(JSON.parse(row.decision_json).reasons, ['activation_incomplete']);
+  assert.equal(ctx.graph.adsets.get(route.adset_id).status, 'PAUSED');
+  assert.equal(ctx.graph.campaigns.get(route.campaign_id).status, 'PAUSED');
+  const notice = (await listRoutes(ctx)).unnotified_decisions.find((entry) => entry.route_key === route.route_key);
+  assert.equal(notice.outcome, 'BLOCKED');
+});
+
+test('A2: rota só é fechada com a pausa confirmada por leitura; sem confirmação fica PAUSE_PENDING e o monitor repete', async () => {
+  const ctx = await withPolicies(setup());
+  const route = await ensureOk(ctx);
+  ctx.graph.addAd({ id: AD_ID, adset_id: route.adset_id, status: 'PAUSED' });
+  ctx.pauseFails = true;
+  ctx.graph.intercept((call) => {
+    if (call.method !== 'POST') return undefined;
+    if (call.path === AD_ID) return graphError('Ad disapproved', 100, 400);
+    if (ctx.pauseFails && call.body && call.body.status === 'PAUSED' && Object.keys(call.body).length === 1) return 'timeout';
+    return undefined;
+  });
+  const refused = await decision(ctx, route, 'APPROVE');
+  assert.equal(refused.status, 200, JSON.stringify(refused.body));
+  assert.equal(refused.body.outcome, 'BLOCKED');
+  assert.deepEqual(refused.body.reasons, ['activation_failed', 'pause_after_failure_unconfirmed']);
+  assert.equal(refused.body.route_status, 'PAUSE_PENDING');
+  // O conjunto segue ACTIVE na Meta: a rota NÃO é final e continua viva.
+  assert.equal(ctx.graph.adsets.get(route.adset_id).status, 'ACTIVE');
+  let row = routeRow(ctx, route.route_key);
+  assert.equal(row.status, 'PAUSE_PENDING');
+  assert.equal(row.decided_at, null);
+  const listed = await listRoutes(ctx);
+  assert.deepEqual(listed.in_progress.map((entry) => [entry.route_key, entry.status]), [[route.route_key, 'PAUSE_PENDING']]);
+  assert.deepEqual(listed.unnotified_decisions, []);
+  // Continua contando no comprometido da unidade para outra aprovação.
+  const other = await ensureOk(ctx, 'NH', 'ENGAGEMENT_VIDEO', 23);
+  const pendingOther = (await listRoutes(ctx)).pending.find((entry) => entry.route_key === other.route_key);
+  assert.equal(pendingOther.budget_state.committed_daily_brl, 81 + 23);
+  // Repetir a decisão ou o pedido não muda nada.
+  const again = await decision(ctx, route, 'APPROVE');
+  assert.equal(again.body.outcome, 'ALREADY_DECIDED');
+  assert.equal(again.body.decided_outcome, 'BLOCKED');
+  assert.equal((await ensure(ctx)).body.status, 'PAUSE_PENDING');
+
+  // Monitor com a pausa ainda falhando: repete, não fecha e fica não saudável.
+  const failing = (await monitorStep(ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(failing.unresolved_route_keys, [route.route_key]);
+  assert.equal(routeRow(ctx, route.route_key).status, 'PAUSE_PENDING');
+  const health = (await listRoutes(ctx)).monitor.find((entry) => entry.unit === 'NH');
+  assert.equal(health.consecutive_failures, 1);
+  assert.equal(health.last_ok_at, null);
+
+  // Pausa volta a funcionar: o monitor confirma por leitura e só então fecha.
+  ctx.pauseFails = false;
+  const fixed = (await monitorStep(ctx)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(fixed.recovered, [{ route_key: route.route_key, status: 'BLOCKED' }]);
+  assert.equal(ctx.graph.adsets.get(route.adset_id).status, 'PAUSED');
+  assert.equal(ctx.graph.campaigns.get(route.campaign_id).status, 'PAUSED');
+  row = routeRow(ctx, route.route_key);
+  assert.equal(row.status, 'BLOCKED');
+  assert.deepEqual(JSON.parse(row.decision_json).reasons, ['activation_failed']);
+  assert.ok(row.decided_at);
+  const done = await listRoutes(ctx);
+  assert.deepEqual(done.in_progress, []);
+  assert.equal(done.unnotified_decisions.find((entry) => entry.route_key === route.route_key).outcome, 'BLOCKED');
+  assert.equal(done.monitor.find((entry) => entry.unit === 'NH').consecutive_failures, 0);
+  assert.equal((await ensure(ctx)).body.error, 'objective_route_cooldown');
+});
+
+test('A2: pausa cujo POST dá timeout mas foi aplicada é confirmada pela leitura; pausa do monitor sem confirmação não fecha', async () => {
+  // A resposta da pausa se perdeu, mas a Meta pausou: a leitura confirma.
+  const ctx = await withPolicies(setup());
+  const route = await ensureOk(ctx);
+  ctx.graph.addAd({ id: AD_ID, adset_id: route.adset_id, status: 'PAUSED' });
+  ctx.graph.intercept((call) => {
+    if (call.method !== 'POST') return undefined;
+    if (call.path === AD_ID) return graphError('Ad disapproved', 100, 400);
+    return call.body && call.body.status === 'PAUSED' ? 'timeout_after' : undefined;
+  });
+  const refused = await decision(ctx, route, 'APPROVE');
+  assert.equal(refused.body.outcome, 'BLOCKED');
+  assert.deepEqual(refused.body.reasons, ['activation_failed']);
+  assert.equal(routeRow(ctx, route.route_key).status, 'BLOCKED');
+  assert.equal(ctx.graph.adsets.get(route.adset_id).status, 'PAUSED');
+
+  // Monitor acima do teto e a pausa falha: a rota não vira PAUSED_BY_MONITOR
+  // até a leitura confirmar.
+  const mon = await withPolicies(setup());
+  const active = await ensureOk(mon);
+  assert.equal((await decision(mon, active, 'APPROVE')).body.outcome, 'ACTIVATED');
+  mon.graph.spend.set(active.adset_id, 50_000);
+  mon.pauseFails = true;
+  mon.graph.intercept((call) => (mon.pauseFails && call.method === 'POST' && call.body.status === 'PAUSED' ? 'timeout' : undefined));
+  const first = (await monitorStep(mon)).body.units.find((unit) => unit.unit === 'NH');
+  assert.equal(first.action, 'pause_incomplete');
+  assert.deepEqual(first.paused_route_keys, []);
+  assert.equal(routeRow(mon, active.route_key).status, 'PAUSE_PENDING');
+  assert.equal(mon.graph.adsets.get(active.adset_id).status, 'ACTIVE');
+  mon.pauseFails = false;
+  const second = (await monitorStep(mon)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(second.recovered, [{ route_key: active.route_key, status: 'PAUSED_BY_MONITOR' }]);
+  assert.equal(mon.graph.adsets.get(active.adset_id).status, 'PAUSED');
+  const notice = (await listRoutes(mon)).unnotified_decisions.find((entry) => entry.route_key === active.route_key);
+  assert.equal(notice.outcome, 'PAUSED_BY_MONITOR');
+  assert.deepEqual(notice.reasons, ['monitor_ceiling_exceeded']);
+
+  // Conjunto apagado no Gerenciador: a Graph não lê e a listagem completa da
+  // conta não o mostra. Isso também conta como parado.
+  const gone = await withPolicies(setup());
+  const deleted = await ensureOk(gone);
+  assert.equal((await decision(gone, deleted, 'APPROVE')).body.outcome, 'ACTIVATED');
+  gone.graph.spend.set(WPP_ADSET.NH, 50_000);
+  gone.graph.adsets.delete(deleted.adset_id);
+  gone.graph.campaigns.delete(deleted.campaign_id);
+  const cleaned = (await monitorStep(gone)).body.units.find((unit) => unit.unit === 'NH');
+  assert.deepEqual(cleaned.paused_route_keys, [deleted.route_key]);
+  assert.equal(routeRow(gone, deleted.route_key).adset_status, 'DELETED');
+});
+
+// Réplica sintética da regra do nó "Validate Meta Placement Eligibility" do
+// workflow Meta Ads – Publish: TODA entrada de placement_checks precisa dos
+// quatro publishers e do posicionamento de status do WhatsApp, senão o lote
+// inteiro é bloqueado. O nó não conhece as chaves objective_route_*.
+function publishPreflightBlocks(placementChecks) {
+  const required = ['facebook', 'instagram', 'audience_network', 'whatsapp'];
+  return placementChecks.filter((check) => {
+    const targeting = check.targeting || {};
+    const publishers = targeting.publisher_platforms || [];
+    const positions = targeting.whatsapp_positions || [];
+    return !required.every((name) => publishers.includes(name)) || !positions.includes('status');
+  }).map((check) => check.adset_id);
+}
+
+test('A3: rota ativada não entra no inventário de quem não a listou; o preflight do Publish segue passando', async () => {
+  const ctx = await withPolicies(setup());
+  const whatsappTargeting = {
+    publisher_platforms: ['facebook', 'instagram', 'audience_network', 'whatsapp'],
+    whatsapp_positions: ['status'],
+  };
+  for (const id of Object.values(WPP_ADSET)) ctx.graph.adsets.get(id).targeting = whatsappTargeting;
+  const inventory = async (env, adsets) => {
+    const response = await handleMetaAdsPublishRequest({
+      request: new Request('https://vault.test/v1/meta-ads-publish/inventory', {
+        method: 'POST', body: JSON.stringify({ token_id: TOKEN.NH, account_id: ACCOUNT_ID, adsets }),
+      }),
+      env, requestId: 'req', pathname: '/v1/meta-ads-publish/inventory',
+      decryptToken: async () => 'synthetic-access-token', writeAudit: async () => {},
+    });
+    assert.equal(response.status, 200);
+    return (await response.json()).placement_checks;
+  };
+  // O pedido que o workflow de hoje faz: só os conjuntos do WhatsApp.
+  const workflowRequest = [{ adset_id: WPP_ADSET.NH, destination_group: GROUP.NH }];
+  const before = await inventory(ctx.env, workflowRequest);
+  const route = await ensureOk(ctx);
+  assert.equal((await decision(ctx, route, 'APPROVE')).body.outcome, 'ACTIVATED');
+  const after = await inventory(ctx.env, workflowRequest);
+  // Mesma resposta de antes da rota e de quando o modo está desligado.
+  assert.deepEqual(after, before);
+  assert.deepEqual(after, await inventory({ ...ctx.env, META_ADS_OBJECTIVE_ROUTES_MODE: 'off' }, workflowRequest));
+  assert.deepEqual(after.map((check) => check.adset_id), [WPP_ADSET.NH]);
+  // O conjunto de tráfego não tem publishers de WhatsApp: se entrasse sozinho
+  // na resposta, o preflight bloquearia o lote. Listado de propósito, ele vem
+  // com a origem da rota, para o chamador que já sabe tratá-lo.
+  const explicit = await inventory(ctx.env, [...workflowRequest, { adset_id: route.adset_id, destination_group: GROUP.NH }]);
+  assert.equal(explicit.find((check) => check.adset_id === route.adset_id).objective_route_outcome, 'ACTIVATED');
+  assert.deepEqual(publishPreflightBlocks(after), []);
+  assert.deepEqual(publishPreflightBlocks(explicit), [route.adset_id]);
+});
+
+test('M2: a busca por nome não usa filtro da Graph e a retomada não duplica quando a listagem ainda não mostra o objeto', async () => {
+  const ctx = await withPolicies(setup());
+  let dropped = false;
+  ctx.graph.intercept((call) => {
+    if (call.method === 'POST' && call.path.endsWith('/campaigns') && !dropped) {
+      dropped = true;
+      return 'timeout_after';
+    }
+    return undefined;
+  });
+  // Leitura logo após a escrita: a Meta criou, mas a listagem ainda vem vazia.
+  ctx.listingLags = true;
+  const route = ctx.graph.route.bind(ctx.graph);
+  ctx.graph.route = (call) => (ctx.listingLags && call.method === 'GET' && call.path.endsWith('/campaigns')
+    ? ctx.graph.ok({ data: [] }) : route(call));
+  const names = objectiveRouteNames('NH', 'TRAFFIC_SITE_AGENDAMENTO');
+  const created = () => [...ctx.graph.campaigns.values()].filter((row) => row.name === names.campaign).length;
+
+  assert.equal((await ensure(ctx)).status, 502);
+  assert.equal(created(), 1);
+  const second = await ensure(ctx);
+  assert.equal(second.status, 502);
+  assert.equal(second.body.detail.cause_code, 'objective_route_create_unconfirmed');
+  assert.equal(created(), 1);
+  assert.equal(ctx.graph.posts().filter((call) => call.path.endsWith('/campaigns')).length, 1);
+  // A listagem alcança a escrita: reaproveita pelo nome, sem segundo POST.
+  ctx.listingLags = false;
+  const done = await ensure(ctx);
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(created(), 1);
+  assert.ok(events(ctx, done.body.route_key).includes('campaign_reused_by_name'));
+  // Nenhuma chamada depende do filtro por nome.
+  assert.equal(ctx.graph.calls.some((call) => 'filtering' in call.query), false);
+
+  // Recusa definitiva da Meta na criação não abre a janela de espera.
+  const refused = await withPolicies(setup());
+  let once = false;
+  refused.graph.intercept((call) => {
+    if (!once && call.method === 'POST' && call.path.endsWith('/campaigns')) {
+      once = true;
+      return graphError('Invalid parameter', 100, 400);
+    }
+    return undefined;
+  });
+  assert.equal((await ensure(refused)).status, 502);
+  assert.equal((await ensure(refused)).status, 200);
+});
+
+test('M3: conta em outro fuso invalida a conta do teto e gasto sem conjunto conta para as duas unidades', async () => {
+  const ctx = await withPolicies(setup());
+  const nh = await ensureOk(ctx, 'NH', 'TRAFFIC_SITE_AGENDAMENTO', 23);
+  const bss = await ensureOk(ctx, 'BSS', 'TRAFFIC_SITE_AGENDAMENTO', 30);
+  // Conjunto apagado no mês: aparece no total da conta, não nas linhas.
+  ctx.graph.unattributedSpend = 400;
+  const listed = await listRoutes(ctx);
+  assert.equal(listed.pending.find((entry) => entry.route_key === nh.route_key).budget_state.spend_mtd_brl, 2100 + 400);
+  assert.equal(listed.pending.find((entry) => entry.route_key === bss.route_key).budget_state.spend_mtd_brl, 2700 + 400);
+  // NH: 2100 + 3000 sem conjunto + (81 + 23) × 5 = 5620 > 5400.
+  ctx.graph.unattributedSpend = 3000;
+  const blocked = await decision(ctx, nh, 'APPROVE');
+  assert.equal(blocked.body.outcome, 'BLOCKED');
+  assert.deepEqual(blocked.body.reasons, ['ceiling_exceeded']);
+  assert.equal(blocked.body.budget.spend_mtd_brl, 5100);
+
+  ctx.graph.unattributedSpend = 0;
+  ctx.graph.timezone = 'America/Los_Angeles';
+  ctx.clock.now += 16 * 60_000;
+  const invalid = (await listRoutes(ctx)).pending.find((entry) => entry.route_key === bss.route_key).budget_state;
+  assert.deepEqual(invalid.invalid, ['account_timezone_not_sao_paulo']);
+  assert.equal(invalid.spend_mtd_brl, null);
+  const refused = await decision(ctx, bss, 'APPROVE');
+  assert.equal(refused.body.outcome, 'BLOCKED');
+  assert.deepEqual(refused.body.reasons, ['budget_inputs_invalid']);
+  assert.equal(activePosts(ctx).length, 0);
+});
+
+test('M4: troca de estado é compare-and-set e a trava é renovada a cada mutação', async () => {
+  // Outra chamada fecha a rota enquanto a aprovação lê a conta: a aprovação
+  // perde a corrida, não ativa nada e não sobrescreve a decisão.
+  const ctx = await withPolicies(setup());
+  const route = await ensureOk(ctx);
+  let raced = false;
+  ctx.graph.intercept((call) => {
+    if (!raced && call.method === 'GET' && call.path.endsWith('/insights')) {
+      raced = true;
+      ctx.d1.db.prepare(`UPDATE meta_ads_objective_routes SET status = 'REJECTED', decided_at = 'x' WHERE route_key = ?`).run(route.route_key);
+    }
+    return undefined;
+  });
+  const lost = await decision(ctx, route, 'APPROVE');
+  assert.equal(lost.status, 409, JSON.stringify(lost.body));
+  assert.equal(lost.body.error, 'objective_route_state_changed');
+  assert.equal(activePosts(ctx).length, 0);
+  assert.equal(routeRow(ctx, route.route_key).status, 'REJECTED');
+
+  // O vencimento varrido fora da trava não desfaz uma decisão concorrente.
+  const sweep = await withPolicies(setup());
+  const expiring = await ensureOk(sweep);
+  sweep.clock.now += internals.approvalTtlMs + internals.decisionGraceMs + 60_000;
+  const first = sweep.d1.db.prepare.bind(sweep.d1.db);
+  let flipped = false;
+  sweep.d1.db.prepare = (sql) => {
+    if (!flipped && /^UPDATE meta_ads_objective_routes SET status = \?/.test(sql)) {
+      flipped = true;
+      first(`UPDATE meta_ads_objective_routes SET status = 'ACTIVATED' WHERE route_key = ?`).run(expiring.route_key);
+    }
+    return first(sql);
+  };
+  const swept = await sweep.call('/pending', { action: 'list_pending_objective_routes' });
+  assert.equal(swept.status, 200, JSON.stringify(swept.body));
+  assert.equal(routeRow(sweep, expiring.route_key).status, 'ACTIVATED');
+
+  // Trava perdida no meio da ativação (outra chamada assumiu a unidade): a
+  // mutação seguinte não sai, a rota fica em ACTIVATING para o monitor.
+  const locked = await withPolicies(setup());
+  const slow = await ensureOk(locked);
+  let heartbeats = 0;
+  locked.graph.intercept((call) => {
+    if (call.method === 'POST' && call.path === slow.campaign_id && call.body.status === 'ACTIVE') {
+      heartbeats = locked.d1.rows(`SELECT heartbeat_at FROM meta_ads_publish_locks WHERE resource_key = 'objective-route-unit:NH'`).length;
+      locked.d1.db.prepare(`UPDATE meta_ads_publish_locks SET operation_key = 'outra-chamada' WHERE resource_key = 'objective-route-unit:NH'`).run();
+    }
+    return undefined;
+  });
+  const interrupted = await decision(locked, slow, 'APPROVE');
+  assert.equal(heartbeats, 1);
+  assert.equal(interrupted.status, 502, JSON.stringify(interrupted.body));
+  assert.equal(interrupted.body.detail.cause_code, 'objective_route_unit_lock_lost');
+  assert.equal(locked.graph.adsets.get(slow.adset_id).status, 'PAUSED');
+  assert.equal(routeRow(locked, slow.route_key).status, 'ACTIVATING');
+  // A trava da outra chamada não é apagada por quem a perdeu.
+  assert.equal(locked.d1.rows(`SELECT operation_key FROM meta_ads_publish_locks WHERE resource_key = 'objective-route-unit:NH'`)[0].operation_key, 'outra-chamada');
+});
