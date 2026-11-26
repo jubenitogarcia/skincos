@@ -179,7 +179,7 @@ const CURSOR_PATTERN = /^[A-Za-z0-9_=-]{1,1024}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ACTION_TYPE_PATTERN = /^[A-Za-z0-9_.:-]{1,120}$/;
 
-function text(value) {
+function readText(value) {
   return String(value ?? '').trim();
 }
 
@@ -233,7 +233,7 @@ export function metaAdsReadCapabilities() {
 // entram aqui quando o chamador envia um parâmetro novo e explícito; sem ele o
 // gateway segue pelo caminho antigo, byte a byte.
 export function isMetaAdsReadRequest(action, body) {
-  const name = text(action);
+  const name = readText(action);
   const input = isPlainObject(body) ? body : {};
   if (name === 'get_insights') return true;
   if (name === 'list_ads') {
@@ -271,7 +271,7 @@ export function createMetaAdsReadActions(deps) {
 
   function normalizeCursor(value) {
     if (!present(value)) return '';
-    const cursor = text(value);
+    const cursor = readText(value);
     if (typeof value !== 'string' || !CURSOR_PATTERN.test(cursor)) throw reject('read_cursor_invalid');
     return cursor;
   }
@@ -282,7 +282,7 @@ export function createMetaAdsReadActions(deps) {
     const out = [];
     for (const entry of value) {
       if (typeof entry !== 'string') throw reject(code);
-      const item = upper ? text(entry).toUpperCase() : text(entry);
+      const item = upper ? readText(entry).toUpperCase() : readText(entry);
       if (!allowed.includes(item)) throw reject(code);
       if (!out.includes(item)) out.push(item);
     }
@@ -290,7 +290,7 @@ export function createMetaAdsReadActions(deps) {
   }
 
   function normalizeDate(value, code) {
-    const date = text(value);
+    const date = readText(value);
     if (!DATE_PATTERN.test(date)) throw reject(code);
     const parsed = new Date(`${date}T00:00:00Z`);
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) throw reject(code);
@@ -311,8 +311,8 @@ export function createMetaAdsReadActions(deps) {
 
   function pagingOut(paging) {
     const cursors = isPlainObject(paging) && isPlainObject(paging.cursors) ? paging.cursors : {};
-    const hasNext = isPlainObject(paging) && text(paging.next) !== '';
-    const after = text(cursors.after);
+    const hasNext = isPlainObject(paging) && readText(paging.next) !== '';
+    const after = readText(cursors.after);
     // O cursor é opaco; se a Graph devolver algo fora do formato esperado a
     // paginação para em vez de repassar um valor arbitrário.
     return hasNext && CURSOR_PATTERN.test(after)
@@ -321,7 +321,7 @@ export function createMetaAdsReadActions(deps) {
   }
 
   function leaseRemainingMs(row, owner, nowMs) {
-    if (!isPlainObject(row) || text(row.run_id) !== owner) return 0;
+    if (!isPlainObject(row) || readText(row.run_id) !== owner) return 0;
     const expires = Date.parse(row.expires_at);
     // Linha ilegível conta como guarda ativa: na dúvida a leitura espera.
     if (!Number.isFinite(expires)) return READ_GUARD_WARNING_MS;
@@ -407,7 +407,7 @@ export function createMetaAdsReadActions(deps) {
           expires_at = excluded.expires_at, updated_at = excluded.updated_at
         WHERE meta_ads_publish_locks.run_id = '${READ_GUARD_OWNER}' AND
           meta_ads_publish_locks.expires_at < excluded.expires_at`,
-        `graph-read-guard:${auth.accountId}`, READ_GUARD_OWNER, text(context.operationKey) || 'read',
+        `graph-read-guard:${auth.accountId}`, READ_GUARD_OWNER, readText(context.operationKey) || 'read',
         now, blockedUntil, now, now);
     } catch {
       context.rateUsage.read_guard.update_failed = true;
@@ -440,7 +440,7 @@ export function createMetaAdsReadActions(deps) {
     let count = 0;
     for (const entry of Array.isArray(list) ? list : []) {
       if (!isPlainObject(entry)) continue;
-      const type = text(entry.action_type);
+      const type = readText(entry.action_type);
       const value = numeric(entry.value);
       if (!ACTION_TYPE_PATTERN.test(type) || value === null) continue;
       if (!(type in out)) {
@@ -457,10 +457,10 @@ export function createMetaAdsReadActions(deps) {
   function summarizeInsightsRow(row, level, breakdowns) {
     const source = isPlainObject(row) ? row : {};
     const out = { level };
-    for (const key of INSIGHTS_IDENTITY_FIELDS[level]) out[key] = present(source[key]) ? text(source[key]) : null;
-    out.date_start = present(source.date_start) ? text(source.date_start) : null;
-    out.date_stop = present(source.date_stop) ? text(source.date_stop) : null;
-    for (const key of breakdowns) out[key] = present(source[key]) ? text(source[key]) : null;
+    for (const key of INSIGHTS_IDENTITY_FIELDS[level]) out[key] = present(source[key]) ? readText(source[key]) : null;
+    out.date_start = present(source.date_start) ? readText(source.date_start) : null;
+    out.date_stop = present(source.date_stop) ? readText(source.date_stop) : null;
+    for (const key of breakdowns) out[key] = present(source[key]) ? readText(source[key]) : null;
     for (const key of INSIGHTS_NUMERIC_FIELDS) out[key] = numeric(source[key]);
     out.actions = summarizeActions(source.actions);
     out.cost_per_action_type = summarizeActions(source.cost_per_action_type);
@@ -469,9 +469,9 @@ export function createMetaAdsReadActions(deps) {
 
   async function getInsights(body, context) {
     const auth = await resolveGraphAuth(body, context);
-    const level = text(body.level);
+    const level = readText(body.level);
     if (!INSIGHTS_LEVELS.includes(level)) throw reject('insights_level_invalid');
-    const period = text(body.period || 'lifetime');
+    const period = readText(body.period || 'lifetime');
     if (!INSIGHTS_PERIODS.includes(period)) throw reject('insights_period_invalid');
     const breakdowns = normalizeAllowlistedList(body.breakdowns, INSIGHTS_BREAKDOWNS, 'insights_breakdown_not_allowed', { max: 2 });
     const statuses = normalizeAllowlistedList(body.effective_status, EFFECTIVE_STATUSES, 'effective_status_invalid', { upper: true });
@@ -555,13 +555,13 @@ export function createMetaAdsReadActions(deps) {
 
   async function readOwnedObject(body, context, fields) {
     const auth = await resolveGraphAuth(body, context);
-    const view = text(body.view);
+    const view = readText(body.view);
     if (!OBJECT_VIEWS.includes(view)) throw reject('read_view_invalid');
     const objectId = normalizeNumericId(body.object_id, 'object_id');
     const result = await readGraph(graphUrl(auth.apiVersion, objectId, { fields: fields.join(',') }), auth, context);
     const source = isPlainObject(result.body) ? result.body : {};
     // A visão histórica só é devolvida para objetos da conta configurada.
-    if (text(source.account_id).replace(/^act_/, '') !== auth.accountId) {
+    if (readText(source.account_id).replace(/^act_/, '') !== auth.accountId) {
       throw failure('object_not_in_authorized_account', { classification: 'auth', http_status: 403 });
     }
     const out = { read_revision: META_ADS_READ_REVISION, view };
@@ -579,7 +579,7 @@ export function createMetaAdsReadActions(deps) {
 
   async function perform(action, body, context) {
     try {
-      return await dispatch(text(action), isPlainObject(body) ? body : {}, context);
+      return await dispatch(readText(action), isPlainObject(body) ? body : {}, context);
     } catch (error) {
       // Uma leitura não deixa efeito externo pendente: timeout ou queda de
       // rede é falha simples, nunca motivo para `reconciliation_required`.
@@ -594,7 +594,8 @@ export function createMetaAdsReadActions(deps) {
   return Object.freeze({ perform, getInsights, listAdsPage });
 }
 
-export const __test = Object.freeze({
+// Nomes únicos no bundle: evitam que o empacotador renomeie símbolos do gateway.
+export const metaAdsReadInternals = Object.freeze({
   insightsLevels: INSIGHTS_LEVELS,
   insightsBreakdowns: INSIGHTS_BREAKDOWNS,
   insightsMetricFields: INSIGHTS_METRIC_FIELDS,

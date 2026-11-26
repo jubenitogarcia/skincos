@@ -4,7 +4,7 @@ import { __test as gateway, handleMetaAdsPublishRequest } from '../src/meta-ads-
 import {
   META_ADS_READ_NEW_ACTIONS,
   META_ADS_READ_REVISION,
-  __test as read,
+  metaAdsReadInternals as read,
   createMetaAdsReadActions,
   isMetaAdsReadRequest,
   metaAdsReadCapabilities,
