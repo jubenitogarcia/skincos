@@ -5,7 +5,7 @@
 //
 // Uso:
 //   node scripts/compare-worker-bundle.mjs --esbuild <binário> --deployed <arquivo>
-//        [--entry src/compat-entry.js] [--allow nomeA,nomeB,...] [--json]
+//        [--entry src/compat-entry.js] [--allow nomeA,nomeB,...] [--allow-file <lista>] [--json]
 //
 // <arquivo> é o código baixado do Worker (o corpo multipart devolvido pela API
 // da Cloudflare ou o .js já extraído). Nada é enviado para fora: o script só
@@ -27,7 +27,10 @@ function parseArgs(argv) {
     else if (arg === '--esbuild') out.esbuild = argv[++index];
     else if (arg === '--deployed') out.deployed = argv[++index];
     else if (arg === '--entry') out.entry = argv[++index];
-    else if (arg === '--allow') out.allow = String(argv[++index] || '').split(',').map((name) => name.trim()).filter(Boolean);
+    else if (arg === '--allow') out.allow.push(...String(argv[++index] || '').split(',').map((name) => name.trim()).filter(Boolean));
+    else if (arg === '--allow-file') {
+      out.allow.push(...readFileSync(argv[++index], 'utf8').split('\n').map((name) => name.trim()).filter((name) => name && !name.startsWith('#')));
+    }
     else throw new Error(`argumento desconhecido: ${arg}`);
   }
   if (!out.esbuild || !out.deployed) throw new Error('informe --esbuild e --deployed');
