@@ -157,6 +157,12 @@ class FakeD1 {
       return this.professionals.filter((prof) => allowed.has(prof.name)).map((prof) => ({ id: prof.id, name: prof.name }))
     }
 
+    if (query.startsWith('select professional_name from schedule_entries where date = ?1 and unit = ?2')) {
+      return this.scheduleEntries
+        .filter((row) => row.date === params[0] && row.unit === params[1])
+        .map((row) => ({ professional_name: row.professional_name }))
+    }
+
     if (query.includes('select date, unit, professional_name as professional')) {
       const includesProfessionalId = query.includes('professional_id')
       let rows = [...this.scheduleEntries]
@@ -1087,4 +1093,149 @@ test('Escala import preserves manual schedule and closed-day conflicts', async (
   assert.equal(db.closedDays.length, 1)
   assert.equal(db.scheduleEntries[0].date, '2026-06-10')
   assert.equal(db.closedDays[0].date, '2026-06-11')
+})
+
+function seedInjectors(db, names) {
+  names.forEach((name, index) => {
+    db.professionals.push({
+      id: `prof-limit-${index + 1}`,
+      name,
+      status: 'Ativo',
+      role: 'Injetor',
+      shift: '',
+      nickname: '',
+      phone: '',
+      email: '',
+      instagram: '',
+      color: '#22c55e',
+      units_json: JSON.stringify(['Novo Hamburgo']),
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    })
+  })
+}
+
+function seedScheduleRow(db, date, name) {
+  db.scheduleEntries.push({
+    id: `row-${date}-${name}`,
+    date,
+    unit: 'Novo Hamburgo',
+    professional_name: name,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    created_by: 'seed',
+    updated_by: 'seed',
+  })
+}
+
+const LIMIT_ENV = (db) => ({ DB: db, APP_ORIGIN: 'https://crm.local', ESCALA_ACTOR_HMAC_KEY: 'test-secret' })
+const LIMIT_ACTOR = { id: 'gestor-1', email: 'gestor@local.test', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] }
+const LIMIT_MESSAGE = 'Cada dia aceita no máximo 2 injetores, um por consultório. Desmarque um para trocar.'
+
+test('Escala schedule PUT accepts two professionals on a day and refuses a third', async () => {
+  const db = new FakeD1()
+  seedInjectors(db, ['Dra. Ana', 'Dr. Bruno', 'Dra. Carla'])
+  seedScheduleRow(db, '2026-11-23', 'Dra. Ana')
+  const env = LIMIT_ENV(db)
+
+  const two = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/schedule', {
+      method: 'PUT',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: LIMIT_ACTOR,
+      body: { date: '2026-11-23', unit: 'Novo Hamburgo', professionals: ['Dra. Ana', 'Dr. Bruno'] },
+    }),
+    env,
+  )
+  assert.equal(two.status, 200)
+  assert.deepEqual(db.scheduleEntries.map((row) => row.professional_name).sort(), ['Dr. Bruno', 'Dra. Ana'])
+
+  const three = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/schedule', {
+      method: 'PUT',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: LIMIT_ACTOR,
+      body: {
+        unit: 'Novo Hamburgo',
+        entries: [
+          { date: '2026-11-24', professionals: ['Dra. Carla'] },
+          { date: '2026-11-23', professionals: ['Dra. Ana', 'Dr. Bruno', 'Dra. Carla'] },
+        ],
+      },
+    }),
+    env,
+  )
+  assert.equal(three.status, 400)
+  const json = await three.json()
+  assert.equal(json.error, 'DAY_PROFESSIONAL_LIMIT')
+  assert.equal(json.message, LIMIT_MESSAGE)
+  assert.equal(json.date, '2026-11-23')
+  assert.equal(json.max, 2)
+  // Nothing in the batch was written.
+  assert.deepEqual(db.scheduleEntries.map((row) => `${row.date}:${row.professional_name}`).sort(), [
+    '2026-11-23:Dr. Bruno',
+    '2026-11-23:Dra. Ana',
+  ])
+})
+
+test('Escala schedule POST refuses to add a third professional to a day', async () => {
+  const db = new FakeD1()
+  seedInjectors(db, ['Dra. Ana', 'Dr. Bruno', 'Dra. Carla'])
+  seedScheduleRow(db, '2026-11-23', 'Dra. Ana')
+  const env = LIMIT_ENV(db)
+  const post = async (professionals) => worker.fetch(
+    await signedRequest('https://escala.local/api/escala/schedule', {
+      method: 'POST',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: LIMIT_ACTOR,
+      body: { date: '2026-11-23', unit: 'Novo Hamburgo', professionals },
+    }),
+    env,
+  )
+
+  assert.equal((await post(['Dr. Bruno'])).status, 200)
+  assert.equal(db.scheduleEntries.length, 2)
+  // Re-adding someone already on the day is not a third professional.
+  assert.equal((await post(['Dra. Ana'])).status, 200)
+  const third = await post(['Dra. Carla'])
+  assert.equal(third.status, 400)
+  assert.equal((await third.json()).error, 'DAY_PROFESSIONAL_LIMIT')
+  assert.equal(db.scheduleEntries.length, 2)
+})
+
+test('Escala import skips a third professional on a day as a conflict', async () => {
+  const db = new FakeD1()
+  seedScheduleRow(db, '2026-11-23', 'Dra. Ana')
+  const env = LIMIT_ENV(db)
+
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento', {
+      method: 'POST',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: LIMIT_ACTOR,
+      body: {
+        commit: true,
+        feed: {
+          schedule: [
+            { date: '2026-11-23', unit: 'Novo Hamburgo', professional: 'Dra. Ana' },
+            { date: '2026-11-23', unit: 'Novo Hamburgo', professional: 'Dr. Bruno' },
+            { date: '2026-11-23', unit: 'Novo Hamburgo', professional: 'Dra. Carla' },
+            { date: '2026-11-24', unit: 'Novo Hamburgo', professional: 'Dra. Carla' },
+          ],
+        },
+      },
+    }),
+    env,
+  )
+
+  assert.equal(response.status, 200)
+  const json = await response.json()
+  assert.equal(json.summary.schedule.existing, 1)
+  assert.equal(json.summary.schedule.toInsert, 2)
+  assert.equal(json.summary.schedule.conflicts, 1)
+  assert.deepEqual(db.scheduleEntries.map((row) => `${row.date}:${row.professional_name}`).sort(), [
+    '2026-11-23:Dr. Bruno',
+    '2026-11-23:Dra. Ana',
+    '2026-11-24:Dra. Carla',
+  ])
 })

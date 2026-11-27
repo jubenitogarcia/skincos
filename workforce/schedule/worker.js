@@ -12,6 +12,17 @@ const SERVICE_TIME_ZONE = 'America/Sao_Paulo'
 // Read-only GET routes the CRM API may sign with its dedicated key
 // (ESCALA_CRM_API_READ_HMAC_KEY); every other route keeps ESCALA_ACTOR_HMAC_KEY only.
 const CRM_API_READ_PATHS = new Set(['/api/escala/schedule', '/api/escala/schedule/snapshot'])
+// Each unit has two consultation rooms, so a day takes at most two professionals.
+const MAX_PROFESSIONALS_PER_DAY = 2
+const DAY_PROFESSIONAL_LIMIT_MESSAGE = 'Cada dia aceita no máximo 2 injetores, um por consultório. Desmarque um para trocar.'
+
+function dayProfessionalLimitResponse(date) {
+  return {
+    ok: false,
+    status: 400,
+    body: { ok: false, error: 'DAY_PROFESSIONAL_LIMIT', message: DAY_PROFESSIONAL_LIMIT_MESSAGE, date, max: MAX_PROFESSIONALS_PER_DAY },
+  }
+}
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -1152,6 +1163,12 @@ async function handleSchedulePost(env, actor, body) {
   if (known.length !== names.length) {
     return { ok: false, status: 400, body: { ok: false, error: 'UNKNOWN_PROFESSIONAL' } }
   }
+  const currentRes = await env.DB.prepare(
+    `select professional_name from schedule_entries where date = ?1 and unit = ?2`
+  ).bind(date, unit).all()
+  const dayNames = new Set((currentRes.results || []).map((row) => normalizeName(row.professional_name)).filter(Boolean))
+  names.forEach((name) => dayNames.add(name))
+  if (dayNames.size > MAX_PROFESSIONALS_PER_DAY) return dayProfessionalLimitResponse(date)
   const professionalIds = await professionalIdsByName(env, names)
   const hasProfessionalId = await tableHasColumn(env, 'schedule_entries', 'professional_id')
   const now = new Date().toISOString()
@@ -1187,6 +1204,8 @@ async function handleSchedulePut(env, actor, body) {
   if (!unit || !entries.length || entries.some((entry) => !isValidDate(entry.date) || !entry.professionals.length)) {
     return { ok: false, status: 400, body: { ok: false, error: 'INVALID_INPUT' } }
   }
+  const overLimit = entries.find((entry) => entry.professionals.length > MAX_PROFESSIONALS_PER_DAY)
+  if (overLimit) return dayProfessionalLimitResponse(overLimit.date)
   const unitAllowed = ensureUnitAllowed(actor, unit)
   if (!unitAllowed.ok) return unitAllowed
   const uniqueNames = Array.from(new Set(entries.flatMap((entry) => entry.professionals)))
@@ -1456,6 +1475,12 @@ async function handleAtendimentoImport(env, actor, body) {
   const existingProfessionals = new Map((existingProfessionalsRes.results || []).map((row) => [normalizeName(row.name), row]))
   const existingSchedule = new Set((existingScheduleRes.results || []).map((row) => `${row.date}__${normalizeUnitKey(row.unit)}__${normalizeName(row.professional)}`))
   const existingScheduleByDay = new Set((existingScheduleRes.results || []).map((row) => `${row.date}__${normalizeUnitKey(row.unit)}`))
+  const scheduleNamesByDay = new Map()
+  for (const row of existingScheduleRes.results || []) {
+    const dayKey = `${row.date}__${normalizeUnitKey(row.unit)}`
+    if (!scheduleNamesByDay.has(dayKey)) scheduleNamesByDay.set(dayKey, new Set())
+    scheduleNamesByDay.get(dayKey).add(normalizeName(row.professional))
+  }
   const existingClosed = new Map((existingClosedRes.results || []).map((row) => [`${row.date}__${normalizeUnitKey(row.unit)}`, row]))
   const existingHolidays = new Set((existingHolidaysRes.results || []).map((row) => `${row.date}__${normalizeUnitKey(row.unit)}__${normalizeName(row.name)}`))
 
@@ -1558,6 +1583,14 @@ async function handleAtendimentoImport(env, actor, body) {
       summary.schedule.conflicts += 1
       continue
     }
+    const dayKey = `${row.date}__${normalizeUnitKey(row.unit)}`
+    const dayNames = scheduleNamesByDay.get(dayKey) || new Set()
+    if (!dayNames.has(row.professional) && dayNames.size >= MAX_PROFESSIONALS_PER_DAY) {
+      summary.schedule.conflicts += 1
+      continue
+    }
+    dayNames.add(row.professional)
+    scheduleNamesByDay.set(dayKey, dayNames)
     summary.schedule.toInsert += 1
     if (commit) {
       if (closed) statements.push(env.DB.prepare(`delete from closed_days where date = ?1 and unit = ?2`).bind(row.date, row.unit))
